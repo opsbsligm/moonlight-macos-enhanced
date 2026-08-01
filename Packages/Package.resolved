@@ -1,0 +1,16 @@
+{
+  "object" : {
+    "pins" : [
+      {
+        "identity" : "openssl",
+        "kind" : "remote",
+        "location" : "https://github.com/krzyzanowskim/OpenSSL-Package.git",
+        "state" : {
+          "version" : "3.6.1",
+          "revision" : "3.6.1"
+        }
+      }
+    ],
+    "version" : 2
+  }
+}

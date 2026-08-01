@@ -1,0 +1,44 @@
+# Build artifacts
+build/
+DerivedData/
+*.app
+*.dmg
+*.o
+*.a
+*.dylib
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Swift Package Manager cache
+Packages/checkouts/
+Packages/artifacts/
+Packages/repositories/
+
+# Large binary frameworks (managed via download script or Git LFS)
+xcframeworks/
+Packages/OpenSSL.xcframework/
+xcframeworks.zip
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+crash_log
+
+# Temporary
+*.tmp
+*.swp
+*~
