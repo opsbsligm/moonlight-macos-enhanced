@@ -57,22 +57,16 @@ build-app:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
-# Run unit tests (placeholder - add test targets as needed)
+# Integration test: verify app bundle, code signature, and launch
 test-app:
   stage: test
   dependencies:
     - build-app
   script:
-    - xcodebuild test
-        -project "$XCODE_PROJECT"
-        -scheme "$XCODE_SCHEME"
-        -configuration "Debug"
-        -derivedDataPath "$DERIVED_DATA_PATH"
-        CODE_SIGN_IDENTITY="-"
-        CODE_SIGNING_REQUIRED=NO
-        || echo "warn: No test targets configured yet"
-  allow_failure: true
+    - zsh scripts/integration-test.sh
+        "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app"
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
 # Package as DMG for release tags
