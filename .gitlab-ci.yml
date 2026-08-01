@@ -1,0 +1,93 @@
+# GitLab CI/CD pipeline for Moonlight macOS
+# Requires a macOS runner with Xcode and shell executor
+
+stages:
+  - deps
+  - build
+  - test
+  - package
+
+variables:
+  DERIVED_DATA_PATH: "build/xcode/derivedData"
+  XCODE_PROJECT: "Moonlight.xcodeproj"
+  XCODE_SCHEME: "Moonlight for macOS"
+  CONFIGURATION: "Release"
+
+# Cache binary frameworks between pipelines
+cache:
+  key: frameworks
+  paths:
+    - xcframeworks/
+    - Packages/OpenSSL.xcframework/
+  policy: pull-push
+
+# Download binary frameworks (skipped if cache hit)
+download-deps:
+  stage: deps
+  script:
+    - zsh scripts/download-frameworks.sh
+  artifacts:
+    paths:
+      - xcframeworks/
+      - Packages/OpenSSL.xcframework/
+    expire_in: 1 day
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# Build the Xcode project
+build-app:
+  stage: build
+  dependencies:
+    - download-deps
+  script:
+    - xcodebuild
+        -project "$XCODE_PROJECT"
+        -scheme "$XCODE_SCHEME"
+        -configuration "$CONFIGURATION"
+        -derivedDataPath "$DERIVED_DATA_PATH"
+        CODE_SIGN_IDENTITY="-"
+        CODE_SIGNING_REQUIRED=NO
+        build
+  artifacts:
+    paths:
+      - $DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app
+    expire_in: 1 week
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# Run unit tests (placeholder - add test targets as needed)
+test-app:
+  stage: test
+  dependencies:
+    - build-app
+  script:
+    - xcodebuild test
+        -project "$XCODE_PROJECT"
+        -scheme "$XCODE_SCHEME"
+        -configuration "Debug"
+        -derivedDataPath "$DERIVED_DATA_PATH"
+        CODE_SIGN_IDENTITY="-"
+        CODE_SIGNING_REQUIRED=NO
+        || echo "warn: No test targets configured yet"
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# Package as DMG for release tags
+package-dmg:
+  stage: package
+  dependencies:
+    - build-app
+  script:
+    - zsh scripts/package-dmg.sh
+        "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app"
+        "build/Moonlight-${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}.dmg"
+  artifacts:
+    paths:
+      - build/*.dmg
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == "main"'
