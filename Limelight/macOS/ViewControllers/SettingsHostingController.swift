@@ -12,30 +12,22 @@ import Combine
 import SwiftUI
 
 class SettingsHostingController<RootView: View>: NSWindowController {
-  private var languageObserver: Any?
+  // Wraps macOS 26 LiquidGlassWindowController while keeping the same
+  // ObjC bridge entry point for backward compatibility of the caller API.
+  private var _real: LiquidGlassWindowController<RootView>?
 
   convenience init(rootView: RootView) {
-    let hostingController = NSHostingController(rootView: rootView)
-
-    let window = NSWindow(contentViewController: hostingController)
-    window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-    window.collectionBehavior = [.fullScreenNone]
-    window.tabbingMode = .disallowed
-    window.title = LanguageManager.shared.localize("Settings")
-
-    self.init(window: window)
-
-    languageObserver = NotificationCenter.default.addObserver(
-      forName: .init("LanguageChanged"), object: nil, queue: .main
-    ) { [weak window] _ in
-      window?.title = LanguageManager.shared.localize("Settings")
-    }
-  }
-
-  deinit {
-    if let languageObserver {
-      NotificationCenter.default.removeObserver(languageObserver)
-    }
+    let title = LanguageManager.shared.localize("Settings")
+    let inner = LiquidGlassWindowController(
+      rootView: rootView,
+      title: title,
+      minSize: NSSize(width: 640, height: 520)
+    )
+    // Take ownership of the window from the inner controller so callers
+    // still operate on this NSWindowController instance.
+    self.init(window: inner.window)
+    _real = inner
+    // Inner is now just a bookkeeping holder; the window lives on self.
   }
 }
 
