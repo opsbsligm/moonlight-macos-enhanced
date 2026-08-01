@@ -303,7 +303,7 @@
 			);
 			mainGroup = FB290CE519B2C406004C83CF;
 			packageReferences = (
-				A42858402D5065B800E39078 /* XCRemoteSwiftPackageReference "OpenSSL-Package" */,
+				A42858402D5065B800E39078 /* XCLocalSwiftPackageReference "OpenSSL-Package" */,
 			);
 			preferredProjectObjectVersion = 48;
 			productRefGroup = FB290CEF19B2C406004C83CF /* Products */;
@@ -653,21 +653,17 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		A42858402D5065B800E39078 /* XCRemoteSwiftPackageReference "OpenSSL-Package" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/krzyzanowskim/OpenSSL-Package.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.3.2000;
-			};
+/* Begin XCLocalSwiftPackageReference section */
+		A42858402D5065B800E39078 /* XCLocalSwiftPackageReference "OpenSSL-Package" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "Packages/OpenSSL-Package";
 		};
-/* End XCRemoteSwiftPackageReference section */
+/* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		A42858412D5065B800E39078 /* OpenSSL */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A42858402D5065B800E39078 /* XCRemoteSwiftPackageReference "OpenSSL-Package" */;
+			package = A42858402D5065B800E39078 /* XCLocalSwiftPackageReference "OpenSSL-Package" */;
 			productName = OpenSSL;
 		};
 /* End XCSwiftPackageProductDependency section */
