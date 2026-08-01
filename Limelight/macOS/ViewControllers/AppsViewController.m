@@ -1,0 +1,1725 @@
+//
+//  AppsViewController.m
+//  Moonlight for macOS
+//
+//  Created by Michael Kenny on 23/12/17.
+//  Copyright © 2017 Moonlight Stream. All rights reserved.
+//
+
+#import "AppsViewController.h"
+#import "AppsViewControllerDelegate.h" // Restore this import
+#import "AppCell.h"
+#import "AppCellView.h"
+#import "AlertPresenter.h"
+#import "StreamViewController.h"
+#import "NSWindow+Moonlight.h"
+#import "NSCollectionView+Moonlight.h"
+#import "NSApplication+Moonlight.h"
+#import "ImageFader.h"
+#import "NSView+Moonlight.h"
+
+#import "Moonlight-Swift.h"
+#import "StreamingSessionManager.h"
+
+#import "F.h"
+
+#import "HttpManager.h"
+#import "IdManager.h"
+#import "CryptoManager.h"
+#import "AppListResponse.h"
+#import "AppAssetManager.h"
+#import "DataManager.h"
+#import "ServerInfoResponse.h"
+#import "DiscoveryWorker.h"
+#import "ConnectionHelper.h"
+#import "WakeOnLanManager.h"
+
+#undef NSLocalizedString
+#define NSLocalizedString(key, comment) [[LanguageManager shared] localize:key]
+
+@interface AppsViewController () <NSCollectionViewDataSource, AppsViewControllerDelegate, AppAssetCallback, NSSearchFieldDelegate, NSMenuItemValidation>
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *cmsIdToId;
+@property (nonatomic, strong) NSArray<TemporaryApp *> *apps;
+@property (nonatomic, strong) TemporaryApp *runningApp;
+
+@property (nonatomic, strong) NSString *filterText;
+@property (nonatomic) NSSearchField *getSearchField;
+
+@property (nonatomic, strong) NSDictionary<NSString *, NSString *> *appNameToId;
+
+@property (nonatomic, strong) AppAssetManager *appManager;
+@property (nonatomic, strong) NSCache *boxArtCache;
+@property (nonatomic) CGFloat itemScale;
+
+@property (nonatomic) id windowDidBecomeKeyObserver;
+
+@property (nonatomic, strong) TemporaryApp *currentlyHoveredApp;
+
+@property (nonatomic, strong) NSViewController *lockOverlayHostingController;
+@property (nonatomic, strong) NSViewController *offlineOverlayHostingController;
+@property (nonatomic, strong) id streamingStateObserver;
+@property (nonatomic, strong) id hostLatencyObserver;
+@property (nonatomic, copy) NSString *currentHostUUID;
+@property (nonatomic, copy) NSString *offlineOverlayHostUUID;
+@property (nonatomic, copy) NSString *pendingSessionSunshineTargetDisplayNameOverride;
+@property (nonatomic) BOOL hasPendingSessionSunshineTargetDisplayOverride;
+@property (nonatomic, strong) NSNumber *pendingSessionSunshineScreenModeOverride;
+@property (nonatomic, copy) NSArray<NSDictionary<NSString *, id> *> *cachedSunshineDisplays;
+@property (nonatomic, copy) NSString *cachedSunshineDisplaysHostUUID;
+@property (nonatomic) BOOL refreshingSunshineDisplays;
+
+@end
+
+const CGFloat scaleBase = 1.125;
+static NSUserInterfaceItemIdentifier const MLSunshineOverridesSeparatorMenuItemIdentifier = @"sunshineOverridesSeparatorMenuItem";
+static NSUserInterfaceItemIdentifier const MLSunshineThisStreamDisplayMenuItemIdentifier = @"sunshineThisStreamDisplayMenuItem";
+static NSUserInterfaceItemIdentifier const MLSunshineThisStreamModeMenuItemIdentifier = @"sunshineThisStreamModeMenuItem";
+static NSUserInterfaceItemIdentifier const MLSunshineRefreshDisplaysMenuItemIdentifier = @"sunshineRefreshDisplaysMenuItem";
+
+@implementation AppsViewController
+
+#pragma mark - Lifecycle
+
+- (void)loadView {
+    @try {
+        [super loadView];
+    } @catch (NSException *exception) {
+        Log(LOG_W, @"[diag] AppsViewController storyboard view load failed: %@. Falling back to programmatic view.", exception.reason ?: @"(unknown)");
+
+        NSView *rootView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 450, 300)];
+        rootView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+
+        NSScrollView *scrollView = [[NSScrollView alloc] initWithFrame:NSZeroRect];
+        scrollView.translatesAutoresizingMaskIntoConstraints = NO;
+        scrollView.borderType = NSNoBorder;
+        scrollView.hasVerticalScroller = YES;
+        scrollView.hasHorizontalScroller = NO;
+        scrollView.autohidesScrollers = YES;
+        scrollView.drawsBackground = YES;
+        scrollView.backgroundColor = [NSColor controlBackgroundColor];
+
+        CollectionView *collectionView = [[CollectionView alloc] initWithFrame:NSMakeRect(0, 0, 450, 300)];
+        collectionView.selectable = YES;
+        collectionView.autoresizingMask = NSViewWidthSizable;
+
+        NSCollectionViewFlowLayout *layout = [[NSCollectionViewFlowLayout alloc] init];
+        layout.minimumInteritemSpacing = 10.0;
+        layout.minimumLineSpacing = 24.0;
+        layout.itemSize = NSMakeSize(96.0, 144.0);
+        layout.sectionInset = NSEdgeInsetsMake(28.0, 16.0, 28.0, 16.0);
+        collectionView.collectionViewLayout = layout;
+        collectionView.backgroundColors = @[[NSColor controlBackgroundColor]];
+
+        scrollView.documentView = collectionView;
+        [rootView addSubview:scrollView];
+        [NSLayoutConstraint activateConstraints:@[
+            [scrollView.leadingAnchor constraintEqualToAnchor:rootView.leadingAnchor],
+            [scrollView.trailingAnchor constraintEqualToAnchor:rootView.trailingAnchor],
+            [scrollView.topAnchor constraintEqualToAnchor:rootView.topAnchor],
+            [scrollView.bottomAnchor constraintEqualToAnchor:rootView.bottomAnchor],
+        ]];
+
+        self.collectionView = collectionView;
+        self.view = rootView;
+    }
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    self.collectionView.dataSource = self;
+    [self.collectionView registerNib:[[NSNib alloc] initWithNibNamed:@"AppCell" bundle:nil] forItemWithIdentifier:@"AppCell"];
+
+    self.apps = @[];
+    self.cmsIdToId = [NSMutableDictionary dictionary];
+
+    self.itemScale = [[NSUserDefaults standardUserDefaults] floatForKey:@"itemScale"];
+    if (self.itemScale == 0) {
+        self.itemScale = pow(scaleBase, 2);
+    }
+    [self updateCollectionViewItemSize];
+
+    [self loadApps];
+    
+    self.runningApp = [self findRunningApp:self.host];
+    
+    self.boxArtCache = [[NSCache alloc] init];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(languageChanged:) name:@"LanguageChanged" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleHostAutoAddressSwitched:) name:@"HostAutoAddressSwitched" object:nil];
+
+    // Subscribe to streaming state changes
+    __weak typeof(self) weakSelf = self;
+    self.streamingStateObserver = [[NSNotificationCenter defaultCenter]
+        addObserverForName:@"StreamingStateChanged"
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *note) {
+        [weakSelf handleStreamingStateChange:note];
+    }];
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    if (self.streamingStateObserver) {
+        [[NSNotificationCenter defaultCenter] removeObserver:self.streamingStateObserver];
+    }
+}
+
+- (void)languageChanged:(NSNotification *)note {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.getSearchField.placeholderString = NSLocalizedString(@"Search Apps", @"Search Apps");
+        [self.collectionView reloadData];
+    });
+}
+
+- (void)viewWillAppear {
+    [super viewWillAppear];
+    
+    self.parentViewController.title = self.host.displayName;
+    [self updateWindowSubtitle];
+    
+    [self.parentViewController.view.window moonlight_toolbarItemForAction:@selector(backButtonClicked:)].enabled = YES;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wundeclared-selector"
+    [self.parentViewController.view.window moonlight_toolbarItemForAction:@selector(addHostButtonClicked:)].enabled = NO;
+#pragma clang diagnostic pop
+    [self.parentViewController.view.window moonlight_toolbarItemForIdentifier:@"SidebarToggleToolbarItem"].enabled = YES;
+
+
+    self.getSearchField.delegate = self;
+    self.getSearchField.placeholderString = NSLocalizedString(@"Search Apps", @"Search Apps");
+}
+
+- (void)viewDidAppear {
+    [super viewDidAppear];
+    
+    [self syncHostStateFromDatabase];
+    self.currentHostUUID = self.host.uuid;
+
+    __weak typeof(self) weakSelf = self;
+    self.windowDidBecomeKeyObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidBecomeKeyNotification object:self.view.window queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+        [weakSelf updateRunningAppState];
+        
+        [SettingsClass loadMoonlightSettingsFor:self.host.uuid];
+        [weakSelf updateWindowSubtitle];
+    }];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateWindowSubtitle) name:NSUserDefaultsDidChangeNotification object:nil];
+    // Also listen for latency updates to update the IP in Auto mode
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleHostLatencyUpdate:) name:@"HostLatencyUpdated" object:nil];
+
+    // Check initial streaming state
+    [self handleStreamingStateChange:nil];
+
+    [self updateOfflineOverlayForCurrentHost];
+    [self refreshSunshineDisplaysIfNeededForce:NO];
+}
+
+- (void)updateOfflineOverlayForCurrentHost {
+    StreamingSessionManager *manager = [StreamingSessionManager shared];
+    BOOL isStreamingThisHost = (self.host.uuid != nil) && [manager isStreamingHost:self.host.uuid];
+
+    if (self.host.state == StateOffline && !isStreamingThisHost) {
+        [self showOfflineOverlayIfCurrentHost];
+    } else {
+        [self hideOfflineOverlay];
+    }
+}
+
+- (void)syncHostStateFromDatabase {
+    if (!self.host.uuid) {
+        return;
+    }
+
+    DataManager *dataManager = [[DataManager alloc] init];
+    NSArray *hosts = [dataManager getHosts];
+    for (TemporaryHost *h in hosts) {
+        if ([h.uuid isEqualToString:self.host.uuid]) {
+            if (h.state != StateUnknown) {
+                self.host.state = h.state;
+            }
+            self.host.pairState = h.pairState;
+            self.host.addressLatencies = h.addressLatencies;
+            self.host.addressStates = h.addressStates;
+            if (h.activeAddress) {
+                self.host.activeAddress = h.activeAddress;
+            }
+            break;
+        }
+    }
+
+    [self updateWindowSubtitle];
+}
+
+- (void)handleHostLatencyUpdate:(NSNotification *)note {
+    NSString *uuid = note.userInfo[@"uuid"];
+    if (uuid == nil || ![uuid isEqualToString:self.host.uuid]) {
+        return;
+    }
+
+    NSDictionary *latencies = note.userInfo[@"latencies"];
+    NSDictionary *states = note.userInfo[@"states"];
+    if (latencies) {
+        self.host.addressLatencies = latencies;
+    }
+    if (states) {
+        self.host.addressStates = states;
+    }
+
+    [self syncHostStateFromDatabase];
+
+    [self updateOfflineOverlayForCurrentHost];
+
+    // If we were offline and now online, try to refresh apps
+    if (self.host.state != StateOffline && self.apps.count == 0) {
+        [self discoverAppsForHost:self.host];
+    }
+}
+
+- (void)handleHostAutoAddressSwitched:(NSNotification *)note {
+    NSString *uuid = note.userInfo[@"uuid"];
+    if (uuid == nil || ![uuid isEqualToString:self.host.uuid]) {
+        return;
+    }
+
+    if (!self.view.window || !self.view.window.isVisible) {
+        return;
+    }
+
+    NSString *oldAddress = note.userInfo[@"oldAddress"] ?: @"";
+    NSString *newAddress = note.userInfo[@"newAddress"] ?: @"";
+    NSNumber *oldLatency = note.userInfo[@"oldLatency"] ?: @(-1);
+    NSNumber *newLatency = note.userInfo[@"newLatency"] ?: @(-1);
+
+    NSString *title = NSLocalizedString(@"Auto Address Switched Title", @"Auto address switched alert title");
+    NSString *format = NSLocalizedString(@"Auto Address Switched Message", @"Auto address switched alert message");
+    NSString *message = [NSString stringWithFormat:format,
+                         self.host.displayName ?: @"",
+                         oldAddress,
+                         newAddress,
+                         oldLatency.doubleValue,
+                         newLatency.doubleValue];
+
+    [AlertPresenter displayAlert:NSAlertStyleInformational title:title message:message window:self.view.window completionHandler:nil];
+}
+
+- (void)requestHostRefresh {
+    if (!self.host.uuid) {
+        return;
+    }
+
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"MoonlightRequestHostDiscovery"
+                                                        object:nil
+                                                      userInfo:@{ @"uuid": self.host.uuid }];
+}
+
+- (void)handleStreamingStateChange:(NSNotification *)notification {
+    if (notification) {
+        NSString *hostUUID = notification.userInfo[@"hostUUID"];
+        if (hostUUID && self.host.uuid && ![hostUUID isEqualToString:self.host.uuid]) {
+            return;
+        }
+    }
+
+    StreamingSessionManager *manager = [StreamingSessionManager shared];
+
+    // Check if THIS host is streaming
+    BOOL shouldShowOverlay = (self.host.uuid != nil) && [manager isStreamingHost:self.host.uuid];
+
+    if (shouldShowOverlay) {
+        [self showLockOverlay];
+    } else {
+        [self hideLockOverlay];
+    }
+}
+
+- (void)showLockOverlay {
+    if (self.lockOverlayHostingController) return;
+
+    StreamingSessionManager *manager = [StreamingSessionManager shared];
+
+    NSString *hostName = self.host.displayName.length > 0 ? self.host.displayName : NSLocalizedString(@"Unknown", @"Unknown");
+    NSString *appName = (self.host.uuid != nil ? [manager appNameForHost:self.host.uuid] : nil) ?: @"Unknown App";
+
+    __weak typeof(self) weakSelf = self;
+    self.lockOverlayHostingController = [StreamingLockOverlayViewFactory createOverlayWithHostName:hostName
+                                                                                          appName:appName
+                                                                                     onShowWindow:^{
+        if (self.host.uuid) {
+            [[StreamingSessionManager shared] focusStreamWindowForHost:self.host.uuid];
+        }
+    } onDisconnect:^{
+        [weakSelf presentStreamingDisconnectOptions];
+    }];
+
+    NSView *overlayView = self.lockOverlayHostingController.view;
+    overlayView.frame = self.view.bounds;
+    overlayView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+
+    [self.view addSubview:overlayView];
+    [self addChildViewController:self.lockOverlayHostingController];
+
+    // Animate in
+    overlayView.alphaValue = 0.0;
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+        context.duration = 0.25;
+        overlayView.animator.alphaValue = 1.0;
+    } completionHandler:nil];
+}
+
+- (void)presentStreamingDisconnectOptions {
+    StreamingSessionManager *manager = [StreamingSessionManager shared];
+    if (!self.host.uuid || ![manager isStreamingHost:self.host.uuid]) {
+        return;
+    }
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.alertStyle = NSAlertStyleInformational;
+    alert.messageText = NSLocalizedString(@"Disconnect Alert", @"Disconnect Alert");
+    [alert addButtonWithTitle:NSLocalizedString(@"Disconnect from Stream", @"Disconnect from Stream")];
+    [alert addButtonWithTitle:NSLocalizedString(@"Close and Quit App", @"Close and Quit App")];
+    [alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"Cancel")];
+
+    NSWindow *window = self.view.window;
+    if (!window) {
+        return;
+    }
+
+    [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse returnCode) {
+        if (returnCode == NSAlertFirstButtonReturn) {
+            [[StreamingSessionManager shared] requestDisconnectWithQuitApp:NO hostUUID:self.host.uuid];
+        } else if (returnCode == NSAlertSecondButtonReturn) {
+            [[StreamingSessionManager shared] requestDisconnectWithQuitApp:YES hostUUID:self.host.uuid];
+        }
+    }];
+}
+
+- (void)hideLockOverlay {
+    if (!self.lockOverlayHostingController) return;
+
+    NSViewController *overlayVC = self.lockOverlayHostingController;
+    self.lockOverlayHostingController = nil; // Clear reference first
+
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+        context.duration = 0.2;
+        overlayVC.view.animator.alphaValue = 0.0;
+    } completionHandler:^{
+        [overlayVC.view removeFromSuperview];
+        [overlayVC removeFromParentViewController];
+    }];
+}
+
+- (void)showOfflineOverlay {
+    if (self.offlineOverlayHostingController) return;
+
+    // Ensure we don't have the lock overlay on top (though unlikely to be streaming if offline)
+    [self hideLockOverlay];
+
+    NSString *hostName = self.host.displayName.length > 0 ? self.host.displayName : NSLocalizedString(@"Unknown", @"Unknown");
+    self.offlineOverlayHostUUID = self.host.uuid;
+
+    __weak typeof(self) weakSelf = self;
+    self.offlineOverlayHostingController = [OfflineHostOverlayViewFactory createOverlayWithHostName:hostName
+                                                                                            onWake:^{
+        [WakeOnLanManager wakeHost:weakSelf.host];
+        [weakSelf requestHostRefresh];
+        // The UI handles the waiting state visually
+        // We rely on handleHostLatencyUpdate to detect when it comes online
+    } onRefresh:^{
+        [weakSelf requestHostRefresh];
+    } onCancel:^{
+        [weakSelf transitionToHostsVC];
+    }];
+
+    NSView *overlayView = self.offlineOverlayHostingController.view;
+    overlayView.frame = self.view.bounds;
+    overlayView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+
+    [self.view addSubview:overlayView];
+    [self addChildViewController:self.offlineOverlayHostingController];
+
+    // Animate in
+    overlayView.alphaValue = 0.0;
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+        context.duration = 0.25;
+        overlayView.animator.alphaValue = 1.0;
+    } completionHandler:nil];
+}
+
+- (void)showOfflineOverlayIfCurrentHost {
+    if (self.offlineOverlayHostingController && self.offlineOverlayHostUUID && ![self.offlineOverlayHostUUID isEqualToString:self.host.uuid]) {
+        [self hideOfflineOverlay];
+    }
+    if (!self.currentHostUUID || ![self.currentHostUUID isEqualToString:self.host.uuid]) {
+        return;
+    }
+    if (self.host.state != StateOffline) {
+        return;
+    }
+    [self showOfflineOverlay];
+}
+
+- (void)hideOfflineOverlay {
+    if (!self.offlineOverlayHostingController) return;
+
+    NSViewController *overlayVC = self.offlineOverlayHostingController;
+    self.offlineOverlayHostingController = nil;
+    self.offlineOverlayHostUUID = nil;
+
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+        context.duration = 0.2;
+        overlayVC.view.animator.alphaValue = 0.0;
+    } completionHandler:^{
+        [overlayVC.view removeFromSuperview];
+        [overlayVC removeFromParentViewController];
+    }];
+}
+
+- (void)switchToHost:(TemporaryHost *)newHost {
+    if ([self.host.uuid isEqualToString:newHost.uuid]) {
+        return;
+    }
+
+    [SettingsWindowObjCBridge syncSelectedProfileWithHostId:newHost.uuid];
+
+    self.host = newHost;
+    self.currentHostUUID = newHost.uuid;
+    [self hideOfflineOverlay];
+
+    // Sync latest state/address info for the selected host
+    [self syncHostStateFromDatabase];
+
+    // Clear current state
+    self.apps = @[];
+    self.runningApp = nil;
+    [self.collectionView reloadData];
+    [self.boxArtCache removeAllObjects];
+
+    // Update window title/subtitle
+    self.parentViewController.title = newHost.displayName;
+    [self updateWindowSubtitle];
+
+    // Load settings
+    [SettingsClass loadMoonlightSettingsFor:newHost.uuid];
+
+    // Reload apps
+    [self loadApps];
+    self.runningApp = [self findRunningApp:newHost];
+    [self clearPendingSunshineStreamOverrides];
+    self.cachedSunshineDisplays = @[];
+    self.cachedSunshineDisplaysHostUUID = nil;
+    [self refreshSunshineDisplaysIfNeededForce:NO];
+
+    // Check streaming state for new host
+    [self handleStreamingStateChange:nil];
+
+    [self updateOfflineOverlayForCurrentHost];
+}
+
+- (void)updateWindowSubtitle {
+    NSDictionary *settings = [SettingsClass getSettingsFor:self.host.uuid];
+    NSString *method = settings[@"connectionMethod"];
+
+    NSString* (^bestKnownAddress)(void) = ^NSString* {
+        if (self.host.activeAddress.length > 0) {
+            return self.host.activeAddress;
+        }
+
+        NSArray<NSString *> *candidates = @[ self.host.localAddress ?: @"",
+                                             self.host.address ?: @"",
+                                             self.host.externalAddress ?: @"",
+                                             self.host.ipv6Address ?: @"" ];
+        NSString *bestAddr = nil;
+        NSInteger bestLatency = NSIntegerMax;
+
+        for (NSString *addr in candidates) {
+            if (addr.length == 0) continue;
+            NSNumber *state = self.host.addressStates[addr];
+            BOOL online = state ? (state.intValue == 1) : YES;
+            if (!online) continue;
+
+            NSNumber *latency = self.host.addressLatencies[addr];
+            if (latency != nil && latency.intValue >= 0) {
+                if (latency.intValue < bestLatency) {
+                    bestLatency = latency.intValue;
+                    bestAddr = addr;
+                }
+            } else if (bestAddr == nil) {
+                bestAddr = addr;
+            }
+        }
+
+        return bestAddr;
+    };
+
+    NSString* (^addressLabel)(NSString*) = ^NSString* (NSString* addr) {
+        if (!addr) {
+            return NSLocalizedString(@"Unknown", nil);
+        }
+
+        NSNumber *state = self.host.addressStates[addr];
+        NSNumber *latency = self.host.addressLatencies[addr];
+        BOOL online = state ? (state.intValue == 1) : YES;
+
+        if (!online) {
+            return [NSString stringWithFormat:@"%@ (%@)", addr, NSLocalizedString(@"Offline", nil)];
+        }
+        if (latency && latency.intValue >= 0) {
+            return [NSString stringWithFormat:@"%@ (%dms)", addr, latency.intValue];
+        }
+        return addr;
+    };
+
+    NSString *displaySubtitle = nil;
+    if (method && ![method isEqualToString:@"Auto"]) {
+        // Manual route: method holds the target address
+        displaySubtitle = [NSString stringWithFormat:@"%@ (%@)", NSLocalizedString(@"Manual", nil), addressLabel(method)];
+    } else {
+        // Auto route: show activeAddress chosen by routing
+        NSString *autoAddr = bestKnownAddress();
+        displaySubtitle = [NSString stringWithFormat:@"%@ (%@)", NSLocalizedString(@"Auto", nil), addressLabel(autoAddr)];
+    }
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.parentViewController.view.window.subtitle = displaySubtitle;
+    });
+}
+
+- (BOOL)becomeFirstResponder {
+    [self.view.window makeFirstResponder:self.collectionView];
+    return [super becomeFirstResponder];
+}
+
+- (void)transitionToHostsVC {
+    // Notify delegate to handle back navigation
+    if ([self.navigationDelegate respondsToSelector:@selector(appsViewControllerDidRequestBack:)]) {
+        [self.navigationDelegate appsViewControllerDidRequestBack:self];
+    }
+}
+
+- (void)prepareForSegue:(NSStoryboardSegue *)segue sender:(id)sender {
+    StreamViewController *streamVC = segue.destinationController;
+    streamVC.app = self.runningApp;
+    streamVC.delegate = self;
+    streamVC.hasSessionSunshineTargetDisplayOverride = self.hasPendingSessionSunshineTargetDisplayOverride;
+    streamVC.sessionSunshineTargetDisplayNameOverride = self.pendingSessionSunshineTargetDisplayNameOverride;
+    streamVC.sessionSunshineScreenModeOverride = self.pendingSessionSunshineScreenModeOverride;
+    [self clearPendingSunshineStreamOverrides];
+}
+
+
+#pragma mark - NSResponder
+
+- (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
+    // Forward validate to collectionView, because for some reason it doesn't get called
+    // automatically by the system when expected (even though it's firstResponder).
+    return [self.collectionView validateMenuItem:menuItem];
+}
+
+
+#pragma mark - Actions
+
+- (IBAction)backButtonClicked:(id)sender {
+    [self transitionToHostsVC];
+}
+
+- (IBAction)pinAppMenuItemClicked:(NSMenuItem *)item {
+    AppCellView *appCellView = (AppCellView *)(item.menu.delegate);
+    AppCell *appCell = (AppCell *)(appCellView.delegate);
+
+    NSInteger previousIndex = [self indexPathForApp:appCell.app].item;
+    
+    appCell.app.pinned = !appCell.app.pinned;
+    [self updateCollectionViewWithNewPinnedChangedApp:appCell.app newPinnedState:appCell.app.pinned previousIndex:previousIndex];
+    
+    [[[DataManager alloc] init] updateAppsForExistingHost:self.host];
+}
+
+- (IBAction)hideAppMenuItemClicked:(NSMenuItem *)item {
+    AppCellView *appCellView = (AppCellView *)(item.menu.delegate);
+    AppCell *appCell = (AppCell *)(appCellView.delegate);
+    
+    appCell.app.hidden = !appCell.app.hidden;
+    [appCell updateAlphaStateWithShouldAnimate:YES];
+    
+    [[[DataManager alloc] init] updateAppsForExistingHost:self.host];
+}
+
+- (IBAction)quitAppMenuItemClicked:(id)sender {
+    TemporaryApp *app = [sender representedObject];
+    if (![app isKindOfClass:[TemporaryApp class]]) {
+        app = self.runningApp;
+    }
+    if (app == nil) {
+        return;
+    }
+    [self quitApp:app completion:nil];
+}
+
+- (IBAction)open:(id)sender {
+    if (self.collectionView.selectionIndexPaths.count != 0) {
+        NSIndexPath *selectedIndex = self.collectionView.selectionIndexPaths.anyObject;
+        TemporaryApp *app = [self itemsForSection:selectedIndex.section][selectedIndex.item];
+        [self openApp:app];
+    }
+}
+
+- (void)updateCollectionViewItemSize {
+    NSCollectionViewFlowLayout *flowLayout = (NSCollectionViewFlowLayout *)self.collectionView.collectionViewLayout;
+
+    flowLayout.minimumInteritemSpacing = 0;
+    flowLayout.itemSize = NSMakeSize((int)(90 * self.itemScale + 6 + 2), (int)(128 * self.itemScale + 6 + 2));
+    
+    CGSize appArtworkDimensions = [SettingsClass appArtworkDimensionsFor:self.host.uuid];
+    CGFloat artworkAspectRatio = appArtworkDimensions.width / appArtworkDimensions.height;
+
+    CGFloat baseHeight = 128.0 * self.itemScale + 6 + 2;
+    CGFloat baseWidth = baseHeight * artworkAspectRatio;
+
+    NSSize itemSize = NSMakeSize((int)baseWidth, (int)baseHeight);
+    flowLayout.itemSize = itemSize;
+    
+    [flowLayout invalidateLayout];
+    
+    [[NSUserDefaults standardUserDefaults] setFloat:self.itemScale forKey:@"itemScale"];
+    
+    for (AppCell *item in self.collectionView.visibleItems) {
+        [item updateShadowPath];
+    }
+}
+
+- (IBAction)increaseItemSize:(id)sender {
+    if (self.itemScale > pow(scaleBase, 7)) {
+        return;
+    }
+    self.itemScale *= scaleBase;
+    [self updateCollectionViewItemSize];
+}
+
+- (IBAction)decreaseItemSize:(id)sender {
+    if (self.itemScale < pow(scaleBase, 0)) {
+        return;
+    }
+    self.itemScale /= scaleBase;
+    [self updateCollectionViewItemSize];
+}
+
+
+#pragma mark - NSCollectionViewDataSource
+
+- (void)configureItem:(AppCell *)item atIndexPath:(NSIndexPath * _Nonnull)indexPath {
+    TemporaryApp *app = [self itemsForSection:indexPath.section][indexPath.item];
+    item.appName.stringValue = app.name;
+    item.app = app;
+    
+    BOOL isRunning = [self isAppRunning:app];
+    item.runningIconContainer.alphaValue = isRunning ? 1.0 : 0.0;
+    item.runningIconContainer.hidden = !isRunning;
+    
+    CGSize appArtworkDimensions = [SettingsClass appArtworkDimensionsFor:app.host.uuid];
+    CGFloat aspectRatio = appArtworkDimensions.width / appArtworkDimensions.height;
+    item.appCoverArt.superview.translatesAutoresizingMaskIntoConstraints = NO;
+    [item.appCoverArt.superview.widthAnchor constraintEqualToAnchor:item.appCoverArt.superview.heightAnchor multiplier:aspectRatio].active = YES;
+
+    [item updateSelectedState:NO];
+    
+    NSImage *fastCacheImage = [self.boxArtCache objectForKey:app.id];
+    if (fastCacheImage != nil) {
+        item.appCoverArt.image = fastCacheImage;
+        item.placeholderView.hidden = YES;
+    } else {
+        item.appCoverArt.image = nil;
+        
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+            NSImage* cacheImage = [AppsViewController loadBoxArtForCaching:app];
+            if (cacheImage != nil) {
+                
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    AppCell *currentItem = (AppCell *)[self.collectionView itemAtIndexPath:indexPath];
+                    if ([item.app.id isEqualToString:currentItem.app.id]) {
+                        if (item.appCoverArt != nil) {
+                            [ImageFader transitionImageViewWithOldImageView:item.appCoverArt newImageViewBlock:^NSImageView * _Nonnull {
+                                NSImageView *newImageView = [[NSImageView alloc] init];
+                                [newImageView smoothRoundCornersWithCornerRadius:APP_CELL_CORNER_RADIUS];
+
+                                return newImageView;
+                            } duration:0.3 image:cacheImage completionBlock:^(NSImageView * _Nonnull newImageView) {
+                                item.appCoverArt = newImageView;
+                                item.placeholderView.hidden = YES;
+                            }];
+                        }
+                    }
+                    [self.boxArtCache setObject:cacheImage forKey:app.id];
+                });
+            }
+        });
+    }
+}
+
+- (nonnull NSCollectionViewItem *)collectionView:(nonnull NSCollectionView *)collectionView itemForRepresentedObjectAtIndexPath:(nonnull NSIndexPath *)indexPath {
+    AppCell *item = [collectionView makeItemWithIdentifier:@"AppCell" forIndexPath:indexPath];
+    item.delegate = self;
+
+    [self configureItem:item atIndexPath:indexPath];
+
+    return item;
+}
+
+- (NSInteger)collectionView:(nonnull NSCollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
+    return [self itemsForSection:section].count;
+}
+
+- (NSInteger)numberOfSectionsInCollectionView:(NSCollectionView *)collectionView {
+    return 2;
+}
+
+- (NSArray<TemporaryApp *> *)itemsForSection:(NSInteger)section {
+    return [[self filteredItems:self.apps forSection:section] sortedArrayUsingSelector:@selector(compareName:)];
+}
+
+- (NSArray<TemporaryApp *> *)filteredItems:(NSArray<TemporaryApp *> *)rawItems forSection:(NSInteger)section {
+    if (section == 0) {
+        return [F filterArray:rawItems withBlock:^BOOL(TemporaryApp *obj) {
+            return obj.pinned;
+        }];
+    } else {
+        return [F filterArray:rawItems withBlock:^BOOL(TemporaryApp *obj) {
+            return !obj.pinned;
+        }];
+    }
+}
+
+
+#pragma mark - NSSearchFieldDelegate
+
+- (void)controlTextDidChange:(NSNotification *)obj {
+    self.filterText = ((NSTextField *)obj.object).stringValue;
+    [self displayApps];
+    [self.collectionView reloadData];
+}
+
+
+#pragma mark - AppsViewControllerDelegate
+
+- (void)openApp:(TemporaryApp *)app {
+    // Check if this host is already streaming
+    if (![[StreamingSessionManager shared] canStartStreamForHost:self.host.uuid]) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = NSLocalizedString(@"Host Busy", @"Host Busy");
+        alert.informativeText = NSLocalizedString(@"This host is already streaming. Please disconnect first.", @"This host is already streaming. Please disconnect first.");
+        [alert addButtonWithTitle:NSLocalizedString(@"OK", @"OK")];
+        [alert runModal];
+        return;
+    }
+
+    if (self.runningApp != nil && ![self isSameApp:app asApp:self.runningApp]) {
+        if ([self askWhetherToStopRunningApp:self.runningApp andStartNewApp:app]) {
+            [self quitApp:self.runningApp completion:^(BOOL success) {
+                if (success) {
+                    self.runningApp = app;
+                    [self performSegueWithIdentifier:@"streamSegue" sender:nil];
+                }
+            }];
+        }
+    } else {
+        self.runningApp = app;
+        [self performSegueWithIdentifier:@"streamSegue" sender:nil];
+    }
+}
+
+- (void)quitApp:(TemporaryApp *)app completion:(void (^)(BOOL success))completion {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *uniqueId = [IdManager getUniqueId];
+
+        HttpManager *hMan = [[HttpManager alloc] initWithHost:app.host.activeAddress uniqueId:uniqueId serverCert:app.host.serverCert];
+        HttpResponse *quitResponse = [[HttpResponse alloc] init];
+        HttpRequest *quitRequest = [HttpRequest requestForResponse:quitResponse withUrlRequest:[hMan newQuitAppRequest]];
+        
+        [hMan executeRequestSynchronously:quitRequest];
+        if (quitResponse.statusCode == 200) {
+            ServerInfoResponse *serverInfoResp = [[ServerInfoResponse alloc] init];
+            [hMan executeRequestSynchronously:[HttpRequest requestForResponse:serverInfoResp withUrlRequest:[hMan newServerInfoRequest:NO] fallbackError:401 fallbackRequest:[hMan newHttpServerInfoRequest]]];
+            if (![serverInfoResp isStatusOk] || [[serverInfoResp getStringTag:@"state"] hasSuffix:@"_SERVER_BUSY"]) {
+                // On newer GFE versions, the quit request succeeds even though the app doesn't
+                // really quit if another client tries to kill your app. We'll patch the response
+                // to look like the old error in that case, so the UI behaves.
+                quitResponse.statusCode = 599;
+            }
+        }
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            // If it fails, display an error and stop the current operation
+            if (quitResponse.statusCode != 200) {
+                [AlertPresenter displayAlert:NSAlertStyleWarning title:NSLocalizedString(@"Failed to quit app", @"Failed to quit app") message:NSLocalizedString(@"Quit App Error Message", @"Quit App Error Message") window:self.view.window completionHandler:nil];
+                if (completion != nil) {
+                    completion(NO);
+                }
+            } else {
+                self.runningApp = nil;
+                
+                if (completion != nil) {
+                    completion(YES);
+                }
+            }
+        });
+    });
+}
+
+- (void)appDidQuit:(TemporaryApp *)app {
+    self.runningApp = nil;
+    [self updateRunningAppState];
+}
+
+- (void)didOpenContextMenu:(NSMenu *)menu forApp:(TemporaryApp *)app {
+    NSMenuItem *quitAppMenuItem = [HostsViewController getMenuItemForIdentifier:@"quitAppMenuItem" inMenu:menu];
+    NSMenuItem *hideAppMenuItem = [HostsViewController getMenuItemForIdentifier:@"hideAppMenuItem" inMenu:menu];
+    NSMenuItem *pinAppMenuItem = [HostsViewController getMenuItemForIdentifier:@"pinAppMenuItem" inMenu:menu];
+    if (app.pinned) {
+        pinAppMenuItem.title = NSLocalizedString(@"Unpin App", @"Unpin App");
+        pinAppMenuItem.image = [NSImage imageWithSystemSymbolName:@"pin.slash" accessibilityDescription:nil];
+    } else {
+        pinAppMenuItem.title = NSLocalizedString(@"Pin App", @"Pin App");
+        pinAppMenuItem.image = [NSImage imageWithSystemSymbolName:@"pin" accessibilityDescription:nil];
+    }
+    if (app.hidden) {
+        hideAppMenuItem.title = NSLocalizedString(@"Show App", @"Show App");
+        hideAppMenuItem.image = [NSImage imageWithSystemSymbolName:@"eye" accessibilityDescription:nil];
+    } else {
+        hideAppMenuItem.title = NSLocalizedString(@"Hide App", @"Hide App");
+        hideAppMenuItem.image = [NSImage imageWithSystemSymbolName:@"eye.slash" accessibilityDescription:nil];
+    }
+
+    quitAppMenuItem.title = NSLocalizedString(@"Quit App", @"Quit App");
+    quitAppMenuItem.image = [NSImage imageWithSystemSymbolName:@"xmark.circle" accessibilityDescription:nil];
+    quitAppMenuItem.representedObject = app;
+    quitAppMenuItem.hidden = ![self isAppRunning:app];
+    quitAppMenuItem.enabled = [self isAppRunning:app];
+
+    [self rebuildSunshineOverrideItemsInMenu:menu];
+    [self refreshSunshineDisplaysIfNeededForce:NO];
+}
+
+- (NSArray<NSDictionary<NSString *, id> *> *)sunshineScreenModeEntries {
+    return @[
+        @{@"title": @"Host Default", @"value": @(-1)},
+        @{@"title": @"Verify Only", @"value": @(0)},
+        @{@"title": @"Activate Display", @"value": @(1)},
+        @{@"title": @"Make Primary", @"value": @(2)},
+        @{@"title": @"Only Stream Display", @"value": @(3)},
+        @{@"title": @"Use As Secondary", @"value": @(4)},
+    ];
+}
+
+- (NSString *)preferredSunshineHostAddress {
+    if (self.host.activeAddress.length > 0) {
+        return self.host.activeAddress;
+    }
+    if (self.host.localAddress.length > 0) {
+        return self.host.localAddress;
+    }
+    if (self.host.address.length > 0) {
+        return self.host.address;
+    }
+    if (self.host.externalAddress.length > 0) {
+        return self.host.externalAddress;
+    }
+    if (self.host.ipv6Address.length > 0) {
+        return self.host.ipv6Address;
+    }
+    return nil;
+}
+
+- (void)clearPendingSunshineStreamOverrides {
+    self.hasPendingSessionSunshineTargetDisplayOverride = NO;
+    self.pendingSessionSunshineTargetDisplayNameOverride = nil;
+    self.pendingSessionSunshineScreenModeOverride = nil;
+}
+
+- (void)refreshSunshineDisplaysIfNeededForce:(BOOL)force {
+    if (self.host.uuid.length == 0 || self.host.serverCert == nil) {
+        return;
+    }
+    if (self.refreshingSunshineDisplays) {
+        return;
+    }
+    if (!force &&
+        self.cachedSunshineDisplaysHostUUID.length > 0 &&
+        [self.cachedSunshineDisplaysHostUUID isEqualToString:self.host.uuid]) {
+        return;
+    }
+
+    NSString *address = [self preferredSunshineHostAddress];
+    if (address.length == 0) {
+        return;
+    }
+
+    self.refreshingSunshineDisplays = YES;
+    NSString *hostUUID = [self.host.uuid copy];
+    NSData *serverCert = self.host.serverCert;
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        HttpManager *httpManager = [[HttpManager alloc] initWithHost:address
+                                                            uniqueId:[IdManager getUniqueId]
+                                                          serverCert:serverCert];
+        NSArray<NSDictionary<NSString *, id> *> *displays = [httpManager fetchSunshineDisplays];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.refreshingSunshineDisplays = NO;
+            if (![self.host.uuid isEqualToString:hostUUID]) {
+                return;
+            }
+
+            self.cachedSunshineDisplaysHostUUID = hostUUID;
+            self.cachedSunshineDisplays = displays ?: @[];
+        });
+    });
+}
+
+- (NSInteger)indexForSunshineMenuInsertionInMenu:(NSMenu *)menu {
+    NSMenuItem *quitItem = [HostsViewController getMenuItemForIdentifier:@"quitAppMenuItem" inMenu:menu];
+    if (quitItem != nil) {
+        NSInteger quitIndex = [menu indexOfItem:quitItem];
+        if (quitIndex > 0) {
+            return quitIndex;
+        }
+    }
+    return menu.numberOfItems;
+}
+
+- (NSString *)sunshineDisplayLabelForValue:(NSString *)value {
+    if (value.length == 0) {
+        return NSLocalizedString(@"Host Default", @"Host Default");
+    }
+
+    for (NSDictionary<NSString *, id> *entry in self.cachedSunshineDisplays ?: @[]) {
+        NSString *deviceId = [entry[@"device_id"] isKindOfClass:[NSString class]] ? entry[@"device_id"] : @"";
+        if (![deviceId isEqualToString:value]) {
+            continue;
+        }
+
+        NSString *friendlyName = [entry[@"friendly_name"] isKindOfClass:[NSString class]] ? entry[@"friendly_name"] : deviceId;
+        NSString *displayName = [entry[@"display_name"] isKindOfClass:[NSString class]] ? entry[@"display_name"] : deviceId;
+        if (friendlyName.length > 0 &&
+            ![friendlyName isEqualToString:deviceId] &&
+            ![friendlyName isEqualToString:displayName]) {
+            return [NSString stringWithFormat:@"%@ (%@)", friendlyName, deviceId];
+        }
+        return friendlyName.length > 0 ? friendlyName : deviceId;
+    }
+
+    return value;
+}
+
+- (NSString *)sunshineScreenModeTitleForValue:(NSInteger)value {
+    for (NSDictionary<NSString *, id> *entry in [self sunshineScreenModeEntries]) {
+        NSNumber *rawValue = entry[@"value"];
+        if (rawValue.integerValue == value) {
+            return NSLocalizedString(entry[@"title"], nil);
+        }
+    }
+    return NSLocalizedString(@"Host Default", @"Host Default");
+}
+
+- (void)removeSunshineOverrideItemsFromMenu:(NSMenu *)menu {
+    NSMutableArray<NSMenuItem *> *itemsToRemove = [NSMutableArray array];
+    for (NSMenuItem *item in menu.itemArray) {
+        NSUserInterfaceItemIdentifier identifier = item.identifier;
+        if ([identifier isEqualToString:MLSunshineOverridesSeparatorMenuItemIdentifier] ||
+            [identifier isEqualToString:MLSunshineThisStreamDisplayMenuItemIdentifier] ||
+            [identifier isEqualToString:MLSunshineThisStreamModeMenuItemIdentifier] ||
+            [identifier isEqualToString:MLSunshineRefreshDisplaysMenuItemIdentifier]) {
+            [itemsToRemove addObject:item];
+        }
+    }
+
+    for (NSMenuItem *item in itemsToRemove) {
+        [menu removeItem:item];
+    }
+}
+
+- (void)configureSunshineDisplaySubmenu:(NSMenu *)submenu {
+    NSMenuItem *followHostSettingItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Follow Host Setting", @"Follow Host Setting")
+                                                                   action:@selector(selectPendingSunshineStreamDisplayOverride:)
+                                                            keyEquivalent:@""];
+    followHostSettingItem.target = self;
+    followHostSettingItem.representedObject = [NSNull null];
+    followHostSettingItem.state = self.hasPendingSessionSunshineTargetDisplayOverride ? NSControlStateValueOff : NSControlStateValueOn;
+    [submenu addItem:followHostSettingItem];
+
+    NSMenuItem *hostDefaultItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Host Default", @"Host Default")
+                                                             action:@selector(selectPendingSunshineStreamDisplayOverride:)
+                                                      keyEquivalent:@""];
+    hostDefaultItem.target = self;
+    hostDefaultItem.representedObject = @"";
+    hostDefaultItem.state = self.hasPendingSessionSunshineTargetDisplayOverride &&
+        self.pendingSessionSunshineTargetDisplayNameOverride.length == 0 ? NSControlStateValueOn : NSControlStateValueOff;
+    [submenu addItem:hostDefaultItem];
+
+    NSArray<NSDictionary<NSString *, id> *> *displays = self.cachedSunshineDisplays ?: @[];
+    if (displays.count > 0) {
+        [submenu addItem:[NSMenuItem separatorItem]];
+        for (NSDictionary<NSString *, id> *entry in displays) {
+            NSString *deviceId = [entry[@"device_id"] isKindOfClass:[NSString class]] ? entry[@"device_id"] : @"";
+            if (deviceId.length == 0) {
+                continue;
+            }
+
+            NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:[self sunshineDisplayLabelForValue:deviceId]
+                                                          action:@selector(selectPendingSunshineStreamDisplayOverride:)
+                                                   keyEquivalent:@""];
+            item.target = self;
+            item.representedObject = deviceId;
+            item.state = (self.hasPendingSessionSunshineTargetDisplayOverride &&
+                          [self.pendingSessionSunshineTargetDisplayNameOverride isEqualToString:deviceId])
+                ? NSControlStateValueOn : NSControlStateValueOff;
+            [submenu addItem:item];
+        }
+    } else {
+        [submenu addItem:[NSMenuItem separatorItem]];
+        NSString *title = self.refreshingSunshineDisplays
+            ? NSLocalizedString(@"Loading…", @"Loading")
+            : NSLocalizedString(@"No Host Displays Found", @"No host displays found");
+        NSMenuItem *placeholder = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+        placeholder.enabled = NO;
+        [submenu addItem:placeholder];
+    }
+
+    if (self.hasPendingSessionSunshineTargetDisplayOverride &&
+        self.pendingSessionSunshineTargetDisplayNameOverride.length > 0) {
+        BOOL found = NO;
+        for (NSDictionary<NSString *, id> *entry in displays) {
+            NSString *deviceId = [entry[@"device_id"] isKindOfClass:[NSString class]] ? entry[@"device_id"] : @"";
+            if ([deviceId isEqualToString:self.pendingSessionSunshineTargetDisplayNameOverride]) {
+                found = YES;
+                break;
+            }
+        }
+        if (!found) {
+            [submenu addItem:[NSMenuItem separatorItem]];
+            NSMenuItem *fallbackItem = [[NSMenuItem alloc] initWithTitle:self.pendingSessionSunshineTargetDisplayNameOverride
+                                                                  action:@selector(selectPendingSunshineStreamDisplayOverride:)
+                                                           keyEquivalent:@""];
+            fallbackItem.target = self;
+            fallbackItem.representedObject = self.pendingSessionSunshineTargetDisplayNameOverride;
+            fallbackItem.state = NSControlStateValueOn;
+            [submenu addItem:fallbackItem];
+        }
+    }
+}
+
+- (void)configureSunshineScreenModeSubmenu:(NSMenu *)submenu {
+    NSMenuItem *followHostSettingItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Follow Host Setting", @"Follow Host Setting")
+                                                                   action:@selector(selectPendingSunshineStreamScreenModeOverride:)
+                                                            keyEquivalent:@""];
+    followHostSettingItem.target = self;
+    followHostSettingItem.representedObject = [NSNull null];
+    followHostSettingItem.state = self.pendingSessionSunshineScreenModeOverride == nil ? NSControlStateValueOn : NSControlStateValueOff;
+    [submenu addItem:followHostSettingItem];
+    [submenu addItem:[NSMenuItem separatorItem]];
+
+    for (NSDictionary<NSString *, id> *entry in [self sunshineScreenModeEntries]) {
+        NSString *title = entry[@"title"];
+        NSNumber *value = entry[@"value"];
+        if (title.length == 0 || value == nil) {
+            continue;
+        }
+
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(title, nil)
+                                                      action:@selector(selectPendingSunshineStreamScreenModeOverride:)
+                                               keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = value;
+        item.state = (self.pendingSessionSunshineScreenModeOverride != nil &&
+                      self.pendingSessionSunshineScreenModeOverride.integerValue == value.integerValue)
+            ? NSControlStateValueOn : NSControlStateValueOff;
+        [submenu addItem:item];
+    }
+}
+
+- (void)rebuildSunshineOverrideItemsInMenu:(NSMenu *)menu {
+    [self removeSunshineOverrideItemsFromMenu:menu];
+
+    NSInteger insertionIndex = [self indexForSunshineMenuInsertionInMenu:menu];
+
+    NSMenuItem *separator = [NSMenuItem separatorItem];
+    separator.identifier = MLSunshineOverridesSeparatorMenuItemIdentifier;
+    [menu insertItem:separator atIndex:insertionIndex++];
+
+    NSMenu *displaySubmenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"This Stream Display", @"This Stream Display")];
+    [self configureSunshineDisplaySubmenu:displaySubmenu];
+    NSMenuItem *displayMenuItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"This Stream Display", @"This Stream Display")
+                                                             action:nil
+                                                      keyEquivalent:@""];
+    displayMenuItem.identifier = MLSunshineThisStreamDisplayMenuItemIdentifier;
+    displayMenuItem.submenu = displaySubmenu;
+    [menu insertItem:displayMenuItem atIndex:insertionIndex++];
+
+    NSMenu *modeSubmenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"This Stream Screen Mode", @"This Stream Screen Mode")];
+    [self configureSunshineScreenModeSubmenu:modeSubmenu];
+    NSMenuItem *modeMenuItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"This Stream Screen Mode", @"This Stream Screen Mode")
+                                                          action:nil
+                                                   keyEquivalent:@""];
+    modeMenuItem.identifier = MLSunshineThisStreamModeMenuItemIdentifier;
+    modeMenuItem.submenu = modeSubmenu;
+    [menu insertItem:modeMenuItem atIndex:insertionIndex++];
+
+    NSMenuItem *refreshItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Refresh Host Displays", @"Refresh host displays")
+                                                         action:@selector(refreshSunshineDisplaysMenuItemClicked:)
+                                                  keyEquivalent:@""];
+    refreshItem.target = self;
+    refreshItem.identifier = MLSunshineRefreshDisplaysMenuItemIdentifier;
+    refreshItem.enabled = !self.refreshingSunshineDisplays;
+    [menu insertItem:refreshItem atIndex:insertionIndex];
+}
+
+- (IBAction)refreshSunshineDisplaysMenuItemClicked:(id)sender {
+    self.cachedSunshineDisplaysHostUUID = nil;
+    self.cachedSunshineDisplays = @[];
+    [self refreshSunshineDisplaysIfNeededForce:YES];
+}
+
+- (IBAction)selectPendingSunshineStreamDisplayOverride:(NSMenuItem *)sender {
+    if ([sender.representedObject isKindOfClass:[NSNull class]]) {
+        self.hasPendingSessionSunshineTargetDisplayOverride = NO;
+        self.pendingSessionSunshineTargetDisplayNameOverride = nil;
+        return;
+    }
+
+    self.hasPendingSessionSunshineTargetDisplayOverride = YES;
+    self.pendingSessionSunshineTargetDisplayNameOverride =
+        [sender.representedObject isKindOfClass:[NSString class]] ? sender.representedObject : @"";
+    Log(LOG_I, @"[sunshine] Next stream display override=%@",
+        [self sunshineDisplayLabelForValue:self.pendingSessionSunshineTargetDisplayNameOverride]);
+}
+
+- (IBAction)selectPendingSunshineStreamScreenModeOverride:(NSMenuItem *)sender {
+    if ([sender.representedObject isKindOfClass:[NSNull class]]) {
+        self.pendingSessionSunshineScreenModeOverride = nil;
+        return;
+    }
+
+    if ([sender.representedObject isKindOfClass:[NSNumber class]]) {
+        self.pendingSessionSunshineScreenModeOverride = sender.representedObject;
+        Log(LOG_I, @"[sunshine] Next stream screen mode override=%@",
+            [self sunshineScreenModeTitleForValue:self.pendingSessionSunshineScreenModeOverride.integerValue]);
+    }
+}
+
+- (void)didHover:(BOOL)hovered forApp:(TemporaryApp *)app {
+    AppCell *currentCell = [self cellForApp:self.currentlyHoveredApp];
+    AppCell *cell = [self cellForApp:app];
+    if (hovered) {
+        if (self.currentlyHoveredApp == app) {
+            return;
+        }
+
+        [currentCell exitHoveredState];
+        [cell enterHoveredState];
+        
+        self.currentlyHoveredApp = app;
+    } else {
+        [cell exitHoveredState];
+        self.currentlyHoveredApp = nil;
+    }
+}
+
+
+#pragma mark - Running App State
+
+- (TemporaryApp*)findRunningApp:(TemporaryHost*)host {
+    for (TemporaryApp* app in host.appList) {
+        if ([app.id isEqualToString:host.currentGame]) {
+            return app;
+        }
+    }
+    
+    return nil;
+}
+
+- (void)setRunningApp:(TemporaryApp *)runningApp {
+    TemporaryApp *oldApp = self.runningApp;
+    _runningApp = runningApp;
+    
+    if (runningApp == nil) {
+        self.host.currentGame = @"0";
+    } else {
+        self.host.currentGame = self.runningApp.id;
+    }
+    
+    if (oldApp == runningApp) {
+        return;
+    }
+    
+    [self redrawCellAtOldPath:[self indexPathForApp:oldApp]];
+    [self redrawCellAtNewPath:[self indexPathForApp:runningApp]];
+}
+
+static const CGFloat runningAnimationDuration = 1.0;
+
+- (void)redrawCellAtOldPath:(NSIndexPath *)oldPath {
+    if (oldPath == nil) {
+        return;
+    }
+    
+    AppCell *oldItem = (AppCell *)[self.collectionView itemAtIndexPath:oldPath];
+
+    // Create an NSAnimationContext for smoother animations
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+        // Set the duration of the animation
+        context.duration = runningAnimationDuration;
+        
+        // Fade out the runningIconContainer
+        oldItem.runningIconContainer.animator.alphaValue = 0.0;
+    } completionHandler:^{
+        // This block is called when the fade out animation completes
+        
+        // Update the UI or perform any other necessary tasks
+        
+        // Update the visibility status and alpha value for the runningIconContainer
+        oldItem.runningIconContainer.hidden = YES;
+    }];
+}
+
+- (void)redrawCellAtNewPath:(NSIndexPath *)newPath {
+    if (newPath == nil) {
+        return;
+    }
+        
+    AppCell *newItem = (AppCell *)[self.collectionView itemAtIndexPath:newPath];
+
+    // Now, if you want to fade in the runningIconContainer
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+        // Set the duration of the animation
+        context.duration = runningAnimationDuration;
+        
+        // Fade in the runningIconContainer
+        newItem.runningIconContainer.hidden = NO;
+        newItem.runningIconContainer.animator.alphaValue = 1.0;
+    } completionHandler:nil];
+}
+
+- (void)updateRunningAppState {
+    __weak typeof(self) weakSelf = self;
+    NSOperation *operation = [NSBlockOperation blockOperationWithBlock:^{
+        DiscoveryWorker *worker = [[DiscoveryWorker alloc] initWithHost:weakSelf.host uniqueId:[IdManager getUniqueId]];
+        [worker discoverHost];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TemporaryApp *runningApp = [weakSelf findRunningApp:weakSelf.host];
+            [weakSelf setRunningApp:runningApp];
+        });
+    }];
+    NSOperationQueue *queue = [[NSOperationQueue alloc] init];
+    [queue addOperation:operation];
+}
+
+- (BOOL)isSameApp:(TemporaryApp *)lhs asApp:(TemporaryApp *)rhs {
+    if (lhs == rhs) {
+        return YES;
+    }
+    if (lhs == nil || rhs == nil) {
+        return NO;
+    }
+    if (lhs.id.length == 0 || rhs.id.length == 0) {
+        return NO;
+    }
+    return [lhs.id isEqualToString:rhs.id];
+}
+
+- (BOOL)isAppRunning:(TemporaryApp *)app {
+    if (app == nil || app.id.length == 0) {
+        return NO;
+    }
+    if ([self isSameApp:app asApp:self.runningApp]) {
+        return YES;
+    }
+    return self.host.currentGame.length > 0 && [app.id isEqualToString:self.host.currentGame];
+}
+
+
+#pragma mark - Helpers
+
+- (NSSearchField *)getSearchField {
+    return [self.parentViewController.view.window moonlight_searchFieldInToolbar];
+}
+
+- (NSIndexPath *)indexPathForApp:(TemporaryApp *)app {
+    if (app != nil) {
+        NSInteger section = app.pinned ? 0 : 1;
+        NSInteger appIndex = [[self itemsForSection:section] indexOfObject:app];
+        if (appIndex >= 0) {
+            return [NSIndexPath indexPathForItem:appIndex inSection:section];
+        }
+    }
+    
+    return nil;
+}
+
+- (AppCell *)cellForApp:(TemporaryApp *)app {
+    if (app == nil) {
+        return nil;
+    }
+    
+    NSIndexPath *indexPath = [self indexPathForApp:app];
+    return (AppCell *)[self.collectionView itemAtIndexPath:indexPath];
+}
+
+- (BOOL)askWhetherToStopRunningApp:(TemporaryApp *)currentApp andStartNewApp:(TemporaryApp *)newApp {
+    NSAlert *alert = [[NSAlert alloc] init];
+    
+    alert.alertStyle = NSAlertStyleInformational;
+    alert.messageText = [NSString stringWithFormat:NSLocalizedString(@"App Running Alert", @"App Running Alert"), currentApp.name, currentApp.name, newApp.name];
+    
+    [alert addButtonWithTitle:NSLocalizedString(@"Yes", @"Yes")];
+    [alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"Cancel")];
+    
+    NSModalResponse response = [alert runModal];
+    
+    return response == NSAlertFirstButtonReturn;
+}
+
+- (NSDictionary *)calculateUpateIndexPathsFromOld:(NSArray<TemporaryApp *> *)old toNew:(NSArray<TemporaryApp *> *)new {
+    NSMutableSet<NSIndexPath *> *deletions = [NSMutableSet set];
+    NSMutableSet<NSIndexPath *> *insertions = [NSMutableSet set];
+    NSMutableSet<NSString *> *alreadyAdded = [NSMutableSet setWithCapacity:new.count];
+    
+    NSUInteger oldIndex = 0;
+    NSUInteger newIndex = 0;
+    
+    while (oldIndex < old.count || newIndex < new.count) {
+        if (oldIndex >= old.count) {
+            TemporaryApp *newItem = new[newIndex];
+            [insertions addObject:[self indexPathForApp:newItem inApps:new atPos:newIndex]];
+            [alreadyAdded addObject:newItem.id];
+            newIndex++;
+        } else if (newIndex >= new.count) {
+            TemporaryApp *oldItem = old[oldIndex];
+            [deletions addObject:[self indexPathForApp:oldItem inApps:old atPos:oldIndex]];
+            oldIndex++;
+        } else {
+            TemporaryApp *oldItem = old[oldIndex];
+            TemporaryApp *newItem = new[newIndex];
+            if ([alreadyAdded containsObject:oldItem.id]) {
+                [deletions addObject:[self indexPathForApp:oldItem inApps:old atPos:oldIndex]];
+                oldIndex++;
+            } else {
+                NSComparisonResult comparison = [oldItem compare:newItem];
+                if (comparison == NSOrderedSame) {
+                    [alreadyAdded addObject:newItem.id];
+                    oldIndex++;
+                    newIndex++;
+                } else if (comparison == NSOrderedAscending) {
+                    [deletions addObject:[self indexPathForApp:oldItem inApps:old atPos:oldIndex]];
+                    oldIndex++;
+                } else if (comparison == NSOrderedDescending) {
+                    [insertions addObject:[self indexPathForApp:newItem inApps:new atPos:newIndex]];
+                    [alreadyAdded addObject:newItem.id];
+                    newIndex++;
+                }
+            }
+        }
+    }
+    
+    return @{@"deletions": deletions, @"insertions": insertions};
+}
+
+- (NSIndexPath *)indexPathForApp:(TemporaryApp *)app inApps:(NSArray<TemporaryApp *> *)apps atPos:(NSInteger)pos {
+    if (app.pinned) {
+        return [NSIndexPath indexPathForItem:pos inSection:0];
+    } else {
+        NSInteger pinnedAppCount = [apps indexOfObjectPassingTest:^BOOL(TemporaryApp * _Nonnull app, NSUInteger idx, BOOL * _Nonnull stop) {
+            if (!app.pinned) {
+                *stop = YES;
+                return YES;
+            } else {
+                return NO;
+            }
+        }];
+        return [NSIndexPath indexPathForItem:pos - pinnedAppCount inSection:1];
+    }
+}
+
+- (void)updateCollectionViewDataWithOld:(NSArray<TemporaryApp *> *)old new:(NSArray<TemporaryApp *> *)new {
+    NSDictionary *updates = [self calculateUpateIndexPathsFromOld:old toNew:new];
+    NSSet<NSIndexPath *> *deletions = updates[@"deletions"];
+    NSSet<NSIndexPath *> *insertions = updates[@"insertions"];
+    
+    if (deletions.count != 0 || insertions.count != 0) {
+        self.apps = [self fetchApps];
+        
+        [self.collectionView.animator performBatchUpdates:^{
+            [self.collectionView deleteItemsAtIndexPaths:deletions];
+            [self.collectionView insertItemsAtIndexPaths:insertions];
+        } completionHandler:^(BOOL finished) {
+            
+        }];
+    }
+}
+
+- (void)updateCollectionViewWithNewPinnedChangedApp:(TemporaryApp *)app newPinnedState:(BOOL)newPinnedState previousIndex:(NSInteger)previousIndex {
+    NSArray<TemporaryApp *> *apps = [self itemsForSection:newPinnedState == YES ? 0 : 1];
+    NSArray<NSString *> *appNames = [F mapArray:apps withBlock:^id(TemporaryApp *obj) {
+        return obj.name;
+    }];
+    NSInteger newIndex = [appNames indexOfObject:app.name inSortedRange:NSMakeRange(0, appNames.count) options:NSBinarySearchingInsertionIndex usingComparator:^NSComparisonResult(NSString * _Nonnull obj1, NSString * _Nonnull obj2) {
+        return [obj1 caseInsensitiveCompare:obj2];
+    }];
+
+    NSIndexPath *previousIndexPath;
+    NSIndexPath *newIndexPath;
+    if (newPinnedState == YES) {
+        newIndexPath = [NSIndexPath indexPathForItem:newIndex inSection:0];
+        previousIndexPath = [NSIndexPath indexPathForItem:previousIndex inSection:1];
+    } else {
+        previousIndexPath = [NSIndexPath indexPathForItem:previousIndex inSection:0];
+        newIndexPath = [NSIndexPath indexPathForItem:newIndex inSection:1];
+    }
+    
+    [self.collectionView.animator performBatchUpdates:^{
+        [self.collectionView moveItemAtIndexPath:previousIndexPath toIndexPath:newIndexPath];
+    } completionHandler:^(BOOL finished) {
+    }];
+}
+
+
+#pragma mark - App Discovery
+
+- (void)loadApps {
+    self.appManager = [[AppAssetManager alloc] initWithCallback:self];
+
+    // If definitely offline, show overlay immediately and skip app display
+    if (self.host.state == StateOffline) {
+        [self showOfflineOverlayIfCurrentHost];
+        return;
+    }
+
+    if (self.host.appList.count > 0) {
+        [self displayApps];
+    }
+
+    // Only discover if not definitely offline
+    // But we might want to discover if state is Unknown
+    [self discoverAppsForHost:self.host];
+}
+
+- (NSArray<TemporaryApp *> *)fetchApps {
+    NSPredicate *predicate;
+    if (self.filterText.length != 0) {
+        predicate = [NSPredicate predicateWithFormat:@"name CONTAINS[cd] %@", self.filterText];
+    } else {
+        predicate = [NSPredicate predicateWithValue:YES];
+    }
+    NSArray<TemporaryApp *> *filteredApps = [self.host.appList.allObjects filteredArrayUsingPredicate:predicate];
+    
+    NSArray<TemporaryApp *> *hiddenAwareApps = [F filterArray:filteredApps withBlock:^BOOL(TemporaryApp *obj) {
+        if (self.host.showHiddenApps) {
+            return YES;
+        } else {
+            return obj.hidden == NO;
+        }
+    }];
+    
+    return [hiddenAwareApps sortedArrayUsingSelector:@selector(compare:)];
+}
+
+- (void)displayApps {
+    self.apps = [self fetchApps];
+}
+
+- (void)discoverAppsForHost:(TemporaryHost *)host {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        if (host.activeAddress == nil || host.activeAddress.length == 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if ([self.host.uuid isEqualToString:host.uuid]) {
+                    [self requestHostRefresh];
+                }
+            });
+            return;
+        }
+
+        NSString *uniqueId = [IdManager getUniqueId];
+        
+        AppListResponse* appListResp = [ConnectionHelper getAppListForHostWithHostIP:host.activeAddress serverCert:host.serverCert uniqueID:uniqueId];
+        
+        if (appListResp == nil || ![appListResp isStatusOk] || [appListResp getAppList] == nil) {
+            Log(LOG_W, @"Failed to get applist: %@", appListResp.statusMessage);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                // Don't override host state based on app list failure. Rely on discovery state.
+                if ([self.host.uuid isEqualToString:host.uuid]) {
+                    [self requestHostRefresh];
+                    [self updateOfflineOverlayForCurrentHost];
+                }
+            });
+        } else {
+            NSArray<TemporaryApp *> *oldItems = [self fetchApps];
+
+            [self updateApplist:[appListResp getAppList] forHost:host];
+            
+            [self.appManager stopRetrieving];
+            [self.appManager retrieveAssetsFromHost:self.host];
+            
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSArray<TemporaryApp *> *newItems = [self fetchApps];
+                [self updateCollectionViewDataWithOld:oldItems new:newItems];
+            });
+        }
+    });
+}
+
+- (void) updateApplist:(NSSet*) newList forHost:(TemporaryHost*)host {
+    DataManager *database = [[DataManager alloc] init];
+    NSMutableSet *newHostAppList = [NSMutableSet setWithSet:host.appList];
+    
+    for (TemporaryApp* app in newList) {
+        BOOL appAlreadyInList = NO;
+        for (TemporaryApp* savedApp in newHostAppList) {
+            if ([app.id isEqualToString:savedApp.id]) {
+                savedApp.name = app.name;
+                appAlreadyInList = YES;
+                break;
+            }
+        }
+        if (!appAlreadyInList) {
+            app.host = host;
+            [newHostAppList addObject:app];
+        }
+    }
+    
+    BOOL appWasRemoved;
+    do {
+        appWasRemoved = NO;
+        
+        for (TemporaryApp* app in newHostAppList) {
+            appWasRemoved = YES;
+            for (TemporaryApp* mergedApp in newList) {
+                if ([mergedApp.id isEqualToString:app.id]) {
+                    appWasRemoved = NO;
+                    break;
+                }
+            }
+            if (appWasRemoved) {
+                // Removing the app mutates the list we're iterating (which isn't legal).
+                // We need to jump out of this loop and restart enumeration.
+                
+                [newHostAppList removeObject:app];
+                
+                // It's important to remove the app record from the database
+                // since we'll have a constraint violation now that appList
+                // doesn't have this app in it.
+                [database removeApp:app];
+                
+                break;
+            }
+        }
+        
+        // Keep looping until the list is no longer being mutated
+    } while (appWasRemoved);
+    
+    host.appList = [newHostAppList copy];
+    
+    [database updateAppsForExistingHost:host];
+}
+
+
+#pragma mark - Image Loading
+
+- (void)updateCellWithImageForApp:(TemporaryApp *)app {
+    dispatch_async(dispatch_get_main_queue(), ^{
+
+        NSIndexPath *path = [self indexPathForApp:app];
+        AppCell *item = (AppCell *)[self.collectionView itemAtIndexPath:path];
+        if (item != nil) {
+            
+            NSImage* fastCacheImage = [self.boxArtCache objectForKey:app.id];
+            if (fastCacheImage != nil) {
+                
+                [ImageFader transitionImageViewWithOldImageView:item.appCoverArt newImageViewBlock:^NSImageView * _Nonnull {
+                    NSImageView *newImageView = [[NSImageView alloc] init];
+                    [newImageView smoothRoundCornersWithCornerRadius:APP_CELL_CORNER_RADIUS];
+                    
+                    return newImageView;
+                } duration:0.3 image:fastCacheImage completionBlock:^(NSImageView * _Nonnull newImageView) {
+                    item.appCoverArt = newImageView;
+                    item.placeholderView.hidden = YES;
+                }];
+            }
+        }
+    });
+}
+
+// This function forces immediate decoding of the UIImage, rather
+// than the default lazy decoding that results in janky scrolling.
++ (OSImage *)loadBoxArtForCaching:(TemporaryApp *)app {
+    OSImage *boxArt;
+    
+    NSData* imageData = [NSData dataWithContentsOfFile:[AppAssetManager boxArtPathForApp:app]];
+    if (imageData == nil) {
+        // No box art on disk
+        return nil;
+    }
+    
+    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)imageData, NULL);
+    CGImageRef cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil);
+    
+    size_t width = CGImageGetWidth(cgImage);
+    size_t height = CGImageGetHeight(cgImage);
+    
+    CGSize appArtworkDimensions = [SettingsClass appArtworkDimensionsFor:app.host.uuid];
+    CGFloat targetWidth = appArtworkDimensions.width;
+    CGFloat targetHeight = appArtworkDimensions.height;
+    CGFloat targetAspect = targetWidth / targetHeight;
+    CGFloat drawAspect = (CGFloat)width / (CGFloat)height;
+    
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef imageContext =  CGBitmapContextCreate(NULL, targetWidth, targetHeight, 8, targetWidth * 4, colorSpace,
+                                                       kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+    CGColorSpaceRelease(colorSpace);
+
+    if (targetAspect >= drawAspect) {
+        CGFloat drawHeight = targetWidth / drawAspect;
+        CGFloat yOffset = (targetHeight - drawHeight) / 2.0;
+        CGContextDrawImage(imageContext, CGRectMake(0, yOffset, targetWidth, drawHeight), cgImage);
+    } else {
+        CGFloat drawWidth = targetHeight * drawAspect;
+        CGFloat xOffset = (targetWidth - drawWidth) / 2.0;
+        CGContextDrawImage(imageContext, CGRectMake(xOffset, 0, drawWidth, targetHeight), cgImage);
+    }
+    
+    CGImageRef outputImage = CGBitmapContextCreateImage(imageContext);
+
+#if TARGET_OS_IPHONE
+    boxArt = [UIImage imageWithCGImage:outputImage];
+#else
+    boxArt = [[NSImage alloc] initWithCGImage:outputImage size:NSMakeSize(targetWidth, targetHeight)];
+#endif
+
+    CGImageRelease(outputImage);
+    CGContextRelease(imageContext);
+    
+    CGImageRelease(cgImage);
+    CFRelease(source);
+    
+    return boxArt;
+}
+
+- (void)updateBoxArtCacheForApp:(TemporaryApp *)app {
+    if ([self.boxArtCache objectForKey:app] == nil) {
+        OSImage *image = [AppsViewController loadBoxArtForCaching:app];
+        if (image != nil) {
+            // Add the image to our cache if it was present
+            [self.boxArtCache setObject:image forKey:app.id];
+            
+            [self updateCellWithImageForApp:app];
+        }
+    }
+}
+
+
+#pragma mark - AppAssetCallback
+
+- (void)receivedAssetForApp:(TemporaryApp *)app {
+    // Update the box art cache now so we don't have to do it
+    // on the main thread
+    [self updateBoxArtCacheForApp:app];
+}
+
+@end

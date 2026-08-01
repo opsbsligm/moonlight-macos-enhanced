@@ -1,0 +1,676 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 76;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4C38E7F91FEE085B000425CD /* (null) in Sources */ = {isa = PBXBuildFile; };
+		4C38E7FC1FEE0875000425CD /* (null) in Sources */ = {isa = PBXBuildFile; };
+		4C38E8011FEE08AA000425CD /* (null) in Sources */ = {isa = PBXBuildFile; };
+		4C38E82E1FF0C71D000425CD /* libmoonlight-common.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 98AB2E841CAD46840089BB98 /* libmoonlight-common.a */; };
+		A42858422D5065B800E39078 /* OpenSSL in Frameworks */ = {isa = PBXBuildFile; productRef = A42858412D5065B800E39078 /* OpenSSL */; };
+		A42858472D5066A000E39078 /* FFmpeg.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A42858432D5066A000E39078 /* FFmpeg.xcframework */; };
+		A42858482D5066A000E39078 /* Opus.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A42858442D5066A000E39078 /* Opus.xcframework */; };
+		A42858492D50682400E39078 /* SDL2.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A42858452D5066A000E39078 /* SDL2.xcframework */; };
+		A428584A2D50682400E39078 /* SDL2.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A42858452D5066A000E39078 /* SDL2.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A4B1C1002D9F0A1B00C0FF04 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = A4B1C1002D9F0A1B00C0FF01 /* Localizable.strings */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4C38E82F1FF0C726000425CD /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98AB2E7F1CAD46830089BB98 /* moonlight-common.xcodeproj */;
+			proxyType = 1;
+			remoteGlobalIDString = FB290E2D19B37A4E004C83CF;
+			remoteInfo = "moonlight-common";
+		};
+		98AB2E831CAD46840089BB98 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98AB2E7F1CAD46830089BB98 /* moonlight-common.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = FB290E2E19B37A4E004C83CF;
+			remoteInfo = "moonlight-common";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A428584B2D50682400E39078 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				A428584A2D50682400E39078 /* SDL2.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		4C2556A121F56F280009838E /* Moonlight.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Moonlight.entitlements; sourceTree = "<group>"; };
+		4C7E0A7A1FECBFFD00684411 /* Moonlight.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Moonlight.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4CD17E9B2733C0FC004D438C /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		98AB2E7F1CAD46830089BB98 /* moonlight-common.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = "moonlight-common.xcodeproj"; path = "moonlight-common/moonlight-common.xcodeproj"; sourceTree = "<group>"; };
+		A42858432D5066A000E39078 /* FFmpeg.xcframework */ = {isa = PBXFileReference; expectedSignature = "AppleDeveloperProgram:KHSNQKXT55:Martin Kenny"; lastKnownFileType = wrapper.xcframework; name = FFmpeg.xcframework; path = xcframeworks/FFmpeg.xcframework; sourceTree = "<group>"; };
+		A42858442D5066A000E39078 /* Opus.xcframework */ = {isa = PBXFileReference; expectedSignature = "AppleDeveloperProgram:KHSNQKXT55:Martin Kenny"; lastKnownFileType = wrapper.xcframework; name = Opus.xcframework; path = xcframeworks/Opus.xcframework; sourceTree = "<group>"; };
+		A42858452D5066A000E39078 /* SDL2.xcframework */ = {isa = PBXFileReference; expectedSignature = "AppleDeveloperProgram:KHSNQKXT55:Martin Kenny"; lastKnownFileType = wrapper.xcframework; name = SDL2.xcframework; path = xcframeworks/SDL2.xcframework; sourceTree = "<group>"; };
+		A4B1C1002D9F0A1B00C0FF02 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = Limelight/macOS/en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		A4B1C1002D9F0A1B00C0FF03 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "Limelight/macOS/zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A40F5A9A2D432ABE006DA227 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				/Localized/macOS/Main.storyboard,
+				"build-number.sh",
+				Crypto/CryptoManager.m,
+				Crypto/IdManager.m,
+				Crypto/mkcert.c,
+				Database/DataManager.m,
+				Database/TemporaryApp.m,
+				Database/TemporaryHost.m,
+				Database/TemporarySettings.m,
+				DatabaseSingleton.m,
+				Input/Controller.m,
+				Input/ControllerSupport.m,
+				Input/CoreHIDMouseDriver.swift,
+				Input/HapticContext.m,
+				Input/HIDSupport.m,
+				"Input/HIDSupport+Pointer.m",
+				"Input/HIDSupport+Rumble.m",
+				"Input/HIDSupport+Scroll.m",
+				Input/Ticks.m,
+				Limelight.xcdatamodeld,
+				macOS/AppCell.xib,
+				macOS/AppDelegateForAppKit.m,
+				macOS/Assets.xcassets,
+				macOS/Helpers/AlertPresenter.m,
+				macOS/Helpers/AwdlAuthorizationHelper.m,
+				macOS/Helpers/BackgroundColorView.m,
+				macOS/Helpers/ControllerNavigation.m,
+				macOS/Helpers/Functional/F.m,
+				"macOS/Helpers/Functional/NSArray+F.m",
+				"macOS/Helpers/Functional/NSDictionary+F.m",
+				"macOS/Helpers/Functional/NSNumber+F.m",
+				macOS/Helpers/Helpers.m,
+				macOS/Helpers/ImageFader.m,
+				macOS/Helpers/LanguageManager.swift,
+				macOS/Helpers/MASPreferences/MASPreferencesWindow.xib,
+				macOS/Helpers/MASPreferences/MASPreferencesWindowController.m,
+				macOS/Helpers/MicrophoneManager.swift,
+				"macOS/Helpers/NSApplication+Moonlight.m",
+				"macOS/Helpers/NSCollectionView+Moonlight.m",
+				"macOS/Helpers/NSResponder+Moonlight.m",
+				"macOS/Helpers/NSView+Moonlight.m",
+				"macOS/Helpers/NSWindow+Moonlight.m",
+				macOS/Helpers/NumberOnlyFormatter.swift,
+				macOS/Helpers/ViewExtensions.swift,
+				macOS/HostCell.xib,
+				"macOS/Supporting Files/main.m",
+				macOS/ViewControllers/AboutView.xib,
+				macOS/ViewControllers/AboutViewController.m,
+				macOS/ViewControllers/AboutWindow.xib,
+				macOS/ViewControllers/AppCell.m,
+				macOS/ViewControllers/AppsViewController.m,
+				macOS/ViewControllers/AppsWorkspaceViewController.m,
+				macOS/ViewControllers/ConnectionDetailsViewController.swift,
+				macOS/ViewControllers/ConnectionEditorViewController.m,
+				macOS/ViewControllers/ContainerViewController.m,
+				macOS/ViewControllers/DebugLogParser.swift,
+				macOS/ViewControllers/GeneralPrefsPaneVC.m,
+				macOS/ViewControllers/GeneralPrefsPaneView.xib,
+				macOS/ViewControllers/HostCell.m,
+				macOS/ViewControllers/HostSidebarView.swift,
+				macOS/ViewControllers/HostSidebarViewModel.swift,
+				macOS/ViewControllers/HostsViewController.m,
+				macOS/ViewControllers/MLEdgeMenuUI.m,
+				macOS/ViewControllers/Settings.swift,
+				macOS/ViewControllers/SettingsAppPane.swift,
+				macOS/ViewControllers/SettingsAudioPane.swift,
+				macOS/ViewControllers/SettingsHostingController.swift,
+				macOS/ViewControllers/SettingsInputPane.swift,
+				macOS/ViewControllers/SettingsModel.swift,
+				"macOS/ViewControllers/SettingsModel+DerivedValues.swift",
+				"macOS/ViewControllers/SettingsModel+Persistence.swift",
+				"macOS/ViewControllers/SettingsModel+RiskAssessment.swift",
+				macOS/ViewControllers/SettingsObjCBridge.swift,
+				macOS/ViewControllers/SettingsSharedControls.swift,
+				macOS/ViewControllers/SettingsShortcuts.swift,
+				macOS/ViewControllers/SettingsStore.swift,
+				macOS/ViewControllers/SettingsStreamPane.swift,
+				macOS/ViewControllers/SettingsVideoPane.swift,
+				macOS/ViewControllers/SettingsView.swift,
+				macOS/ViewControllers/StreamRiskAssessment.swift,
+				macOS/ViewControllers/StreamViewController.m,
+				"macOS/ViewControllers/StreamViewController+Diagnostics.m",
+				"macOS/ViewControllers/StreamViewController+MenuUI.m",
+				"macOS/ViewControllers/StreamViewController+MouseCapture.m",
+				"macOS/ViewControllers/StreamViewController+WindowModes.m",
+				macOS/Views/AppCellView.m,
+				macOS/Views/CollectionView.m,
+				macOS/Views/HostCellView.m,
+				macOS/Views/LinkTextField.m,
+				macOS/Views/NavigatableAlertView.m,
+				macOS/Views/StreamingLockOverlayView.swift,
+				macOS/Views/StreamViewMac.m,
+				Network/AppAssetManager.m,
+				Network/AppAssetResponse.m,
+				Network/AppAssetRetriever.m,
+				Network/AppListResponse.m,
+				Network/ConnectionEndpointStore.m,
+				Network/ConnectionHelper.m,
+				Network/DiscoveryManager.m,
+				Network/DiscoveryWorker.m,
+				Network/HttpManager.m,
+				Network/HttpRequest.m,
+				Network/HttpResponse.m,
+				Network/LatencyProbe.m,
+				Network/MDNSManager.m,
+				Network/PairManager.m,
+				Network/ServerInfoResponse.m,
+				Network/StreamingSessionManager.m,
+				Network/WakeOnLanManager.m,
+				Stream/Connection.m,
+				Stream/RendererLayerContainer.m,
+				Stream/StreamConfiguration.m,
+				Stream/StreamManager.m,
+				Stream/VideoDecoderRenderer.m,
+				Utility/LogBuffer.m,
+				Utility/Logger.m,
+				Utility/Utils.m,
+			);
+			target = 4C7E0A791FECBFFD00684411 /* Moonlight for macOS */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A40F5A3F2D432ABE006DA227 /* Limelight */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (A40F5A9A2D432ABE006DA227 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Limelight; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		4C7E0A771FECBFFD00684411 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A42858492D50682400E39078 /* SDL2.xcframework in Frameworks */,
+				A42858472D5066A000E39078 /* FFmpeg.xcframework in Frameworks */,
+				A42858482D5066A000E39078 /* Opus.xcframework in Frameworks */,
+				A42858422D5065B800E39078 /* OpenSSL in Frameworks */,
+				4C38E82E1FF0C71D000425CD /* libmoonlight-common.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		98AB2E801CAD46830089BB98 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				98AB2E841CAD46840089BB98 /* libmoonlight-common.a */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FB290CE519B2C406004C83CF = {
+			isa = PBXGroup;
+			children = (
+				4CD17E9B2733C0FC004D438C /* README.md */,
+				4C2556A121F56F280009838E /* Moonlight.entitlements */,
+				98AB2E7F1CAD46830089BB98 /* moonlight-common.xcodeproj */,
+				A40F5A3F2D432ABE006DA227 /* Limelight */,
+				A4B1C1002D9F0A1B00C0FF01 /* Localizable.strings */,
+				FB290CF019B2C406004C83CF /* Frameworks */,
+				FB290CEF19B2C406004C83CF /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FB290CEF19B2C406004C83CF /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4C7E0A7A1FECBFFD00684411 /* Moonlight.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FB290CF019B2C406004C83CF /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A42858432D5066A000E39078 /* FFmpeg.xcframework */,
+				A42858442D5066A000E39078 /* Opus.xcframework */,
+				A42858452D5066A000E39078 /* SDL2.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4C7E0A791FECBFFD00684411 /* Moonlight for macOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4C7E0A8D1FECBFFD00684411 /* Build configuration list for PBXNativeTarget "Moonlight for macOS" */;
+			buildPhases = (
+				4C7E0A761FECBFFD00684411 /* Sources */,
+				4C7E0A771FECBFFD00684411 /* Frameworks */,
+				4C7E0A781FECBFFD00684411 /* Resources */,
+				A4C4E0012E8A100000A1B001 /* Build AWDL Privileged Helper */,
+				A428584B2D50682400E39078 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4C38E8301FF0C726000425CD /* PBXTargetDependency */,
+			);
+			name = "Moonlight for macOS";
+			productName = "Moonlight for macOS";
+			productReference = 4C7E0A7A1FECBFFD00684411 /* Moonlight.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		FB290CE619B2C406004C83CF /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 0730;
+				LastUpgradeCheck = 2600;
+				ORGANIZATIONNAME = "Moonlight Game Streaming Project";
+				TargetAttributes = {
+					4C7E0A791FECBFFD00684411 = {
+						CreatedOnToolsVersion = 9.2;
+						LastSwiftMigration = 1020;
+						ProvisioningStyle = Automatic;
+						SystemCapabilities = {
+							com.apple.Sandbox = {
+								enabled = 0;
+							};
+						};
+					};
+				};
+			};
+			buildConfigurationList = FB290CE919B2C406004C83CF /* Build configuration list for PBXProject "Moonlight" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = FB290CE519B2C406004C83CF;
+			packageReferences = (
+				A42858402D5065B800E39078 /* XCRemoteSwiftPackageReference "OpenSSL-Package" */,
+			);
+			preferredProjectObjectVersion = 48;
+			productRefGroup = FB290CEF19B2C406004C83CF /* Products */;
+			projectDirPath = "";
+			projectReferences = (
+				{
+					ProductGroup = 98AB2E801CAD46830089BB98 /* Products */;
+					ProjectRef = 98AB2E7F1CAD46830089BB98 /* moonlight-common.xcodeproj */;
+				},
+			);
+			projectRoot = "";
+			targets = (
+				4C7E0A791FECBFFD00684411 /* Moonlight for macOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXReferenceProxy section */
+		98AB2E841CAD46840089BB98 /* libmoonlight-common.a */ = {
+			isa = PBXReferenceProxy;
+			fileType = archive.ar;
+			path = "libmoonlight-common.a";
+			remoteRef = 98AB2E831CAD46840089BB98 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+/* End PBXReferenceProxy section */
+
+/* Begin PBXResourcesBuildPhase section */
+		4C7E0A781FECBFFD00684411 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A4B1C1002D9F0A1B00C0FF04 /* Localizable.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A4C4E0012E8A100000A1B001 /* Build AWDL Privileged Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Limelight/macOS/Helpers/AwdlPrivilegedHelperMain.m",
+				"$(SRCROOT)/Limelight/macOS/Helpers/AwdlPrivilegedHelperProtocol.h",
+				"$(SRCROOT)/scripts/build_awdl_privileged_helper.sh",
+			);
+			name = "Build AWDL Privileged Helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchServices/$(PRODUCT_BUNDLE_IDENTIFIER).AwdlPrivilegedHelper",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"${SRCROOT}/scripts/build_awdl_privileged_helper.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4C7E0A761FECBFFD00684411 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4C38E8011FEE08AA000425CD /* (null) in Sources */,
+				4C38E7FC1FEE0875000425CD /* (null) in Sources */,
+				4C38E7F91FEE085B000425CD /* (null) in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4C38E8301FF0C726000425CD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = "moonlight-common";
+			targetProxy = 4C38E82F1FF0C726000425CD /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		A4B1C1002D9F0A1B00C0FF01 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				A4B1C1002D9F0A1B00C0FF02 /* en */,
+				A4B1C1002D9F0A1B00C0FF03 /* zh-Hans */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		4C7E0A8B1FECBFFD00684411 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A40F5A3F2D432ABE006DA227 /* Limelight */;
+			baseConfigurationReferenceRelativePath = Version.xcconfig;
+			buildSettings = {
+				APP_SHORTCUTS_ENABLE_FLEXIBLE_MATCHING = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = Moonlight.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = "Limelight/macOS/Supporting Files/Limelight-Prefix.pch";
+				HEADER_SEARCH_PATHS = (
+					"$(SDKROOT)/usr/include/libxml2",
+					"$(PROJECT_DIR)/moonlight-common/moonlight-common-c/src",
+					"$(PROJECT_DIR)/moonlight-common/moonlight-common-c/enet/include",
+				);
+				INFOPLIST_FILE = "Limelight/macOS/Supporting Files/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.3.8;
+				MTL_ENABLE_DEBUG_INFO = YES;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-weak_framework",
+					MetalFX,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac;
+				PRODUCT_NAME = Moonlight;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		4C7E0A8C1FECBFFD00684411 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A40F5A3F2D432ABE006DA227 /* Limelight */;
+			baseConfigurationReferenceRelativePath = Version.xcconfig;
+			buildSettings = {
+				APP_SHORTCUTS_ENABLE_FLEXIBLE_MATCHING = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = Moonlight.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_USB = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = "Limelight/macOS/Supporting Files/Limelight-Prefix.pch";
+				HEADER_SEARCH_PATHS = (
+					"$(SDKROOT)/usr/include/libxml2",
+					"$(PROJECT_DIR)/moonlight-common/moonlight-common-c/src",
+					"$(PROJECT_DIR)/moonlight-common/moonlight-common-c/enet/include",
+				);
+				INFOPLIST_FILE = "Limelight/macOS/Supporting Files/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 1.3.8;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-weak_framework",
+					MetalFX,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac;
+				PRODUCT_NAME = Moonlight;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		FB290D1E19B2C406004C83CF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 4439TAX9XJ;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = "DEBUG=1";
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FB290D1F19B2C406004C83CF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 4439TAX9XJ;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				PROVISIONING_PROFILE = "";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4C7E0A8D1FECBFFD00684411 /* Build configuration list for PBXNativeTarget "Moonlight for macOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4C7E0A8B1FECBFFD00684411 /* Debug */,
+				4C7E0A8C1FECBFFD00684411 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FB290CE919B2C406004C83CF /* Build configuration list for PBXProject "Moonlight" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FB290D1E19B2C406004C83CF /* Debug */,
+				FB290D1F19B2C406004C83CF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A42858402D5065B800E39078 /* XCRemoteSwiftPackageReference "OpenSSL-Package" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/krzyzanowskim/OpenSSL-Package.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.3.2000;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A42858412D5065B800E39078 /* OpenSSL */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A42858402D5065B800E39078 /* XCRemoteSwiftPackageReference "OpenSSL-Package" */;
+			productName = OpenSSL;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = FB290CE619B2C406004C83CF /* Project object */;
+}
