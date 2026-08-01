@@ -71,7 +71,12 @@ clang_args=(
   -I"${helper_include_dir}"
 )
 
-for arch in ${ARCHS}; do
+# zsh does NOT word-split unquoted variable expansions by default (unlike bash).
+# Without the `=` flag, ${ARCHS}="arm64 x86_64" would be passed to clang as a
+# single -arch argument "-arch arm64 x86_64", producing:
+#   clang: error: invalid arch name '-arch arm64 x86_64'
+# The `=` flag forces word splitting on IFS so each arch becomes its own -arch.
+for arch in ${=ARCHS}; do
   clang_args+=(-arch "$arch")
 done
 

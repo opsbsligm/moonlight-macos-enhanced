@@ -26,6 +26,13 @@
 @import VideoToolbox;
 @import MetalKit;
 
+// CVDisplayLink and AVSampleBufferDisplayLayer are deprecated in macOS 15.0
+// but remain the proven APIs for low-latency game streaming. The new
+// NSView.displayLink and sampleBufferRenderer APIs are not yet validated for
+// sub-frame-latency rendering. Suppress deprecation at file scope; tracked
+// for migration in a future release once the new APIs are benchmarked.
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 #if __has_include(<MetalFX/MetalFX.h>)
 #import <MetalFX/MetalFX.h>
 #define ML_HAS_METALFX 1
@@ -1042,7 +1049,6 @@ static BOOL MLGetSharedMetalPipelines(MTLPixelFormat pixelFormat,
     int videoFormat;
 
     NSData *spsData, *ppsData, *vpsData;
-    CMVideoFormatDescriptionRef _imageFormatDesc;
     CMVideoFormatDescriptionRef formatDesc;
     CMVideoFormatDescriptionRef _nativeImageFormatDesc;
 
@@ -1201,7 +1207,7 @@ static BOOL MLGetSharedMetalPipelines(MTLPixelFormat pixelFormat,
 
     [self resetVideoParameterSetState];
 
-    if (formatDesc != nil) {
+    if (formatDesc != NULL) {
         CFRelease(formatDesc);
         formatDesc = nil;
     }
@@ -1282,6 +1288,9 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     if ([NSThread isMainThread]) {
         warmBlock();
     } else {
+        // TODO: dispatch_sync on the main queue can deadlock if the main thread
+        // is blocked by an external caller. Kept synchronous so warmup completes
+        // before start() proceeds; revisit if deadlocks are observed.
         dispatch_sync(dispatch_get_main_queue(), warmBlock);
     }
 }
@@ -1333,10 +1342,32 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 
 - (void)teardownDecompressionSession
 {
+    // Only tear down the VTDecompressionSession itself here. Do NOT release
+    // formatDesc — createDecompressionSession calls us at the top to drop any
+    // previously-built VT session before building a fresh one, but it still
+    // needs formatDesc as the input descriptor for the new session. Releasing
+    // formatDesc here would NULL it out and force VTDecompressionSessionCreate
+    // to fail with kVTParameterErr, silently routing Enhanced/Native renderers
+    // through fallbackToCompatibilityRenderer (which kills Metal super-resolution
+    // and VT low-latency frame interpolation). formatDesc is released in
+    // teardownFormatDescription, which is only called from stop / dealloc.
     if (_decompressionSession) {
         VTDecompressionSessionInvalidate(_decompressionSession);
         CFRelease(_decompressionSession);
         _decompressionSession = NULL;
+    }
+}
+
+- (void)teardownFormatDescription
+{
+    // formatDesc (CMVideoFormatDescriptionRef) is CoreFoundation and not
+    // ARC-managed. Release it on stop / dealloc to prevent leaks. Decoupled
+    // from teardownDecompressionSession so that createDecompressionSession
+    // can drop a stale VT session without clobbering the freshly-built
+    // formatDesc handed to it by submitDecodeBuffer (H264/HEVC/AV1 paths).
+    if (self->formatDesc != NULL) {
+        CFRelease(self->formatDesc);
+        self->formatDesc = NULL;
     }
 }
 
@@ -2185,6 +2216,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     if ([NSThread isMainThread]) {
         activateBlock();
     } else {
+        // TODO: dispatch_sync on the main queue can deadlock if the main thread
+        // is blocked. Must stay synchronous because `success` is returned below.
         dispatch_sync(dispatch_get_main_queue(), activateBlock);
     }
 
@@ -4463,6 +4496,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     void (^startBlock)(void) = ^{
         NSScreen *screen = self->_view.window.screen;
         CVReturn status = kCVReturnError;
+        if (self->_displayLink) {
+            CVDisplayLinkStop(self->_displayLink);
+            CVDisplayLinkRelease(self->_displayLink);
+            self->_displayLink = NULL;
+        }
         if (screen != nil) {
             CGDirectDisplayID displayId = getDisplayID(screen);
             status = CVDisplayLinkCreateWithCGDisplay(displayId, &self->_displayLink);
@@ -4474,6 +4512,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         }
         if (status != kCVReturnSuccess) {
             Log(LOG_E, @"Failed to create CVDisplayLink: %d", status);
+            // M9 fix: bail out early. Without a display link the output callback
+            // would never fire and frames would never render; passing NULL to
+            // CVDisplayLinkSetOutputCallback / CVDisplayLinkStart is also
+            // undefined behavior.
+            return;
         }
 
         status = CVDisplayLinkSetOutputCallback(self->_displayLink, displayLinkCallback, (__bridge void * _Nullable)(self));
@@ -4495,6 +4538,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     if ([NSThread isMainThread]) {
         startBlock();
     } else {
+        // TODO: dispatch_sync on the main queue can deadlock if the main thread
+        // is blocked. Kept synchronous so the display link is started before
+        // start() returns, avoiding a race with an immediate stop().
         dispatch_sync(dispatch_get_main_queue(), startBlock);
     }
 }
@@ -4703,12 +4749,20 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
 {
     if (_displayLink != NULL) {
         CVDisplayLinkStop(_displayLink);
+        CVDisplayLinkSetOutputCallback(_displayLink, NULL, NULL);
         CVDisplayLinkRelease(_displayLink);
         _displayLink = NULL;
     }
 
     [self clearCurrentFrame];
+    if (_textureCache) {
+        // CVMetalTextureCacheRef is a CFTypeRef; use CFRelease since the
+        // dedicated CVMetalTextureCacheRelease is not declared in this SDK.
+        CFRelease(_textureCache);
+        _textureCache = NULL;
+    }
     [self teardownDecompressionSession];
+    [self teardownFormatDescription];
     [self teardownEnhancementProcessor];
     [self teardownFrameInterpolationProcessor];
     [self teardownHDRPresentationResources];
@@ -4932,6 +4986,27 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     OSStatus status;
     size_t oldOffset = CMBlockBufferGetDataLength(frameBuffer);
 
+    // M7 fix: detect the actual start-code length at this offset.
+    // H.264/H.265 AnnexB allows both 3-byte (00 00 01) and 4-byte (00 00 00 01)
+    // start codes. The previous code always used NALU_START_PREFIX_SIZE (3),
+    // which left a stray 0x00 at the start of the NALU payload for 4-byte
+    // start codes, corrupting the length prefix fed to VideoToolbox.
+    int startCodeSize = NALU_START_PREFIX_SIZE; // 3
+    if (nalLength >= FRAME_START_PREFIX_SIZE) {
+        size_t bytesAvailable = 0;
+        const uint8_t *directPtr = NULL;
+        OSStatus peekStatus = CMBlockBufferGetDataPointer(dataBuffer, offset, &bytesAvailable, NULL, (char **)&directPtr);
+        if (peekStatus == noErr && directPtr != NULL && bytesAvailable >= FRAME_START_PREFIX_SIZE &&
+            directPtr[0] == 0 && directPtr[1] == 0 && directPtr[2] == 0 && directPtr[3] == 1) {
+            startCodeSize = FRAME_START_PREFIX_SIZE; // 4
+        }
+    }
+    const int dataLength = nalLength - startCodeSize;
+    if (dataLength < 0) {
+        Log(LOG_E, @"updateBufferForRange: invalid nalLength=%d startCodeSize=%d", nalLength, startCodeSize);
+        return;
+    }
+
     // Append a 4 byte buffer to the frame block for the length prefix
     status = CMBlockBufferAppendMemoryBlock(frameBuffer, NULL,
                                             NAL_LENGTH_PREFIX_SIZE,
@@ -4943,7 +5018,6 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     }
 
     // Write the length prefix to the new buffer
-    const int dataLength = nalLength - NALU_START_PREFIX_SIZE;
     const uint8_t lengthBytes[] = {(uint8_t)(dataLength >> 24), (uint8_t)(dataLength >> 16),
         (uint8_t)(dataLength >> 8), (uint8_t)dataLength};
     status = CMBlockBufferReplaceDataBytes(lengthBytes, frameBuffer,
@@ -4954,7 +5028,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     }
 
     // Attach the data buffer to the frame buffer by reference
-    status = CMBlockBufferAppendBufferReference(frameBuffer, dataBuffer, offset + NALU_START_PREFIX_SIZE, dataLength, 0);
+    status = CMBlockBufferAppendBufferReference(frameBuffer, dataBuffer, offset + startCodeSize, dataLength, 0);
     if (status != noErr) {
         Log(LOG_E, @"CMBlockBufferAppendBufferReference failed: %d", (int)status);
         return;
@@ -4967,6 +5041,9 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     int ret;
 
     // Fallback to standard malloc to avoid potential pool/locking issues
+    if (decodeUnit->fullLength <= 0) {
+        return DR_NEED_IDR;
+    }
     unsigned char* data = (unsigned char*) malloc(decodeUnit->fullLength);
     if (data == NULL) {
         return DR_NEED_IDR;
@@ -5072,7 +5149,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
         // See if we've got all the parameter sets we need for our video format
         if ([self readyForPictureData]) {
 
-            if (formatDesc != nil) {
+            if (formatDesc != NULL) {
                 CFRelease(formatDesc);
                 formatDesc = nil;
             }
@@ -5133,7 +5210,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     }
 
     if ((videoFormat & VIDEO_FORMAT_MASK_AV1) && frameType != FRAME_TYPE_PFRAME) {
-        if (formatDesc != nil) {
+        if (formatDesc != NULL) {
             CFRelease(formatDesc);
             formatDesc = nil;
         }
@@ -5159,8 +5236,12 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     if (displayLayer && displayLayer.status == AVQueuedSampleBufferRenderingStatusFailed) {
         Log(LOG_E, @"Display layer rendering failed: %@", displayLayer.error);
 
-        // Recreate the display layer
-        dispatch_sync(dispatch_get_main_queue(), ^{
+        // H5 fix: dispatch_sync(main_queue) from the decode thread can deadlock
+        // if the main thread is blocked (e.g. fullscreen toggle, modal sheet,
+        // or beginStopStreamIfNeededWithReason's own dispatch_sync(main)).
+        // Switch to dispatch_async and move the free/return into the block so
+        // we don't continue using `data` after handing it off.
+        dispatch_async(dispatch_get_main_queue(), ^{
             [self reinitializeDisplayLayer];
         });
 

@@ -25,11 +25,16 @@ xcuserdata/
 Packages/checkouts/
 Packages/artifacts/
 Packages/repositories/
+.swiftpm/
+.build/
 
 # Large binary frameworks (managed via download script or Git LFS)
 xcframeworks/
 Packages/OpenSSL.xcframework/
 xcframeworks.zip
+
+# Local symlink to OpenSSL headers (build artifact, not source)
+libs/
 
 # macOS
 .DS_Store
@@ -42,3 +47,19 @@ crash_log
 *.tmp
 *.swp
 *~
+
+# Secrets / signing materials — never commit
+.env*
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+certs/
+secrets/
+**/ApiKeys*.plist
+*.key
+*.pem
+
+# Xcode project noise
+*.xcscmblueprint
+

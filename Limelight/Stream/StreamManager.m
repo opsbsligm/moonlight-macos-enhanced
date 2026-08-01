@@ -87,7 +87,7 @@
         [_callbacks launchFailed:serverInfoResp.statusMessage];
         return;
     }
-    else if (pairStatus == NULL || appversion == NULL || serverState == NULL) {
+    else if (pairStatus == nil || appversion == nil || serverState == nil) {
         [_callbacks launchFailed:@"Failed to connect to PC"];
         return;
     }
@@ -187,7 +187,7 @@
         [_callbacks launchFailed:launchResp.statusMessage];
         Log(LOG_E, @"Failed Launch Response: %@", launchResp.statusMessage);
         return FALSE;
-    } else if (gameSession == NULL || [gameSession isEqualToString:@"0"]) {
+    } else if (gameSession == nil || [gameSession isEqualToString:@"0"]) {
         [_callbacks launchFailed:@"Failed to launch app"];
         Log(LOG_E, @"Failed to parse game session");
         return FALSE;

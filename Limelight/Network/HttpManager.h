@@ -13,6 +13,7 @@
 @interface HttpManager : NSObject <NSURLSessionDelegate>
 
 - (id) initWithHost:(NSString*) host uniqueId:(NSString*) uniqueId serverCert:(NSData*) serverCert;
+- (id) initWithHost:(NSString*) host httpsPort:(NSString*)httpsPort httpPort:(NSString*)httpPort uniqueId:(NSString*) uniqueId serverCert:(NSData*) serverCert;
 - (void) setServerCert:(NSData*) serverCert;
 - (NSURLRequest*) newPairRequest:(NSData*)salt clientCert:(NSData*)clientCert;
 - (NSURLRequest*) newUnpairRequest;

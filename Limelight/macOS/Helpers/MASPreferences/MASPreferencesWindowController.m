@@ -270,7 +270,8 @@ static NSString * PreferencesKeyForViewBounds (NSString *identifier)
     // Setup min/max sizes and show/hide resize indicator
     [self.window setContentMinSize:minViewRect.size];
     [self.window setContentMaxSize:NSMakeSize(sizableWidth ? CGFLOAT_MAX : NSWidth(oldViewRect), sizableHeight ? CGFLOAT_MAX : NSHeight(oldViewRect))];
-    [self.window setShowsResizeIndicator:sizableWidth || sizableHeight];
+    // setShowsResizeIndicator: is deprecated in macOS 15.0 — "This property does not do
+    // anything and should not be used." Removed per Apple guidance.
     [[self.window standardWindowButton:NSWindowZoomButton] setEnabled:sizableWidth || sizableHeight];
 
     [self.window setFrame:newFrame display:YES animate:[self.window isVisible]];

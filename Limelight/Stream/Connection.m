@@ -145,13 +145,16 @@ typedef NS_ENUM(NSInteger, MLAudioRendererBackend) {
     char _rtspSessionUrl[1024];
 
     ML_CONNECTION_CONTEXT _connectionContext;
-    NSLock *_initLock;
 
     VideoDecoderRenderer *_renderer;
     id<ConnectionCallbacks> _callbacks;
 
     OpusMSDecoder *_opusDecoder;
     int _audioBufferEntries;
+    // TODO: These indices are read/written across decode and render threads
+    // without memory barriers. On ARM64 this is a data race. Consider migrating
+    // to os_unfair_lock or stdatomic for correctness. Currently works in
+    // practice due to single-producer/single-consumer access patterns.
     int _audioBufferWriteIndex;
     int _audioBufferReadIndex;
     int _audioBufferStride;
@@ -710,6 +713,15 @@ int ArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION originalOpusC
     conn->_audioBufferReadFrameOffset = 0;
     conn->_audioSamplesPerFrame = opusConfig.samplesPerFrame;
     conn->_audioBufferStride = opusConfig.channelCount * opusConfig.samplesPerFrame;
+    // M5 fix: validate opus config to prevent zero-stride heap overflow.
+    // If channelCount or samplesPerFrame is 0, the stride is 0, malloc(0) is
+    // returned, and opus_multistream_decode would write samplesPerFrame*channelCount
+    // shorts into a 0-byte buffer → heap overflow.
+    if (opusConfig.channelCount <= 0 || opusConfig.samplesPerFrame <= 0 || conn->_audioBufferStride <= 0) {
+        Log(LOG_E, @"Invalid opus config: channelCount=%d samplesPerFrame=%d (stride=%d)\n",
+            opusConfig.channelCount, opusConfig.samplesPerFrame, conn->_audioBufferStride);
+        return -1;
+    }
     int frameDurationMs = MAX(1, (int)(opusConfig.samplesPerFrame / (opusConfig.sampleRate / 1000)));
     int targetBufferDurationMs = MLAudioRingBufferDurationForMode((MLAudioOutputMode)conn->_audioOutputMode);
     int bufferedFramesTarget = MAX(1, (targetBufferDurationMs + frameDurationMs - 1) / frameDurationMs);
@@ -2253,6 +2265,34 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
 {
     // Remove notification observer to prevent crashes from stale references
     [NSNotificationCenter.defaultCenter removeObserver:self];
+
+    // H2 fix: defensive cleanup of audio/mic resources in case terminate ->
+    // LiStopConnectionCtx -> ArCleanup path was not reached (e.g. stageFailed
+    // then release, or external release). Idempotent — safe to call twice.
+    @try {
+        [self cleanupSelectedAudioRenderer];
+    } @catch (NSException *e) {
+        Log(LOG_D, @"cleanupSelectedAudioRenderer in dealloc threw: %@", e);
+    }
+
+    if (_opusDecoder != NULL) {
+        opus_multistream_decoder_destroy(_opusDecoder);
+        _opusDecoder = NULL;
+    }
+    if (_audioCircularBuffer != NULL) {
+        free(_audioCircularBuffer);
+        _audioCircularBuffer = NULL;
+    }
+    if (_audioRenderScratchBuffer != NULL) {
+        free(_audioRenderScratchBuffer);
+        _audioRenderScratchBuffer = NULL;
+    }
+
+    @try {
+        [self stopMicrophoneIfNeeded];
+    } @catch (NSException *e) {
+        Log(LOG_D, @"stopMicrophoneIfNeeded in dealloc threw: %@", e);
+    }
 }
 
 -(void) terminate
@@ -2295,13 +2335,9 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
     self = [super init];
 
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(updateVolume) name:@"volumeSettingChanged" object:nil];
-    
-    // Use a lock to ensure that only one thread is initializing
-    // or deinitializing a connection at a time.
-    if (_initLock == nil) {
-        _initLock = [[NSLock alloc] init];
-    }
-    
+
+    // L1 fix: removed unused _initLock (created but never locked/unlocked).
+
     _hostAddress = config.host;
     _audioVolumeMultiplier = 1.0f;
     _stateLock = OS_UNFAIR_LOCK_INIT;
@@ -2737,7 +2773,9 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
     __block int result = -1;
     void (^operation)(void) = ^{
         [self ensureControlContextBacklink];
-        LiSetThreadConnectionContext(&_connectionContext);
+        // Explicitly reference self to silence -Wimplicit-retain-self; this block
+        // is dispatched on _clipboardControlQueue and intentionally captures self.
+        LiSetThreadConnectionContext(&self->_connectionContext);
         os_unfair_lock_lock(&gConnectionLifecycleLock);
         result = block();
         os_unfair_lock_unlock(&gConnectionLifecycleLock);

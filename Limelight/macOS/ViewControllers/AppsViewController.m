@@ -1670,8 +1670,11 @@ static const CGFloat runningAnimationDuration = 1.0;
     CGFloat drawAspect = (CGFloat)width / (CGFloat)height;
     
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    // kCGImageAlphaPremultipliedFirst is CGImageAlphaInfo, kCGBitmapByteOrder32Little
+    // is CGBitmapInfo. Cast the alpha info to CGBitmapInfo to perform a well-defined
+    // bitwise OR (otherwise -Wenum-enum-conversion fires).
     CGContextRef imageContext =  CGBitmapContextCreate(NULL, targetWidth, targetHeight, 8, targetWidth * 4, colorSpace,
-                                                       kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+                                                       (CGBitmapInfo)kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
     CGColorSpaceRelease(colorSpace);
 
     if (targetAspect >= drawAspect) {

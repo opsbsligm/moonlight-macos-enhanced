@@ -4,5 +4,17 @@
 <dict>
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- Hardened Runtime is enabled (ENABLE_HARDENED_RUNTIME=YES). The app loads
+	     third-party frameworks (FFmpeg/Opus/SDL2/OpenSSL) signed by a different
+	     Apple Developer team. Without disable-library-validation the hardened
+	     runtime would reject these dylibs at load time with EXC_BAD_ACCESS /
+	     "code signature invalid". This key only relaxes library validation;
+	     it does NOT disable code signing enforcement. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
 </dict>
 </plist>

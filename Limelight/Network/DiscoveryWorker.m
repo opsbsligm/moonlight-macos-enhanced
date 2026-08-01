@@ -446,9 +446,13 @@ static dispatch_once_t gUnpairedObservationOnceToken;
                                                      uniqueId:_uniqueId
                                                          serverCert:cert];
         ServerInfoResponse* response = [[ServerInfoResponse alloc] init];
+        // Use fast-fail (2s) for both the primary HTTPS probe and its HTTP
+        // fallback. Previously the fallback used the default 5s timeout,
+        // which made the total worst-case latency 7s (2 + 5) for a host that
+        // never responds. This aligns the fallback timeout with the probe.
         [hMan executeRequestSynchronously:[HttpRequest requestForResponse:response
                                                            withUrlRequest:[hMan newServerInfoRequest:true]
-                                           fallbackError:401 fallbackRequest:[hMan newHttpServerInfoRequest]]];
+                                           fallbackError:401 fallbackRequest:[hMan newHttpServerInfoRequest:true]]];
         return response;
     }
 }

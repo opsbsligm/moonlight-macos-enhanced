@@ -120,11 +120,7 @@ struct AppView: View {
     let panel = NSSavePanel()
     panel.canCreateDirectories = true
     panel.nameFieldStringValue = "moonlight-debug.log"
-    if #available(macOS 11.0, *) {
-      panel.allowedContentTypes = [.plainText]
-    } else {
-      panel.allowedFileTypes = ["log", "txt"]
-    }
+    panel.allowedContentTypes = [.plainText]
 
     let saveAction: (URL) -> Void = { destinationURL in
       do {
@@ -999,9 +995,9 @@ private struct DebugLogLiveView: View {
   private var currentModeDisplayName: String {
     switch currentMode {
     case .defaultLog:
-      return "默认日志 / Default Log"
+      return languageManager.localize("Default Log")
     case .raw:
-      return "原始日志 / Raw"
+      return languageManager.localize("Raw")
     }
   }
 
@@ -1063,12 +1059,12 @@ private struct DebugLogLiveView: View {
 
   private var categoryMenuTitle: String {
     if selectedCategoryFilters.isEmpty {
-      return "未筛选 / No Filter"
+      return languageManager.localize("No Filter")
     }
     if selectedCategoryFilters.count == 1 {
-      return selectedCategoryDescriptors.first?.displayName ?? "1 Selected"
+      return selectedCategoryDescriptors.first?.displayName ?? languageManager.localize("1 Selected")
     }
-    return "已选 \(selectedCategoryFilters.count) 项 / \(selectedCategoryFilters.count) Selected"
+    return "\(languageManager.localize("Selected")) \(selectedCategoryFilters.count)"
   }
 
   private var selectedCategorySummary: String? {
@@ -1199,11 +1195,7 @@ private struct DebugLogLiveView: View {
     let panel = NSSavePanel()
     panel.canCreateDirectories = true
     panel.nameFieldStringValue = "moonlight-debug-filtered.log"
-    if #available(macOS 11.0, *) {
-      panel.allowedContentTypes = [.plainText]
-    } else {
-      panel.allowedFileTypes = ["log", "txt"]
-    }
+    panel.allowedContentTypes = [.plainText]
 
     let header = """
       # Moonlight Filtered Log
@@ -1267,8 +1259,8 @@ private struct DebugLogLiveView: View {
           .font(.caption)
           .foregroundColor(.secondary)
         Picker("", selection: $settingsModel.debugLogMode) {
-          Text("默认日志 / Default").tag("default")
-          Text("原始日志 / Raw").tag("raw")
+          Text(languageManager.localize("Default")).tag("default")
+          Text(languageManager.localize("Raw")).tag("raw")
         }
         .pickerStyle(.segmented)
         .frame(width: 260)
@@ -1324,7 +1316,7 @@ private struct DebugLogLiveView: View {
       }
 
       HStack(spacing: 8) {
-        TextField("搜索关键词 / 主机 / 错误码 / 分类", text: $searchText)
+        TextField(languageManager.localize("Search keyword / host / error code / category"), text: $searchText)
           .textFieldStyle(.roundedBorder)
 
         DebugLogCategoryFilterMenuButton(
@@ -1398,7 +1390,7 @@ private struct DebugLogLiveView: View {
           RoundedRectangle(cornerRadius: 6)
             .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         )
-        .onChange(of: renderedEntries.count) { _ in
+        .onChange(of: renderedEntries.count) { _, _ in
           guard settingsModel.debugLogAutoScroll else { return }
           withAnimation(.easeOut(duration: 0.12)) {
             proxy.scrollTo("log-end", anchor: .bottom)
@@ -1421,19 +1413,19 @@ private struct DebugLogLiveView: View {
     .onReceive(model.$refreshToken) { _ in
       refreshRenderedEntries()
     }
-    .onChange(of: settingsModel.debugLogMode) { _ in
+    .onChange(of: settingsModel.debugLogMode) { _, _ in
       refreshRenderedEntries()
     }
-    .onChange(of: settingsModel.debugLogShowSystemNoise) { _ in
+    .onChange(of: settingsModel.debugLogShowSystemNoise) { _, _ in
       refreshRenderedEntries()
     }
-    .onChange(of: searchText) { _ in
+    .onChange(of: searchText) { _, _ in
       scheduleSearchRefresh()
     }
-    .onChange(of: settingsModel.debugLogMinLevel) { _ in
+    .onChange(of: settingsModel.debugLogMinLevel) { _, _ in
       refreshRenderedEntries()
     }
-    .onChange(of: settingsModel.debugLogTimeScope) { _ in
+    .onChange(of: settingsModel.debugLogTimeScope) { _, _ in
       if currentTimeScope == .sinceClear && clearFromDate == nil {
         clearFromDate = Date()
       }
@@ -1465,12 +1457,10 @@ private struct DebugLogCategoryFilterMenuButton: NSViewRepresentable {
     button.controlSize = .small
     button.font = .systemFont(ofSize: 12, weight: .regular)
     button.lineBreakMode = .byTruncatingTail
-    if #available(macOS 11.0, *) {
-      button.image = NSImage(
-        systemSymbolName: "line.3.horizontal.decrease.circle",
-        accessibilityDescription: "Category Filter"
-      )
-    }
+    button.image = NSImage(
+      systemSymbolName: "line.3.horizontal.decrease.circle",
+      accessibilityDescription: "Category Filter"
+    )
     return button
   }
 
@@ -1498,8 +1488,8 @@ private struct DebugLogCategoryFilterMenuButton: NSViewRepresentable {
 
       let statusItem = NSMenuItem(
         title: parent.selectedFilters.isEmpty
-          ? "当前未筛选（显示全部） / No Filter Applied"
-          : "清空分类筛选 / Clear Category Filters",
+          ? LanguageManager.shared.localize("No Filter Applied")
+          : LanguageManager.shared.localize("Clear Category Filters"),
         action: parent.selectedFilters.isEmpty ? nil : #selector(handleClearAction(_:)),
         keyEquivalent: ""
       )
@@ -1513,7 +1503,7 @@ private struct DebugLogCategoryFilterMenuButton: NSViewRepresentable {
         item.image = systemImage(named: domain.systemImageName)
 
         let submenu = NSMenu(title: domain.displayName)
-        let allItem = NSMenuItem(title: "全部 / All", action: #selector(handleDomainAction(_:)), keyEquivalent: "")
+        let allItem = NSMenuItem(title: LanguageManager.shared.localize("All"), action: #selector(handleDomainAction(_:)), keyEquivalent: "")
         allItem.target = self
         allItem.representedObject = domain.categoryKey
         allItem.state = parent.selectedFilters.contains(domain.categoryKey) ? .on : .off
@@ -1542,10 +1532,7 @@ private struct DebugLogCategoryFilterMenuButton: NSViewRepresentable {
     }
 
     private func systemImage(named name: String) -> NSImage? {
-      if #available(macOS 11.0, *) {
-        return NSImage(systemSymbolName: name, accessibilityDescription: nil)
-      }
-      return nil
+      return NSImage(systemSymbolName: name, accessibilityDescription: nil)
     }
 
     @objc private func handleClearAction(_ sender: NSMenuItem) {
@@ -1571,10 +1558,10 @@ private struct DebugLogEntryDetailView: View {
   var body: some View {
     VStack(spacing: 12) {
       HStack {
-        Text("日志详情 / Log Detail")
+        Text(LanguageManager.shared.localize("Log Detail"))
           .font(.headline)
         Spacer()
-        Button("关闭 / Close") {
+        Button(LanguageManager.shared.localize("Close")) {
           dismiss()
         }
       }
@@ -1596,7 +1583,7 @@ private struct DebugLogEntryDetailView: View {
       }
 
       VStack(alignment: .leading, spacing: 6) {
-        Text("默认视图 / Default View")
+        Text(LanguageManager.shared.localize("Default View"))
           .font(.caption)
           .foregroundColor(.secondary)
         Text(entry.defaultTitle)
@@ -1615,7 +1602,7 @@ private struct DebugLogEntryDetailView: View {
       Divider()
 
       VStack(alignment: .leading, spacing: 6) {
-        Text("解析消息 / Parsed Message")
+        Text(LanguageManager.shared.localize("Parsed Message"))
           .font(.caption)
           .foregroundColor(.secondary)
         Text(entry.message.isEmpty ? entry.rawLine : entry.message)
@@ -1627,7 +1614,7 @@ private struct DebugLogEntryDetailView: View {
       Divider()
 
       VStack(alignment: .leading, spacing: 6) {
-        Text("原始行 / Raw Line")
+        Text(LanguageManager.shared.localize("Raw Line"))
           .font(.caption)
           .foregroundColor(.secondary)
         ScrollView {

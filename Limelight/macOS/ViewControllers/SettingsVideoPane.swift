@@ -555,7 +555,7 @@ struct VideoView: View {
       }
       .padding()
     }
-    .onChange(of: settingsModel.selectedSmoothnessLatencyMode) { newValue in
+    .onChange(of: settingsModel.selectedSmoothnessLatencyMode) { _, newValue in
       guard
         newValue == SettingsModel.smoothnessLatencyCustom,
         !customTimingRiskAcknowledged

@@ -42,11 +42,12 @@
             [_callback pairFailed:@"You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again."];
         } else if (![[serverInfoResp getStringTag:@"PairStatus"] isEqual:@"1"]) {
             NSString* appversion = [serverInfoResp getStringTag:@"appversion"];
-            if (appversion == nil) {
+            if (appversion == nil || appversion.length == 0) {
                 [_callback pairFailed:@"Missing XML element"];
                 return;
-            }            
-            [self initiatePairWithPin:PIN forServerMajorVersion:[[appversion substringToIndex:1] intValue]];
+            }
+            int serverMajorVersion = (appversion.length > 0) ? [[appversion substringToIndex:1] intValue] : 0;
+            [self initiatePairWithPin:PIN forServerMajorVersion:serverMajorVersion];
         } else {
             [_callback alreadyPaired];
         }
@@ -71,6 +72,8 @@
 
     if (shouldAttemptUnpair) {
         [_httpManager executeRequestSynchronously:[HttpRequest requestWithUrlRequest:[_httpManager newUnpairRequest]]];
+        // Clear any pinned server cert so a failed pairing doesn't leave stale cert pinning
+        [_httpManager setServerCert:nil];
     }
     
     
@@ -84,7 +87,14 @@
         // Use the response error if the request failed
         errorMsg = resp.statusMessage;
     }
-    
+
+    // The HTTP layer surfaces NSURL timeout errors (e.g. the long PIN-entry
+    // timeout) by storing the error code in statusCode. Distinguish a timeout
+    // from an actual rejection so the user sees the right message.
+    if (resp != nil && resp.statusCode == NSURLErrorTimedOut) {
+        errorMsg = @"Pairing timed out. Make sure the host PC is reachable and try again.";
+    }
+
     [_callback pairFailed:errorMsg];
 }
 
@@ -242,8 +252,8 @@
 
 - (NSString*) generatePIN {
     NSString* PIN = [NSString stringWithFormat:@"%d%d%d%d",
-                     arc4random() % 10, arc4random() % 10,
-                     arc4random() % 10, arc4random() % 10];
+                     arc4random_uniform(10), arc4random_uniform(10),
+                     arc4random_uniform(10), arc4random_uniform(10)];
     return PIN;
 }
 

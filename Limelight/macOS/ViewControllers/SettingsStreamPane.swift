@@ -54,7 +54,6 @@ struct StreamView: View {
 
   private func safeDisplayPixelSize() -> CGSize? {
     guard let screen = NSScreen.main else { return nil }
-    guard #available(macOS 12.0, *) else { return nil }
 
     let insets = screen.safeAreaInsets
     let safeFrame = NSRect(
@@ -200,7 +199,7 @@ struct StreamView: View {
             .onAppear {
               settingsModel.refreshConnectionCandidates()
             }
-            .onChange(of: settingsModel.selectedHost?.id) { newValue in
+            .onChange(of: settingsModel.selectedHost?.id) { _, newValue in
               if let newValue, newValue != SettingsModel.globalHostId {
                 settingsModel.refreshConnectionCandidates()
               }
@@ -231,7 +230,7 @@ struct StreamView: View {
             }
             .labelsHidden()
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .onChange(of: languageManager.currentLanguage) { _ in
+            .onChange(of: languageManager.currentLanguage) { _, _ in
               languageManager.applyAppLanguage()
             }
           }
@@ -648,25 +647,25 @@ struct StreamView: View {
           }
         }
       }
-      .onChange(of: settingsModel.remoteResolutionEnabled) { _ in
+      .onChange(of: settingsModel.remoteResolutionEnabled) { _, _ in
         withAnimation {
           showRemoteCustomResolutionGroup =
             settingsModel.remoteResolutionEnabled && settingsModel.selectedRemoteResolution == .zero
         }
       }
-      .onChange(of: settingsModel.selectedRemoteResolution) { _ in
+      .onChange(of: settingsModel.selectedRemoteResolution) { _, _ in
         withAnimation {
           showRemoteCustomResolutionGroup =
             settingsModel.remoteResolutionEnabled && settingsModel.selectedRemoteResolution == .zero
         }
       }
-      .onChange(of: settingsModel.remoteFpsEnabled) { _ in
+      .onChange(of: settingsModel.remoteFpsEnabled) { _, _ in
         withAnimation {
           showRemoteCustomFpsGroup =
             settingsModel.remoteFpsEnabled && settingsModel.selectedRemoteFps == .zero
         }
       }
-      .onChange(of: settingsModel.selectedRemoteFps) { _ in
+      .onChange(of: settingsModel.selectedRemoteFps) { _, _ in
         withAnimation {
           showRemoteCustomFpsGroup =
             settingsModel.remoteFpsEnabled && settingsModel.selectedRemoteFps == .zero

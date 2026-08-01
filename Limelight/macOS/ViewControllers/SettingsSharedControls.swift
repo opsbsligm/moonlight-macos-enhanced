@@ -1059,12 +1059,9 @@ private struct ShortcutKeycapView: View {
     }
 }
 
-extension CGSize: @retroactive Hashable {
-  public func hash(into hasher: inout Hasher) {
-    hasher.combine(width)
-    hasher.combine(height)
-  }
-}
+// CGSize conforms to Hashable natively in CoreGraphics (macOS 14.0+).
+// The previous @retroactive extension was redundant and produced a
+// "conformance already stated" warning — removed.
 
 #Preview {
   if #available(macOS 13.0, *) {

@@ -414,6 +414,12 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				// enet (third-party) intentionally ORs values from two distinct
+				// enums (ENetProtocolCommand | ENetProtocolFlag). This is idiomatic
+				// for the library and safe (both are unsigned). Suppress the
+				// -Wenum-enum-conversion warning at the target level rather than
+				// patching upstream source.
+				WARNING_CFLAGS = "-Wno-enum-enum-conversion";
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu99 gnu++11";
@@ -472,6 +478,12 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				// enet (third-party) intentionally ORs values from two distinct
+				// enums (ENetProtocolCommand | ENetProtocolFlag). This is idiomatic
+				// for the library and safe (both are unsigned). Suppress the
+				// -Wenum-enum-conversion warning at the target level rather than
+				// patching upstream source.
+				WARNING_CFLAGS = "-Wno-enum-enum-conversion";
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu99 gnu++11";

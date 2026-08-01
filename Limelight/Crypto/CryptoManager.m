@@ -22,9 +22,11 @@ static NSData* cert = nil;
 static NSData* p12 = nil;
 
 + (void)invalidateCachedKeyPair {
-    key = nil;
-    cert = nil;
-    p12 = nil;
+    @synchronized(self) {
+        key = nil;
+        cert = nil;
+        p12 = nil;
+    }
 }
 
 + (void)generateAndPersistKeyPairForce:(BOOL)force {
@@ -149,9 +151,9 @@ static NSData* p12 = nil;
     
     if (!x509) {
         Log(LOG_E, @"Unable to parse certificate in memory");
-        return NULL;
+        return false;
     }
-    
+
     EVP_PKEY* pubKey = X509_get_pubkey(x509);
     EVP_MD_CTX *mdctx = NULL;
     mdctx = EVP_MD_CTX_create();
@@ -225,24 +227,30 @@ static NSData* p12 = nil;
 }
 
 + (NSData*) readCertFromFile {
-    if (cert == nil) {
-        cert = [CryptoManager readCryptoObject:@"client.crt"];
+    @synchronized(self) {
+        if (cert == nil) {
+            cert = [CryptoManager readCryptoObject:@"client.crt"];
+        }
+        return cert;
     }
-    return cert;
 }
 
 + (NSData*) readP12FromFile {
-    if (p12 == nil) {
-        p12 = [CryptoManager readCryptoObject:@"client.p12"];
+    @synchronized(self) {
+        if (p12 == nil) {
+            p12 = [CryptoManager readCryptoObject:@"client.p12"];
+        }
+        return p12;
     }
-    return p12;
 }
 
 + (NSData*) readKeyFromFile {
-    if (key == nil) {
-        key = [CryptoManager readCryptoObject:@"client.key"];
+    @synchronized(self) {
+        if (key == nil) {
+            key = [CryptoManager readCryptoObject:@"client.key"];
+        }
+        return key;
     }
-    return key;
 }
 
 + (bool) keyPairExists {
@@ -264,7 +272,7 @@ static NSData* p12 = nil;
     
     if (!x509) {
         Log(LOG_E, @"Unable to parse certificate in memory!");
-        return NULL;
+        return nil;
     }
     
 #if (OPENSSL_VERSION_NUMBER < 0x10002000L)

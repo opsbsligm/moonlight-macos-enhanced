@@ -134,13 +134,105 @@ static BOOL MoonlightShouldAutoDiscoverNewHosts(void) {
 }
 
 - (ServerInfoResponse*) getServerInfoResponseForAddress:(NSString*)address {
-    HttpManager* hMan = [[HttpManager alloc] initWithHost:address uniqueId:_uniqueId serverCert:nil];
+    // Parse host and explicit port from address string. We need to handle
+    // the port correctly for both HTTPS and HTTP fallback requests.
+    NSString *hostPart = nil;
+    NSString *portPart = nil;
+    [Utils parseAddress:address intoHost:&hostPart andPort:&portPart];
+    if (hostPart.length == 0) {
+        hostPart = address;
+    }
+
+    NSString *httpsPort;
+    NSString *httpPort;
+
+    if (portPart.length > 0) {
+        // Explicit port supplied. Determine whether it's an HTTPS or HTTP port.
+        // Known HTTPS GameStream API ports: 47984, 49984, 57984 (and any ending in 4)
+        // Known HTTP GameStream API ports: 47989, 49989, 57989 (and any ending in 9)
+        // WebUI ports: 47990, 49990, 57990 — the GameStream API ports are at
+        //   WebUI - 6 (HTTPS) and WebUI - 1 (HTTP). E.g. 47990 -> 47984 / 47989.
+        NSInteger portVal = portPart.integerValue;
+        switch (portVal) {
+            case 47984: case 49984: case 57984:
+                // This is an HTTPS API port
+                httpsPort = portPart;
+                httpPort = [NSString stringWithFormat:@"%ld", (long)(portVal + 5)];
+                break;
+            case 47989: case 49989: case 57989:
+                // This is an HTTP API port
+                httpsPort = [NSString stringWithFormat:@"%ld", (long)(portVal - 5)];
+                httpPort = portPart;
+                break;
+            case 47990: case 49990: case 57990:
+                // WebUI port — HTTPS API is port-6, HTTP API is port-1
+                httpsPort = [NSString stringWithFormat:@"%ld", (long)(portVal - 6)];
+                httpPort  = [NSString stringWithFormat:@"%ld", (long)(portVal - 1)];
+                break;
+            default:
+                // Unknown port — use a heuristic based on the last digit to
+                // decide whether it's a WebUI, HTTPS, or HTTP port. This keeps
+                // custom Sunshine ports (e.g. 48990, 55990) from being
+                // misclassified as plain HTTP ports.
+                switch (portVal % 10) {
+                    case 0:
+                        // WebUI port — HTTPS API is port-6, HTTP API is port-1
+                        httpsPort = [NSString stringWithFormat:@"%ld", (long)(portVal - 6)];
+                        httpPort  = [NSString stringWithFormat:@"%ld", (long)(portVal - 1)];
+                        break;
+                    case 4:
+                        // HTTPS API port
+                        httpsPort = portPart;
+                        httpPort = [NSString stringWithFormat:@"%ld", (long)(portVal + 5)];
+                        break;
+                    case 9:
+                        // HTTP API port
+                        httpsPort = [NSString stringWithFormat:@"%ld", (long)(portVal - 5)];
+                        httpPort = portPart;
+                        break;
+                    default:
+                        // Conservative fallback — treat as HTTP port
+                        httpsPort = [NSString stringWithFormat:@"%ld", (long)(portVal - 5)];
+                        httpPort = portPart;
+                        break;
+                }
+                break;
+        }
+    } else {
+        // No port — use standard defaults
+        httpsPort = @"47984";
+        httpPort = @"47989";
+    }
+
+    HttpManager* hMan = [[HttpManager alloc] initWithHost:hostPart
+                                              httpsPort:httpsPort
+                                                httpPort:httpPort
+                                                uniqueId:_uniqueId
+                                              serverCert:nil];
     ServerInfoResponse* serverInfoResponse = [[ServerInfoResponse alloc] init];
-    // Use fast failure for discovery (2s timeout) to speed up status updates
-    [hMan executeRequestSynchronously:[HttpRequest requestForResponse:serverInfoResponse withUrlRequest:[hMan newServerInfoRequest:true] fallbackError:401 fallbackRequest:[hMan newHttpServerInfoRequest:true]]];
+
+    NSURLRequest *httpsReq = [hMan newServerInfoRequest:true];
+    NSURLRequest *httpReq = [hMan newHttpServerInfoRequest:true];
+    Log(LOG_D, @"[Discovery] Probing %@ — HTTPS: %@ | HTTP: %@",
+        address, httpsReq.URL.absoluteString, httpReq.URL.absoluteString);
+
+    // Probe HTTP first so that activeAddress (recorded from the responding candidate)
+    // carries the HTTP port or bare IP — never an HTTPS-only port. Downstream code
+    // that re-derives ports from activeAddress treats the embedded port as HTTP.
+    // HTTPS is retained as the 401 fallback (legacy GFE/Sunshine hosts that
+    // reject unauthenticated HTTP serverinfo return 401 and need a retry over TLS).
+    [hMan executeRequestSynchronously:[HttpRequest requestForResponse:serverInfoResponse
+                                                        withUrlRequest:httpReq
+                                                         fallbackError:401
+                                                        fallbackRequest:httpsReq]];
+
     return serverInfoResponse;
 }
 
+// Try the user-provided address first, then probe common Sunshine/GFE ports
+// on the same host. This handles cases where the user typed just an IP
+// (Sunshine runs on non-default ports), or a WebUI port (47990/49990/57990)
+// where we need to fall back to the adjacent GameStream API port (port-1).
 - (void) discoverHost:(NSString *)hostAddress withCallback:(void (^)(TemporaryHost *, NSString*))callback {
     BOOL prohibitedAddress = [DiscoveryManager isProhibitedAddress:hostAddress];
     NSString* prohibitedAddressMessage = [NSString stringWithFormat: @"Moonlight only supports adding PCs on your local network on %s.",
@@ -150,14 +242,88 @@ static BOOL MoonlightShouldAutoDiscoverNewHosts(void) {
                                    "iOS"
     #endif
                              ];
-    ServerInfoResponse* serverInfoResponse = [self getServerInfoResponseForAddress:hostAddress];
-    
+
+    // Parse the user's input into host + optional port
+    NSString *baseHost = nil;
+    NSString *userPort = nil;
+    [Utils parseAddress:hostAddress intoHost:&baseHost andPort:&userPort];
+    if (baseHost.length == 0) {
+        baseHost = hostAddress;
+    }
+
+    // Build a list of candidate addresses to probe, in priority order.
+    // The getServerInfoResponseForAddress method now correctly maps each
+    // port to its HTTPS/HTTP counterparts, so we just need to provide the
+    // right candidate addresses.
+    NSMutableOrderedSet<NSString *> *candidates = [NSMutableOrderedSet orderedSetWithCapacity:6];
+    [candidates addObject:hostAddress];
+
+    if (userPort.length == 0) {
+        // No explicit port: probe well-known Sunshine/GFE API ports.
+        // HTTP ports first — when a candidate succeeds we record it as
+        // activeAddress, and downstream code treats an embedded port as HTTP.
+        // Putting HTTP first keeps activeAddress HTTP-shaped so later
+        // single-arg initWithHost:uniqueId:serverCert: (used by ConnectionHelper
+        // and elsewhere) can re-derive the correct HTTPS port.
+        NSArray<NSNumber *> *apiPorts = @[@47989, @49989, @57989, @47984, @49984, @57984];
+        for (NSNumber *p in apiPorts) {
+            NSString *addr = [self joinHost:baseHost withPort:p.integerValue];
+            if (addr) [candidates addObject:addr];
+        }
+    }
+
+    Log(LOG_D, @"[Discovery] Candidates for %@: %@", hostAddress, candidates.array);
+
+    ServerInfoResponse* serverInfoResponse = nil;
+    NSString* bestAddress = nil;
+    for (NSString *candidate in candidates) {
+        serverInfoResponse = [self getServerInfoResponseForAddress:candidate];
+        if ([serverInfoResponse isStatusOk]) {
+            bestAddress = candidate;
+            Log(LOG_D, @"Manual host discovery hit on %@", candidate);
+            break;
+        }
+    }
+
     TemporaryHost* host = nil;
-    if ([serverInfoResponse isStatusOk]) {
+    if (serverInfoResponse != nil && [serverInfoResponse isStatusOk]) {
         host = [[TemporaryHost alloc] init];
-        host.activeAddress = host.address = hostAddress;
+        // Use the address that actually responded as activeAddress; persist
+        // the original user input as address so subsequent discovery (which
+        // reads address/localAddress/externalAddress) still works.
+        NSString *normalizedAddress = bestAddress ?: hostAddress;
+        // Normalize HTTPS-shaped activeAddress to HTTP port so downstream
+        // single-arg initWithHost:uniqueId:serverCert: (which treats an
+        // embedded port as HTTP) derives the correct HTTPS port.
+        {
+            NSString *nh = nil, *np = nil;
+            [Utils parseAddress:normalizedAddress intoHost:&nh andPort:&np];
+            if (np.length > 0) {
+                NSInteger pv = np.integerValue;
+                if (pv > 0 && pv % 10 == 4) {
+                    // HTTPS API port — convert to HTTP counterpart (port + 5)
+                    normalizedAddress = [self joinHost:nh withPort:pv + 5];
+                }
+            }
+        }
+        host.activeAddress = normalizedAddress;
+        host.address = hostAddress;
         host.state = StateOnline;
         [serverInfoResponse populateHost:host];
+
+        // If we succeeded on a derived (not user-entered) address, also
+        // update localAddress with that derived endpoint so the saved
+        // host record can reach the server on next launch even if the
+        // original bare IP has no API listener.
+        if (bestAddress != nil && ![bestAddress isEqualToString:hostAddress]) {
+            if (host.localAddress.length == 0) {
+                NSString *derivedHost = nil;
+                [Utils parseAddress:bestAddress intoHost:&derivedHost andPort:nil];
+                if ([derivedHost isEqualToString:baseHost]) {
+                    host.localAddress = bestAddress;
+                }
+            }
+        }
         
         // Check if this is a new PC
         if (![self getHostInDiscovery:host.uuid]) {
@@ -224,6 +390,16 @@ static BOOL MoonlightShouldAutoDiscoverNewHosts(void) {
     } else {
         callback(nil, prohibitedAddressMessage);
     }
+}
+
+- (NSString *)joinHost:(NSString *)host withPort:(NSInteger)port {
+    if (host.length == 0 || port <= 0 || port > 65535) {
+        return nil;
+    }
+    if ([host containsString:@":"] && ![host hasPrefix:@"["]) {
+        return [NSString stringWithFormat:@"[%@]:%ld", host, (long)port];
+    }
+    return [NSString stringWithFormat:@"%@:%ld", host, (long)port];
 }
 
 - (void) resetDiscoveryState {

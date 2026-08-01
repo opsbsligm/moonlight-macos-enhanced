@@ -6,25 +6,34 @@
 //  Drops all legacy macOS <26 fallback paths; dedicated to the new
 //  translucent material system and native .liquidGlass split view.
 //
+//  Note: configuration mirrors SettingsHostingController — the window is
+//  fully opaque (no .fullSizeContentView, no transparent titlebar) to
+//  satisfy the "settings window must be completely opaque with no desktop
+//  penetration" hard constraint.
+//
 
 import AppKit
 import SwiftUI
 import Combine
 
-final class LiquidGlassWindowController<RootView: View>: NSWindowController {
+final class LiquidGlassWindowController<RootView: View>: NSWindowController, NSWindowDelegate {
   private var languageObserver: Any?
 
   convenience init(rootView: RootView, title: String, minSize: NSSize = NSSize(width: 560, height: 420)) {
     let hosting = NSHostingController(rootView: rootView)
 
     let window = NSWindow(contentViewController: hosting)
-    window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+    // Standard opaque window — NO fullSizeContentView, NO transparent titlebar.
+    // Matches SettingsHostingController so the window is completely opaque.
+    window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
     window.collectionBehavior = [.fullScreenNone, .participatesInCycle]
     window.tabbingMode = .disallowed
     window.minSize = minSize
     window.title = title
     window.titleVisibility = .visible
-    window.titlebarAppearsTransparent = true
+    window.titlebarAppearsTransparent = false
+    // styleMask does not include .fullSizeContentView, so the content view
+    // does not extend under the titlebar — hasFullScreenContentView is moot.
     window.isMovable = true
 
     self.init(window: window)
@@ -44,17 +53,17 @@ final class LiquidGlassWindowController<RootView: View>: NSWindowController {
   }
 
   private func setupAppearanceBindings() {
-    // macOS 26 Liquid Glass windows respond to system vibrancy automatically;
-    // the content view should never draw opaque backgrounds.
+    // Opaque configuration — matches SettingsHostingController. The window
+    // and its content view draw an opaque controlBackgroundColor layer so
+    // the desktop can never show through (hard constraint).
     window?.contentView?.wantsLayer = true
-    window?.contentView?.layer?.backgroundColor = .clear
-    window?.isOpaque = false
+    window?.contentView?.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    window?.contentView?.layer?.isOpaque = true
+    window?.isOpaque = true
     window?.hasShadow = true
-    window?.backgroundColor = .clear
+    window?.backgroundColor = .controlBackgroundColor
   }
-}
 
-extension LiquidGlassWindowController: NSWindowDelegate {
   func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
     // Enforce minimum size for the liquid-glass tab bar so tiles never collapse.
     let minSize = sender.minSize

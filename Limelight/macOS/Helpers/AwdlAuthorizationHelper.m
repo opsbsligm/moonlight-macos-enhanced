@@ -7,6 +7,12 @@
 #import <Security/SecCode.h>
 #import <Security/SecBase.h>
 
+// SMJobBless is deprecated in macOS 13.0 in favor of SMAppService. However,
+// SMAppService does not yet support the privileged helper tool (launchd
+// Mach service) pattern used by AWDL. Suppress deprecation at file scope
+// until SMAppService gains privileged helper support; tracked for migration.
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 @implementation MLAwdlAuthorizationHelper
 
 static AuthorizationRef MLAwdlAuthorizationRef = NULL;
