@@ -80,7 +80,7 @@ fi
 
 echo ""
 echo "5. Launch test (5 second smoke test)"
-LAUNCH_PID=$(open -W -n "$APP_PATH" &; echo $!)
+open -n "$APP_PATH" 2>/dev/null
 sleep 5
 
 if pgrep -f "Moonlight.app/Contents/MacOS/Moonlight" >/dev/null 2>&1; then
@@ -94,7 +94,7 @@ else
 fi
 
 # Check for crash logs
-CRASH_LOGS=$(ls ~/Library/Logs/DiagnosticReports/Moonlight* 2>/dev/null | wc -l)
+CRASH_LOGS=$(find ~/Library/Logs/DiagnosticReports -name "Moonlight*" 2>/dev/null | wc -l)
 if [[ "$CRASH_LOGS" -eq 0 ]]; then
   echo "  PASS: No crash logs found"
   PASS=$((PASS + 1))
