@@ -145,6 +145,9 @@
 				macOS/ViewControllers/SettingsStreamPane.swift,
 				macOS/ViewControllers/SettingsVideoPane.swift,
 				macOS/ViewControllers/SettingsView.swift,
+				macOS/ViewControllers/LiquidGlass/LiquidGlassWindowController.swift,
+				macOS/ViewControllers/LiquidGlass/LiquidGlassTabBar.swift,
+				macOS/ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift,
 				macOS/ViewControllers/StreamRiskAssessment.swift,
 				macOS/ViewControllers/StreamViewController.m,
 				"macOS/ViewControllers/StreamViewController+Diagnostics.m",
@@ -284,7 +287,7 @@
 					4C7E0A791FECBFFD00684411 = {
 						CreatedOnToolsVersion = 9.2;
 						LastSwiftMigration = 1020;
-						ProvisioningStyle = Automatic;
+						ProvisioningStyle = Manual;
 						SystemCapabilities = {
 							com.apple.Sandbox = {
 								enabled = 0;
@@ -452,7 +455,7 @@
 					"-weak_framework",
 					MetalFX,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac;
+				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac2;
 				PRODUCT_NAME = Moonlight;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
@@ -485,7 +488,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -512,7 +515,7 @@
 					"-weak_framework",
 					MetalFX,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac;
+				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac2;
 				PRODUCT_NAME = Moonlight;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
@@ -567,6 +570,11 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				// OpenSSL framework headers use lowercase include paths (e.g.
+				// <openssl/evp.h>) that differ in case from the files on disk
+				// (EVP.h). This is a known issue with the pre-built framework
+				// and cannot be fixed without patching upstream headers.
+				WARNING_CFLAGS = "-Wno-nonportable-include-path";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -619,6 +627,11 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				// OpenSSL framework headers use lowercase include paths (e.g.
+				// <openssl/evp.h>) that differ in case from the files on disk
+				// (EVP.h). This is a known issue with the pre-built framework
+				// and cannot be fixed without patching upstream headers.
+				WARNING_CFLAGS = "-Wno-nonportable-include-path";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PROVISIONING_PROFILE = "";
 				SDKROOT = macosx;

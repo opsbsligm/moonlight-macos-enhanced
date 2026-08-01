@@ -23,13 +23,13 @@
         appListResp = [[AppListResponse alloc] init];
         [hMan executeRequestSynchronously:[HttpRequest requestForResponse:appListResp withUrlRequest:[hMan newAppListRequest]]];
         if (![appListResp isStatusOk] || [appListResp getAppList] == nil) {
-            Log(LOG_W, @"Failed to get applist on try %d: %@", i, appListResp.statusMessage);
+            Log(LOG_W, @"Failed to get applist on try %d: %@", i + 1, appListResp.statusMessage);
             
             // Wait for one second then retry
             [NSThread sleepForTimeInterval:1];
         }
         else {
-            Log(LOG_I, @"App list successfully retreived - took %d tries", i);
+            Log(LOG_I, @"App list successfully retreived - took %d tries", i + 1);
             break;
         }
     }

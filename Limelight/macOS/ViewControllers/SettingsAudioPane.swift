@@ -200,7 +200,7 @@ struct AudioView: View {
             hintKey: "Microphone hint",
             boolBinding: $settingsModel.enableMicrophone
           )
-          .onChange(of: settingsModel.enableMicrophone) { newValue in
+          .onChange(of: settingsModel.enableMicrophone) { _, newValue in
             guard newValue else { return }
             micManager.refreshPermissionStatus()
             switch micManager.permissionStatus {

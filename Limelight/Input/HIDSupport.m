@@ -9,6 +9,12 @@
 
 #import <IOKit/hid/IOHIDElement.h>
 
+// CVDisplayLink is deprecated in macOS 15.0 but remains the recommended API
+// for low-latency game input polling. The new NSView.displayLink API is not
+// yet validated for sub-frame input latency. Suppress deprecation at file
+// scope; tracked for migration in a future release.
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 
 NSString *const HIDMouseModeToggledNotification = @"HIDMouseModeToggledNotification";
 NSString *const HIDGamepadQuitNotification = @"HIDGamepadQuitNotification";
@@ -1473,6 +1479,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                     default:
                         break;
                 }
+                break;
             case kHIDPage_Simulation:
                 switch (usage) {
                     case kHIDUsage_Sim_Brake:
@@ -1485,6 +1492,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                     default:
                         break;
                 }
+                break;
 
             case kHIDPage_Button:
                 switch (usage) {
@@ -1521,6 +1529,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                         break;
                 }
                 
+                break;
             case kHIDPage_Consumer:
                 switch (usage) {
                     case kHIDUsage_Csmr_ACBack:
@@ -1540,6 +1549,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                         break;
                 }
                 
+                break;
             default:
                 break;
         }
@@ -1604,6 +1614,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                     default:
                         break;
                 }
+                break;
 
             case kHIDPage_Button:
                 switch (usage) {
@@ -1646,6 +1657,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
                         break;
                 }
                 
+                break;
             default:
                 break;
         }

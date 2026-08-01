@@ -102,8 +102,6 @@
     NSString* _sharedStreamUniqueId;
     NSString* _deviceName;
     NSData* _serverCert;
-    
-    NSError* _error;
 }
 
 static uint64_t gLastServerInfoErrorLogMs = 0;
@@ -135,20 +133,31 @@ static BOOL IsServerInfoRequest(NSURL *url) {
     return [abs containsString:@"/serverinfo"];
 }
 
-static void LogServerInfoFallbackError(NSInteger code, NSURL *url) {
-    uint64_t nowMs = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
-    if (nowMs - gLastServerInfoErrorLogMs < 1000) {
-        gSuppressedServerInfoErrorLogs++;
-        return;
-    }
+static NSObject *ServerInfoErrorLogLock(void) {
+    static NSObject *lock;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        lock = [[NSObject alloc] init];
+    });
+    return lock;
+}
 
-    if (gSuppressedServerInfoErrorLogs > 0) {
-        Log(LOG_W, @"Request failed with error %ld, attempting fallback (suppressed %d repeats in last 1.0s)", (long)code, gSuppressedServerInfoErrorLogs);
-        gSuppressedServerInfoErrorLogs = 0;
-    } else {
-        Log(LOG_W, @"Request failed with error %ld, attempting fallback", (long)code);
+static void LogServerInfoFallbackError(NSInteger code, NSURL *url) {
+    @synchronized(ServerInfoErrorLogLock()) {
+        uint64_t nowMs = (uint64_t)(CFAbsoluteTimeGetCurrent() * 1000.0);
+        if (nowMs - gLastServerInfoErrorLogMs < 1000) {
+            gSuppressedServerInfoErrorLogs++;
+            return;
+        }
+
+        if (gSuppressedServerInfoErrorLogs > 0) {
+            Log(LOG_W, @"Request failed with error %ld, attempting fallback (suppressed %d repeats in last 1.0s)", (long)code, gSuppressedServerInfoErrorLogs);
+            gSuppressedServerInfoErrorLogs = 0;
+        } else {
+            Log(LOG_W, @"Request failed with error %ld, attempting fallback", (long)code);
+        }
+        gLastServerInfoErrorLogMs = nowMs;
     }
-    gLastServerInfoErrorLogMs = nowMs;
 }
 
 static const NSString* HTTP_PORT = @"47989";
@@ -166,6 +175,11 @@ static const NSString* HTTPS_PORT = @"47984";
 }
 
 - (id) initWithHost:(NSString*) host uniqueId:(NSString*) uniqueId serverCert:(NSData*) serverCert {
+    // Delegate to the explicit-port initializer with auto-derived default ports.
+    return [self initWithHost:host httpsPort:nil httpPort:nil uniqueId:uniqueId serverCert:serverCert];
+}
+
+- (id) initWithHost:(NSString*) host httpsPort:(NSString*)httpsPort httpPort:(NSString*)httpPort uniqueId:(NSString*) uniqueId serverCert:(NSData*) serverCert {
     self = [super init];
     // Use a per-client ID for pairing/discovery so different Moonlight installs
     // don't overwrite each other's pairing state on the host.
@@ -173,23 +187,46 @@ static const NSString* HTTPS_PORT = @"47984";
     // Keep the historical shared stream session ID so another Moonlight client
     // can still stop a session started elsewhere.
     _sharedStreamUniqueId = kSharedStreamSessionUniqueId;
-    _deviceName = deviceName;
+
+    // Derive a stable device name for this client. GFE / Sunshine uses the
+    // devicename query parameter to identify and label the connecting client.
+    NSString *resolvedDeviceName = nil;
+    char hostname[256] = {0};
+    if (gethostname(hostname, sizeof(hostname)) == 0) {
+        resolvedDeviceName = [NSString stringWithUTF8String:hostname];
+    }
+    if (resolvedDeviceName.length == 0) {
+        resolvedDeviceName = [[NSHost currentHost] name];
+    }
+    if (resolvedDeviceName.length == 0) {
+        resolvedDeviceName = @"Moonlight";
+    }
+    _deviceName = resolvedDeviceName;
     _serverCert = serverCert;
-    
+
     NSString* hostAddress;
     NSString* customPort;
-    
+
     [Utils parseAddress:host intoHost:&hostAddress andPort:&customPort];
-    
-    NSString* httpPort = (NSString*)HTTP_PORT;
-    NSString* httpsPort = (NSString*)HTTPS_PORT;
-    
-    if (customPort != nil) {
-        // When a custom port is specified, we assume it's the HTTP port
-        // because that's what we use for initial discovery/pairing.
-        // We derive the HTTPS port by subtracting 5 (standard offset).
-        httpPort = customPort;
-        httpsPort = [NSString stringWithFormat:@"%d", [customPort intValue] - 5];
+
+    // Port resolution order:
+    //   1. Caller-supplied httpsPort/httpPort win outright (used by DiscoveryManager
+    //      which already mapped WebUI/HTTPS/HTTP ports to their canonical counterparts).
+    //   2. Otherwise, if the host string carries a port, treat it as the HTTP port
+    //      and derive the HTTPS port as httpPort - 5 (standard GFE/Sunshine offset).
+    //   3. Else fall back to the well-known GameStream defaults (47989 / 47984).
+    NSString* resolvedHttpPort  = httpPort;
+    NSString* resolvedHttpsPort = httpsPort;
+
+    if (resolvedHttpPort.length == 0) {
+        resolvedHttpPort = (customPort.length > 0) ? customPort : (NSString*)HTTP_PORT;
+    }
+    if (resolvedHttpsPort.length == 0) {
+        if (customPort.length > 0) {
+            resolvedHttpsPort = [NSString stringWithFormat:@"%d", [customPort intValue] - 5];
+        } else {
+            resolvedHttpsPort = (NSString*)HTTPS_PORT;
+        }
     }
 
     // If this is an IPv6 literal, we must properly enclose it in brackets
@@ -199,9 +236,9 @@ static const NSString* HTTPS_PORT = @"47984";
     } else {
         urlSafeHost = hostAddress;
     }
-    
-    _baseHTTPURL = [NSString stringWithFormat:@"http://%@:%@", urlSafeHost, httpPort];
-    _baseHTTPSURL = [NSString stringWithFormat:@"https://%@:%@", urlSafeHost, httpsPort];
+
+    _baseHTTPURL  = [NSString stringWithFormat:@"http://%@:%@",  urlSafeHost, resolvedHttpPort];
+    _baseHTTPSURL = [NSString stringWithFormat:@"https://%@:%@", urlSafeHost, resolvedHttpsPort];
 
     return self;
 }
@@ -261,11 +298,11 @@ static const NSString* HTTPS_PORT = @"47984";
         [urlSession finishTasksAndInvalidate];
     }
 
-    _error = requestError;
+    NSError *error = requestError;
 
-    if (!_error && request.response) {
+    if (!error && request.response) {
         [request.response populateWithData:requestResp];
-        
+
         // If the fallback error code was detected, issue the fallback request
         if (request.response.statusCode == request.fallbackError && request.fallbackRequest != NULL) {
             Log(LOG_D, @"Request failed with fallback error code: %d", request.fallbackError);
@@ -275,22 +312,21 @@ static const NSString* HTTPS_PORT = @"47984";
             [self executeRequestSynchronously:request];
         }
     }
-    else if (_error && request.fallbackRequest) {
+    else if (error && request.fallbackRequest) {
         // Fallback on any error if fallback is present (e.g. HTTP fallback for HTTPS discovery)
-        // This handles cases like certificate mismatches (-1202) or other TLS errors
         if (IsServerInfoRequest(request.request.URL)) {
-            LogServerInfoFallbackError([_error code], request.request.URL);
+            LogServerInfoFallbackError([error code], request.request.URL);
         } else {
-            Log(LOG_W, @"Request failed with error %ld, attempting fallback", (long)[_error code]);
+            Log(LOG_W, @"Request failed with error %ld, attempting fallback", (long)[error code]);
         }
         request.request = request.fallbackRequest;
         request.fallbackError = 0;
         request.fallbackRequest = NULL;
         [self executeRequestSynchronously:request];
     }
-    else if (_error && request.response) {
-        request.response.statusCode = [_error code];
-        request.response.statusMessage = [_error localizedDescription];
+    else if (error && request.response) {
+        request.response.statusCode = [error code];
+        request.response.statusMessage = [error localizedDescription];
     }
 }
 
@@ -341,11 +377,10 @@ static const NSString* HTTPS_PORT = @"47984";
 }
 
 - (NSURLRequest *)newServerInfoRequest:(bool)fastFail {
-    if (_serverCert == nil) {
-        // Use HTTP if the cert is not pinned yet
-        return [self newHttpServerInfoRequest:fastFail];
-    }
-    
+    // Always prefer HTTPS for serverinfo. For unpinned hosts (_serverCert == nil),
+    // the TLS delegate will accept any server certificate to allow the first
+    // contact / pairing handshake. Fallback to HTTP is handled at the call site
+    // via HttpRequest.fallbackRequest (e.g. for legacy GFE 2.x hosts).
     NSString* urlString = [NSString stringWithFormat:@"%@/serverinfo?uniqueid=%@", _baseHTTPSURL, _clientUniqueId];
     return [self createRequestFromString:urlString timeout:(fastFail ? SHORT_TIMEOUT_SEC : NORMAL_TIMEOUT_SEC)];
 }
@@ -356,14 +391,13 @@ static const NSString* HTTPS_PORT = @"47984";
     NSString* urlString = [NSString stringWithFormat:@"%@/serverinfo?uniqueid=%@", _baseHTTPURL, _clientUniqueId];
     return [self createRequestFromString:urlString timeout:(fastFail ? SHORT_TIMEOUT_SEC : NORMAL_TIMEOUT_SEC)];
 }
-
 - (NSURLRequest *)newHttpServerInfoRequest {
     return [self newHttpServerInfoRequest:false];
 }
 
 - (NSURLRequest *)newDisplaysRequest {
     NSString *urlString = [NSString stringWithFormat:@"%@/displays?uniqueid=%@", _baseHTTPSURL, _clientUniqueId];
-    return [self createRequestFromString:urlString timeout:SHORT_TIMEOUT_SEC];
+    return [self createRequestFromString:urlString timeout:NORMAL_TIMEOUT_SEC];
 }
 
 - (NSArray<NSDictionary<NSString*, id>*>*)fetchSunshineDisplays {
@@ -1056,11 +1090,24 @@ static const NSString* HTTPS_PORT = @"47984";
     // Allow untrusted server certificates
     if([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust])
     {
-        if (SecTrustGetCertificateCount(challenge.protectionSpace.serverTrust) != 1) {
-            Log(LOG_E, @"Server certificate count mismatch");
-            completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, NULL);
-            return;
+        if (_serverCert == nil) {
+            // No pinned certificate yet (first contact / pre-pairing phase).
+            // Accept any server certificate so HTTPS probes can succeed against
+            // freshly installed Sunshine hosts (which use self-signed certs and
+            // often have HTTP/47989 disabled by default). The certificate will
+            // be pinned after a successful pairing handshake.
+            SecTrustRef trust = challenge.protectionSpace.serverTrust;
+            if (trust != NULL) {
+                completionHandler(NSURLSessionAuthChallengeUseCredential,
+                                  [NSURLCredential credentialForTrust:trust]);
+                return;
+            }
         }
+
+        // Note: We intentionally do not enforce a certificate chain length of 1.
+        // Requiring a single-element chain breaks enterprise CA deployments and
+        // hosts that present intermediate certificates. Pinning is based solely
+        // on comparing the leaf certificate (index 0) below, which is sufficient.
         
         SecCertificateRef actualCert = NULL;
         if (@available(macOS 12.0, *)) {

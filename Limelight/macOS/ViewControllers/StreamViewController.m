@@ -741,6 +741,11 @@ highFreqMotor:(unsigned short)highFreqMotor {
     [self restoreStreamWindowChromeIfNeeded];
     [self tearDownStreamLifecycleObserversAndTimers];
 
+    // H6 fix: release IOPMAssertion so the display can sleep again if the VC
+    // is deallocated while mouse capture is still active (e.g. external release
+    // or exception path). allowDisplaySleep is idempotent.
+    [self allowDisplaySleep];
+
     [self removeMenuTitlebarAccessoryFromWindowIfNeeded];
     self.menuTitlebarAccessory = nil;
     self.menuTitlebarButton = nil;
@@ -1561,23 +1566,29 @@ highFreqMotor:(unsigned short)highFreqMotor {
 - (void)connectionTerminated:(int)errorCode {
     Log(LOG_I, @"Connection terminated: %ld (0x%08x)", (long)errorCode, (unsigned int)errorCode);
     LiSetThreadConnectionContext(NULL);
-    self.clipboardRuntimeConnection = nil;
-    self.waitingForFirstRenderedFrame = NO;
-    [self stopStreamHealthDiagnostics];
-    [self finalizeInputDiagnosticsWithReason:[NSString stringWithFormat:@"connection-terminated:%d", errorCode]];
-    self.streamHealthConnectionStartedMs = 0;
-    [self logStreamHealthSummaryWithReason:[NSString stringWithFormat:@"connection-terminated:%d", errorCode]];
-    [[AwdlHelperManager sharedManager] endStreamSessionWithReason:[NSString stringWithFormat:@"connection-terminated:%d", errorCode]];
 
-    // Notify session manager
-    if (self.app.host.uuid) {
-        [[StreamingSessionManager shared] didDisconnectForHost:self.app.host.uuid];
-    }
-
-    self.hidSupport.inputContext = NULL;
-    self.controllerSupport.inputContext = NULL;
-
+    // H4 fix: the entire method body must run on the main thread because it
+    // touches nonatomic UI-bound properties (hidSupport, controllerSupport,
+    // clipboardRuntimeConnection, timers, overlays). The previous code only
+    // dispatched the tail end to the main queue, leaving the head executing on
+    // the common-c callback thread where it could race with dealloc/teardown.
     dispatch_async(dispatch_get_main_queue(), ^{
+        self.clipboardRuntimeConnection = nil;
+        self.waitingForFirstRenderedFrame = NO;
+        [self stopStreamHealthDiagnostics];
+        [self finalizeInputDiagnosticsWithReason:[NSString stringWithFormat:@"connection-terminated:%d", errorCode]];
+        self.streamHealthConnectionStartedMs = 0;
+        [self logStreamHealthSummaryWithReason:[NSString stringWithFormat:@"connection-terminated:%d", errorCode]];
+        [[AwdlHelperManager sharedManager] endStreamSessionWithReason:[NSString stringWithFormat:@"connection-terminated:%d", errorCode]];
+
+        // Notify session manager
+        if (self.app.host.uuid) {
+            [[StreamingSessionManager shared] didDisconnectForHost:self.app.host.uuid];
+        }
+
+        self.hidSupport.inputContext = NULL;
+        self.controllerSupport.inputContext = NULL;
+
         [self releaseClipboardSyncOwnershipWithUnbind:NO];
         [self hideConnectionTimeoutOverlay];
         if (self.statsTimer) {
@@ -1601,7 +1612,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
         if (self.reconnectInProgress) {
             return;
         }
-        
+
         // If it was user initiated, just close normally.
         if (self.disconnectWasUserInitiated) {
              if ([SettingsClass quitAppAfterStreamFor:self.app.host.uuid]) {
@@ -1611,7 +1622,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
              }
              return;
         }
-        
+
         // Once a stream has been established, any termination here should close the stream window
         // instead of leaving the last frame or an error page behind. Launch/setup failures are
         // handled separately by stageFailed/launchFailed.

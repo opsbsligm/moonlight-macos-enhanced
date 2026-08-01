@@ -7,6 +7,12 @@
 //
 #import "HIDSupport_Internal.h"
 
+// CVDisplayLink is deprecated in macOS 15.0 but remains the recommended API
+// for low-latency pointer input. The new NSView.displayLink API is not yet
+// validated for sub-frame input latency. Suppress deprecation at file scope;
+// tracked for migration in a future release.
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 static CGFloat const HIDGCMouseRelativeSpeedDivisor = 2.5;
 static CGFloat const HIDCoreHIDFreeMouseBaselineScale = 0.75;
 

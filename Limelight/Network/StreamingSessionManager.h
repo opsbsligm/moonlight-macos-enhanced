@@ -12,9 +12,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, StreamingState) {
     StreamingStateIdle,
-    StreamingStateConnecting,
+    StreamingStateConnecting,    // Currently unused; reserved for future connection lifecycle phases.
     StreamingStateStreaming,
-    StreamingStateDisconnecting
+    StreamingStateDisconnecting  // Currently unused; reserved for future connection lifecycle phases.
 };
 
 @interface StreamingSessionManager : NSObject
@@ -24,12 +24,6 @@ typedef NS_ENUM(NSInteger, StreamingState) {
 @property (nonatomic, readonly, nullable) NSString *activeAppId;
 @property (nonatomic, readonly, nullable) NSString *activeAppName;
 @property (nonatomic, weak, nullable) NSWindowController *streamWindowController;
-
-// Stream statistics
-@property (nonatomic, readonly) double currentLatency;
-@property (nonatomic, readonly, nullable) NSString *currentResolution;
-@property (nonatomic, readonly) NSInteger currentFramerate;
-@property (nonatomic, readonly) double connectionQuality; // 0.0 to 1.0
 
 + (instancetype)shared;
 
@@ -42,12 +36,6 @@ typedef NS_ENUM(NSInteger, StreamingState) {
                          appId:(NSString *)appId
                        appName:(NSString *)appName
             windowController:(NSWindowController *)windowController;
-
-// Update stream statistics
-- (void)updateStreamStats:(double)latency 
-               resolution:(NSString *)resolution 
-                framerate:(NSInteger)framerate 
-                  quality:(double)quality;
 
 // Query state for a specific host
 - (BOOL)isStreamingHost:(NSString *)hostUUID;

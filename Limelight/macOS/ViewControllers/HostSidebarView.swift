@@ -60,7 +60,10 @@ struct HostSidebarView: View {
         }
         .listStyle(SidebarListStyle())
         .frame(minWidth: 200)
-        .onChange(of: selectedHostUUID) { newUUID in
+        .onChange(of: selectedHostUUID) { oldUUID, newUUID in
+            // The two-parameter closure form is the macOS 14+ replacement for the
+            // deprecated single-parameter onChange(of:perform:) overload.
+            _ = oldUUID
             if let uuid = newUUID {
                 let stateRaw = viewModel.hosts.first(where: { $0.uuid == uuid })?.state.rawValue ?? HostState.unknown.rawValue
                 onHostSelected(uuid, stateRaw)

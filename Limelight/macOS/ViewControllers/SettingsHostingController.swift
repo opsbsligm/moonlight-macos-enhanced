@@ -11,23 +11,63 @@ import AVFoundation
 import Combine
 import SwiftUI
 
-class SettingsHostingController<RootView: View>: NSWindowController {
-  // Wraps macOS 26 LiquidGlassWindowController while keeping the same
-  // ObjC bridge entry point for backward compatibility of the caller API.
-  private var _real: LiquidGlassWindowController<RootView>?
+class SettingsHostingController<RootView: View>: NSWindowController, NSWindowDelegate {
+  // Inline macOS 26 Liquid Glass window configuration; avoids the need
+  // to reference an external LiquidGlassWindowController type that may
+  // not be in the same Swift frontend compilation batch.
+  private var languageObserver: Any?
 
   convenience init(rootView: RootView) {
     let title = LanguageManager.shared.localize("Settings")
-    let inner = LiquidGlassWindowController(
-      rootView: rootView,
-      title: title,
-      minSize: NSSize(width: 640, height: 520)
+    let hosting = NSHostingController(rootView: rootView)
+
+    let window = NSWindow(contentViewController: hosting)
+    // ── Liquid Glass window chrome (macOS 26) ────────────────────────
+    // fullSizeContentView: 使内容视图延伸到标题栏下方,让 Liquid Glass
+    //                     标题栏与下方内容视觉上连续,不再有"分隔条"
+    // titlebarAppearsTransparent = true:
+    //                     macOS 26 标题栏用 Liquid Glass 玻璃材质,
+    //                     必须 transparent 才能让背景内容透出
+    // titleVisibility = .hidden: 隐藏"设置"标题文字,标题栏只留红黄绿
+    //                     控制按钮 + Liquid Glass 玻璃条,与下方 Tab bar 一体
+    window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
+    window.collectionBehavior = [.fullScreenNone, .participatesInCycle]
+    window.tabbingMode = .disallowed
+    window.minSize = NSSize(width: 640, height: 520)
+    window.title = title
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
+    window.isMovableByWindowBackground = true
+    window.isMovable = true
+
+    self.init(window: window)
+    window.delegate = self
+
+    // Bind the content view to a clear, vibrancy-friendly canvas so the
+    // glass material cards render against a translucent backdrop.
+    window.contentView?.wantsLayer = true
+    window.contentView?.layer?.backgroundColor = .clear
+    window.isOpaque = false
+    window.hasShadow = true
+    window.backgroundColor = .clear
+
+    languageObserver = NotificationCenter.default.addObserver(
+      forName: .init("LanguageChanged"), object: nil, queue: .main
+    ) { [weak window, title] _ in
+      window?.title = title
+    }
+  }
+
+  deinit {
+    if let languageObserver { NotificationCenter.default.removeObserver(languageObserver) }
+  }
+
+  func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+    let minSize = sender.minSize
+    return NSSize(
+      width: max(frameSize.width, minSize.width),
+      height: max(frameSize.height, minSize.height)
     )
-    // Take ownership of the window from the inner controller so callers
-    // still operate on this NSWindowController instance.
-    self.init(window: inner.window)
-    _real = inner
-    // Inner is now just a bookkeeping holder; the window lives on self.
   }
 }
 
@@ -338,7 +378,9 @@ final class WelcomePermissionsHostingController: NSWindowController, NSWindowDel
 
 @objc class SettingsWindowObjCBridge: NSView {
   @objc class func makeSettingsWindow(hostId: String?) -> NSWindowController {
-    let settingsView = SettingsView(hostId: hostId)
+    // Liquid Glass redesign (macOS 26) replaces the legacy sidebar-based
+    // SettingsView with a horizontal glass tab bar layout.
+    let settingsView = LiquidGlassSettingsView(hostId: hostId)
     return SettingsHostingController(rootView: settingsView)
   }
 

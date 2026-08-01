@@ -1,7 +1,20 @@
 # GitLab CI/CD pipeline for Moonlight macOS
-# Requires a macOS runner with Xcode and shell executor
+# Requires a macOS runner with Xcode and shell executor.
+#
+# Pipeline stages:
+#   lint     — code quality gates (SwiftLint, clang-format dry-run)
+#   deps     — download binary frameworks
+#   build    — compile the app
+#   test     — integration smoke test (bundle, signature, launch)
+#   package  — produce a DMG (tag / main only)
+#
+# Security scanning (SAST / Secret Detection / Dependency Scanning) is included
+# via GitLab Auto-DevOps templates. Sign/notarize stages are intentionally
+# omitted here (no Developer ID configured yet); add a `notarize` stage once
+# signing credentials are available as CI/CD Variables.
 
 stages:
+  - lint
   - deps
   - build
   - test
@@ -12,18 +25,77 @@ variables:
   XCODE_PROJECT: "Moonlight.xcodeproj"
   XCODE_SCHEME: "Moonlight for macOS"
   CONFIGURATION: "Release"
+  # Pinned by download-frameworks.sh; bump here to bust cache.
+  DEPS_VERSION: "3.6.0001"
 
-# Cache binary frameworks between pipelines
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_TAG'
+
+# --- Security scanning (Auto-DevOps templates) -------------------------------
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+
+# --- Lint --------------------------------------------------------------------
+lint:swiftlint:
+  stage: lint
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - |
+      if ! command -v swiftlint >/dev/null 2>&1; then
+        echo "SwiftLint not installed — skipping (install via brew install swiftlint)"
+        exit 0
+      fi
+      swiftlint lint --strict Limelight 2>&1 | tee lint-swift.txt
+  artifacts:
+    when: always
+    paths:
+      - lint-swift.txt
+    expire_in: 1 week
+
+lint:clang-format:
+  stage: lint
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - |
+      if ! command -v clang-format >/dev/null 2>&1; then
+        echo "clang-format not installed — skipping"
+        exit 0
+      fi
+      # Dry-run: exit non-zero if any file would be reformatted.
+      find Limelight -name '*.m' -o -name '*.h' | \
+        xargs clang-format --dry-run -Werror 2>&1 | tee lint-clang.txt
+  artifacts:
+    when: always
+    paths:
+      - lint-clang.txt
+    expire_in: 1 week
+
+# --- Dependencies ------------------------------------------------------------
+# Cache binary frameworks between pipelines. Keyed on DEPS_VERSION so a bump
+# automatically invalidates stale caches.
 cache:
-  key: frameworks
+  key:
+    files:
+      - scripts/download-frameworks.sh
+    prefix: "frameworks-${DEPS_VERSION}"
   paths:
     - xcframeworks/
     - Packages/OpenSSL.xcframework/
   policy: pull-push
 
-# Download binary frameworks (skipped if cache hit)
 download-deps:
   stage: deps
+  tags: [macos]
   script:
     - zsh scripts/download-frameworks.sh
   artifacts:
@@ -35,49 +107,67 @@ download-deps:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
-# Build the Xcode project
+# --- Build -------------------------------------------------------------------
 build-app:
   stage: build
+  tags: [macos]
   dependencies:
     - download-deps
   script:
+    # Generate BUILD_NUMBER from git history (xcodebuild does not run scheme
+    # PreActions, so we invoke build-number.sh explicitly here).
+    - SRCROOT="$CI_PROJECT_DIR" DERIVED_FILE_DIR="$CI_PROJECT_DIR/$DERIVED_DATA_PATH" sh Limelight/build-number.sh
+    - mkdir -p "$DERIVED_DATA_PATH"
     - xcodebuild
         -project "$XCODE_PROJECT"
         -scheme "$XCODE_SCHEME"
         -configuration "$CONFIGURATION"
+        -destination 'platform=macOS'
         -derivedDataPath "$DERIVED_DATA_PATH"
         CODE_SIGN_IDENTITY="-"
         CODE_SIGNING_REQUIRED=NO
-        build
+        build 2>&1 | tee build.log | xcpretty --report junit
   artifacts:
+    when: always
     paths:
       - $DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app
+      - build.log
+      - build/reports/
     expire_in: 1 week
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
-# Integration test: verify app bundle, code signature, and launch
+# --- Test --------------------------------------------------------------------
 test-app:
   stage: test
+  tags: [macos]
   dependencies:
     - build-app
   script:
     - zsh scripts/integration-test.sh
         "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app"
+        2>&1 | tee test-integration.log
+  artifacts:
+    when: always
+    paths:
+      - test-integration.log
+    expire_in: 1 week
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
-# Package as DMG for release tags
+# --- Package -----------------------------------------------------------------
+# Produce a DMG only for tags (releases) and main branch pushes (nightly smoke).
 package-dmg:
   stage: package
+  tags: [macos]
   dependencies:
     - build-app
   script:
     - zsh scripts/package-dmg.sh
         "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app"
-        "build/Moonlight-${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}.dmg"
+        "build/Moonlight-${CI_COMMIT_TAG:-nightly-$CI_COMMIT_SHORT_SHA}.dmg"
   artifacts:
     paths:
       - build/*.dmg
@@ -85,3 +175,21 @@ package-dmg:
   rules:
     - if: '$CI_COMMIT_TAG'
     - if: '$CI_COMMIT_BRANCH == "main"'
+
+# --- Notarize (placeholder) --------------------------------------------------
+# Enable once a Developer ID Application certificate is available as CI/CD
+# Variables (DEVELOPER_IDENTITY / APPLE_ID / APPLE_TEAM_ID / APP_SPECIFIC_PASSWORD).
+#
+# notarize-app:
+#   stage: package
+#   dependencies: [package-dmg]
+#   rules:
+#     - if: '$CI_COMMIT_TAG'
+#   script:
+#     - xcrun notarytool submit build/*.dmg
+#         --apple-id "$APPLE_ID"
+#         --team-id "$APPLE_TEAM_ID"
+#         --password "$APP_SPECIFIC_PASSWORD"
+#         --wait
+#     - xcrun stapler staple "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app"
+#     - xcrun stapler staple build/*.dmg
