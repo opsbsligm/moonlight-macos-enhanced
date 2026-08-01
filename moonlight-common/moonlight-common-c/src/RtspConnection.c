@@ -4,6 +4,7 @@
 #define RTSP_CONNECT_TIMEOUT_SEC 10
 #define RTSP_RECEIVE_TIMEOUT_SEC 15
 #define RTSP_RETRY_DELAY_MS 500
+#define MAX_RTSP_RESPONSE_SIZE (1024 * 1024)
 
 typedef struct _RTSP_HANDSHAKE_CONTEXT {
     int currentSeqNumber;
@@ -476,6 +477,12 @@ static bool transactRtspMessageEnet(PML_CONNECTION_CONTEXT ctx, PRTSP_HANDSHAKE_
     goto Exit;
   }
 
+  if (event.packet->dataLength > MAX_RTSP_RESPONSE_SIZE) {
+    Limelog("RTSP response exceeded maximum allowed size\n");
+    enet_packet_destroy(event.packet);
+    goto Exit;
+  }
+
   responseBuffer = malloc(event.packet->dataLength);
   if (responseBuffer == NULL) {
     Limelog("Failed to allocate RTSP response buffer\n");
@@ -494,6 +501,12 @@ static bool transactRtspMessageEnet(PML_CONNECTION_CONTEXT ctx, PRTSP_HANDSHAKE_
     if (serviceEnetHost(client, &event, RTSP_RECEIVE_TIMEOUT_SEC * 1000) <= 0 ||
         event.type != ENET_EVENT_TYPE_RECEIVE) {
       Limelog("Failed to receive RTSP reply payload: %d\n", LastSocketFail());
+      goto Exit;
+    }
+
+    if ((size_t)offset + event.packet->dataLength > MAX_RTSP_RESPONSE_SIZE) {
+      Limelog("RTSP response exceeded maximum allowed size\n");
+      enet_packet_destroy(event.packet);
       goto Exit;
     }
 
@@ -607,6 +620,12 @@ static bool transactRtspMessageTcp(PML_CONNECTION_CONTEXT ctx, PRTSP_HANDSHAKE_C
     struct pollfd pfd;
 
     if (offset >= responseBufferSize) {
+      if ((size_t)offset >= MAX_RTSP_RESPONSE_SIZE) {
+        *error = EMSGSIZE;
+        Limelog("RTSP response exceeded maximum allowed size\n");
+        goto Exit;
+      }
+
       responseBufferSize = offset + 16384;
       responseBuffer = extendBuffer(responseBuffer, responseBufferSize);
       if (responseBuffer == NULL) {
@@ -638,6 +657,12 @@ static bool transactRtspMessageTcp(PML_CONNECTION_CONTEXT ctx, PRTSP_HANDSHAKE_C
       // Done reading
       break;
     } else {
+      if ((size_t)offset + err > MAX_RTSP_RESPONSE_SIZE) {
+        *error = EMSGSIZE;
+        Limelog("RTSP response exceeded maximum allowed size\n");
+        goto Exit;
+      }
+
       offset += err;
     }
   }
@@ -1590,7 +1615,14 @@ int performRtspHandshakeCtx(PML_CONNECTION_CONTEXT ctx, PSERVER_INFORMATION serv
     // resolves any 454 session not found errors on
     // standard RTSP server implementations.
     // (i.e - sessionId = "DEADBEEFCAFE;timeout = 90")
-    sessionIdString = strdup(strtok_r(sessionId, ";", &strtokCtx));
+    char* sessionToken = strtok_r(sessionId, ";", &strtokCtx);
+    if (sessionToken == NULL || sessionToken[0] == '\0') {
+      Limelog("RTSP SETUP streamid=audio has malformed session attribute\n");
+      ret = -1;
+      goto Exit;
+    }
+
+    sessionIdString = strdup(sessionToken);
     if (sessionIdString == NULL) {
       Limelog("Failed to duplicate session ID string\n");
       ret = -1;
