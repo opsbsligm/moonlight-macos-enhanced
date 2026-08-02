@@ -176,45 +176,25 @@ import VideoToolbox
 }
 
 @objc enum KeyboardCompatibilityMode: Int, CaseIterable {
-  case standard = 0
-  case commandToControl = 1
-  case swapLeftControlAndWin = 2
-  case shortcutTranslation = 3
-  case hybrid = 4
+  case streamingStandard = 0
 
-  static let defaultMode: Self = .standard
+  static let defaultMode: Self = .streamingStandard
 
   init(persistedRawValue: Int?) {
-    switch persistedRawValue {
-    case KeyboardCompatibilityMode.commandToControl.rawValue:
-      self = .commandToControl
-    case KeyboardCompatibilityMode.swapLeftControlAndWin.rawValue:
-      self = .swapLeftControlAndWin
-    case KeyboardCompatibilityMode.shortcutTranslation.rawValue:
-      self = .shortcutTranslation
-    case KeyboardCompatibilityMode.hybrid.rawValue:
-      self = .hybrid
-    default:
-      self = .standard
-    }
+    // Always use streaming standard regardless of persisted value.
+    // Legacy modes (commandToControl, swapLeftControlAndWin, shortcutTranslation,
+    // hybrid, moonlightClassic) have been removed completely per CI/CD refactor.
+    self = .streamingStandard
   }
 
   init(selection: String) {
-    self = Self.allCases.first(where: { $0.displayKey == selection }) ?? Self.defaultMode
+    self = .streamingStandard
   }
 
   var displayKey: String {
     switch self {
-    case .standard:
-      return "Keep Mac Shortcuts"
-    case .commandToControl:
-      return "⌘ Always as Ctrl"
-    case .swapLeftControlAndWin:
-      return "Left Ctrl ↔ Left Win"
-    case .shortcutTranslation:
-      return "Mac Shortcuts as Windows Shortcuts"
-    case .hybrid:
-      return "Windows Shortcuts + Left Ctrl ↔ Left Win"
+    case .streamingStandard:
+      return "Streaming Standard (Recommended)"
     }
   }
 

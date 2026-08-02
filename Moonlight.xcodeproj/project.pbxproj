@@ -81,6 +81,7 @@
 				Input/CoreHIDMouseDriver.swift,
 				Input/HapticContext.m,
 				Input/HIDSupport.m,
+				Input/KeyboardMapResolver.m,
 				"Input/HIDSupport+Pointer.m",
 				"Input/HIDSupport+Rumble.m",
 				"Input/HIDSupport+Scroll.m",
@@ -448,8 +449,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.3.8;
+				MARKETING_VERSION = 1.3.9;
 				MTL_ENABLE_DEBUG_INFO = YES;
+				CURRENT_PROJECT_VERSION = 12;
+				BUILD_NUMBER = 12;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-weak_framework",
@@ -508,8 +511,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.3.8;
+				MARKETING_VERSION = 1.3.9;
 				MTL_ENABLE_DEBUG_INFO = NO;
+				CURRENT_PROJECT_VERSION = 12;
+				BUILD_NUMBER = 12;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-weak_framework",
@@ -554,7 +559,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = Q5DJ76223C;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -615,7 +620,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = YES;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = Q5DJ76223C;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;

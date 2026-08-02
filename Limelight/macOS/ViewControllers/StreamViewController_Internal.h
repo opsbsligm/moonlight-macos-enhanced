@@ -434,9 +434,6 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic, strong) id localKeyDownMonitor;
 @property (nonatomic, strong) id localMouseClickMonitor;
 @property (nonatomic, strong) id globalMouseMovedMonitor;
-@property (nonatomic) BOOL deferredCommandModifierPendingForShortcutTranslation;
-@property (nonatomic) BOOL deferredCommandModifierForwardedAsHeld;
-@property (nonatomic) NSUInteger deferredCommandModifierDispatchToken;
 
 @property (nonatomic) BOOL savedPresentationOptionsValid;
 @property (nonatomic) NSApplicationPresentationOptions savedPresentationOptions;

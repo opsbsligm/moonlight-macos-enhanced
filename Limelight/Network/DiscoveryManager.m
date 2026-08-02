@@ -411,11 +411,20 @@ static BOOL MoonlightShouldAutoDiscoverNewHosts(void) {
     if (shouldDiscover) {
         return;
     }
-    
-    Log(LOG_I, @"Starting discovery");
+
+    NSUInteger queuedHosts;
+    NSUInteger pausedHosts;
+    @synchronized (_hostQueue) {
+        queuedHosts = _hostQueue.count;
+        pausedHosts = _pausedHosts.count;
+    }
+    Log(LOG_I, @"[Discovery] START — queued hosts=%lu, paused=%lu, auto-discover-new=%d",
+        (unsigned long)queuedHosts,
+        (unsigned long)pausedHosts,
+        MoonlightShouldAutoDiscoverNewHosts() ? 1 : 0);
     shouldDiscover = YES;
     [_mdnsMan searchForHosts];
-    
+
     @synchronized (_hostQueue) {
         for (TemporaryHost* host in _hostQueue) {
             if (![_pausedHosts containsObject:host]) {
@@ -423,6 +432,33 @@ static BOOL MoonlightShouldAutoDiscoverNewHosts(void) {
             }
         }
     }
+
+    // After ~15s of discovery, if we have zero hosts in the queue (first run)
+    // or ZERO saved hosts are currently online, emit a diagnostic summary that
+    // points users toward the permission checklist and the manual-add flow.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15.0 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        if (!shouldDiscover) return;
+
+        NSUInteger total = 0;
+        NSUInteger online = 0;
+        @synchronized (self->_hostQueue) {
+            total = self->_hostQueue.count;
+            for (TemporaryHost *h in self->_hostQueue) {
+                if (h.state == StateOnline) online++;
+            }
+        }
+        if (total == 0 || online == 0) {
+            Log(LOG_W, @"[Discovery] ⚠️ 15s SUMMARY: hosts-in-queue=%lu, online=%lu. "
+                @"If this is unexpected: (1) Verify LocalNetwork is ON in System Settings "
+                @"→ Privacy & Security → Local Network. (2) Click + and add the host by IP "
+                @"directly. (3) Run Help → 诊断连接问题 to capture a full diagnostic report.",
+                (unsigned long)total, (unsigned long)online);
+        } else {
+            Log(LOG_I, @"[Discovery] 15s SUMMARY: hosts-in-queue=%lu, online=%lu. OK.",
+                (unsigned long)total, (unsigned long)online);
+        }
+    });
 }
 
 - (void) stopDiscovery {

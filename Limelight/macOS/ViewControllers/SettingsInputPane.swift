@@ -61,18 +61,9 @@ struct InputView: View {
   }
 
   private var selectedKeyboardTranslationDetailKey: String {
-    switch KeyboardCompatibilityMode(selection: settingsModel.selectedKeyboardCompatibilityMode) {
-    case .standard:
-      return "Shortcut Translation Mode Keep Mac detail"
-    case .commandToControl:
-      return "Shortcut Translation Mode CommandToControl detail"
-    case .swapLeftControlAndWin:
-      return "Shortcut Translation Mode SwapLeftControlAndWin detail"
-    case .shortcutTranslation:
-      return "Shortcut Translation Mode ShortcutTranslation detail"
-    case .hybrid:
-      return "Shortcut Translation Mode Hybrid detail"
-    }
+    // Simplified: Only one mode exists now - Streaming Standard (Parsec-like).
+    // No more legacy modes to choose from.
+    return "Direct macOS to Windows mapping. Cmd→Win, Ctrl→Ctrl, Option→Alt, Shift→Shift."
   }
 
   var body: some View {

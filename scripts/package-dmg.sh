@@ -30,6 +30,33 @@ trap 'rm -rf "$STAGING_DIR"' EXIT
 cp -R "$APP_PATH" "$STAGING_DIR/"
 ln -s /Applications "$STAGING_DIR/Applications"
 
+# Copy post-install fix script
+cp "${SCRIPT_DIR}/fix-moonlight-permissions.sh" "$STAGING_DIR/"
+chmod +x "$STAGING_DIR/fix-moonlight-permissions.sh"
+
+# Create README with installation instructions
+cat > "$STAGING_DIR/安装说明.txt" << 'README_EOF'
+Moonlight macOS 安装说明
+========================
+
+1. 将 Moonlight.app 拖入 Applications 文件夹
+
+2. 安装后修复权限（重要！）：
+   - 打开 终端 (Terminal)
+   - 运行以下命令：
+     bash /Applications/Moonlight.app/Contents/Resources/../../fix-moonlight-permissions.sh
+   - 或者双击本 DMG 中的 fix-moonlight-permissions.sh
+
+3. 首次启动：
+   - 右键点击 Moonlight → 打开
+   - 在弹出的对话框中点击"打开"
+   - 当弹出网络权限请求时点击"允许"
+
+4. 如需手动修复：
+   - 系统设置 → 隐私与安全性 → 本地网络 → 开启 Moonlight
+   - 系统设置 → 隐私与安全性 → 仍要打开 → 点击"仍要打开"
+README_EOF
+
 # Create the DMG
 hdiutil create \
   -volname "Moonlight" \

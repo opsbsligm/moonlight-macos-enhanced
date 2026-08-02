@@ -766,6 +766,8 @@
 "Shortcut Translation Mode CustomRules detail" = "Turns off global shortcut translation. Your custom rules below still keep working.";
 "Shortcut Translation Mode ShortcutTranslation detail" = "Translates common ⌘ shortcuts into Windows-style Ctrl shortcuts while keeping other keys unchanged.";
 "Shortcut Translation Mode Hybrid detail" = "Translates common ⌘ shortcuts like Windows shortcuts and also swaps the left Ctrl and left Win positions.";
+"Moonlight Classic Mapping" = "Moonlight Classic Mapping";
+"Shortcut Translation Mode MoonlightClassic detail" = "Maps ⌘ to Ctrl and Control to Win symmetrically. Mac shortcuts map directly to Windows shortcuts without triggering the Start menu.";
 "Reconnect Stream" = "Reconnect Stream";
 "Stream Shortcuts" = "Stream Shortcuts";
 "Clipboard" = "Clipboard";

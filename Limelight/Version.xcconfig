@@ -1,6 +1,1 @@
-// CFBundleVersion — populated by build-number.sh at build time.
-// The value below is a fallback for manual builds without git (CI always
-// overrides it via DERIVED_FILE_DIR/GeneratedBuildNumber.xcconfig).
-// Use 1 (not 0) so the very first build produces a valid positive integer
-// for CFBundleVersion, which App Store Connect requires.
-BUILD_NUMBER = 1
+BUILD_NUMBER = 11

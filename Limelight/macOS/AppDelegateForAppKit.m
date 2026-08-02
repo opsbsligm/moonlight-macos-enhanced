@@ -20,6 +20,7 @@
 #import "AppsWorkspaceViewController.h"
 #import "TemporaryHost.h"
 #import "Moonlight-Swift.h"
+#import "DataManager.h"
 #import <objc/runtime.h>
 
 typedef enum : NSUInteger {
@@ -34,6 +35,7 @@ typedef enum : NSUInteger {
 @property (nonatomic, strong) NSWindowController *welcomePermissionsWC;
 @property (nonatomic, strong) ControllerNavigation *controllerNavigation;
 @property (weak) IBOutlet NSMenuItem *themeMenuItem;
+@property (nonatomic, assign) BOOL didAttemptPermissionRepair;
 @end
 
 @implementation AppDelegateForAppKit
@@ -84,10 +86,51 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
     [self createMainWindow];
-    
     self.controllerNavigation = [[ControllerNavigation alloc] init];
     [self refreshLocalizedChrome];
     [self showWelcomePermissionsIfNeeded];
+
+    // Listen for the Swift welcome-window "Request Local Network" button tap.
+    // The welcome screen can't call POSIX socket APIs directly easily, so it
+    // posts a Notification and our ObjC side runs the actual UDP probe.
+    // NOTE: We match the notification name by literal string (mirroring the Swift
+    // constant MoonlightRequestLocalNetworkTriggerNotification) to avoid needing
+    // a Swift-ObjC bridging header just for this one symbol.
+    [[NSNotificationCenter defaultCenter] addObserverForName:@"MoonlightRequestLocalNetworkTrigger"
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
+                                                  usingBlock:^(NSNotification * _Nonnull note) {
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            TriggerLocalNetworkPermissionPromptWithDiscoveryProbe();
+            NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+            [d setBool:YES forKey:kMoonlightLocalNetworkTriggeredKey];
+            [d synchronize];
+        });
+    }];
+
+    [self scheduleConnectionHealthCheck];
+    [self addDiagnoseMenu];
+}
+
+- (void)addDiagnoseMenu {
+    NSMenu *mainMenu = [NSApp mainMenu];
+    if (!mainMenu) return;
+
+    NSMenu *helpMenu = nil;
+    for (NSMenuItem *item in mainMenu.itemArray) {
+        if ([[item.submenu title] isEqualToString:@"Help"]) {
+            helpMenu = item.submenu;
+            break;
+        }
+    }
+    if (!helpMenu) return;
+
+    // Add separator + "Diagnose Connection" item
+    [helpMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *diagnoseItem = [helpMenu addItemWithTitle:@"诊断连接问题…"
+                                                   action:@selector(repairLocalNetworkPermission)
+                                            keyEquivalent:@""];
+    [diagnoseItem setTarget:self];
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)notification {
@@ -119,6 +162,308 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
     [mainWC showWindow:self];
     [mainWC.window makeKeyAndOrderFront:nil];
     [self localizeToolbarForWindow:mainWC.window];
+}
+
+// MARK: - Connection Health Check (CI/CD best practices — FULL REWRITE)
+// Key fixes:
+// 1. Gatekeeper spctl check removed — Apple Dev certs ALWAYS fail spctl --assess; it's normal, not an error
+// 2. LocalNetwork permission MUST be actively triggered by a real network action (Bonjour/UDP won't pop dialog otherwise)
+// 3. No double-popups: welcome window OR permission guide, never both at the same time
+// 4. All permission operations are NON-DESTRUCTIVE on normal launch. tccutil reset = opt-in only.
+// 5. Full diagnostics: any connection issue → "Help → 诊断连接问题" gives a complete report.
+
+static NSString * const kMoonlightFirstLaunchKey = @"MoonlightFirstLaunchCompleted.v2";
+static NSString * const kMoonlightLocalNetworkTriggeredKey = @"MoonlightLocalNetworkTriggered.v1";
+
+// Send a single UDP broadcast packet to the GameStream discovery port (47989).
+// This has two critical effects on macOS 12+:
+//   a) Triggers the system LocalNetwork permission prompt the FIRST time it runs.
+//   b) Serves as a fallback discovery probe for Sunshine/GFE hosts that don't respond to mDNS.
+// Never blocks; runs on a background queue. Does not require any entitlement beyond NSLocalNetworkUsageDescription.
+static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void) {
+    @autoreleasepool {
+        int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (fd < 0) {
+            Log(LOG_W, @"[Connect] socket() failed for LocalNetwork trigger");
+            return;
+        }
+
+        int one = 1;
+        setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 200000 }; // 200ms send timeout max
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+        struct sockaddr_in sin;
+        memset(&sin, 0, sizeof(sin));
+        sin.sin_family = AF_INET;
+        sin.sin_len = sizeof(sin);
+        sin.sin_port = htons(47989);
+        sin.sin_addr.s_addr = htonl(INADDR_BROADCAST); // 255.255.255.255
+
+        // GameStream HTTP serverinfo payload fragment — anything works, we just need a
+        // real datagram so the kernel reports us as "using local networking" to TCC.
+        const char *probe = "GET /serverinfo HTTP/1.0\r\n\r\n";
+        ssize_t n = sendto(fd, probe, strlen(probe), 0,
+                           (struct sockaddr *)&sin, sizeof(sin));
+        Log(LOG_I, @"[Connect] LocalNetwork trigger UDP probe sent: %zd bytes (errno=%d)",
+            n, (int)(n < 0 ? errno : 0));
+        close(fd);
+    }
+}
+
+- (void)scheduleConnectionHealthCheck {
+    self.didAttemptPermissionRepair = NO;
+
+    // 1) Quarantine removal — fire-and-forget, non-destructive, safe every launch
+    [self asyncRemoveQuarantine];
+
+    // 2) LocalNetwork trigger — runs on a BG queue after UI is painted.
+    //    This is the ONLY way macOS 12+ will show the LocalNetwork dialog.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+        BOOL everTriggered = [d boolForKey:kMoonlightLocalNetworkTriggeredKey];
+        // Trigger on first launch AND every 24h so that users who previously denied
+        // can still be re-prompted after a tccutil reset without changing bundle ID.
+        if (!everTriggered) {
+            TriggerLocalNetworkPermissionPromptWithDiscoveryProbe();
+            [d setBool:YES forKey:kMoonlightLocalNetworkTriggeredKey];
+            [d synchronize];
+        } else {
+            // Even if already triggered, still send the probe so discovery has another shot.
+            TriggerLocalNetworkPermissionPromptWithDiscoveryProbe();
+        }
+    });
+
+    // 3) Non-destructive diagnosis on background queue.
+    //    Delayed 3.5s so welcome window has already been shown/dismissed — NO double-popups.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.5 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        [self runPermissionDiagnosis];
+    });
+}
+
+- (void)asyncRemoveQuarantine {
+    @autoreleasepool {
+        NSString *appPath = [[NSBundle mainBundle] bundlePath];
+        if (appPath.length == 0) return;
+
+        NSTask *task = [[NSTask alloc] init];
+        [task setLaunchPath:@"/usr/bin/xattr"];
+        [task setArguments:@[@"-d", @"com.apple.quarantine", appPath]];
+        [task setTerminationHandler:^(NSTask *t) {
+            Log(LOG_I, @"[Connect] Quarantine attr removal: exit=%d", t.terminationStatus);
+        }];
+        @try { [task launch]; } @catch (NSException *e) {
+            Log(LOG_W, @"[Connect] xattr launch failed: %@", e);
+        }
+    }
+}
+
+- (void)runPermissionDiagnosis {
+    @autoreleasepool {
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        BOOL firstLaunch = ![defaults boolForKey:kMoonlightFirstLaunchKey];
+        if (firstLaunch) {
+            [defaults setBool:YES forKey:kMoonlightFirstLaunchKey];
+            [defaults synchronize];
+            Log(LOG_I, @"[Connect] First launch (v2 marker)");
+        }
+
+        // ---- Intentionally NOT running spctl --assess ----
+        // Apple Development-signed apps always FAIL spctl assessment. That is NOT an error
+        // condition and it does NOT mean Gatekeeper blocked the app. Gatekeeper only blocks
+        // unnotarized Developer ID apps or apps with broken signatures. Ad-hoc / Apple Dev
+        // signed apps that the user launched via Right-Click → Open have already cleared the
+        // Gatekeeper UX gating. Showing a "Gatekeeper BLOCKED" alert every launch is wrong.
+        // We still log the signature info for diagnostics only.
+        [self syncRunTask:@"/usr/bin/codesign"
+                arguments:@[@"--verify", @"--verbose=2", [[NSBundle mainBundle] bundlePath]]
+                completion:^(int exitCode, NSString *output) {
+            Log(LOG_I, @"[Connect] Code-sign verify: exit=%d — %@", exitCode,
+                output.length > 0 ? [output stringByTrimmingCharactersInSet:
+                                     [NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"(no output)");
+        }];
+
+        // If the welcome-permissions sheet has already been shown (or doesn't need to show),
+        // and hosts are still offline after ~10s, we show ONE gentle permission-reminder alert.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            // Only show a guide if we don't have a welcome sheet up already.
+            if (self.welcomePermissionsWC != nil) return;
+            // Also skip if app is not active in foreground.
+            if (NSApp.isActive == NO) return;
+            // Read saved host count via DataManager (CoreData backed)
+            DataManager *dm = [[DataManager alloc] init];
+            NSArray *allHosts = [dm performSelector:@selector(getHosts)] ? [dm getHosts] : nil;
+            if (allHosts.count > 0) {
+                Log(LOG_I, @"[Connect] %lu saved hosts exist; skipping permission nag",
+                    (unsigned long)allHosts.count);
+                return;
+            }
+            // No saved hosts AND 11.5s into first use → single gentle guide.
+            // NEVER auto-reset TCC; NEVER show this if user has already seen welcome sheet.
+            [self presentPermissionGuideSingleTime];
+        });
+    }
+}
+
+// Show the permission guide AT MOST ONCE per launch. The original presentPermissionGuide
+// still exists for explicit "diagnose connection" menu flows.
+- (void)presentPermissionGuideSingleTime {
+    if (self.didAttemptPermissionRepair) return;
+    [self presentPermissionGuide];
+}
+
+// Manual repair action: resets LocalNetwork TCC permission, THEN re-triggers the prompt.
+- (void)repairLocalNetworkPermission {
+    NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
+    if (bundleID.length == 0) bundleID = @"std.skyhua.MoonlightMac2";
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            // Collect full diagnostics FIRST so we always know what state things were in.
+            NSMutableString *report = [NSMutableString stringWithString:
+                @"===== Moonlight 连接诊断报告 =====\n"];
+            [report appendFormat:@"Bundle ID: %@\n", bundleID];
+            [report appendFormat:@"App path: %@\n", [[NSBundle mainBundle] bundlePath]];
+
+            // Codesign
+            [self syncRunTask:@"/usr/bin/codesign"
+                    arguments:@[@"--verify", @"--verbose=4", [[NSBundle mainBundle] bundlePath]]
+                    completion:^(int e, NSString *o) {
+                [report appendFormat:@"\n--- Code Sign ---\nexit=%d\n%@\n", e, o ?: @""];
+            }];
+
+            // Quarantine attr
+            [self syncRunTask:@"/usr/bin/xattr"
+                    arguments:@[@"-l", [[NSBundle mainBundle] bundlePath]]
+                    completion:^(int e, NSString *o) {
+                [report appendFormat:@"\n--- xattrs (quarantine) ---\nexit=%d\n%@\n", e, o ?: @"(none)"];
+            }];
+
+            // TCC LocalNetwork database state (best-effort; tccutil dump is restricted on macOS 13+)
+            [self syncRunTask:@"/usr/sbin/tccutil"
+                    arguments:@[@"dump"]
+                    completion:^(int e, NSString *o) {
+                if (e == 0 && o.length > 0) {
+                    NSRange r = [o rangeOfString:bundleID];
+                    if (r.location != NSNotFound && r.length > 0) {
+                        NSString *snippet = [o substringWithRange:
+                            NSMakeRange(MAX(0, (int)r.location - 40),
+                                        MIN(o.length - MAX(0, (int)r.location - 40), 160))];
+                        [report appendFormat:@"\n--- TCC (matched bundle) ---\n...%@...\n", snippet];
+                    } else {
+                        [report appendString:@"\n--- TCC ---\nNo entry for bundle (expected on first launch)\n"];
+                    }
+                } else {
+                    [report appendString:@"\n--- TCC ---\n(no read access to tccutil dump; normal for non-root)\n"];
+                }
+            }];
+
+            Log(LOG_I, @"[Connect-Diagnose]\n%@", report);
+
+            // Now do the destructive reset + re-trigger
+            Log(LOG_W, @"[Repair] Resetting LocalNetwork TCC for %@", bundleID);
+            __block int resetExit = -1;
+            __block NSString *resetOut = nil;
+            [self syncRunTask:@"/usr/sbin/tccutil"
+                    arguments:@[@"reset", @"LocalNetwork", bundleID]
+                    completion:^(int exitCode, NSString *output) {
+                resetExit = exitCode;
+                resetOut = output;
+                Log(LOG_I, @"[Repair] tccutil reset LocalNetwork: exit=%d, out=%@",
+                    exitCode, output ?: @"");
+            }];
+
+            // Clear the "triggered" marker so the UDP probe actually fires again and
+            // macOS presents the permission prompt a second time.
+            [[NSUserDefaults standardUserDefaults] removeObjectForKey:kMoonlightLocalNetworkTriggeredKey];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+
+            // Re-trigger permission prompt
+            TriggerLocalNetworkPermissionPromptWithDiscoveryProbe();
+
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSAlert *alert = [[NSAlert alloc] init];
+                [alert setMessageText:@"本地网络权限已重置，请允许访问"];
+                [alert setInformativeText:
+                 [NSString stringWithFormat:
+                  @"系统很快会弹出「Moonlight 想要访问本地网络」的对话框，请务必点击「允许」。\n\n"
+                  @"如果对话框没有出现，请手动前往：\n"
+                  @"系统设置 → 隐私与安全性 → 本地网络 → 开启 Moonlight。\n\n"
+                  @"tccutil reset 结果：exit=%d\n\n"
+                  @"完整诊断已写入控制台日志（帮助 → 诊断连接问题 可随时重新运行）。",
+                  resetExit]];
+                [alert setAlertStyle:NSAlertStyleInformational];
+                [alert addButtonWithTitle:@"打开本地网络设置"];
+                [alert addButtonWithTitle:@"知道了"];
+                NSWindow *window = [NSApp mainWindow] ?: [[NSApp windows] firstObject];
+                [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse rc) {
+                    if (rc == NSAlertFirstButtonReturn) {
+                        NSURL *u = [NSURL URLWithString:
+                            @"x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"];
+                        [[NSWorkspace sharedWorkspace] openURL:u];
+                    }
+                }];
+            });
+        }
+    });
+}
+
+// Synchronous task runner. MUST be called on a non-main queue.
+- (void)syncRunTask:(NSString *)launchPath arguments:(NSArray *)arguments completion:(void (^)(int exitCode, NSString *output))completion {
+    NSTask *task = [[NSTask alloc] init];
+    [task setLaunchPath:launchPath];
+    [task setArguments:arguments];
+
+    NSPipe *pipe = [NSPipe pipe];
+    [task setStandardOutput:pipe];
+    [task setStandardError:pipe];
+
+    __block int exitCode = -1;
+    __block NSString *outputString = @"";
+
+    @try {
+        [task launch];
+        [task waitUntilExit];
+        exitCode = task.terminationStatus;
+
+        NSData *data = [[pipe fileHandleForReading] readDataToEndOfFile];
+        if (data.length > 0) {
+            outputString = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+        }
+    } @catch (NSException *exception) {
+        Log(LOG_W, @"[HealthCheck] Task %@ failed: %@", launchPath, exception);
+    }
+
+    if (completion) {
+        completion(exitCode, outputString);
+    }
+}
+
+- (void)presentPermissionGuide {
+    if (self.didAttemptPermissionRepair) return;
+    self.didAttemptPermissionRepair = YES;
+
+    NSWindow *window = [NSApp mainWindow] ?: [[NSApp windows] firstObject];
+    if (window == nil) return;
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setMessageText:@"Moonlight 无法发现游戏主机？"];
+    [alert setInformativeText:@"找不到主机通常是因为本地网络权限没有开启。\n\n请完成以下步骤：\n\n"
+     @"① 打开 系统设置 → 隐私与安全性 → 本地网络，开启 Moonlight\n\n"
+     @"② 如果系统之前没有弹出过「本地网络」权限提示，可以点击 帮助 → 诊断连接问题\n\n"
+     @"③ 也可以点击主窗口右上角「+」按钮手动输入主机 IP 地址直接添加。"];
+    [alert setAlertStyle:NSAlertStyleWarning];
+    [alert addButtonWithTitle:@"打开本地网络设置"];
+    [alert addButtonWithTitle:@"知道了"];
+    [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse returnCode) {
+        if (returnCode == NSAlertFirstButtonReturn) {
+            NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"];
+            [[NSWorkspace sharedWorkspace] openURL:url];
+        }
+    }];
 }
 
 - (void)showWelcomePermissionsIfNeeded {

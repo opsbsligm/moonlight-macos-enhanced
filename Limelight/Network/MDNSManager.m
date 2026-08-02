@@ -18,22 +18,26 @@
     NSMutableArray* services;
     BOOL scanActive;
     BOOL timerPending;
+    NSUInteger searchAttempts;
+    NSUInteger resolveAttemptsTotal;
 }
 
 static NSString* NV_SERVICE_TYPE = @"_nvstream._tcp";
 
 - (id) initWithCallback:(id<MDNSCallback>)callback {
     self = [super init];
-    
+
     self.callback = callback;
-    
+
     scanActive = FALSE;
-    
+    searchAttempts = 0;
+    resolveAttemptsTotal = 0;
+
     mDNSBrowser = [[NSNetServiceBrowser alloc] init];
     [mDNSBrowser setDelegate:self];
-    
+
     services = [[NSMutableArray alloc] init];
-    
+
     return self;
 }
 
@@ -41,8 +45,9 @@ static NSString* NV_SERVICE_TYPE = @"_nvstream._tcp";
     if (scanActive) {
         return;
     }
-    
-    Log(LOG_I, @"Starting mDNS discovery");
+
+    Log(LOG_I, @"[MDNS] Starting mDNS discovery (previous attempts=%lu, known services=%lu)",
+        (unsigned long)searchAttempts, (unsigned long)services.count);
     scanActive = TRUE;
 
     if (!timerPending) {
@@ -57,8 +62,9 @@ static NSString* NV_SERVICE_TYPE = @"_nvstream._tcp";
     if (!scanActive) {
         return;
     }
-    
-    Log(LOG_I, @"Stopping mDNS discovery");
+
+    Log(LOG_I, @"[MDNS] Stopping mDNS discovery (total attempts=%lu, services tracked=%lu)",
+        (unsigned long)searchAttempts, (unsigned long)services.count);
     scanActive = FALSE;
     [mDNSBrowser stop];
 }
@@ -240,25 +246,35 @@ static NSString* NV_SERVICE_TYPE = @"_nvstream._tcp";
 }
 
 - (void)netServiceBrowser:(NSNetServiceBrowser *)aNetServiceBrowser didFindService:(NSNetService *)aNetService moreComing:(BOOL)moreComing {
-    Log(LOG_D, @"Found service: %@", aNetService);
-    
+    Log(LOG_D, @"[MDNS] Found service: %@ (moreComing=%d)", aNetService, moreComing);
+
     if (![services containsObject:aNetService]) {
-        Log(LOG_I, @"Found new host: %@", aNetService.name);
+        Log(LOG_I, @"[MDNS] Found new host service: %@", aNetService.name);
         [aNetService setDelegate:self];
+        resolveAttemptsTotal++;
         [aNetService resolveWithTimeout:5];
         [services addObject:aNetService];
     }
 }
 
 - (void)netServiceBrowser:(NSNetServiceBrowser *)aNetServiceBrowser didRemoveService:(NSNetService *)aNetService moreComing:(BOOL)moreComing {
-    Log(LOG_I, @"Removing service: %@", aNetService);
+    Log(LOG_I, @"[MDNS] Removing service: %@", aNetService);
     [services removeObject:aNetService];
 }
 
 - (void)netServiceBrowser:(NSNetServiceBrowser *)aNetServiceBrowser didNotSearch:(NSDictionary *)errorDict {
-    Log(LOG_W, @"Did not perform search: \n%@", [errorDict description]);
-    
-    // We'll schedule a retry in startSearchTimerCallback
+    NSNumber *code = errorDict[NSNetServicesErrorCode];
+    NSString *domain = errorDict[NSNetServicesErrorDomain];
+    Log(LOG_E, @"[MDNS] BROWSE FAILED. This almost always means LocalNetwork permission was DENIED in System Settings. Run Help → 诊断连接问题 for full details. (domain=%@ code=%@ dict=%@)",
+        domain ?: @"(null)", code ?: @"(null)", errorDict);
+
+    // We'll schedule a retry in startSearchTimerCallback, but after 3 consecutive
+    // search failures we print a prominent hint so the user doesn't keep waiting
+    // for discovery to "just work".
+    searchAttempts++;
+    if (searchAttempts >= 3 && services.count == 0) {
+        Log(LOG_E, @"[MDNS] ⚠️ 3 browse attempts with ZERO hosts found. Open System Settings → Privacy & Security → Local Network and make sure Moonlight is TURNED ON. If no entry exists: click + button, or run Help → 诊断连接问题 from the menu.");
+    }
 }
 
 - (void)startSearchTimerCallback:(NSTimer *)timer {
@@ -267,11 +283,12 @@ static NSString* NV_SERVICE_TYPE = @"_nvstream._tcp";
         timerPending = FALSE;
         return;
     }
-    
-    Log(LOG_D, @"Restarting mDNS search");
+
+    searchAttempts++;
+    Log(LOG_D, @"[MDNS] (Re)starting mDNS search — attempt #%lu", (unsigned long)searchAttempts);
     [mDNSBrowser stop];
     [mDNSBrowser searchForServicesOfType:NV_SERVICE_TYPE inDomain:@""];
-    
+
     // Search again in 5 seconds. We need to do this because
     // we want more aggressive querying than Bonjour will normally
     // do for when we're at the hosts screen. This also covers scenarios
