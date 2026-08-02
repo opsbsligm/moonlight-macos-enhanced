@@ -13,5 +13,6 @@
 - (void)showPreferencesForHost:(NSString *)hostId;
 - (void)applyThemePreference:(NSInteger)theme;
 - (NSInteger)currentThemePreference;
+- (void)repairLocalNetworkPermission;
 
 @end

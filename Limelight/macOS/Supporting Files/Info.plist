@@ -33,8 +33,14 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nvstream._tcp</string>
+	</array>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 SkyHua and contributors</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Moonlight需要访问本地网络以发现并连接您的游戏主机。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Used to capture microphone audio for streaming to the host.</string>
 	<key>NSInputMonitoringUsageDescription</key>

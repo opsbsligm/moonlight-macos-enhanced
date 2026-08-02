@@ -73,7 +73,6 @@
 @property (nonatomic) BOOL coreHIDMouseRuntimeFailed;
 @property (nonatomic) NSUInteger keyboardPhysicalModifierSourceMask;
 @property (nonatomic) NSUInteger keyboardRemoteModifierMask;
-@property (nonatomic) NSUInteger keyboardDeferredShortcutTranslationCommandMask;
 @property (atomic) BOOL coreHIDFreeMouseAbsoluteSyncScheduled;
 @property (atomic) uint64_t coreHIDFreeMouseAbsoluteSyncToken;
 @property (nonatomic) dispatch_queue_t inputQueue;
@@ -140,6 +139,7 @@
 - (BOOL)usesKeyboardCommandToControlCompatibility;
 - (BOOL)usesKeyboardLeftControlWinSwapCompatibility;
 - (BOOL)usesKeyboardShortcutTranslationCompatibility;
+- (BOOL)usesKeyboardMoonlightClassicMapping;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
 - (BOOL)shouldApplyKeyboardShortcutTranslationForEvent:(NSEvent *)event;
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event;

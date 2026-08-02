@@ -5,6 +5,18 @@
 
 #import "StreamViewController_Internal.h"
 
+// ---------------------------------------------------------------------------
+// SIMPLIFIED REFACTOR (2026-08-02): Deferred Command Logic REMOVED.
+//
+// In the new "Streaming Standard" mode, macOS Command maps DIRECTLY to
+// Windows Win. There is NO need for a deferred/timer mechanism to distinguish
+// between a standalone Cmd tap and a Cmd+Key shortcut. We simply forward
+// the modifier state immediately, just like any other modifier (Ctrl, Alt).
+//
+// This completely eliminates the class of bugs where double-clicking the mouse
+// while resting on a Cmd key accidentally sent a Win key tap.
+// ---------------------------------------------------------------------------
+
 static inline BOOL MLCGCursorIsVisibleCompat(void) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -2237,65 +2249,13 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)flagsChanged:(NSEvent *)event {
-    NSEventModifierFlags relevantModifiers = MLRelevantShortcutModifiers(event.modifierFlags);
-    if ([self shouldDeferCommandModifierForShortcutHandlingWithEvent:event]) {
-        self.deferredCommandModifierPendingForShortcutTranslation = YES;
-        self.deferredCommandModifierForwardedAsHeld = NO;
-        NSUInteger dispatchToken = ++self.deferredCommandModifierDispatchToken;
-        Log(LOG_D, @"[diag] deferring command modifier for shortcut translation: %@",
-            MLDisconnectEventSummary(event));
-        __weak typeof(self) weakSelf = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            __strong typeof(weakSelf) strongSelf = weakSelf;
-            if (!strongSelf ||
-                !strongSelf.deferredCommandModifierPendingForShortcutTranslation ||
-                strongSelf.deferredCommandModifierForwardedAsHeld ||
-                strongSelf.deferredCommandModifierDispatchToken != dispatchToken) {
-                return;
-            }
-
-            NSEventModifierFlags currentModifiers = MLRelevantShortcutModifiers([NSEvent modifierFlags]);
-            if (currentModifiers != NSEventModifierFlagCommand) {
-                return;
-            }
-
-            strongSelf.deferredCommandModifierForwardedAsHeld = YES;
-            Log(LOG_I, @"[diag] deferred command forwarded as held mapped modifier: %@",
-                MLDisconnectEventSummary(event));
-            [strongSelf.hidSupport beginDeferredShortcutTranslationCommandHoldForKeyCode:event.keyCode];
-        });
-        return;
-    }
-
-    if (self.deferredCommandModifierPendingForShortcutTranslation) {
-        if ((relevantModifiers & NSEventModifierFlagCommand) == 0) {
-            self.deferredCommandModifierDispatchToken += 1;
-            self.deferredCommandModifierPendingForShortcutTranslation = NO;
-
-            if (self.deferredCommandModifierForwardedAsHeld) {
-                self.deferredCommandModifierForwardedAsHeld = NO;
-                Log(LOG_I, @"[diag] deferred command released after held forwarding: %@",
-                    MLDisconnectEventSummary(event));
-                [self.hidSupport endDeferredShortcutTranslationCommandHoldForKeyCode:event.keyCode];
-            } else {
-                Log(LOG_I, @"[diag] deferred command resolved as standalone mapped tap: %@",
-                    MLDisconnectEventSummary(event));
-                [self.hidSupport sendSyntheticRemoteModifierTapForKeyCode:event.keyCode
-                            preferShortcutTranslationCommandMapping:YES];
-            }
-            return;
-        }
-
-        if (self.deferredCommandModifierForwardedAsHeld) {
-            [self.hidSupport flagsChanged:event];
-        } else {
-            Log(LOG_D, @"[diag] keeping command modifier deferred while awaiting shortcut resolution: %@",
-                MLDisconnectEventSummary(event));
-        }
-        return;
-    }
-
+    // STREAMING STANDARD (Parsec/UU Remote):
+    // Modifiers are forwarded DIRECTLY. No deferred logic, no timer, no
+    // "distinguish standalone Cmd from Cmd+Key" dance that caused the
+    // double-click-sends-Win bug.
     [self.hidSupport flagsChanged:event];
+
+    NSEventModifierFlags relevantModifiers = MLRelevantShortcutModifiers(event.modifierFlags);
 
     StreamShortcut *releaseShortcut = [self streamShortcutForAction:MLShortcutActionReleaseMouseCapture];
     NSEventModifierFlags relevantMods = relevantModifiers;
@@ -2324,7 +2284,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)keyDown:(NSEvent *)event {
-    [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"plain-keydown" event:event];
     [self.hidSupport keyDown:event];
 }
 
@@ -2334,6 +2293,8 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 
 
 - (void)mouseDown:(NSEvent *)event {
+    // STREAMING STANDARD: Mouse events must NEVER touch keyboard state.
+    // No resolveDeferred... calls, no modifier mask inference.
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"left-down"];
     [self logMouseClickDiagnosticsForPhase:@"left-down" event:event];
@@ -2640,16 +2601,23 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)resolveDeferredCommandModifierWithoutRemoteTapWithReason:(NSString *)reason event:(NSEvent *)event {
-    if (!self.deferredCommandModifierPendingForShortcutTranslation) {
-        return;
-    }
-
-    self.deferredCommandModifierPendingForShortcutTranslation = NO;
-    self.deferredCommandModifierForwardedAsHeld = NO;
-    self.deferredCommandModifierDispatchToken += 1;
-    Log(LOG_D, @"[diag] deferred command consumed without standalone Win tap: reason=%@ event=%@",
-        reason ?: @"(nil)",
-        MLDisconnectEventSummary(event));
+    // LEGACY METHOD - NOW A PERMANENT NO-OP.
+    //
+    // The entire "deferred Command modifier" state machine has been REMOVED as
+    // part of the 2026-08-02 CI/CD refactor. It was the root cause of:
+    //   * "Double-clicking left mouse opens the Windows Start menu"
+    //   * "Ctrl / Option / Win keys don't respond in Moonlight Classic mode"
+    //
+    // Under the Streaming Standard (Parsec / UU Remote / Steam Link):
+    //   * Modifier keys are sent immediately on flagsChanged: (down/up).
+    //   * Mouse events NEVER mutate keyboard modifier state.
+    //   * There is NO timer, NO "wait and see if Cmd is followed by a key".
+    //
+    // This method is retained only to avoid removing 20+ call sites across
+    // the file in one edit (risk of introducing a typo). All call paths that
+    // previously landed here are now silent no-ops.
+    (void)reason;
+    (void)event;
 }
 
 - (BOOL)performKeyboardTranslationLocalAction:(NSString *)action {

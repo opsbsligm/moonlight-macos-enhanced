@@ -765,6 +765,8 @@
 "Shortcut Translation Mode CustomRules detail" = "只翻译模式关闭，不做任何全局替换；下面的自定义规则仍然会照常生效。";
 "Shortcut Translation Mode ShortcutTranslation detail" = "把常用 ⌘ 组合键按 Windows 的 Ctrl 快捷键方式发送，其它按键保持原样。";
 "Shortcut Translation Mode Hybrid detail" = "把常用 ⌘ 组合键按 Windows 快捷键方式处理，同时交换左 Ctrl 和左 Win。";
+"Moonlight Classic Mapping" = "Moonlight 原版映射";
+"Shortcut Translation Mode MoonlightClassic detail" = "⌘ 映射为 Ctrl、Control 映射为 Win，左右对称。Mac 快捷键直接对应 Windows 快捷键，不会误触开始菜单。";
 "Reconnect Stream" = "重连串流";
 "Stream Shortcuts" = "串流快捷键";
 "Clipboard" = "剪贴板";
