@@ -1,6 +1,18 @@
 Moonlight for macOS — Enhanced Edition
 Copyright © 2024-2026 SkyHua and contributors
 
+This program is a derivative work of Moonlight for macOS
+(https://github.com/moonlight-stream/moonlight-macOS), originally
+created by Diego Waxemberg and Michael Kenny, and licensed under the
+GNU General Public License v3.
+
+Modifications were made starting from 2024-07-26, including but not
+limited to: keyboard input system refactor, connection robustness
+improvements, UI enhancements, and CI/CD pipeline integration.
+
+The original source files retain their copyright notices. This notice
+satisfies the attribution requirement of GPLv3 §5(a).
+
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
@@ -13,6 +25,7 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
+The full text of the GPLv3 is included in the file COPYING.GPLv3.
 
 ------------------------------------------------------------------------------
 
@@ -20,6 +33,7 @@ This project includes third-party components under the following licenses:
 
 1. moonlight-common-c (ENet + RS codec)
    Licensed under the GNU General Public License v3.
+   Copyright © Moonlight Game Streaming Project.
    See moonlight-common/moonlight-common-c/LICENSE.txt
 
 2. OpenSSL (crypto framework)
@@ -36,6 +50,7 @@ This project includes third-party components under the following licenses:
 
 5. MASPreferences (settings UI)
    Licensed under the 2-clause BSD License.
+   Copyright © 2016 Vadim Shpakovski.
    See Limelight/macOS/Helpers/MASPreferences/LICENSE.md
 
 6. Roboto Font
