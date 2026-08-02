@@ -1,0 +1,46 @@
+Moonlight for macOS — Enhanced Edition
+Copyright © 2024-2026 SkyHua and contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+------------------------------------------------------------------------------
+
+This project includes third-party components under the following licenses:
+
+1. moonlight-common-c (ENet + RS codec)
+   Licensed under the GNU General Public License v3.
+   See moonlight-common/moonlight-common-c/LICENSE.txt
+
+2. OpenSSL (crypto framework)
+   Licensed under the Apache License 2.0.
+   See https://www.openssl.org/source/apache-license.txt
+
+3. FFmpeg (video decode)
+   Licensed under the GNU Lesser General Public License v2.1+.
+   See https://www.ffmpeg.org/legal.html
+
+4. SDL2 (platform abstraction)
+   Licensed under the zlib License.
+   See https://www.libsdl.org/license.php
+
+5. MASPreferences (settings UI)
+   Licensed under the 2-clause BSD License.
+   See Limelight/macOS/Helpers/MASPreferences/LICENSE.md
+
+6. Roboto Font
+   Licensed under the Apache License 2.0.
+   See Limelight/Font/Roboto/Apache License.txt
+
+Full license texts for each component are included in their respective
+subdirectories within this repository.
