@@ -38,28 +38,56 @@ libs/
 
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
 
 # Logs
 *.log
 crash_log
+Logs/
+DerivedData/
 
 # Temporary
 *.tmp
 *.swp
 *~
+*.bak
+*.orig
 
 # Secrets / signing materials — never commit
 .env*
 *.p12
 *.cer
+*.crt
+*.pfx
 *.mobileprovision
 *.provisionprofile
+*.keystore
+*.jks
 certs/
 secrets/
+credentials/
 **/ApiKeys*.plist
 *.key
 *.pem
+id_rsa*
+id_dsa*
+*.pub
 
 # Xcode project noise
 *.xcscmblueprint
+xccheckout/
+
+# CI / local dev convenience files
+.vscode/
+.idea/
+*.iml
+
 
