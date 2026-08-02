@@ -4,6 +4,14 @@
 //
 //  Keyboard Compatibility Layer - Single Source of Truth (Simplified for Streaming).
 //
+//  Copyright © 2026 SkyHua and contributors.
+//  This file is part of Moonlight for macOS — Enhanced Edition.
+//
+//  This program is free software: you can redistribute it and/or modify
+//  it under the terms of the GNU General Public License as published by
+//  the Free Software Foundation, either version 3 of the License, or
+//  (at your option) any later version.
+//
 //  REFACTORED on 2026-08-02:
 //  =================================================================
 //  We have REMOVED all legacy mapping modes (CommandToControl, Swap,
