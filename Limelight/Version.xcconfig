@@ -1,1 +1,5 @@
-BUILD_NUMBER = 16
+// Baseline BUILD_NUMBER — manually updated on release tags.
+// At build time, build-number.sh generates GeneratedBuildNumber.xcconfig
+// from `git rev-list --count HEAD` which overrides this value via #include?.
+BUILD_NUMBER = 17
+#include? "$(DERIVED_FILE_DIR)/GeneratedBuildNumber.xcconfig"

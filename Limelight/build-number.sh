@@ -5,9 +5,11 @@
 #   - Xcode scheme PreAction (sets SRCROOT/PROJECT_DIR/DERIVED_FILE_DIR)
 #   - CI pipeline (called explicitly before xcodebuild)
 #
-# We prefer writing to DERIVED_FILE_DIR to avoid polluting the tracked
-# Version.xcconfig. When DERIVED_FILE_DIR is unavailable (manual invocation),
-# we fall back to overwriting Version.xcconfig, matching historical behavior.
+# SINGLE SOURCE OF TRUTH: BUILD_NUMBER = git rev-list --count HEAD.
+# This value is written to GeneratedBuildNumber.xcconfig in DERIVED_FILE_DIR.
+# Version.xcconfig holds the last-known-good baseline (manually updated on
+# release tags) but is NEVER overwritten by this script — this prevents
+# dirty working trees and ensures git checkout --clean is reliable.
 #
 # Note: xcodebuild invoked from the command line does NOT run scheme
 # PreActions, so CI must call this script explicitly (see .gitlab-ci.yml).
@@ -24,7 +26,7 @@ elif xcrun --find git >/dev/null 2>&1; then
 fi
 
 if [ -z "$git" ]; then
-    # No git available — leave Version.xcconfig untouched (keeps its default).
+    # No git available — use Version.xcconfig baseline (keeps its default).
     exit 0
 fi
 
@@ -34,12 +36,9 @@ if [ -z "$bundleVersion" ]; then
     exit 0
 fi
 
-if [ -n "$DERIVED_FILE_DIR" ] && [ -d "$DERIVED_FILE_DIR" ]; then
-    # Preferred: write to derived data, no working-tree pollution.
-    echo "BUILD_NUMBER = $bundleVersion" > "$DERIVED_FILE_DIR/GeneratedBuildNumber.xcconfig"
-elif [ -n "$PROJECT_DIR" ]; then
-    # Fallback: historical behavior (overwrites tracked file).
-    # CI should clean this with `git checkout -- Limelight/Version.xcconfig`
-    # after build, or use DERIVED_FILE_DIR by exporting it.
-    echo "BUILD_NUMBER = $bundleVersion" > "$PROJECT_DIR/Limelight/Version.xcconfig"
-fi
+# ALWAYS write to DERIVED_FILE_DIR. If not set, derive a reasonable default
+# so this script works in manual invocation without polluting the working tree.
+OUT_DIR="${DERIVED_FILE_DIR:-${PROJECT_DIR:-$(pwd)}/build/generated}"
+mkdir -p "$OUT_DIR" 2>/dev/null
+echo "BUILD_NUMBER = $bundleVersion" > "$OUT_DIR/GeneratedBuildNumber.xcconfig"
+echo "[build-number] BUILD_NUMBER=$bundleVersion -> $OUT_DIR/GeneratedBuildNumber.xcconfig"

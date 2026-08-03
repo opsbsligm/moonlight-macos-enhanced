@@ -165,9 +165,11 @@ package-dmg:
   dependencies:
     - build-app
   script:
+    # package-dmg.sh reads CFBundleShortVersionString + CFBundleVersion from
+    # Info.plist and names the DMG "Moonlight-<ver>-build<num>.dmg" — this
+    # guarantees DMG name == app version, regardless of CI context.
     - zsh scripts/package-dmg.sh
         "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app"
-        "build/Moonlight-${CI_COMMIT_TAG:-nightly-$CI_COMMIT_SHORT_SHA}.dmg"
   artifacts:
     paths:
       - build/*.dmg

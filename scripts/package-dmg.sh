@@ -8,7 +8,6 @@ SCRIPT_DIR="${0:A:h}"
 PROJECT_DIR="${SCRIPT_DIR:h}"
 
 APP_PATH="${1:-${PROJECT_DIR}/build/xcode/derivedData/Build/Products/Release/Moonlight.app}"
-OUTPUT_DMG="${2:-${PROJECT_DIR}/build/Moonlight.dmg}"
 APP_NAME=$(basename "$APP_PATH" .app)
 
 if [[ ! -d "$APP_PATH" ]]; then
@@ -18,10 +17,12 @@ fi
 
 echo "Packaging $APP_NAME.app into DMG..."
 
+# Single source of truth: version info comes from the built app's Info.plist.
+# DMG name is ALWAYS "Moonlight-<version>-build<buildnum>.dmg".
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "1.0.0")
 BUILD_NUM=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "1")
 DMG_NAME="Moonlight-${VERSION}-build${BUILD_NUM}.dmg"
-OUTPUT_DMG="${OUTPUT_DMG%.*}_${VERSION}-build${BUILD_NUM}.dmg"
+OUTPUT_DMG="${2:-${PROJECT_DIR}/build/${DMG_NAME}}"
 
 STAGING_DIR=$(mktemp -d -t moonlight-dmg)
 trap 'rm -rf "$STAGING_DIR"' EXIT
