@@ -37,8 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `BUILD_NUMBER` baseline updated 16 → 18 (fallback); CI generates 19 from
-  `git rev-list --count HEAD` via `GeneratedBuildNumber.xcconfig`.
+- `BUILD_NUMBER` baseline in `Version.xcconfig` updated 16 → 19 to match
+  `git rev-list --count HEAD` exactly. CI also generates 19 via
+  `GeneratedBuildNumber.xcconfig`; both sources now agree, so local and CI
+  builds produce identical `CFBundleVersion`.
 - `Version.xcconfig` now includes a comment explaining the
   `#include? GeneratedBuildNumber.xcconfig` override mechanism.
 - `build-number.sh` fallback path removed — script always writes to
