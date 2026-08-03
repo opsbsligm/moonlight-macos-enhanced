@@ -1334,6 +1334,24 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     self.pendingHybridRemoteCursorSync = NO;
 }
 
+- (void)scheduleKeyboardSuppressionClear {
+    NSUInteger suppressionClearGeneration = self.activeStreamGeneration;
+    NSUInteger capturedToken = self.keyboardSuppressionClearToken;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.300 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (self.activeStreamGeneration != suppressionClearGeneration) {
+            return;
+        }
+        if (self.keyboardSuppressionClearToken != capturedToken) {
+            // A new mouseDown occurred during the 300ms window.
+            // Do NOT clear the flag — the new click re-armed suppression.
+            return;
+        }
+        self.suppressingKeyboardFromMouseEvent = NO;
+        self.hidSupport.suppressingKeyboardFromMouseEvent = NO;
+    });
+}
+
 - (void)dispatchMouseButton:(int)button pressed:(BOOL)pressed event:(NSEvent *)event {
     if (![self supportsRemoteDesktopCursorSync] || ![self hasReadyInputContext]) {
         if (pressed) {
@@ -1751,12 +1769,20 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     if (!window || window.isKeyWindow) {
         return;
     }
-    if (![NSApp isActive] || self.stopStreamInProgress || self.reconnectInProgress || self.spaceTransitionInProgress) {
+    if (self.stopStreamInProgress || self.reconnectInProgress || self.spaceTransitionInProgress) {
         return;
     }
     if (![self isWindowInCurrentSpace]) {
         return;
     }
+    
+    // If the app is not active, activate it first so the window can become key.
+    // This fixes the "first click lost" issue where the OS consumes the first
+    // click for window activation instead of dispatching it to the app.
+    if (![NSApp isActive]) {
+        [NSApp activateIgnoringOtherApps:YES];
+    }
+    
     @try {
         [window makeKeyWindow];
     } @catch (NSException *exception) {
@@ -1981,6 +2007,18 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
             return event;
         }
 
+        // Reject synthetic keyDown events that AppKit / certain trackpad
+        // drivers synthesize during double-click dispatch. Replaces the
+        // flaky suppressingKeyboardFromMouseEvent time-window flag with a
+        // deterministic three-check detector (see header for details).
+        const char *reason = "genuine";
+        if (MLKeyDownIsSyntheticDoubleClick(event, strongSelf.lastMouseButtonEventAtMs, &reason)) {
+            Log(LOG_W, @"[keyboard] localKeyDownMonitor: swallowed synthetic keyDown (%s) keyCode=%hu mods=0x%llx",
+                reason ?: "?",
+                event.keyCode, (unsigned long long)event.modifierFlags);
+            return nil;
+        }
+
         if ([strongSelf handleKeyboardTranslationRuleForEvent:event]) {
             return nil;
         }
@@ -2112,8 +2150,9 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
             }
 
             strongSelf.globalInactivePointerInsideStreamView = YES;
-            Log(LOG_I, @"[diag] Global pointer re-entered visible stream view while inactive; requesting reactivation");
-            [NSApp activateIgnoringOtherApps:YES];
+            Log(LOG_I, @"[diag] Global pointer re-entered visible stream view while inactive; awaiting explicit click to activate (avoiding hover-steal)");
+            // Do NOT auto-activate: hover-stealing focus breaks user workflows.
+            // Activation will happen on the next mouseDown via ensureStreamWindowKeyIfPossible.
             dispatch_async(dispatch_get_main_queue(), ^{
                 __strong typeof(weakSelf) innerSelf = weakSelf;
                 if (!innerSelf || ![NSApp isActive] || ![innerSelf isWindowInCurrentSpace]) {
@@ -2293,8 +2332,20 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 
 
 - (void)mouseDown:(NSEvent *)event {
-    // STREAMING STANDARD: Mouse events must NEVER touch keyboard state.
-    // No resolveDeferred... calls, no modifier mask inference.
+    // Ensure the stream window is the Key Window before processing the click.
+    // This is critical for fixing the "first click lost" issue:
+    // when the app is launched in the background, the first click is often
+    // consumed by the OS for window activation. By ensuring key window status
+    // inside the mouseDown handler, we guarantee that clicks are dispatched
+    // to the application correctly.
+    [self ensureStreamWindowKeyIfPossible];
+
+    // -- 2026-08-02 NEW: Deterministic double-click synthetic detection --
+    // Replace the flaky time-window flag with a monotonic timestamp of the
+    // last mouse button event (down/up, any button). The proximity check in
+    // MLKeyDownIsSyntheticDoubleClick uses this value.
+    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
+
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"left-down"];
     [self logMouseClickDiagnosticsForPhase:@"left-down" event:event];
@@ -2306,6 +2357,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)mouseUp:(NSEvent *)event {
+    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"left-up"];
     [self logMouseClickDiagnosticsForPhase:@"left-up" event:event];
@@ -2314,6 +2366,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)rightMouseDown:(NSEvent *)event {
+    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"right-down"];
     [self logMouseClickDiagnosticsForPhase:@"right-down" event:event];
@@ -2328,6 +2381,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)rightMouseUp:(NSEvent *)event {
+    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"right-up"];
     [self logMouseClickDiagnosticsForPhase:@"right-up" event:event];
@@ -2342,6 +2396,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)otherMouseDown:(NSEvent *)event {
+    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"other-down"];
     [self logMouseClickDiagnosticsForPhase:@"other-down" event:event];
@@ -2354,6 +2409,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)otherMouseUp:(NSEvent *)event {
+    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"other-up"];
     [self logMouseClickDiagnosticsForPhase:@"other-up" event:event];
@@ -2525,7 +2581,8 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (KeyboardTranslationRule *)keyboardTranslationRuleMatchingEvent:(NSEvent *)event {
-    if (event == nil || self.app.host.uuid.length == 0) {
+    // Entry gate: only keyboard events have defined keyCode semantics.
+    if (!MLIsKeyboardKeyEvent(event) || self.app.host.uuid.length == 0) {
         return nil;
     }
 
@@ -2743,11 +2800,88 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 #pragma mark - KeyboardNotifiable
 
 - (BOOL)onKeyboardEquivalent:(NSEvent *)event {
+    // -----------------------------------------------------------------------
+    // SINGLE ENTRY GATE (2026-08-02 architectural fix)
+    //
+    // This is the ONE place where we decide: "is this event a keyboard
+    // event?" Every downstream path (shortcut matching, translation rules,
+    // hardcoded keyCode comparisons, HID keyDown/keyUp forwarding) relies
+    // on this gate. Mouse / tablet / gesture events have UNDEFINED -keyCode
+    // semantics; some device drivers return garbage that collides with
+    // kVK_ANSI_C (== 8) during double-click, causing "double-click sends C".
+    //
+    // Previous fix scattered event.type checks across 3+ functions but
+    // missed hardcoded comparisons and shouldDeferCommandModifier. This
+    // single gate closes ALL holes permanently.
+    // -----------------------------------------------------------------------
+    if (!MLIsKeyboardKeyEvent(event)) {
+        // Non-keyboard event: SWALLOW (return YES) to prevent it from
+        // falling through to keyDown: which would send garbage to remote.
+        return YES;
+    }
+
+    // DETERMINISTIC SYNTHETIC KEYDOWN REJECTOR (2026-08-02)
+    //
+    // Replaces the flaky suppressingKeyboardFromMouseEvent time-window flag.
+    // Uses three independent checks (proximity, char-consistency, spurious-
+    // modifier).  Same code path as localKeyDownMonitor and HIDSupport.keyDown:
+    // if any single check fires, the event is swallowed before any further
+    // dispatch.
+    const char *synthReason = "genuine";
+    if (event.type == NSEventTypeKeyDown &&
+        MLKeyDownIsSyntheticDoubleClick(event, self.lastMouseButtonEventAtMs, &synthReason)) {
+        Log(LOG_W, @"[keyboard] onKeyboardEquivalent: swallowed synthetic keyDown (%s) kVK=%hu mods=0x%llx",
+            synthReason ?: "?",
+            event.keyCode,
+            (unsigned long long)event.modifierFlags);
+        return YES;
+    }
+
+    // -----------------------------------------------------------------------
+    // TEARDOWN FAST-PATH
+    //
+    // Once stopStreamInProgress / reconnectInProgress is set or the HID
+    // teardown has already fired, shouldSendInputEvents becomes NO.
+    // The code below silently returns YES without doing anything: the
+    // event is swallowed, the disconnect never happens, and AppKit
+    // eventually falls through to NSBeep().
+    //
+    // This early-exit fast-path:
+    //   1. If teardown already happened -> swallow silently (no beep, no op).
+    //   2. If user is pressing the configured disconnect shortcut even when
+    //      stopStreamInProgress is already set -> fall through the normal
+    //      shortcut path so performCloseStreamWindow can still fire.
+    //   3. For any other key during teardown / reconnect: SWALLOW silently
+    //      with return YES, so AppKit never plays NSBeep.
+    // -----------------------------------------------------------------------
+    const BOOL alreadyTornDown = self.hidSupport.keyboardTeardownAlreadyCalled
+        || !self.hidSupport.shouldSendInputEvents;
+    const BOOL inTransition = alreadyTornDown
+        || self.stopStreamInProgress
+        || self.reconnectInProgress;
+
     StreamShortcut *disconnectOptionsShortcut = [self streamShortcutForAction:MLShortcutActionShowDisconnectOptions];
     const NSEventModifierFlags eventModifierFlags = MLRelevantShortcutModifiers(event.modifierFlags);
     StreamShortcut *disconnectShortcut = [self streamShortcutForAction:MLShortcutActionDisconnectStream];
     StreamShortcut *quitShortcut = [self streamShortcutForAction:MLShortcutActionCloseAndQuitApp];
     StreamShortcut *reconnectShortcut = [self streamShortcutForAction:MLShortcutActionReconnectStream];
+
+    const BOOL criticalShortcut =
+        [self event:event matchesShortcut:disconnectShortcut]
+        || [self event:event matchesShortcut:disconnectOptionsShortcut]
+        || [self event:event matchesShortcut:quitShortcut]
+        || [self event:event matchesShortcut:reconnectShortcut];
+
+    if (inTransition && !criticalShortcut) {
+        // Swallow completely. No NSBeep, no hidSupport call, nothing.
+        Log(LOG_D, @"[diag] onKeyboardEquivalent: swallowed key kVK=%hd during teardown (torn=%d stop=%d reconn=%d mods=0x%llx)",
+            event.keyCode,
+            self.hidSupport.keyboardTeardownAlreadyCalled ? 1 : 0,
+            self.stopStreamInProgress ? 1 : 0,
+            self.reconnectInProgress ? 1 : 0,
+            (unsigned long long)eventModifierFlags);
+        return YES;
+    }
 
     [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"keyboard-equivalent" event:event];
 
@@ -2867,8 +3001,15 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         return;
     }
     if (![NSApp isActive]) {
-        [self noteInputDiagnosticsCaptureSkipped:@"app-inactive"];
-        Log(LOG_D, @"[diag] captureMouse skipped: app inactive");
+        // If the app is not active, try to activate it first.
+        // This prevents the "first click lost" issue where the first click
+        // is consumed by the OS for app activation instead of being dispatched
+        // to the application.
+        [NSApp activateIgnoringOtherApps:YES];
+        [self noteInputDiagnosticsCaptureSkipped:@"app-inactive-activating"];
+        Log(LOG_D, @"[diag] captureMouse: app inactive, activating...");
+        // Return early; the capture will be re-attempted when the app becomes active
+        // via the NSApplicationDidBecomeActiveNotification observer.
         return;
     }
 

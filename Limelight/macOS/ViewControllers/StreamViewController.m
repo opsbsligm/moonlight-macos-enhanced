@@ -354,7 +354,14 @@ highFreqMotor:(unsigned short)highFreqMotor {
     
     self.windowWillCloseNotification = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowWillCloseNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         if ([weakSelf isOurWindowTheWindowInNotiifcation:note]) {
-            [weakSelf beginStopStreamIfNeededWithReason:@"window-will-close"]; 
+            // Last-defense teardown: the user might close the stream window
+            // via OS-level controls (red traffic light, Mission Control, Cmd-Q)
+            // without any of our disconnect shortcuts firing. Release remote
+            // modifier state here so the next stream session starts clean,
+            // and so any flagsChanged: events still queued on the main queue
+            // don't produce NSBeep.
+            [weakSelf.hidSupport tearDownKeyboardStateForSessionEnd:"window-will-close"];
+            [weakSelf beginStopStreamIfNeededWithReason:@"window-will-close"];
         }
     }];
 
@@ -406,11 +413,13 @@ highFreqMotor:(unsigned short)highFreqMotor {
             strongSelf.fullscreenTransitionInProgress ? 1 : 0,
             strongSelf.isRemoteDesktopMode ? 1 : 0);
         if (shouldReleaseForActiveSpaceChange) {
+            [strongSelf.hidSupport releaseAllModifierKeys];
             [strongSelf requestMouseUncaptureWhenSafeWithReason:@"active-space-changed" code:@"MUC007"];
         } else {
             [strongSelf logMouseUncaptureStage:@"skip-still-active" code:@"MUC007" reason:@"active-space-changed"];
         }
         if (!windowInCurrentSpace) {
+            [strongSelf.hidSupport releaseAllModifierKeys];
             [strongSelf hideEdgeMenuForInactiveSpaceIfNeeded];
         }
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -631,6 +640,18 @@ highFreqMotor:(unsigned short)highFreqMotor {
     }
     
     self.view.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantDark];
+
+    // Ensure stream window is the Key Window so that first-click interactions
+    // are dispatched to the application instead of being consumed by the OS
+    // for window activation (fixes the "first click lost" issue after stream start).
+    if (![self.view.window isKeyWindow]) {
+        [self.view.window makeKeyAndOrderFront:nil];
+    }
+    // Also ensure the app is active, otherwise the OS will consume the first
+    // click for app activation even if the window is key.
+    if (![NSApp isActive]) {
+        [NSApp activateIgnoringOtherApps:YES];
+    }
 
     NSInteger displayMode = [SettingsClass displayModeFor:self.app.host.uuid];
     if (displayMode == 1 && ![self isWindowFullscreen] && !self.fullscreenTransitionInProgress) {
@@ -1502,6 +1523,17 @@ highFreqMotor:(unsigned short)highFreqMotor {
         // Make the stream interactive as soon as we have video.
         // Without this, fullscreen transitions can leave input disabled until AppKit
         // finishes space/key-window transitions, which can take several seconds.
+        
+        // Ensure the window is the Key Window and app is active before capturing
+        // the mouse. This prevents the "first click lost" issue where the OS
+        // consumes the first click for window/app activation.
+        if (![self.view.window isKeyWindow]) {
+            [self.view.window makeKeyAndOrderFront:nil];
+        }
+        if (![NSApp isActive]) {
+            [NSApp activateIgnoringOtherApps:YES];
+        }
+        
         [self captureMouse];
         [self logCurrentWindowStateWithContext:@"connection-started-after-capture"];
         [self claimClipboardSyncOwnershipIfNeeded];
@@ -1573,6 +1605,14 @@ highFreqMotor:(unsigned short)highFreqMotor {
     // dispatched the tail end to the main queue, leaving the head executing on
     // the common-c callback thread where it could race with dealloc/teardown.
     dispatch_async(dispatch_get_main_queue(), ^{
+        // ROBUSTNESS FIX (2026-08-02): Tear down HID keyboard + modifier
+        // state BEFORE we NULL out inputContext. This guarantees that any
+        // remote-side stuck Win/Ctrl/Alt/Shift keys get KEY_ACTION_UP before
+        // the Limelight context is torn down, and it also disables
+        // shouldSendInputEvents so any flagsChanged: events still queued on
+        // the main queue become no-ops instead of triggering NSBeep.
+        [self.hidSupport tearDownKeyboardStateForSessionEnd:"connection-terminated"];
+
         self.clipboardRuntimeConnection = nil;
         self.waitingForFirstRenderedFrame = NO;
         [self stopStreamHealthDiagnostics];
@@ -1586,6 +1626,9 @@ highFreqMotor:(unsigned short)highFreqMotor {
             [[StreamingSessionManager shared] didDisconnectForHost:self.app.host.uuid];
         }
 
+        // Already torn down via tearDownKeyboardStateForSessionEnd above;
+        // setting inputContext to NULL here remains as a belt-and-suspenders
+        // guard for any HID code paths that check inputContext directly.
         self.hidSupport.inputContext = NULL;
         self.controllerSupport.inputContext = NULL;
 
@@ -1639,8 +1682,9 @@ highFreqMotor:(unsigned short)highFreqMotor {
 }
 
 - (void)stageFailed:(const char *)stageName withError:(int)errorCode {
-    Log(LOG_I, @"Stage %s failed: %ld", stageName, errorCode);
+    Log(LOG_I, @"Stage %s failed: %ld", stageName, (long)errorCode);
     self.connectWatchdogToken += 1;
+    [self.hidSupport tearDownKeyboardStateForSessionEnd:"stage-failed"];
     [self stopStreamHealthDiagnostics];
     [self finalizeInputDiagnosticsWithReason:[NSString stringWithFormat:@"stage-failed:%s", stageName ?: "unknown"]];
     self.streamHealthConnectionStartedMs = 0;
@@ -1656,6 +1700,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
 
 - (void)launchFailed:(NSString *)message {
     self.connectWatchdogToken += 1;
+    [self.hidSupport tearDownKeyboardStateForSessionEnd:"launch-failed"];
     [self stopStreamHealthDiagnostics];
     [self finalizeInputDiagnosticsWithReason:@"launch-failed"];
     self.streamHealthConnectionStartedMs = 0;

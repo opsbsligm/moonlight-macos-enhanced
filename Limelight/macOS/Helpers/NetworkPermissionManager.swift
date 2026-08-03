@@ -16,7 +16,7 @@ import Foundation
     @Published var networkPermissionStatus: NetworkPermissionStatus = .unknown
     @Published var hasAttemptedRepairThisSession = false
 
-    private let bundleID = "std.skyhua.MoonlightMac2"
+    private let bundleID = Bundle.main.bundleIdentifier ?? "std.skyhua.MoonlightMac2"
 
     enum NetworkPermissionStatus {
         case unknown
@@ -89,20 +89,13 @@ import Foundation
     }
 
     private func checkNetworkPermission() {
-        let task = Process()
-        task.launchPath = "/usr/sbin/tccutil"
-        task.arguments = ["reset", "LocalNetwork", bundleID]
-        task.qualityOfService = .utility
+        // NOTE: tccutil reset LocalNetwork has been intentionally removed.
+        // Resetting the TCC database for the app on every startup is a destructive
+        // violation of the user's privacy state and also triggers the macOS
+        // permission re-prompt unnecessarily. We simply probe the current state
+        // and prompt the user to make a change only when the state is denied.
 
-        do {
-            try task.run()
-            task.waitUntilExit()
-            Log(LOG_I, "[NetworkPerm] TCC LocalNetwork reset initiated")
-        } catch {
-            Log(LOG_W, "[NetworkPerm] TCC reset failed: \(error.localizedDescription)")
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self = self else { return }
             self.requestLocalNetworkPermission()
         }
@@ -142,11 +135,13 @@ import Foundation
         guard let window = NSApp.mainWindow ?? NSApp.windows.first else { return }
 
         let alert = NSAlert()
-        alert.messageText = "Gatekeeper 阻止了 Moonlight"
-        alert.informativeText = "macOS 安全机制阻止了 Moonlight 运行。\n\n请执行以下操作：\n\n1. 打开 系统设置 → 隐私与安全性\n2. 向下滚动找到 Moonlight 被阻止的提示\n3. 点击「仍要打开」按钮\n4. 在确认对话框中点击「打开」\n\n或者：右键点击 Moonlight.app → 选择「打开」→ 确认。"
+        let loc = LanguageManager.shared.localize
+        alert.messageText = loc("Gatekeeper Blocked")
+        alert.informativeText = loc("Gatekeeper blocked Moonlight") + "\n\n" +
+            loc("Gatekeeper blocked informative")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "打开系统设置")
-        alert.addButton(withTitle: "知道了")
+        alert.addButton(withTitle: loc("Open System Settings"))
+        alert.addButton(withTitle: loc("Dismiss"))
         alert.beginSheetModal(for: window) { response in
             if response == .alertFirstButtonReturn {
                 self.openSystemSettings()
@@ -158,11 +153,13 @@ import Foundation
         guard let window = NSApp.mainWindow ?? NSApp.windows.first else { return }
 
         let alert = NSAlert()
-        alert.messageText = "需要网络权限"
-        alert.informativeText = "Moonlight 需要访问本地网络来发现和连接您的游戏主机。\n\n请执行以下操作：\n\n1. 打开 系统设置 → 隐私与安全性 → 本地网络\n2. 找到 Moonlight 并开启开关\n3. 重新启动 Moonlight"
+        let loc = LanguageManager.shared.localize
+        alert.messageText = loc("Network Permission Required")
+        alert.informativeText = loc("Moonlight needs local network access") + "\n\n" +
+            loc("Local network permission informative")
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "打开系统设置")
-        alert.addButton(withTitle: "知道了")
+        alert.addButton(withTitle: loc("Open System Settings"))
+        alert.addButton(withTitle: loc("Dismiss"))
         alert.beginSheetModal(for: window) { response in
             if response == .alertFirstButtonReturn {
                 self.openSystemSettingsNetwork()
