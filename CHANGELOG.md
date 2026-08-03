@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.9-build17] - 2026-08-03
+
+### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
+
+### Added
+
+- **Deterministic synthetic-keyDown detector** (`MLKeyDownIsSyntheticDoubleClick()`
+  in `StreamViewController_Internal.h`): replaces the flaky
+  `suppressingKeyboardFromMouseEvent` time-window boolean with a three-check
+  evidence-based detector (proximity + character-consistency + spurious-modifier).
+  Applied uniformly at all three keyDown entry points:
+  `localKeyDownMonitor`, `onKeyboardEquivalent:`, `HIDSupport.keyDown:`.
+- **`MLMonotonicMillis()`**: mach-time-based monotonic timestamp for the
+  proximity check, immune to wall-clock drift.
+- **`MLPrintableANSIKeyCodeMatchesCharacter()`**: validates that the
+  `charactersIgnoringModifiers` of a keyDown event matches the expected US-104
+  ANSI glyph for the keyCode — synthetic events from mouse double-click fail
+  this check.
+- `lastMouseButtonEventAtMs` property on `StreamViewController` — every mouse
+  button handler (left/right/other × down/up) updates this timestamp.
+- `en.lproj/Localizable.strings` and `zh-Hans.lproj/Localizable.strings` now
+  include all control center menu items (Issue #30).
+- CI/CD: `build-number.sh` no longer overwrites the git-tracked
+  `Version.xcconfig`. `#include?` directive added to pull
+  `GeneratedBuildNumber.xcconfig` from `DERIVED_FILE_DIR`.
+- CI/CD: `package-dmg.sh` is now the single source of truth for DMG naming.
+  `.gitlab-ci.yml` no longer passes a CI-specific DMG name.
+
+### Changed
+
+- `BUILD_NUMBER` baseline updated 16 → 17 to match `git rev-list --count HEAD`.
+- `Version.xcconfig` now includes a comment explaining the
+  `#include? GeneratedBuildNumber.xcconfig` override mechanism.
+- `build-number.sh` fallback path removed — script always writes to
+  `DERIVED_FILE_DIR` (or a derived default), never pollutes the working tree.
+
+### Fixed
+
+- **"Double-click left mouse sends C key" (root cause fix)**: The old
+  `suppressingKeyboardFromMouseEvent` flag was written from 3+ locations,
+  used a 300ms time-window that could expire or be reset by rapid clicks,
+  and only checked `MLIsPrintableANSIKeyCode` + `!Command`. The new
+  deterministic detector uses three independent evidence checks that cannot
+  be defeated by forged events.
+- **Modifier key sticking on space switch** (Issue #37+#19): added
+  `[self.hidSupport releaseAllModifierKeys]` in `activeSpaceDidChangeObserver`.
+- **Gamepad mapping for Xbox Elite 2 / Betop Zeus** (Issue #25): extended
+  `isXbox()` to match 0x0B00/0x0B05/0x0B22; added `isKingKong()` for
+  Betop Zeus VID 0x2DC8.
+- **UI crash in `viewDidLayout`** (Issue #26): wrapped
+  `bringStreamControlsToFront` in `@try/@catch` defensive guard.
+- **Window hover steals focus** (Issue #21): removed
+  `[NSApp activateIgnoringOtherApps:YES]` from global mouse monitor.
+- **Control center menu not localized** (Issue #30): all hardcoded Chinese
+  strings replaced with `MLString()` calls.
+- **First click lost after stream start**: ensured window is key + app is
+  active before `captureMouse` in `viewDidAppear` and `connectionStarted`.
+- **NetworkPermissionManager violating tccutil**: removed
+  `tccutil reset LocalNetwork` call (destructive privacy reset).
+
+### Removed
+
+- `scheduleKeyboardSuppressionClear` method and all call sites (legacy
+  300ms timer-based suppression).
+- `keyboardSuppressionClearToken` active usage (property retained as no-op
+  for binary compatibility).
+
 ## [1.3.9] - 2026-08-02
 
 ### BREAKING CHANGES
@@ -116,7 +183,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clipboard sync support.
 - Physical wheel scroll modes (automatic / notched / high-precision).
 
-[Unreleased]: https://github.com/skyhua/Moonlight-macOS/compare/v1.3.9...HEAD
+[Unreleased]: https://github.com/skyhua/Moonlight-macOS/compare/v1.3.9-build17...HEAD
+[1.3.9-build17]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9-build17
 [1.3.9]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9
 [1.3.8]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.8
 [1.3.7]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.7
