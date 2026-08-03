@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.3.9-build17] - 2026-08-03
+## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
 
@@ -37,7 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `BUILD_NUMBER` baseline updated 16 → 17 to match `git rev-list --count HEAD`.
+- `BUILD_NUMBER` baseline updated 16 → 18 (fallback); CI generates 19 from
+  `git rev-list --count HEAD` via `GeneratedBuildNumber.xcconfig`.
 - `Version.xcconfig` now includes a comment explaining the
   `#include? GeneratedBuildNumber.xcconfig` override mechanism.
 - `build-number.sh` fallback path removed — script always writes to
@@ -183,8 +184,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clipboard sync support.
 - Physical wheel scroll modes (automatic / notched / high-precision).
 
-[Unreleased]: https://github.com/skyhua/Moonlight-macOS/compare/v1.3.9-build17...HEAD
-[1.3.9-build17]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9-build17
+[Unreleased]: https://github.com/skyhua/Moonlight-macOS/compare/v1.3.9-build19...HEAD
+[1.3.9-build19]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9-build19
 [1.3.9]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9
 [1.3.8]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.8
 [1.3.7]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.7

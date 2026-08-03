@@ -1,6 +1,6 @@
 # Moonlight for macOS — Enhanced Edition
 
-[![Release](https://img.shields.io/badge/release-v1.3.9--build17-blue)](https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9-build17)
+[![Release](https://img.shields.io/badge/release-v1.3.9--build19-blue)](https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9-build19)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey)](https://developer.apple.com/macos/)
 
@@ -8,7 +8,7 @@
 
 ## 核心特性
 
-### 串流标准键盘映射 (v1.3.9-build17 重构)
+### 串流标准键盘映射 (v1.3.9-build19 重构)
 采用与 **Parsec / UU 远程 / Steam Link** 一致的直接映射方案，彻底消除旧版兼容模式导致的映射混乱：
 
 | macOS 物理键 | Windows HID 功能 |
@@ -35,7 +35,7 @@
 ## 下载安装
 
 ### 方式一：下载 DMG（推荐）
-1. 从 [Releases](../../releases) 下载最新 `Moonlight-1.3.9-build17.dmg`
+1. 从 [Releases](../../releases) 下载最新 `Moonlight-1.3.9-build19.dmg`
 2. 打开 DMG，将 Moonlight 拖入 Applications
 3. 首次运行时，在「系统设置 → 隐私与安全性」中允许运行
 
@@ -136,7 +136,7 @@ footer (可选)
 - **次版本号**：向后兼容的新功能
 - **修订号**：向后兼容的 Bug 修复
 
-每个版本通过 Git annotated tag 标记（如 `v1.3.9-build17`），详见 [CHANGELOG.md](CHANGELOG.md)。
+每个版本通过 Git annotated tag 标记（如 `v1.3.9-build19`），详见 [CHANGELOG.md](CHANGELOG.md)。
 版本号格式：`v<MARKETING_VERSION>-build<BUILD_NUMBER>`，其中 `BUILD_NUMBER` = `git rev-list --count HEAD`。
 DMG 文件名与 tag 一一对应：`Moonlight-<MARKETING_VERSION>-build<BUILD_NUMBER>.dmg`。
 
