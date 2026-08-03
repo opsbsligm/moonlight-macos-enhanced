@@ -140,7 +140,13 @@
 }
 
 - (IBAction)performCloseStreamWindow:(id)sender {
-    [self.hidSupport releaseAllModifierKeys];
+    // Races with connectionTerminated / stageFailed / windowWillClose: the
+    // first one wins, others are safe no-ops. We intentionally run this
+    // BEFORE shouldCloseWindowImmediately check so user-disconnect releases
+    // remote modifier keys even if the stream is already in a semi-teardown
+    // state (the exact scenario you reported: "Cmd+any key just beeps,
+    // can't disconnect").
+    [self.hidSupport tearDownKeyboardStateForSessionEnd:"performCloseStreamWindow"];
     NSString *disconnectSource = [self resolvedDisconnectSourceFromSender:sender];
     BOOL shouldCloseWindowImmediately = self.reconnectInProgress || self.stopStreamInProgress;
     Log(LOG_W, @"[diag] Disconnect requested: source=%@ sender=%@ captured=%d reconnect=%d stopInProgress=%d",
@@ -179,7 +185,7 @@
 }
 
 - (IBAction)performCloseAndQuitApp:(id)sender {
-    [self.hidSupport releaseAllModifierKeys];
+    [self.hidSupport tearDownKeyboardStateForSessionEnd:"performCloseAndQuitApp"];
     [self markUserInitiatedDisconnectAndSuppressWarningsForSeconds:5.0 reason:@"close-and-quit"];
     [self cancelPendingReconnectForUserExitWithReason:@"close-and-quit"];
 

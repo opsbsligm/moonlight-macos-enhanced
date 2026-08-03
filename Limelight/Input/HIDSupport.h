@@ -41,7 +41,28 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
 
+/// --- LEGACY (deprecated, kept for source compat).
+/// Writes are now NO-OPs, reads always return NO.
+/// Replaced by the deterministic header MLKeyDownIsSyntheticDoubleClick() detector in
+/// StreamViewController_Internal.h.
+@property (nonatomic) BOOL suppressingKeyboardFromMouseEvent;
+
 - (void)releaseAllModifierKeys;
+
+/// Returns YES once tearDownKeyboardStateForSessionEnd has run.
+/// Safe to poll from any thread. Readonly atomic BOOL.
+@property (nonatomic, readonly) BOOL keyboardTeardownAlreadyCalled;
+
+/// Called exactly once when the streaming session terminates (either via
+/// connectionTerminated, performCloseStreamWindow, or windowWillClose).
+/// Does ALL of the following atomically:
+///   - Zeroes local physical + remote modifier masks
+///   - Sends UP for all 8 modifier keys (Win/L/Ctrl/Alt/Shift × left/right)
+///   - Releases all pressed mouse buttons (per PointerInput)
+///   - Disables shouldSendInputEvents so subsequent events become no-ops
+///   - Idempotent: second and later calls are a safe no-op
+- (void)tearDownKeyboardStateForSessionEnd:(const char *)reason;
+
 - (void)sendSyntheticRemoteShortcut:(StreamShortcut *)shortcut;
 - (void)sendSyntheticRemoteModifierTapForFlags:(NSEventModifierFlags)modifierFlags;
 - (void)sendSyntheticRemoteModifierTapForKeyCode:(unsigned short)keyCode

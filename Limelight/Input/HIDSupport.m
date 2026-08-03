@@ -280,6 +280,35 @@ static BOOL HIDIsModifierKeyCode(unsigned short keyCode) {
     return HIDPhysicalModifierMaskForKeyCode(keyCode) != 0;
 }
 
+/// Returns YES if the keyCode corresponds to a printable ANSI key
+/// (A-Z, 0-9, punctuation). These keys ALWAYS have non-nil
+/// charactersIgnoringModifiers in real keyboard events. Synthetic
+/// keyDown events from mouse/touchpad double-clicks have valid
+/// keyCodes but empty character data.
+static BOOL HIDIsPrintableANSIKey(unsigned short keyCode) {
+    switch (keyCode) {
+        case kVK_ANSI_A: case kVK_ANSI_B: case kVK_ANSI_C: case kVK_ANSI_D:
+        case kVK_ANSI_E: case kVK_ANSI_F: case kVK_ANSI_G: case kVK_ANSI_H:
+        case kVK_ANSI_I: case kVK_ANSI_J: case kVK_ANSI_K: case kVK_ANSI_L:
+        case kVK_ANSI_M: case kVK_ANSI_N: case kVK_ANSI_O: case kVK_ANSI_P:
+        case kVK_ANSI_Q: case kVK_ANSI_R: case kVK_ANSI_S: case kVK_ANSI_T:
+        case kVK_ANSI_U: case kVK_ANSI_V: case kVK_ANSI_W: case kVK_ANSI_X:
+        case kVK_ANSI_Y: case kVK_ANSI_Z:
+        case kVK_ANSI_0: case kVK_ANSI_1: case kVK_ANSI_2: case kVK_ANSI_3:
+        case kVK_ANSI_4: case kVK_ANSI_5: case kVK_ANSI_6: case kVK_ANSI_7:
+        case kVK_ANSI_8: case kVK_ANSI_9:
+        case kVK_ANSI_Equal: case kVK_ANSI_Minus:
+        case kVK_ANSI_RightBracket: case kVK_ANSI_LeftBracket:
+        case kVK_ANSI_Quote: case kVK_ANSI_Semicolon:
+        case kVK_ANSI_Backslash: case kVK_ANSI_Comma:
+        case kVK_ANSI_Slash: case kVK_ANSI_Period:
+        case kVK_ANSI_Grave:
+            return YES;
+        default:
+            return NO;
+    }
+}
+
 static char HIDRemoteModifierFlagsToGenericFlags(NSUInteger remoteMask) {
     char modifiers = 0;
 
@@ -936,6 +965,11 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (void)flagsChanged:(NSEvent *)event {
+    // Hard gate: reject any non-keyboard event before touching keyCode.
+    // Mouse/tablet/gesture events have UNDEFINED -keyCode on macOS.
+    if (event == nil || event.type != NSEventTypeFlagsChanged) {
+        return;
+    }
     if (!self.shouldSendInputEvents) {
         return;
     }
@@ -945,6 +979,136 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (void)keyDown:(NSEvent *)event {
+    if (event == nil || event.type != NSEventTypeKeyDown) {
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // DETERMINISTIC SYNTHETIC KEYDOWN REJECTOR (2026-08-02)
+    //
+    // Replaces the flaky suppressingKeyboardFromMouseEvent time-window flag.
+    //
+    // Implements THREE independent evidence-based checks that reject
+    // AppKit-synthesized keyDown events from mouse double-click dispatch.
+    // The three checks are exactly the same as the StreamViewController
+    // versions (header MLKeyDownIsSyntheticDoubleClick) but re-implemented
+    // here locally to avoid importing the huge ObjC++ header.
+    //
+    // A synthetic rejection here is definitive. Real keyboard events
+    // ALWAYS pass these checks; synthesized ones almost never do.
+    // -----------------------------------------------------------------------
+    {
+        unsigned short kc = event.keyCode;
+        NSEventModifierFlags mods = event.modifierFlags;
+
+        // 1. CHARACTER CONSISTENCY for printable ANSI keys
+        BOOL printableANSI = NO;
+        switch (kc) {
+            case kVK_ANSI_A: case kVK_ANSI_B: case kVK_ANSI_C: case kVK_ANSI_D:
+            case kVK_ANSI_E: case kVK_ANSI_F: case kVK_ANSI_G: case kVK_ANSI_H:
+            case kVK_ANSI_I: case kVK_ANSI_J: case kVK_ANSI_K: case kVK_ANSI_L:
+            case kVK_ANSI_M: case kVK_ANSI_N: case kVK_ANSI_O: case kVK_ANSI_P:
+            case kVK_ANSI_Q: case kVK_ANSI_R: case kVK_ANSI_S: case kVK_ANSI_T:
+            case kVK_ANSI_U: case kVK_ANSI_V: case kVK_ANSI_W: case kVK_ANSI_X:
+            case kVK_ANSI_Y: case kVK_ANSI_Z:
+            case kVK_ANSI_0: case kVK_ANSI_1: case kVK_ANSI_2: case kVK_ANSI_3:
+            case kVK_ANSI_4: case kVK_ANSI_5: case kVK_ANSI_6: case kVK_ANSI_7:
+            case kVK_ANSI_8: case kVK_ANSI_9:
+            case kVK_ANSI_Equal: case kVK_ANSI_Minus:
+            case kVK_ANSI_RightBracket: case kVK_ANSI_LeftBracket:
+            case kVK_ANSI_Quote: case kVK_ANSI_Semicolon:
+            case kVK_ANSI_Backslash: case kVK_ANSI_Comma:
+            case kVK_ANSI_Slash: case kVK_ANSI_Period:
+            case kVK_ANSI_Grave:
+                printableANSI = YES;
+                break;
+            default:
+                printableANSI = NO;
+                break;
+        }
+        if (printableANSI) {
+            NSString *chars = event.charactersIgnoringModifiers;
+            if (chars.length != 1) {
+                Log(LOG_W, @"[keyboard] HID rejected synthetic: printable kVK=%hu chars.len=%lu",
+                    kc, (unsigned long)chars.length);
+                return;
+            }
+            unichar c = [chars characterAtIndex:0];
+            unichar lc = (unichar)tolower((int)c);
+            BOOL charMatches = NO;
+            switch (kc) {
+                case kVK_ANSI_A: charMatches = (lc == 'a'); break;
+                case kVK_ANSI_B: charMatches = (lc == 'b'); break;
+                case kVK_ANSI_C: charMatches = (lc == 'c'); break;
+                case kVK_ANSI_D: charMatches = (lc == 'd'); break;
+                case kVK_ANSI_E: charMatches = (lc == 'e'); break;
+                case kVK_ANSI_F: charMatches = (lc == 'f'); break;
+                case kVK_ANSI_G: charMatches = (lc == 'g'); break;
+                case kVK_ANSI_H: charMatches = (lc == 'h'); break;
+                case kVK_ANSI_I: charMatches = (lc == 'i'); break;
+                case kVK_ANSI_J: charMatches = (lc == 'j'); break;
+                case kVK_ANSI_K: charMatches = (lc == 'k'); break;
+                case kVK_ANSI_L: charMatches = (lc == 'l'); break;
+                case kVK_ANSI_M: charMatches = (lc == 'm'); break;
+                case kVK_ANSI_N: charMatches = (lc == 'n'); break;
+                case kVK_ANSI_O: charMatches = (lc == 'o'); break;
+                case kVK_ANSI_P: charMatches = (lc == 'p'); break;
+                case kVK_ANSI_Q: charMatches = (lc == 'q'); break;
+                case kVK_ANSI_R: charMatches = (lc == 'r'); break;
+                case kVK_ANSI_S: charMatches = (lc == 's'); break;
+                case kVK_ANSI_T: charMatches = (lc == 't'); break;
+                case kVK_ANSI_U: charMatches = (lc == 'u'); break;
+                case kVK_ANSI_V: charMatches = (lc == 'v'); break;
+                case kVK_ANSI_W: charMatches = (lc == 'w'); break;
+                case kVK_ANSI_X: charMatches = (lc == 'x'); break;
+                case kVK_ANSI_Y: charMatches = (lc == 'y'); break;
+                case kVK_ANSI_Z: charMatches = (lc == 'z'); break;
+                case kVK_ANSI_0: charMatches = (lc == '0'); break;
+                case kVK_ANSI_1: charMatches = (lc == '1'); break;
+                case kVK_ANSI_2: charMatches = (lc == '2'); break;
+                case kVK_ANSI_3: charMatches = (lc == '3'); break;
+                case kVK_ANSI_4: charMatches = (lc == '4'); break;
+                case kVK_ANSI_5: charMatches = (lc == '5'); break;
+                case kVK_ANSI_6: charMatches = (lc == '6'); break;
+                case kVK_ANSI_7: charMatches = (lc == '7'); break;
+                case kVK_ANSI_8: charMatches = (lc == '8'); break;
+                case kVK_ANSI_9: charMatches = (lc == '9'); break;
+                case kVK_ANSI_Equal:       charMatches = (lc == '='); break;
+                case kVK_ANSI_Minus:       charMatches = (lc == '-'); break;
+                case kVK_ANSI_RightBracket:charMatches = (lc == ']'); break;
+                case kVK_ANSI_LeftBracket: charMatches = (lc == '['); break;
+                case kVK_ANSI_Quote:       charMatches = (lc == '\''); break;
+                case kVK_ANSI_Semicolon:   charMatches = (lc == ';'); break;
+                case kVK_ANSI_Backslash:   charMatches = (lc == '\\'); break;
+                case kVK_ANSI_Comma:       charMatches = (lc == ','); break;
+                case kVK_ANSI_Slash:       charMatches = (lc == '/'); break;
+                case kVK_ANSI_Period:      charMatches = (lc == '.'); break;
+                case kVK_ANSI_Grave:       charMatches = (lc == '`'); break;
+                default: charMatches = NO; break;
+            }
+            if (!charMatches) {
+                Log(LOG_W, @"[keyboard] HID rejected synthetic: kVK=%hu char-mismatch got=%d",
+                    kc, (int)c);
+                return;
+            }
+        }
+
+        // 2. SPURIOUS MODIFIER CHECK
+        if ((mods & NSEventModifierFlagNumericPad) &&
+            kc != kVK_ANSI_Keypad0 && kc != kVK_ANSI_Keypad1 &&
+            kc != kVK_ANSI_Keypad2 && kc != kVK_ANSI_Keypad3 &&
+            kc != kVK_ANSI_Keypad4 && kc != kVK_ANSI_Keypad5 &&
+            kc != kVK_ANSI_Keypad6 && kc != kVK_ANSI_Keypad7 &&
+            kc != kVK_ANSI_Keypad8 && kc != kVK_ANSI_Keypad9 &&
+            kc != kVK_ANSI_KeypadDecimal && kc != kVK_ANSI_KeypadPlus &&
+            kc != kVK_ANSI_KeypadMinus && kc != kVK_ANSI_KeypadMultiply &&
+            kc != kVK_ANSI_KeypadDivide && kc != kVK_ANSI_KeypadEquals &&
+            kc != kVK_ANSI_KeypadEnter && kc != kVK_ANSI_KeypadClear) {
+            Log(LOG_W, @"[keyboard] HID rejected synthetic: kVK=%hu spurious-numpad-mod", kc);
+            return;
+        }
+    }
+
     if (self.shouldSendInputEvents) {
         [self syncKeyboardModifierStateForEvent:event];
         short keyCode = 0x8000 | [self translateKeyCodeWithEvent:event];
@@ -960,6 +1124,9 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (void)keyUp:(NSEvent *)event {
+    if (event == nil || event.type != NSEventTypeKeyUp) {
+        return;
+    }
     if (self.shouldSendInputEvents) {
         [self syncKeyboardModifierStateForEvent:event];
         short keyCode = 0x8000 | [self translateKeyCodeWithEvent:event];
@@ -975,11 +1142,25 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (void)releaseAllModifierKeys {
-    // Send asynchronously to avoid blocking the main thread if the connection is dead
+    // Reentry guard: if already inside a modifier release (which can
+    // happen when tearDownKeyboardStateForSessionEnd -> releaseAllButtons
+    // -> releaseAllModifierKeys, or during stream teardown when multiple
+    // teardown paths all call releaseAllModifierKeys), bail immediately
+    // to avoid a self-reentrant HIDDispatchInput deadlock.
+    if (self.keyboardModifierReleaseInProgress) {
+        return;
+    }
+    self.keyboardModifierReleaseInProgress = YES;
+
+    // Local masks are zeroed FIRST, so any concurrent flagsChanged: /
+    // keyDown: racing past the shouldSendInputEvents gate can't add
+    // back modifier bits before we send the UP events.
     self.keyboardPhysicalModifierSourceMask = 0;
     self.keyboardRemoteModifierMask = 0;
+
     PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
     if (!inputCtx) {
+        self.keyboardModifierReleaseInProgress = NO;
         return;
     }
     HIDDispatchInput(self, inputCtx, ^{
@@ -992,6 +1173,48 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         LiSendKeyboardEventCtx(inputCtx, 0xA4, KEY_ACTION_UP, 0);
         LiSendKeyboardEventCtx(inputCtx, 0xA5, KEY_ACTION_UP, 0);
     });
+
+    self.keyboardModifierReleaseInProgress = NO;
+}
+
+- (void)tearDownKeyboardStateForSessionEnd:(const char *)reason {
+    // Idempotency gate. Five teardown paths all want to call this function:
+    //   1. performCloseStreamWindow (user hit the disconnect shortcut)
+    //   2. performCloseAndQuitApp   (user hit quit-app shortcut)
+    //   3. connectionTerminated     (common-c says connection is gone)
+    //   4. windowWillClose          (OS closes the stream window)
+    //   5. stageFailed/launchFailed (stream never got off the ground)
+    // Without the gate they can race on the main queue and stampede
+    // releaseAllModifierKeys, HID teardown, and window close logic.
+    if (self.keyboardTeardownAlreadyCalled) {
+        Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: skipped (already called, hadReleased=%d)",
+            reason ?: "",
+            self.keyboardModifierReleaseInProgress ? 1 : 0);
+        return;
+    }
+    self.keyboardTeardownAlreadyCalled = YES;
+    Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: start (physicalMask=0x%lx remoteMask=0x%lx send=%d)",
+        reason ?: "",
+        (unsigned long)self.keyboardPhysicalModifierSourceMask,
+        (unsigned long)self.keyboardRemoteModifierMask,
+        self.shouldSendInputEvents ? 1 : 0);
+
+    // 1) Release remote modifier state FIRST, while inputContext may still
+    //    be valid. This sends 8 KEY_ACTION_UP packets so the remote PC
+    //    never ends a session with a stuck Win/Ctrl/Alt/Shift key.
+    [self releaseAllModifierKeys];
+
+    // 2) Release pressed mouse buttons before we drop input events.
+    //    Pointer:releaseAllPressedMouseButtons is reentry-safe.
+    [self releaseAllPressedMouseButtons];
+
+    // 3) Disable further input event processing so any events still
+    //    in flight on the main queue become a no-op instead of trying
+    //    to talk to a dead Limelight context.
+    self.shouldSendInputEvents = NO;
+    self.suppressingKeyboardFromMouseEvent = NO;
+
+    Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: done", reason ?: "");
 }
 
 - (void)beginDeferredShortcutTranslationCommandHoldForKeyCode:(unsigned short)keyCode {

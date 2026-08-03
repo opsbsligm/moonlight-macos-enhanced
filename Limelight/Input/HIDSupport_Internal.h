@@ -73,6 +73,8 @@
 @property (nonatomic) BOOL coreHIDMouseRuntimeFailed;
 @property (nonatomic) NSUInteger keyboardPhysicalModifierSourceMask;
 @property (nonatomic) NSUInteger keyboardRemoteModifierMask;
+@property (atomic) BOOL keyboardModifierReleaseInProgress;
+@property (atomic) BOOL keyboardTeardownAlreadyCalled;
 @property (atomic) BOOL coreHIDFreeMouseAbsoluteSyncScheduled;
 @property (atomic) uint64_t coreHIDFreeMouseAbsoluteSyncToken;
 @property (nonatomic) dispatch_queue_t inputQueue;
@@ -305,13 +307,37 @@ static inline BOOL isNintendo(IOHIDDeviceRef device) {
 static inline BOOL isXbox(IOHIDDeviceRef device) {
     UInt16 vendorId = usbIdFromDevice(device, @kIOHIDVendorIDKey);
     UInt16 productId = usbIdFromDevice(device, @kIOHIDProductIDKey);
-    return vendorId == 0x045E && (productId == 0x02FD || productId == 0x0B13);
+    // Microsoft Xbox controllers (vendor 0x045E):
+    //   0x02FD — Xbox One (original GIP)
+    //   0x02E0 — KingKong
+    //   0x0B00 — Xbox Elite 2 (BTH)
+    //   0x0B05 — Xbox Elite 2 (USB)
+    //   0x0B13 — Xbox Series X|S
+    //   0x0B22 — Xbox Elite Series 2 Core
+    return vendorId == 0x045E &&
+        (productId == 0x02FD ||
+         productId == 0x02E0 ||
+         productId == 0x0B00 ||
+         productId == 0x0B05 ||
+         productId == 0x0B13 ||
+         productId == 0x0B22);
 }
 
 static inline BOOL isKingKong(IOHIDDeviceRef device) {
     UInt16 vendorId = usbIdFromDevice(device, @kIOHIDVendorIDKey);
     UInt16 productId = usbIdFromDevice(device, @kIOHIDProductIDKey);
-    return vendorId == 0x045E && productId == 0x02e0;
+    // KingKong (北通宙斯 2 / Betop Zeus) devices:
+    //   0x045E:0x02e0 — shared product id (handled via Microsoft vid too)
+    //   0x2DC8:0x2000+ — known Betop vid range (e.g. BTP-A1T2/A1U2/A1S2)
+    if (vendorId == 0x045E && productId == 0x02e0) {
+        return YES;
+    }
+    if (vendorId == 0x2DC8 && (productId == 0x2000 || productId == 0x2020 || productId == 0x2100)) {
+        return YES;
+    }
+    // Betop/8Bitdo also use 0x1235 / 0x1532 / 0x2DE8 in adapter mode. Only add
+    // known Zeus product ids here to avoid mis-identifying HID keyboards/mice.
+    return NO;
 }
 
 static inline BOOL isPlayStation(IOHIDDeviceRef device) {

@@ -451,8 +451,6 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.3.9;
 				MTL_ENABLE_DEBUG_INFO = YES;
-				CURRENT_PROJECT_VERSION = 12;
-				BUILD_NUMBER = 12;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-weak_framework",
@@ -513,8 +511,6 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.3.9;
 				MTL_ENABLE_DEBUG_INFO = NO;
-				CURRENT_PROJECT_VERSION = 12;
-				BUILD_NUMBER = 12;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-weak_framework",

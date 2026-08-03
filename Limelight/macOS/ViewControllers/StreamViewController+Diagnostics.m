@@ -2983,7 +2983,12 @@
         self.timeoutCopyLogsButton.frame = NSMakeRect(logsStartX + viewLogsWidth + logsGap, logsY, copyLogsWidth, logsBtnHeight);
     }
 
-    [self bringStreamControlsToFront];
+    @try {
+        [self bringStreamControlsToFront];
+    } @catch (NSException *exception) {
+        Log(LOG_W, @"[diag] bringStreamControlsToFront raised during viewDidLayout: %@ %@",
+            exception.name, exception.reason);
+    }
 }
 
 - (void)layoutConnectionWarning {
