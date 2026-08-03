@@ -1,10 +1,11 @@
 # Moonlight for macOS — Enhanced Edition
 
-[![Release](https://img.shields.io/badge/release-v1.3.9--build19-blue)](https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9-build19)
+[![Release](https://img.shields.io/badge/release-v1.3.9--build19-blue)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/tag/v1.3.9-build19)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey)](https://developer.apple.com/macos/)
+[![Upstream](https://img.shields.io/badge/fork%20from-skyhua0224%2Fmoonlight--macos--enhanced-blue)](https://github.com/skyhua0224/moonlight-macos-enhanced)
 
-一个基于 [Moonlight Game Streaming Project](https://github.com/moonlight-stream) 的 macOS 客户端增强版，专注于低延迟串流体验与工业标准键盘映射。
+一个 fork 自 [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) 的增强版，该项目本身衍生自 [Moonlight Game Streaming Project](https://github.com/moonlight-stream)。本仓库专注于低延迟串流体验与工业标准键盘映射。
 
 ## 核心特性
 
@@ -154,6 +155,7 @@ DMG 文件名与 tag 一一对应：`Moonlight-<MARKETING_VERSION>-build<BUILD_N
 
 ## 致谢
 
-- [Moonlight Game Streaming Project](https://github.com/moonlight-stream) — 原始项目
+- [Moonlight Game Streaming Project](https://github.com/moonlight-stream) — 原始上游项目
+- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — 直接 fork 来源原作者
 - [Parsec](https://parsec.app) — 键盘映射最佳实践参考
 - 所有贡献者与测试用户
