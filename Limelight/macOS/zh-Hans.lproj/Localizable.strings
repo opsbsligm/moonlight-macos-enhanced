@@ -842,3 +842,18 @@
 "Host Busy" = "主机正在串流中";
 "This host is already streaming. Please disconnect first." = "这台主机已经在串流中，请先断开当前连接。";
 "Logs copied" = "日志已复制";
+
+// Log browser
+"All" = "全部";
+"Selected" = "已选";
+"1 Selected" = "已选 1 项";
+"No Filter" = "无筛选";
+"No Filter Applied" = "未应用筛选";
+"Clear Category Filters" = "清除分类筛选";
+"Default Log" = "默认日志";
+"Default View" = "默认视图";
+"Log Detail" = "日志详情";
+"Parsed Message" = "解析后消息";
+"Raw" = "原始";
+"Raw Line" = "原始行";
+"Search keyword / host / error code / category" = "搜索关键字 / 主机 / 错误码 / 分类";

@@ -843,3 +843,18 @@
 "Host Busy" = "Host Busy";
 "This host is already streaming. Please disconnect first." = "This host is already streaming. Please disconnect first.";
 "Logs copied" = "Logs copied";
+
+// Log browser
+"All" = "All";
+"Selected" = "Selected";
+"1 Selected" = "1 Selected";
+"No Filter" = "No Filter";
+"No Filter Applied" = "No Filter Applied";
+"Clear Category Filters" = "Clear Category Filters";
+"Default Log" = "Default Log";
+"Default View" = "Default View";
+"Log Detail" = "Log Detail";
+"Parsed Message" = "Parsed Message";
+"Raw" = "Raw";
+"Raw Line" = "Raw Line";
+"Search keyword / host / error code / category" = "Search keyword / host / error code / category";
