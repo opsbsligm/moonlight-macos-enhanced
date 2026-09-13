@@ -45,7 +45,7 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 
 /// Returns YES once tearDownKeyboardStateForSessionEnd has run.
 /// Safe to poll from any thread. Readonly atomic BOOL.
-@property (nonatomic, readonly) BOOL keyboardTeardownAlreadyCalled;
+@property (atomic, readonly) BOOL keyboardTeardownAlreadyCalled;
 
 /// Called exactly once when the streaming session terminates (either via
 /// connectionTerminated, performCloseStreamWindow, or windowWillClose).

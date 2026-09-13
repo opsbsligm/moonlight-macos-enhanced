@@ -438,7 +438,8 @@ static BOOL MoonlightShouldAutoDiscoverNewHosts(void) {
     // points users toward the permission checklist and the manual-add flow.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15.0 * NSEC_PER_SEC)),
                    dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        if (!shouldDiscover) return;
+        // Reads the isa ivar on purpose: the block must keep self alive for 15s.
+        if (!self->shouldDiscover) return;
 
         NSUInteger total = 0;
         NSUInteger online = 0;
