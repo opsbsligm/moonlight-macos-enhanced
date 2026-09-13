@@ -342,24 +342,18 @@ static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void) {
                 [report appendFormat:@"\n--- xattrs (quarantine) ---\nexit=%d\n%@\n", e, o ?: @"(none)"];
             }];
 
-            // TCC LocalNetwork database state (best-effort; tccutil dump is restricted on macOS 13+)
-            [self syncRunTask:@"/usr/sbin/tccutil"
-                    arguments:@[@"dump"]
-                    completion:^(int e, NSString *o) {
-                if (e == 0 && o.length > 0) {
-                    NSRange r = [o rangeOfString:bundleID];
-                    if (r.location != NSNotFound && r.length > 0) {
-                        NSString *snippet = [o substringWithRange:
-                            NSMakeRange(MAX(0, (int)r.location - 40),
-                                        MIN(o.length - MAX(0, (int)r.location - 40), 160))];
-                        [report appendFormat:@"\n--- TCC (matched bundle) ---\n...%@...\n", snippet];
-                    } else {
-                        [report appendString:@"\n--- TCC ---\nNo entry for bundle (expected on first launch)\n"];
-                    }
-                } else {
-                    [report appendString:@"\n--- TCC ---\n(no read access to tccutil dump; normal for non-root)\n"];
-                }
-            }];
+            // TCC state is not queryable from our own process. tccutil implements
+            // exactly one subcommand, "reset SERVICE [BUNDLE_ID]"; there is no
+            // "dump" and no "list", and the database itself is protected by TCC.
+            // The previous "tccutil dump" probe therefore always failed and the
+            // report line it produced was pure noise. The only trustworthy signal
+            // is what the UDP discovery probe actually observed, so record that.
+            BOOL probeFired = [[NSUserDefaults standardUserDefaults]
+                boolForKey:kMoonlightLocalNetworkTriggeredKey];
+            [report appendString:@"\n--- TCC (LocalNetwork) ---\n"];
+            [report appendString:@"Not queryable (tccutil has no read subcommand).\n"];
+            [report appendFormat:@"Discovery probe already fired this install: %@\n",
+                probeFired ? @"YES" : @"NO"];
 
             Log(LOG_I, @"[Connect-Diagnose]\n%@", report);
 
@@ -367,7 +361,10 @@ static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void) {
             Log(LOG_W, @"[Repair] Resetting LocalNetwork TCC for %@", bundleID);
             __block int resetExit = -1;
             __block NSString *resetOut = nil;
-            [self syncRunTask:@"/usr/sbin/tccutil"
+            // Real location is /usr/bin/tccutil. The previous /usr/sbin path does
+            // not exist, so NSTask threw, syncRunTask swallowed it and reported
+            // exit=-1: this reset silently never ran for anyone.
+            [self syncRunTask:@"/usr/bin/tccutil"
                     arguments:@[@"reset", @"LocalNetwork", bundleID]
                     completion:^(int exitCode, NSString *output) {
                 resetExit = exitCode;
@@ -386,15 +383,22 @@ static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void) {
 
             dispatch_async(dispatch_get_main_queue(), ^{
                 NSAlert *alert = [[NSAlert alloc] init];
-                [alert setMessageText:@"本地网络权限已重置，请允许访问"];
+                NSString *resetSummary = resetExit == 0
+                    ? @"tccutil reset 结果：成功"
+                    : [NSString stringWithFormat:
+                       @"tccutil reset 结果：失败（exit=%d）。请手动前往系统设置关闭再开启本地网络开关。",
+                       resetExit];
+                [alert setMessageText:resetExit == 0
+                    ? @"本地网络权限已重置，请允许访问"
+                    : @"本地网络权限重置失败"];
                 [alert setInformativeText:
                  [NSString stringWithFormat:
                   @"系统很快会弹出「Moonlight 想要访问本地网络」的对话框，请务必点击「允许」。\n\n"
                   @"如果对话框没有出现，请手动前往：\n"
                   @"系统设置 → 隐私与安全性 → 本地网络 → 开启 Moonlight。\n\n"
-                  @"tccutil reset 结果：exit=%d\n\n"
+                  @"%@\n%@\n\n"
                   @"完整诊断已写入控制台日志（帮助 → 诊断连接问题 可随时重新运行）。",
-                  resetExit]];
+                  resetSummary, resetOut.length > 0 ? resetOut : @""]];
                 [alert setAlertStyle:NSAlertStyleInformational];
                 [alert addButtonWithTitle:@"打开本地网络设置"];
                 [alert addButtonWithTitle:@"知道了"];
