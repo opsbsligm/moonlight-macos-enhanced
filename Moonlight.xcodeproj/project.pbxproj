@@ -146,7 +146,7 @@
 				macOS/ViewControllers/SettingsStreamPane.swift,
 				macOS/ViewControllers/SettingsVideoPane.swift,
 				macOS/ViewControllers/SettingsView.swift,
-				macOS/ViewControllers/LiquidGlass/LiquidGlassWindowController.swift,
+				macOS/ViewControllers/LiquidGlass/SettingsOverlayPresenter.swift,
 				macOS/ViewControllers/LiquidGlass/LiquidGlassTabBar.swift,
 				macOS/ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift,
 				macOS/ViewControllers/StreamRiskAssessment.swift,

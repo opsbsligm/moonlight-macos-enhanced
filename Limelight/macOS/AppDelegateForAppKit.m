@@ -30,8 +30,8 @@ typedef enum : NSUInteger {
 } Theme;
 
 @interface AppDelegateForAppKit () <NSApplicationDelegate, NSWindowDelegate>
-@property (nonatomic, strong) NSWindowController *preferencesWC;
 @property (nonatomic, strong) NSWindowController *aboutWC;
+@property (nonatomic, weak) NSWindow *mainWindow;
 @property (nonatomic, strong) NSWindowController *welcomePermissionsWC;
 @property (nonatomic, strong) ControllerNavigation *controllerNavigation;
 @property (weak) IBOutlet NSMenuItem *themeMenuItem;
@@ -157,6 +157,7 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 - (void)createMainWindow {
     NSWindowController *mainWC = [NSStoryboard.mainStoryboard instantiateControllerWithIdentifier:@"MainWindowController"];
     mainWC.window.frameAutosaveName = @"Main Window";
+    self.mainWindow = mainWC.window;
     [mainWC.window setMinSize:NSMakeSize(650, 350)];
     
     [mainWC showWindow:self];
@@ -498,38 +499,31 @@ static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void) {
     });
 }
 
-- (NSWindowController *)preferencesWCWithHostId:(NSString *)hostId {
-    if (_preferencesWC != nil) {
-        [_preferencesWC close];
-        _preferencesWC = nil;
+// Settings is a page inside the main window content region. There is no
+// second window to position, no autosave name to keep in sync and no
+// controller to rebuild: the presenter replaces the page in place and
+// restores the toolbar and title on the way out.
+- (NSWindow *)mainContentWindow {
+    if (self.mainWindow != nil) {
+        return self.mainWindow;
     }
-
-    // Always recreate to ensure state is clean and correct host is selected
-    _preferencesWC = [SettingsWindowObjCBridge makeSettingsWindowWithHostId:hostId];
-    _preferencesWC.window.delegate = self;
-
-    return _preferencesWC;
+    NSWindow *candidate = NSApplication.sharedApplication.mainWindow;
+    self.mainWindow = candidate;
+    return candidate;
 }
 
 - (void)showPreferencesForHost:(NSString *)hostId {
-    NSWindowController *prefsWC = [self preferencesWCWithHostId:hostId];
-    prefsWC.window.frameAutosaveName = @"Preferences Window";
-    [prefsWC.window moonlight_centerWindowOnFirstRunWithSize:CGSizeZero];
-
-    [prefsWC showWindow:nil];
-    [prefsWC.window makeKeyAndOrderFront:nil];
+    NSWindow *window = [self mainContentWindow];
+    if (window == nil) {
+        return;
+    }
+    [window makeKeyAndOrderFront:nil];
+    [SettingsWindowObjCBridge presentSettingsInWindow:window hostId:hostId];
 }
 
 - (IBAction)showPreferences:(id)sender {
-    NSViewController *contentVC = NSApplication.sharedApplication.mainWindow.contentViewController;
-    NSString *hostId = [self hostUUIDFromViewControllerTree:contentVC];
-
-    NSWindowController *prefsWC = [self preferencesWCWithHostId:hostId];
-    prefsWC.window.frameAutosaveName = @"Preferences Window";
-    [prefsWC.window moonlight_centerWindowOnFirstRunWithSize:CGSizeZero];
-
-    [prefsWC showWindow:nil];
-    [prefsWC.window makeKeyAndOrderFront:nil];
+    NSViewController *contentVC = [self mainContentWindow].contentViewController;
+    [self showPreferencesForHost:[self hostUUIDFromViewControllerTree:contentVC]];
 }
 
 - (IBAction)showAbout:(id)sender {
@@ -706,9 +700,7 @@ static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void) {
 #pragma mark - NSWindowDelegate
 
 - (void)windowWillClose:(NSNotification *)notification {
-    if (notification.object == self.preferencesWC.window) {
-        self.preferencesWC = nil;
-    } else if (notification.object == self.aboutWC.window) {
+    if (notification.object == self.aboutWC.window) {
         self.aboutWC = nil;
     } else if (notification.object == self.welcomePermissionsWC.window && self.welcomePermissionsWC.window.sheetParent == nil) {
         [WelcomePermissionsWindowObjCBridge markWelcomeWindowShown];

@@ -5,71 +5,19 @@
 //  Created by Michael Kenny on 15/1/2024.
 //  Copyright © 2024 Moonlight Game Streaming Project. All rights reserved.
 //
+//  Holds the first-launch permissions sheet and the Objective-C facade for
+//  settings. The settings page itself lives in LiquidGlass/ and is embedded in
+//  the main window by SettingsOverlayPresenter, so this file no longer creates
+//  a settings window. The previous SettingsHostingController did: it set
+//  isOpaque = false with a clear content background, which let the desktop
+//  bleed through and contradicted the opaque-settings constraint.
+//
 
 import Cocoa
 import AVFoundation
 import Combine
 import SwiftUI
 
-class SettingsHostingController<RootView: View>: NSWindowController, NSWindowDelegate {
-  // Inline macOS 26 Liquid Glass window configuration; avoids the need
-  // to reference an external LiquidGlassWindowController type that may
-  // not be in the same Swift frontend compilation batch.
-  private var languageObserver: Any?
-
-  convenience init(rootView: RootView) {
-    let title = LanguageManager.shared.localize("Settings")
-    let hosting = NSHostingController(rootView: rootView)
-
-    let window = NSWindow(contentViewController: hosting)
-    // ── Liquid Glass window chrome (macOS 26) ────────────────────────
-    // fullSizeContentView: 使内容视图延伸到标题栏下方,让 Liquid Glass
-    //                     标题栏与下方内容视觉上连续,不再有"分隔条"
-    // titlebarAppearsTransparent = true:
-    //                     macOS 26 标题栏用 Liquid Glass 玻璃材质,
-    //                     必须 transparent 才能让背景内容透出
-    // titleVisibility = .hidden: 隐藏"设置"标题文字,标题栏只留红黄绿
-    //                     控制按钮 + Liquid Glass 玻璃条,与下方 Tab bar 一体
-    window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
-    window.collectionBehavior = [.fullScreenNone, .participatesInCycle]
-    window.tabbingMode = .disallowed
-    window.minSize = NSSize(width: 640, height: 520)
-    window.title = title
-    window.titleVisibility = .hidden
-    window.titlebarAppearsTransparent = true
-    window.isMovableByWindowBackground = true
-    window.isMovable = true
-
-    self.init(window: window)
-    window.delegate = self
-
-    // Bind the content view to a clear, vibrancy-friendly canvas so the
-    // glass material cards render against a translucent backdrop.
-    window.contentView?.wantsLayer = true
-    window.contentView?.layer?.backgroundColor = .clear
-    window.isOpaque = false
-    window.hasShadow = true
-    window.backgroundColor = .clear
-
-    languageObserver = NotificationCenter.default.addObserver(
-      forName: .init("LanguageChanged"), object: nil, queue: .main
-    ) { [weak window, title] _ in
-      window?.title = title
-    }
-  }
-
-  deinit {
-    if let languageObserver { NotificationCenter.default.removeObserver(languageObserver) }
-  }
-
-  func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-    let minSize = sender.minSize
-    return NSSize(
-      width: max(frameSize.width, minSize.width),
-      height: max(frameSize.height, minSize.height)
-    )
-  }
-}
 
 private enum WelcomePermissionsState {
   static let defaultsKey = "welcome.permissions.shown.v1"
@@ -377,11 +325,22 @@ final class WelcomePermissionsHostingController: NSWindowController, NSWindowDel
 }
 
 @objc class SettingsWindowObjCBridge: NSView {
-  @objc class func makeSettingsWindow(hostId: String?) -> NSWindowController {
-    // Liquid Glass redesign (macOS 26) replaces the legacy sidebar-based
-    // SettingsView with a horizontal glass tab bar layout.
-    let settingsView = LiquidGlassSettingsView(hostId: hostId)
-    return SettingsHostingController(rootView: settingsView)
+  /// Presents the settings page inside the caller's window. The window is
+  /// passed in rather than looked up, so a key panel cannot make the page
+  /// appear in the wrong window.
+  @objc(presentSettingsInWindow:hostId:)
+  class func presentSettings(inWindow window: NSWindow?, hostId: String?) {
+    SettingsOverlayPresenter.present(in: window, hostId: hostId)
+  }
+
+  @objc(dismissSettingsFromWindow:)
+  class func dismissSettings(fromWindow window: NSWindow?) {
+    SettingsOverlayPresenter.dismiss(from: window)
+  }
+
+  @objc(isSettingsPresentedInWindow:)
+  class func isSettingsPresented(inWindow window: NSWindow?) -> Bool {
+    SettingsOverlayPresenter.isPresented(in: window)
   }
 
   @objc class func syncSelectedProfile(hostId: String?) {
