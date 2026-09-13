@@ -3,8 +3,8 @@
 # Run AFTER copying Moonlight.app to /Applications
 # Usage: bash scripts/fix-moonlight-permissions.sh
 
-APP_PATH="/Applications/Moonlight.app"
-BUNDLE_ID="std.skyhua.MoonlightMac2"
+APP_PATH="${1:-/Applications/Moonlight.app}"
+BUNDLE_ID="${MOONLIGHT_BUNDLE_ID:-std.skyhua.MoonlightMac2}"
 
 echo "=== Moonlight 权限修复脚本 ==="
 echo ""
@@ -35,22 +35,28 @@ tccutil reset LocalNetwork "$BUNDLE_ID" 2>/dev/null
 echo "   完成 (如失败，请在 系统设置 → 隐私与安全性 → 本地网络 中手动开启)"
 
 echo ""
-echo "4. 重置所有 TCC 权限..."
-tccutil reset All "$BUNDLE_ID" 2>/dev/null
-echo "   完成"
+echo "4. 校验代码签名..."
+# Gatekeeper assessment is deliberately not consulted. A build signed with an
+# Apple Development certificate always fails it, which is normal and not a
+# block; reporting "rejected" only sent users hunting for a dialog that macOS
+# never showed. Signature integrity is the thing worth checking here.
+SIGN_RESULT=$(codesign --verify --strict --verbose=2 "$APP_PATH" 2>&1)
+if [ $? -eq 0 ]; then
+    echo "   签名: 通过完整性校验"
+else
+    echo "   签名: 校验失败"
+    echo "$SIGN_RESULT" | sed 's/^/      /'
+    echo ""
+    echo "   若为自签或 ad-hoc 构建，首次启动请右键点击 Moonlight → 打开 → 确认。"
+fi
 
 echo ""
-echo "5. 验证 Gatekeeper 状态..."
-GK_RESULT=$(spctl --assess --verbose=4 "$APP_PATH" 2>&1)
-if echo "$GK_RESULT" | grep -q "accepted"; then
-    echo "   Gatekeeper: ✅ 已接受"
-else
-    echo "   Gatekeeper: ❌ 被拒绝"
-    echo ""
-    echo "   请执行以下操作之一："
-    echo "   方法 A (推荐): 右键点击 Moonlight → 打开 → 确认"
-    echo "   方法 B: 系统设置 → 隐私与安全性 → 点击 '仍要打开' 按钮"
-fi
+echo "5. 其他权限 (麦克风 / 输入监控) 的处理方式..."
+# tccutil reset All would also revoke microphone and input monitoring, which is
+# far broader than fixing local network access and forces the user to redo
+# unrelated grants. Only mention the escape hatch instead of pulling it.
+echo "   这些权限请在应用内首次请求时授权。"
+echo "   如确需重置全部权限，请手动执行: tccutil reset All \"$BUNDLE_ID\""
 
 echo ""
 echo "=== 修复完成 ==="
