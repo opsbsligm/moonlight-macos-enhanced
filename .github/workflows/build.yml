@@ -72,8 +72,14 @@ jobs:
 
     - name: Verify ${{ matrix.variant }} binary slices
       run: |
-        main_binary="build/Build/Products/Release/Moonlight.app/Contents/MacOS/Moonlight"
-        helper_binary="build/Build/Products/Release/Moonlight.app/Contents/Library/LaunchServices/std.skyhua.MoonlightMac.AwdlPrivilegedHelper"
+        app_bundle="build/Build/Products/Release/Moonlight.app"
+        main_binary="$app_bundle/Contents/MacOS/Moonlight"
+        # Derive the helper name from the built bundle instead of hardcoding it.
+        # The build phase names the helper "$(PRODUCT_BUNDLE_IDENTIFIER).AwdlPrivilegedHelper",
+        # so a bundle id change used to break this check silently in both arch jobs.
+        bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_bundle/Contents/Info.plist")"
+        echo "Bundle identifier: $bundle_id"
+        helper_binary="$app_bundle/Contents/Library/LaunchServices/${bundle_id}.AwdlPrivilegedHelper"
 
         lipo -info "$main_binary"
         file "$main_binary"
@@ -241,8 +247,12 @@ jobs:
 
     - name: Verify universal binary slices
       run: |
-        main_binary="dist/universal/Moonlight.app/Contents/MacOS/Moonlight"
-        helper_binary="dist/universal/Moonlight.app/Contents/Library/LaunchServices/std.skyhua.MoonlightMac.AwdlPrivilegedHelper"
+        app_bundle="dist/universal/Moonlight.app"
+        main_binary="$app_bundle/Contents/MacOS/Moonlight"
+        # Same derivation as the per-architecture job above.
+        bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_bundle/Contents/Info.plist")"
+        echo "Bundle identifier: $bundle_id"
+        helper_binary="$app_bundle/Contents/Library/LaunchServices/${bundle_id}.AwdlPrivilegedHelper"
 
         lipo -info "$main_binary"
         lipo -info "$helper_binary"
