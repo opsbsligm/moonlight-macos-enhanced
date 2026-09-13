@@ -36,6 +36,14 @@ if [ -z "$bundleVersion" ]; then
     exit 0
 fi
 
+# --print mode: emit the resolved number on stdout and write nothing. CI uses
+# this to inject BUILD_NUMBER on the xcodebuild command line, the only channel
+# proven to take effect for command-line builds.
+if [ "${1:-}" = "--print" ]; then
+    echo "$bundleVersion"
+    exit 0
+fi
+
 # ALWAYS write to DERIVED_FILE_DIR. If not set, derive a reasonable default
 # so this script works in manual invocation without polluting the working tree.
 OUT_DIR="${DERIVED_FILE_DIR:-${PROJECT_DIR:-$(pwd)}/build/generated}"

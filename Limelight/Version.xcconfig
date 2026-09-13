@@ -1,5 +1,15 @@
-// Baseline BUILD_NUMBER — manually updated on release tags.
-// At build time, build-number.sh generates GeneratedBuildNumber.xcconfig
-// from `git rev-list --count HEAD` which overrides this value via #include?.
+// Baseline BUILD_NUMBER - manually updated on release tags. It is the fallback
+// used when git is unavailable (source tarball) or when no generator ran.
+//
+// Two generators exist, and each only works in one context (both verified):
+//   1. Xcode GUI  - the scheme PreAction runs build-number.sh, which writes
+//      GeneratedBuildNumber.xcconfig into $(DERIVED_FILE_DIR) below.
+//   2. Command line - scheme PreActions do NOT run, and this #include? does not
+//      resolve $(DERIVED_FILE_DIR) at xcconfig parse time, so the include is a
+//      no-op for CI. CI must pass BUILD_NUMBER=... on the xcodebuild command
+//      line: command-line settings outrank every xcconfig, CONFIG_FILE does not.
+//
+// Both generators derive the number identically: git rev-list --count HEAD,
+// so a GUI build and a CI build of the same commit produce the same version.
 BUILD_NUMBER = 19
 #include? "$(DERIVED_FILE_DIR)/GeneratedBuildNumber.xcconfig"

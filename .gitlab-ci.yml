@@ -114,10 +114,14 @@ build-app:
   dependencies:
     - download-deps
   script:
-    # Generate BUILD_NUMBER from git history (xcodebuild does not run scheme
-    # PreActions, so we invoke build-number.sh explicitly here).
-    - SRCROOT="$CI_PROJECT_DIR" DERIVED_FILE_DIR="$CI_PROJECT_DIR/$DERIVED_DATA_PATH" sh Limelight/build-number.sh
-    - mkdir -p "$DERIVED_DATA_PATH"
+    # Resolve BUILD_NUMBER from git history. xcodebuild ignores scheme PreActions
+    # and the #include? in Version.xcconfig cannot resolve $(DERIVED_FILE_DIR) at
+    # parse time, so the value must reach xcodebuild as a command-line setting -
+    # those outrank every xcconfig. This job used to write the generated file into
+    # the derivedData root, where nothing read it, so CI silently fell back to the
+    # checked-in baseline and artifact versions drifted from the git count.
+    - export BUILD_NUMBER_RESOLVED="$(sh Limelight/build-number.sh --print)"
+    - echo "resolved BUILD_NUMBER=$BUILD_NUMBER_RESOLVED"
     - xcodebuild
         -project "$XCODE_PROJECT"
         -scheme "$XCODE_SCHEME"
@@ -126,6 +130,7 @@ build-app:
         -derivedDataPath "$DERIVED_DATA_PATH"
         CODE_SIGN_IDENTITY="-"
         CODE_SIGNING_REQUIRED=NO
+        BUILD_NUMBER="$BUILD_NUMBER_RESOLVED"
         build 2>&1 | tee build.log | xcpretty --report junit
   artifacts:
     when: always
