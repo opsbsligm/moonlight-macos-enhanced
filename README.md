@@ -44,7 +44,7 @@
 ```bash
 # 克隆仓库
 git clone --recurse-submodules <repo-url>
-cd Moonlight-macOS
+cd moonlight-macos-enhanced
 
 # 下载依赖框架（FFmpeg / SDL2 / OpenSSL）
 scripts/download-frameworks.sh
@@ -57,9 +57,13 @@ scripts/package-dmg.sh
 ```
 
 **构建要求：**
-- macOS 15.0+
-- Xcode 16+
-- Swift 5.0+
+- Xcode 26.x（macOS SDK 26+）
+- 运行时 macOS 26.0+：`MACOSX_DEPLOYMENT_TARGET = 26.0`，Liquid Glass 窗口层依赖该版本
+- 如需支持 macOS 15/12（upstream Issue #26），必须调低 deployment target 并改造依赖 26.x API 的窗口层代码
+
+> 说明：`scripts/download-frameworks.sh` 会把 OpenSSL 头文件链接到 `libs/`，
+> `moonlight-common.xcodeproj` 通过 `HEADER_SEARCH_PATHS = ../libs/**` 解析它们。
+> `libs/` 被 gitignore 排除，因此首次构建前必须执行该脚本，否则 common-c 编译失败。
 
 ## 项目结构
 
