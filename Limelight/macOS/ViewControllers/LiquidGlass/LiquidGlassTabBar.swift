@@ -4,7 +4,7 @@
 //
 //  v14.0 — 完整重构版
 //          ═══════════════════════════════════════════════════════
-//          修复透明穿透：独立背景基底 + clipped边界裁剪 + zIndex层级锁定
+//          修复透明穿透：独立背景基底 + GlassEffectContainer 玻璃分组 + zIndex 层级锁定
 //          纯原生 .glassEffect 液态玻璃 + matchedGeometryEffect 流体跟随
 //          组件完全解耦，外部仅通过 selection Binding 通信
 //          ═══════════════════════════════════════════════════════
@@ -16,15 +16,16 @@
 //
 //  隔离策略:
 //    • trackContainer 提供实体背景，.glassEffect 采样此基底而非穿透到桌面
-//    • glassPill 层 .clipped() 限制渲染范围，防止玻璃采样溢出
-//    • 整个 ZStack .clipped() 确保玻璃效果不溢出容器边界
-//    • zIndex 锁定三层顺序，切换动画中层纈权重不变
+//    • 玻璃形状由 glassEffect(in:) 的 shape 限定，玻璃层本身不再 clipped：
+//      裁剪会切断液态玻璃的边缘折射与形变，穿透问题属于基底职责而非裁剪职责
+//    • 外层 ZStack 的 .clipped() 只约束容器边界，不参与玻璃自身的成型
+//    • zIndex 锁定三层顺序，切换动画中层级权重不变
 //
 
 import SwiftUI
 
 // MARK: - 可调参数集中区 ────────────────────────────────────────────
-// 所有视觉/动画参数集中在此，方便微调玻璃通透度、光晕强度、动画速度。
+// 所有视觉/动画参数集中在此，方便微调玻璃通透度与动画速度。
 // 修改参数后无需改动任何逻辑代码。
 
 // Internal so the surrounding settings surface can reuse the same geometry,
@@ -48,11 +49,6 @@ enum TabBarConfig {
   static let accentCoolBlue = Color(
     .sRGB, red: 0.34, green: 0.62, blue: 0.95, opacity: 1.0
   )
-
-  // ── 外部柔光 (轻微泛光，不大面积扩散) ──
-  // ↓ glowRadius / glowOpacity → 更克制; ↑ → 更明显
-  static let glowRadius: CGFloat            = 3
-  static let glowOpacity: Double            = 0.18
 
   // ── 动画 (流体跟随) ──
   static let animationDuration: Double      = 0.22  // 0.22s 持续时间
@@ -127,21 +123,28 @@ public struct LiquidGlassTabBar: View {
 
         // ── L1: 选中胶囊 (原生 .glassEffect 液态玻璃) ──────────
         // 仅在选中 Tab 位置渲染，通过 matchedGeometryEffect 流体跟随位移。
-        // clipped() 限制渲染范围，防止玻璃采样溢出到容器外。
-        HStack(spacing: TabBarConfig.interSpacing) {
-          ForEach(items) { item in
-            if item.id == selection {
-              glassPill(width: segW)
-                .matchedGeometryEffect(id: "selectionPill", in: nsMorph)
-            } else {
-              Color.clear
-                .frame(width: segW, height: TabBarConfig.tabBarHeight)
+        //
+        // GlassEffectContainer 把所有玻璃元素归入同一个玻璃组：同组元素才能
+        // 相互感知（合并、剔除、morph），并共享 spacing 与渲染批次。
+        // 单个视图上独立调用 .glassEffect 只是互不相干的独立效果。
+        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {
+          HStack(spacing: TabBarConfig.interSpacing) {
+            ForEach(items) { item in
+              if item.id == selection {
+                glassPill(width: segW)
+                  .matchedGeometryEffect(id: "selectionPill", in: nsMorph)
+              } else {
+                Color.clear
+                  .frame(width: segW, height: TabBarConfig.tabBarHeight)
+              }
             }
           }
         }
         .padding(.horizontal, TabBarConfig.outerPadding)
         .padding(.vertical, TabBarConfig.outerPadding)
-        .clipped()                    // ← 边界裁剪：限制玻璃渲染范围
+        // 不再对玻璃层 clipped()：裁剪会切断液态玻璃的边缘折射与形变，
+        // 而玻璃形状已由 glassEffect(in:) 的 shape 限定；防止采样穿透的职责
+        // 属于 L0 的 trackContainer 实体基底，不属于裁剪。
         .zIndex(1)                    // ← 层级锁定：玻璃层在基底之上
         .animation(reduceMotion ? nil : fluidAnimation, value: selection)
 
@@ -195,12 +198,8 @@ public struct LiquidGlassTabBar: View {
         style: .continuous
       )
     )
-    // 外部轻微柔和泛光 — 小 radius 确保不大面积扩散
-    .shadow(
-      color: TabBarConfig.accentCoolBlue.opacity(TabBarConfig.glowOpacity),
-      radius: TabBarConfig.glowRadius,
-      x: 0, y: 0
-    )
+    // 液态玻璃自带光学边缘：不再叠加手工 shadow。
+    // 在玻璃外自绘泛光/阴影会破坏系统对它的高度与材质判定。
   }
 
   // MARK: - Geometry
@@ -255,8 +254,6 @@ public struct LiquidGlassTabBar: View {
 // │ 参数名                    │ 默认值  │ 说明                    │
 // ├───────────────────────────┼─────────┼────────────────────────┤
 // │ glassTintOpacity          │ 0.18    │ 玻璃着色透明度 (0-1)    │
-// │ glowRadius                │ 3       │ 外部柔光半径 (pt)       │
-// │ glowOpacity               │ 0.18    │ 柔光透明度 (0-1)        │
 // │ animationDuration         │ 0.22    │ 动画时长 (秒)           │
 // │ pillCornerRadius          │ 8       │ 胶囊圆角 (pt)           │
 // │ containerCornerRadius     │ 10      │ 容器圆角 (pt)           │
@@ -269,6 +266,7 @@ public struct LiquidGlassTabBar: View {
 // 调参指南:
 // • 玻璃更通透 → 降低 glassTintOpacity (如 0.12)
 // • 玻璃更浓郁 → 升高 glassTintOpacity (如 0.25)
-// • 柔光更明显 → 升高 glowRadius + glowOpacity
+// • 需要强调选中态 → 提高 glassTintOpacity 或加 tint 饱和，勿叠加 shadow：
+//   液态玻璃自带光学，外绘泛光会破坏系统对其高度与材质的判定
 // • 动画更快/慢 → 调整 animationDuration
 // • 基底更不透明 → 升高 containerBaseOpacity (建议不低于 0.85)

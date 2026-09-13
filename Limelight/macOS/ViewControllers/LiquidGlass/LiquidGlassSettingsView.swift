@@ -143,8 +143,10 @@ struct LiquidGlassSettingsView: View {
     Color(nsColor: .controlBackgroundColor)
   }
 
-  // Back control for the embedded page. Native .glassEffect only, reusing the
-  // tab bar geometry so the two rows read as one instrument panel.
+  // Back control for the embedded page. It uses the built-in glass button
+  // style rather than a hand-applied .glassEffect: the system style owns the
+  // press, focus and hover response of glass, and reusing the tab bar geometry
+  // keeps the two rows reading as one instrument panel.
   private var headerBar: some View {
     HStack(spacing: 0) {
       Button {
@@ -161,14 +163,7 @@ struct LiquidGlassSettingsView: View {
         .padding(.horizontal, 10)
         .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
-      .glassEffect(
-        .regular,
-        in: RoundedRectangle(
-          cornerRadius: TabBarConfig.pillCornerRadius,
-          style: .continuous
-        )
-      )
+      .buttonStyle(.glass)
       .keyboardShortcut(.cancelAction)
       .accessibilityLabel(languageManager.localize("Back"))
 
