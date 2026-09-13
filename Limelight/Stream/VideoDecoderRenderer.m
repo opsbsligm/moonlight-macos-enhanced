@@ -2139,6 +2139,23 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     if ([normalizedReason containsString:@"warmup in progress"]) {
         return @"Video Frame Interpolation Runtime Detail Warmup";
     }
+    // Report why interpolation is off. Collapsing every rejection into the
+    // generic Off line is what made the feature look broken: the cadence gate,
+    // the renderer gate and the HDR gate all produced the same text, so a
+    // 120 FPS stream on a 144 Hz panel was indistinguishable from the user
+    // never having enabled interpolation.
+    if ([normalizedReason containsString:@"cadence headroom"]) {
+        return @"Video Frame Interpolation Runtime Detail No Cadence Headroom";
+    }
+    if ([normalizedReason containsString:@"only available in metal renderer"]) {
+        return @"Video Frame Interpolation Runtime Detail Requires Metal Renderer";
+    }
+    if ([normalizedReason containsString:@"hdr stream"]) {
+        return @"Video Frame Interpolation Runtime Detail Disabled For Hdr";
+    }
+    if ([normalizedReason containsString:@"refresh rate unavailable"]) {
+        return @"Video Frame Interpolation Runtime Detail Refresh Rate Unknown";
+    }
     if (engine == MLActiveVideoFrameInterpolationEngineNone) {
         return @"Video Frame Interpolation Runtime Detail Off";
     }

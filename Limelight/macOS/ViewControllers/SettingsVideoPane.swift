@@ -64,6 +64,24 @@ struct VideoView: View {
       .availability == .available
   }
 
+  // The renderer publishes which video pipeline is actually running for the
+  // live stream. Those values already flowed through the notification bridge
+  // into the model, but nothing displayed them, so a silently disabled
+  // upscaler or interpolator was indistinguishable from one that was never
+  // enabled. This shows what the decoder is really doing right now.
+  private func runtimeStatusLabel(labelKey: String, summaryKey: String) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+      Text(languageManager.localize(labelKey))
+        .font(.footnote.weight(.medium))
+        .foregroundColor(.secondary)
+      Spacer(minLength: 12)
+      Text(languageManager.localize(summaryKey))
+        .font(.footnote.weight(.semibold))
+        .textSelection(.enabled)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
   private var frameInterpolationDetailKey: String {
     if !showsMetalTuningControls {
       return "Frame Interpolation Metal only detail"
@@ -223,6 +241,20 @@ struct VideoView: View {
             })
 
           SettingDescriptionRow(textKey: frameInterpolationDetailKey)
+
+          Divider()
+
+          InlineSectionLabel(title: "Video runtime status title")
+          SettingDescriptionRow(textKey: "Video runtime status hint")
+          runtimeStatusLabel(labelKey: "Video Runtime Path Label",
+                             summaryKey: settingsModel.videoRuntimeStatusSummaryKey)
+          SettingDescriptionRow(textKey: settingsModel.videoRuntimeStatusDetailKey)
+          runtimeStatusLabel(labelKey: "Upscaling Engine Label",
+                             summaryKey: settingsModel.videoEnhancementRuntimeStatusSummaryKey)
+          SettingDescriptionRow(textKey: settingsModel.videoEnhancementRuntimeStatusDetailKey)
+          runtimeStatusLabel(labelKey: "Frame Interpolation Engine Label",
+                             summaryKey: settingsModel.videoFrameInterpolationRuntimeStatusSummaryKey)
+          SettingDescriptionRow(textKey: settingsModel.videoFrameInterpolationRuntimeStatusDetailKey)
 
           Divider()
 
