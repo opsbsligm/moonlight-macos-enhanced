@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Post-release engineering audit of the v1.3.9-build19 tree. Every item below was
+verified against a clean `xcodebuild clean build` and an x86_64 cross-compile on
+Apple Silicon hardware.
+
+### Fixed
+
+- **Fresh clones could not build.** `moonlight-common.xcodeproj` resolves OpenSSL
+  headers through `HEADER_SEARCH_PATHS = ../libs/**`, but `libs/openssl` was an
+  undocumented hand-made symlink into a SwiftPM debug build directory, and `libs/`
+  is gitignored. `download-frameworks.sh` now creates it from the downloaded
+  `OpenSSL.xcframework` macOS slice.
+- **CI published no artifacts at all.** The workflow requested the
+  `macos-26-intel` runner, which GitHub does not offer (macOS 26 requires Apple
+  Silicon). x86_64 is now cross-compiled on the arm64 runner; verified locally that
+  the vendored `macos-arm64_x86_64` framework slices link a real x86_64 binary.
+- **The generated build number never reached the product.** Three separate causes:
+  GitLab wrote `GeneratedBuildNumber.xcconfig` to the derivedData root instead of
+  the target's `DerivedSources`; GitHub Actions overrode `BUILD_NUMBER` with
+  `github.run_number`; and `#include? "$(DERIVED_FILE_DIR)/..."` in
+  `Version.xcconfig` does not resolve at xcconfig parse time, so it is inert for
+  command-line builds. CI now injects `git rev-list --count HEAD` as a
+  command-line build setting, which is the only channel proven to apply.
+- **Dot-file trees missing from the published repository.** The flattened initial
+  import (c2c4223) rsynced only source trees and dropped `.github/` workflows,
+  issue/PR templates, the release-notes archive, `README.en.md`, `LICENSE.txt`,
+  `ACKNOWLEDGEMENTS.md`, GitHub Pages files and `readme-assets/`, so the fork has
+  never had an Actions run. Restored from `upstream/master`.
+- **Three first-party compiler warnings** that the v1.3.8 entry already claimed
+  were gone: `keyboardTeardownAlreadyCalled` was redeclared `atomic` internally
+  while the public header said `nonatomic`; `HIDIsPrintableANSIKey()` was dead
+  after the keyboard refactor; the 15-second discovery diagnostic block captured
+  the `shouldDiscover` isa ivar implicitly. First-party sources are now
+  warning-free and CI enforces it.
+- `enet.dsp` showed as permanently modified: the import stored CRLF inside the
+  object database, which contradicts `*.dsp text eol=crlf`. Renormalized once.
+
+### Added
+
+- `Limelight/build-number.sh --print` emits the resolved build number without
+  writing anything, so CI can feed it to `xcodebuild`.
+- CI gate that fails a build on new warnings in first-party sources, while
+  tolerating vendored OpenSSL umbrella headers and `moonlight-common`.
+- `Xcode version` pinned to `latest-stable` instead of `latest` (beta drift).
+
+### Documentation corrections
+
+- The v1.3.8 entry "zero compiler warnings" and the v1.3.9-build19 claim that the
+  `Version.xcconfig` baseline and the generated xcconfig "now agree" were both
+  inaccurate; the behaviour is now as described and re-verified.
+- README build requirements said macOS 15.0+, while the project targets 26.0.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
