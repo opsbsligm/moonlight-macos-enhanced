@@ -1334,24 +1334,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     self.pendingHybridRemoteCursorSync = NO;
 }
 
-- (void)scheduleKeyboardSuppressionClear {
-    NSUInteger suppressionClearGeneration = self.activeStreamGeneration;
-    NSUInteger capturedToken = self.keyboardSuppressionClearToken;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.300 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        if (self.activeStreamGeneration != suppressionClearGeneration) {
-            return;
-        }
-        if (self.keyboardSuppressionClearToken != capturedToken) {
-            // A new mouseDown occurred during the 300ms window.
-            // Do NOT clear the flag — the new click re-armed suppression.
-            return;
-        }
-        self.suppressingKeyboardFromMouseEvent = NO;
-        self.hidSupport.suppressingKeyboardFromMouseEvent = NO;
-    });
-}
-
 - (void)dispatchMouseButton:(int)button pressed:(BOOL)pressed event:(NSEvent *)event {
     if (![self supportsRemoteDesktopCursorSync] || ![self hasReadyInputContext]) {
         if (pressed) {
@@ -2007,16 +1989,11 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
             return event;
         }
 
-        // Reject synthetic keyDown events that AppKit / certain trackpad
-        // drivers synthesize during double-click dispatch. Replaces the
-        // flaky suppressingKeyboardFromMouseEvent time-window flag with a
-        // deterministic three-check detector (see header for details).
-        const char *reason = "genuine";
-        if (MLKeyDownIsSyntheticDoubleClick(event, strongSelf.lastMouseButtonEventAtMs, &reason)) {
-            Log(LOG_W, @"[keyboard] localKeyDownMonitor: swallowed synthetic keyDown (%s) keyCode=%hu mods=0x%llx",
-                reason ?: "?",
-                event.keyCode, (unsigned long long)event.modifierFlags);
-            return nil;
+        // This monitor is registered for NSEventMaskKeyDown, so only real
+        // keyboard events reach it. The guard keeps that contract explicit:
+        // keyCode is undefined on non-keyboard events and must never be read.
+        if (!MLIsKeyboardKeyEvent(event)) {
+            return event;
         }
 
         if ([strongSelf handleKeyboardTranslationRuleForEvent:event]) {
@@ -2340,12 +2317,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     // to the application correctly.
     [self ensureStreamWindowKeyIfPossible];
 
-    // -- 2026-08-02 NEW: Deterministic double-click synthetic detection --
-    // Replace the flaky time-window flag with a monotonic timestamp of the
-    // last mouse button event (down/up, any button). The proximity check in
-    // MLKeyDownIsSyntheticDoubleClick uses this value.
-    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
-
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"left-down"];
     [self logMouseClickDiagnosticsForPhase:@"left-down" event:event];
@@ -2357,7 +2328,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)mouseUp:(NSEvent *)event {
-    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"left-up"];
     [self logMouseClickDiagnosticsForPhase:@"left-up" event:event];
@@ -2366,7 +2336,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)rightMouseDown:(NSEvent *)event {
-    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"right-down"];
     [self logMouseClickDiagnosticsForPhase:@"right-down" event:event];
@@ -2381,7 +2350,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)rightMouseUp:(NSEvent *)event {
-    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"right-up"];
     [self logMouseClickDiagnosticsForPhase:@"right-up" event:event];
@@ -2396,7 +2364,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)otherMouseDown:(NSEvent *)event {
-    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"other-down"];
     [self logMouseClickDiagnosticsForPhase:@"other-down" event:event];
@@ -2409,7 +2376,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)otherMouseUp:(NSEvent *)event {
-    self.lastMouseButtonEventAtMs = MLMonotonicMillis();
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"other-up"];
     [self logMouseClickDiagnosticsForPhase:@"other-up" event:event];
@@ -2817,23 +2783,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     if (!MLIsKeyboardKeyEvent(event)) {
         // Non-keyboard event: SWALLOW (return YES) to prevent it from
         // falling through to keyDown: which would send garbage to remote.
-        return YES;
-    }
-
-    // DETERMINISTIC SYNTHETIC KEYDOWN REJECTOR (2026-08-02)
-    //
-    // Replaces the flaky suppressingKeyboardFromMouseEvent time-window flag.
-    // Uses three independent checks (proximity, char-consistency, spurious-
-    // modifier).  Same code path as localKeyDownMonitor and HIDSupport.keyDown:
-    // if any single check fires, the event is swallowed before any further
-    // dispatch.
-    const char *synthReason = "genuine";
-    if (event.type == NSEventTypeKeyDown &&
-        MLKeyDownIsSyntheticDoubleClick(event, self.lastMouseButtonEventAtMs, &synthReason)) {
-        Log(LOG_W, @"[keyboard] onKeyboardEquivalent: swallowed synthetic keyDown (%s) kVK=%hu mods=0x%llx",
-            synthReason ?: "?",
-            event.keyCode,
-            (unsigned long long)event.modifierFlags);
         return YES;
     }
 
