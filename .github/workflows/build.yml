@@ -95,6 +95,16 @@ jobs:
         echo "BUILD_NUMBER_RESOLVED=$(sh Limelight/build-number.sh --print)" >> "$GITHUB_ENV"
         echo "resolved BUILD_NUMBER=$(sh Limelight/build-number.sh --print)"
 
+    - name: Verify input concurrency invariants
+      # The pointer delta handoff between the GameController callback queue and
+      # the CVDisplayLink output callback crosses threads. A compound update on
+      # an atomic property compiles, links and ships with no signal at all, so
+      # the only protection is a behavioural check. The harness extracts the
+      # implementation from Limelight/Input, runs it in the real topology and a
+      # wider one, then rebuilds the previous semantics to prove the check
+      # still notices the race.
+      run: python3 scripts/input-concurrency-tests.py
+
     - name: Build ${{ matrix.display_name }} package
       run: |
         set -o pipefail
