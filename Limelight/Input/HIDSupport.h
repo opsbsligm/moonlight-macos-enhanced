@@ -41,12 +41,6 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
 
-/// --- LEGACY (deprecated, kept for source compat).
-/// Writes are now NO-OPs, reads always return NO.
-/// Replaced by the deterministic header MLKeyDownIsSyntheticDoubleClick() detector in
-/// StreamViewController_Internal.h.
-@property (nonatomic) BOOL suppressingKeyboardFromMouseEvent;
-
 - (void)releaseAllModifierKeys;
 
 /// Returns YES once tearDownKeyboardStateForSessionEnd has run.
