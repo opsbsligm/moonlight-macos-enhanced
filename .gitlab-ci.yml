@@ -21,6 +21,12 @@ stages:
   - package
 
 variables:
+  # moonlight-common-c is a submodule that carries submodules of its own
+  # (enet, nanors). GitLab does not initialize any of them by default, and
+  # the build then fails on the first enet include. Verified locally by
+  # building with an uninitialized tree: Limelight-internal.h cannot find
+  # ../enet/include/enet/enet.h.
+  GIT_SUBMODULE_STRATEGY: recursive
   DERIVED_DATA_PATH: "build/xcode/derivedData"
   XCODE_PROJECT: "Moonlight.xcodeproj"
   XCODE_SCHEME: "Moonlight for macOS"
