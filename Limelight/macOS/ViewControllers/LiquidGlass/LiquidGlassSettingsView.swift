@@ -3,13 +3,23 @@
 //  Moonlight for macOS
 //
 //  macOS 26 Liquid Glass settings view.
-//  v12.0 — 修复透明穿透：移除 Color.clear 背景，改用 GlassView 实体材质
-//          作为整个视图的背景基底。TabBar 自带独立 trackContainer 基底，
-//          玻璃效果采样实体背景而非穿透到桌面。
-//          注意：宿主 SettingsHostingController 使用标准不透明窗口
-//          （无 .fullSizeContentView、titlebarAppearsTransparent=false），
-//          TabBar 通过 .safeAreaInset 布局在内容区顶部，位于标题栏下方，
-//          并不进入标题栏扩展区，也不与系统标题栏材质融合。
+//
+//  Presentation contract: this view is embedded into the content region of the
+//  main window by SettingsOverlayPresenter. It is no longer hosted in its own
+//  window, so two properties are load bearing and were both wrong before:
+//
+//  • The background has to be fully opaque. Under the older .regularMaterial
+//    the settings surface was translucent over whatever page it covered, and
+//    the previous host window additionally set isOpaque = false with a clear
+//    background colour, which let the desktop show through. Both violated the
+//    "settings must be completely opaque" constraint that the file comments
+//    claimed to satisfy.
+//  • No intrinsic minimum size. As an embedded page it has to adapt to the
+//    main window instead of forcing a 640x520 floor that the main window's
+//    own 650x350 minimum contradicts.
+//
+//  When onClose is supplied the view draws its own back control, because an
+//  embedded page has no close button of its own.
 //
 
 import AVFoundation
@@ -25,9 +35,13 @@ struct LiquidGlassSettingsView: View {
   @AppStorage("selected-settings-pane") private var selectedPane: Pane = .stream
 
   var hostId: String?
+  /// Supplied when the view is embedded in the main window. Draws a back
+  /// control and reports dismissal so the presenter can remove the page.
+  var onClose: (() -> Void)?
 
-  init(hostId: String? = nil) {
+  init(hostId: String? = nil, onClose: (() -> Void)? = nil) {
     self.hostId = hostId
+    self.onClose = onClose
   }
 
   var body: some View {
@@ -49,12 +63,10 @@ struct LiquidGlassSettingsView: View {
       }
     )
 
-    // Root: a single ScrollView. The tab bar is injected into the top safe
-    // area via .safeAreaInset(edge: .top), placing it at the top of the
-    // content region. Because the hosting SettingsHostingController uses a
-    // standard opaque window (no .fullSizeContentView), the tab bar sits
-    // below the AppKit title bar rather than extending into it; it does not
-    // share or fuse with the system title bar material.
+    // Root: a single ScrollView, with the tab bar injected into the top safe
+    // area through .safeAreaInset(edge: .top). As an embedded page the region
+    // below the title bar belongs to us alone, so the tab bar and the optional
+    // back row stack inside that inset and the content scrolls under them.
     ScrollView(.vertical, showsIndicators: true) {
       VStack(spacing: 16) {
         Group {
@@ -92,21 +104,25 @@ struct LiquidGlassSettingsView: View {
     }
     .scrollContentBackground(.hidden)
     .safeAreaInset(edge: .top, spacing: 0) {
-      // Tab bar sits at the top of the opaque content region (below the
-      // AppKit title bar — the host window has no .fullSizeContentView).
-      // TabBar 自带独立 trackContainer 基底，无需依赖外部透明背景。
-      LiquidGlassTabBar(selection: selectionBinding, items: tabs)
-        .padding(.horizontal, 20)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
+      VStack(spacing: 8) {
+        if onClose != nil {
+          headerBar
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+        }
+        // TabBar 自带独立 trackContainer 基底，无需依赖外部透明背景。
+        LiquidGlassTabBar(selection: selectionBinding, items: tabs)
+          .padding(.horizontal, 20)
+          .padding(.top, onClose == nil ? 14 : 0)
+          .padding(.bottom, 10)
+      }
     }
-    // v12: 实体材质背景 — SwiftUI .regularMaterial
-    // 提供不透明 frosted glass 基底，替代 v11 的 Color.clear。
-    // 玻璃效果采样此基底，不再穿透到桌面。
-    .background(.regularMaterial)
+    // Fully opaque base colour, not a material. This page covers the main
+    // window content rather than a desktop, so anything translucent here
+    // would show the host list underneath it. The glass pill samples this
+    // base the same way the tab bar track does.
+    .background(opaqueBase)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    .frame(minWidth: 640, idealWidth: 900, maxWidth: .infinity,
-           minHeight: 520, idealHeight: 680, maxHeight: .infinity)
     .onAppear {
       if selectedPane == .legacy {
         selectedPane = .app
@@ -119,6 +135,45 @@ struct LiquidGlassSettingsView: View {
     }
     .environment(\.defaultMinListRowHeight, 28)
     .dynamicTypeSize(.xSmall ... .xxxLarge)
+  }
+
+  // MARK: - Embedded chrome
+
+  private var opaqueBase: some View {
+    Color(nsColor: .controlBackgroundColor)
+  }
+
+  // Back control for the embedded page. Native .glassEffect only, reusing the
+  // tab bar geometry so the two rows read as one instrument panel.
+  private var headerBar: some View {
+    HStack(spacing: 0) {
+      Button {
+        onClose?()
+      } label: {
+        HStack(spacing: TabBarConfig.iconTextSpacing) {
+          Image(systemName: "chevron.backward")
+            .font(.system(size: TabBarConfig.iconSize, weight: .semibold))
+          Text(languageManager.localize("Back"))
+            .font(.system(size: TabBarConfig.fontSize, weight: .medium))
+        }
+        .foregroundStyle(TabBarConfig.accentCoolBlue)
+        .frame(height: TabBarConfig.tabBarHeight)
+        .padding(.horizontal, 10)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .glassEffect(
+        .regular,
+        in: RoundedRectangle(
+          cornerRadius: TabBarConfig.pillCornerRadius,
+          style: .continuous
+        )
+      )
+      .keyboardShortcut(.cancelAction)
+      .accessibilityLabel(languageManager.localize("Back"))
+
+      Spacer(minLength: 0)
+    }
   }
 
   private var effectivePane: Pane {

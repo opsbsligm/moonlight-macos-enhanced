@@ -27,7 +27,9 @@ import SwiftUI
 // 所有视觉/动画参数集中在此，方便微调玻璃通透度、光晕强度、动画速度。
 // 修改参数后无需改动任何逻辑代码。
 
-private enum TabBarConfig {
+// Internal so the surrounding settings surface can reuse the same geometry,
+// colour and animation constants instead of repeating them.
+enum TabBarConfig {
   // ── 布局 (贴近 macOS 原生「设置 App」比例) ──
   static let tabBarHeight: CGFloat          = 28   // Tab 内容区高度
   static let containerCornerRadius: CGFloat = 10   // 容器圆角
