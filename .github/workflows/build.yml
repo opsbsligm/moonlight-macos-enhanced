@@ -10,8 +10,35 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Cheap repository audits that do not need Xcode. They gate every build job
+  # so a broken tree fails in seconds instead of after a full matrix build.
+  audit:
+    name: Repository audits
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Verify localization coverage
+      run: python3 scripts/l10n-audit.py
+
+    - name: Verify every source file is compiled
+      run: python3 scripts/source-membership-audit.py
+
+    - name: Verify project constraints
+      run: python3 scripts/constraints-audit.py
+
+    - name: Verify workflow syntax and shell script hygiene
+      run: |
+        python3 -c "import yaml; yaml.safe_load(open('.github/workflows/build.yml')); print('workflow yaml ok')"
+        for script in scripts/*.sh; do
+          bash -n "$script"
+          echo "shell syntax ok: $script"
+        done
+
   build_arch:
     name: Build ${{ matrix.variant }}
+    needs: audit
     runs-on: ${{ matrix.runner }}
 
     strategy:
