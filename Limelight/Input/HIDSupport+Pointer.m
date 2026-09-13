@@ -93,6 +93,31 @@ static inline double HIDBlendFreeMouseGain(double currentGain, double rawDelta, 
     return HIDClampFreeMouseGain((currentGain * 0.82) + (sample * 0.18));
 }
 
+@implementation HIDMouseDeltaAccumulator {
+    _Atomic double _pendingX;
+    _Atomic double _pendingY;
+}
+// Relaxed is the right ordering here. Each axis is an independent counter with
+// no other data published alongside it that another thread has to observe in
+// the same order, so the only requirement is that an add and a take never
+// interleave into a lost update, which the atomic read-modify-write gives.
+- (void)accumulateMotionX:(CGFloat)deltaX deltaY:(CGFloat)deltaY {
+    atomic_fetch_add_explicit(&_pendingX, (double)deltaX, memory_order_relaxed);
+    atomic_fetch_add_explicit(&_pendingY, (double)deltaY, memory_order_relaxed);
+}
+
+- (void)takeAccumulatedMotionX:(CGFloat *)deltaXOut deltaY:(CGFloat *)deltaYOut {
+    CGFloat takenX = (CGFloat)atomic_exchange_explicit(&_pendingX, 0.0, memory_order_relaxed);
+    CGFloat takenY = (CGFloat)atomic_exchange_explicit(&_pendingY, 0.0, memory_order_relaxed);
+    if (deltaXOut != NULL) {
+        *deltaXOut = takenX;
+    }
+    if (deltaYOut != NULL) {
+        *deltaYOut = takenY;
+    }
+}
+@end
+
 @implementation HIDSupport (Pointer)
 
 - (void)suppressRelativeMouseMotionForMilliseconds:(uint64_t)durationMs {
@@ -428,9 +453,9 @@ static inline double HIDBlendFreeMouseGain(double currentGain, double rawDelta, 
 
 -(void)registerMouseCallbacks:(GCMouse *)mouse API_AVAILABLE(macos(11.0)) {
     if (self.useGCMouse) {
-        mouse.mouseInput.mouseMovedHandler = ^(GCMouseInput * _Nonnull mouse, float deltaX, float deltaY) {
-            self.mouseDeltaX += deltaX;
-            self.mouseDeltaY -= deltaY;
+        mouse.mouseInput.mouseMovedHandler = ^(GCMouseInput * _Nonnull mouseInput, float deltaX, float deltaY) {
+            (void)mouseInput;
+            [self.mouseDeltaAccumulator accumulateMotionX:(CGFloat)deltaX deltaY:(CGFloat)-deltaY];
         };
         
         mouse.mouseInput.leftButton.pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
@@ -532,12 +557,9 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
         return kCVReturnError;
     }
 
-    CGFloat deltaX, deltaY;
-    deltaX = me.mouseDeltaX;
-    deltaY = me.mouseDeltaY;
+    CGFloat deltaX = 0, deltaY = 0;
+    [me.mouseDeltaAccumulator takeAccumulatedMotionX:&deltaX deltaY:&deltaY];
     if (deltaX != 0 || deltaY != 0) {
-        me.mouseDeltaX = 0;
-        me.mouseDeltaY = 0;
         if (me.shouldSendInputEvents) {
             PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(me);
             if (!inputCtx) {

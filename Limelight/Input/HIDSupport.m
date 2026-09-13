@@ -712,6 +712,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         self.host = host;
         self.inputQueue = dispatch_queue_create("com.moonlight.input", DISPATCH_QUEUE_SERIAL);
         self.freeMouseVirtualCursorLock = [[NSObject alloc] init];
+        self.mouseDeltaAccumulator = [[HIDMouseDeltaAccumulator alloc] init];
         self.freeMouseVirtualCursorGainX = 1.0;
         self.freeMouseVirtualCursorGainY = 1.0;
         self.inputDiagnosticsLock = [[NSObject alloc] init];

@@ -12,6 +12,7 @@
 
 #import "Moonlight-Swift.h"
 #include <limits.h>
+#include <stdatomic.h>
 #include <math.h>
 
 #include "Limelight.h"
@@ -24,14 +25,27 @@
 
 @import GameController;
 
+// Relative pointer motion is produced on the GameController mouse callback
+// queue and consumed by the CVDisplayLink output callback on another thread.
+// An atomic CGFloat pair could not express that handoff: the producer's
+// compound update and the consumer's read-then-clear are each several
+// accesses, so motion that landed between a read and the clear that followed
+// was overwritten and lost. Each component is now a single atomic add on the
+// producing side and a single atomic take on the consuming side, so every
+// unit of motion moves exactly once and the accumulator reads as zero again
+// without a second store.
+@interface HIDMouseDeltaAccumulator : NSObject
+- (void)accumulateMotionX:(CGFloat)deltaX deltaY:(CGFloat)deltaY;
+- (void)takeAccumulatedMotionX:(CGFloat *)deltaXOut deltaY:(CGFloat *)deltaYOut;
+@end
+
 @interface HIDSupport () <CoreHIDMouseDriverDelegate>
 @property (nonatomic) dispatch_queue_t rumbleQueue;
 @property (nonatomic, strong) NSDictionary *mappings;
 @property (nonatomic) IOHIDManagerRef hidManager;
 @property (nonatomic, strong) Controller *controller;
 @property (nonatomic) CVDisplayLinkRef displayLink;
-@property (atomic) CGFloat mouseDeltaX;
-@property (atomic) CGFloat mouseDeltaY;
+@property (nonatomic, strong) HIDMouseDeltaAccumulator *mouseDeltaAccumulator;
 @property (nonatomic) UInt8 previousLowFreqMotor;
 @property (nonatomic) UInt8 previousHighFreqMotor;
 @property (atomic) UInt16 nextLowFreqMotor;
