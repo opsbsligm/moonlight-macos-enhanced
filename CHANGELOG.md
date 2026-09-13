@@ -7,6 +7,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Post-release engineering audit of the v1.3.9-build19 tree. Every item below was
+verified against a clean `xcodebuild clean build` and an x86_64 cross-compile on
+Apple Silicon hardware.
+
+### Fixed
+
+- **Fresh clones could not build.** `moonlight-common.xcodeproj` resolves OpenSSL
+  headers through `HEADER_SEARCH_PATHS = ../libs/**`, but `libs/openssl` was an
+  undocumented hand-made symlink into a SwiftPM debug build directory, and `libs/`
+  is gitignored. `download-frameworks.sh` now creates it from the downloaded
+  `OpenSSL.xcframework` macOS slice.
+- **CI published no artifacts at all.** The workflow requested the
+  `macos-26-intel` runner, which GitHub does not offer (macOS 26 requires Apple
+  Silicon). x86_64 is now cross-compiled on the arm64 runner; verified locally that
+  the vendored `macos-arm64_x86_64` framework slices link a real x86_64 binary.
+- **The generated build number never reached the product.** Three separate causes:
+  GitLab wrote `GeneratedBuildNumber.xcconfig` to the derivedData root instead of
+  the target's `DerivedSources`; GitHub Actions overrode `BUILD_NUMBER` with
+  `github.run_number`; and `#include? "$(DERIVED_FILE_DIR)/..."` in
+  `Version.xcconfig` does not resolve at xcconfig parse time, so it is inert for
+  command-line builds. CI now injects `git rev-list --count HEAD` as a
+  command-line build setting, which is the only channel proven to apply.
+- **Three first-party compiler warnings** that the v1.3.8 entry already claimed
+  were gone: `keyboardTeardownAlreadyCalled` was redeclared `atomic` internally
+  while the public header said `nonatomic`; `HIDIsPrintableANSIKey()` was dead
+  after the keyboard refactor; the 15-second discovery diagnostic block captured
+  the `shouldDiscover` isa ivar implicitly. First-party sources are now
+  warning-free and CI enforces it.
+
+### Added
+
+- `Limelight/build-number.sh --print` emits the resolved build number without
+  writing anything, so CI can feed it to `xcodebuild`.
+- CI gate that fails a build on new warnings in first-party sources, while
+  tolerating vendored OpenSSL umbrella headers and `moonlight-common`.
+- `Xcode version` pinned to `latest-stable` instead of `latest` (beta drift).
+
+### Documentation corrections
+
+- The v1.3.8 entry "zero compiler warnings" and the v1.3.9-build19 claim that the
+  `Version.xcconfig` baseline and the generated xcconfig "now agree" were both
+  inaccurate; the behaviour is now as described and re-verified.
+- README build requirements said macOS 15.0+, while the project targets 26.0.
+
+### Second audit pass (input, permissions, CI, settings surface)
+
+#### Fixed
+
+- **Keyboard input discarded real keystrokes.** The three-check synthetic
+  keydown detector added in v1.3.9 was redundant: the `MLIsKeyboardKeyEvent`
+  type gate in `onKeyboardEquivalent:` already prevents a double click from
+  producing a letter, because `keyCode` is undefined on mouse events. What the
+  detector did instead was drop keys. Its proximity check discarded every
+  keyDown within 120 ms of any mouse button event and never reset the
+  timestamp, which is the reported W-plus-space conflict. Its character check
+  validated US-ANSI glyphs, so every printable key was dropped on AZERTY,
+  QWERTZ, Cyrillic, Greek, Hebrew and Arabic layouts and under any input
+  method. Its numeric-pad whitelist omitted the four arrow keys, so arrow keys
+  were discarded as synthetic, which is the reported D-pad failure in issue 39.
+- **The KingKong axis map was unreachable.** `isXbox` listed product id
+  `0x02E0` under the Microsoft vendor id, and `isKingKong` matched the same
+  pair, so the callback always took the Xbox branch. KingKong reports the right
+  stick on Rx/Ry and the triggers on Z/Rz where Xbox reports the right stick on
+  Z/Rz, so every KingKong and Betop Zeus pad was mis-mapped: the issue 25 fix
+  announced in v1.3.9 was never actually in effect.
+- **The connection diagnostics menu never reset anything.** It invoked
+  `/usr/sbin/tccutil`, but tccutil lives in `/usr/bin`; the task launch threw,
+  `syncRunTask` swallowed the exception and reported `exit=-1`, so the
+  promised `tccutil reset LocalNetwork` never ran while the dialog told the
+  user to watch for a prompt that was never re-armed. The same code also
+  probed TCC state with `tccutil dump`, and tccutil implements only
+  `reset SERVICE [BUNDLE_ID]`, so that report line was noise. It now records
+  what the discovery probe actually observed.
+- **Both CI architecture jobs failed on one stale literal.** They asserted the
+  AWDL helper at
+  `Contents/Library/LaunchServices/std.skyhua.MoonlightMac.AwdlPrivilegedHelper`,
+  while the build phase names it from `$(PRODUCT_BUNDLE_IDENTIFIER)`, which has
+  been `std.skyhua.MoonlightMac2` since the rename. The path it checked has not
+  existed for some time. Both jobs now derive the name from the built
+  `Info.plist`; verified locally that the derived path exists and the old
+  literal does not.
+- **`scripts/fix-moonlight-permissions.sh` reported a false Gatekeeper block.**
+  It ran `spctl --assess`, which an Apple Development signature always fails by
+  design, and then told every user to look for an "Open Anyway" button. It now
+  verifies signature integrity with `codesign --verify --strict`. The same
+  script also ran `tccutil reset All`, which revokes microphone and input
+  monitoring along with local network access; that is now a documented manual
+  step rather than something the script does.
+- **Thirteen log browser strings had no translation** in either layer and
+  rendered as raw keys.
+
+#### Changed
+
+- **Settings is a page inside the main window instead of a second window.** It
+  is attached over the content region, hides the toolbar while it is up so main
+  window actions cannot fire underneath an invisible page, and switches the
+  title. The back control, Escape, Command+W and the window closing all restore
+  the previous state, and reopening the same host no longer discards the page.
+  Verified on the built product: the titled visible window count stays at one
+  while settings is up, the page is a descendant of the content view, and a
+  repeated request for the same host does not rebuild it.
+- **The settings surface is now genuinely opaque.** The old host set
+  `isOpaque = false` with a clear content background and the view used
+  `.regularMaterial`, so the page was translucent over whatever lay underneath,
+  while its own comments claimed a standard opaque window.
+- **`LiquidGlassWindowController` was deleted.** It carried the correct opaque
+  configuration and was never referenced by anything.
+- **`scripts/fix-moonlight-permissions.sh` accepts the app path as an
+  argument** instead of hardcoding `/Applications/Moonlight.app`.
+
+#### Added
+
+- **A repository audit job gates every build job**, running on Linux in seconds:
+  localization coverage across both layers, project membership for every
+  implementation file, and the constraint set that regressions have actually
+  broken (bundle identifier, Bonjour and local-network declarations, network
+  entitlements, sandbox state, forbidden tool paths, `waitsForConnectivity`, and
+  the stale helper path in CI). Every audit was also checked in reverse with a
+  planted violation.
+- **Runtime status for the video pipeline is now visible** in the video
+  settings pane. The renderer already published the active render path,
+  upscaler and interpolator per host, and five localized strings were written
+  for it, but no view read them. Interpolation rejection reasons are also split
+  apart, so a stream without display cadence headroom no longer looks identical
+  to the feature being switched off or unavailable.
+
+#### Verified
+
+- **MetalFX spatial scaling is effective.** The draw path constructs an
+  `MTLFXSpatialScaler`, encodes into the drawable and rebuilds it whenever size
+  or pixel format changes; the framework is weak-linked with a class-lookup
+  guard for older systems.
+- **VideoToolbox low-latency frame interpolation is a real implementation**, and
+  the refresh-rate gate is a legitimate constraint rather than a defect: Apple's
+  `VTLowLatencyFrameInterpolationConfiguration` places no refresh-rate
+  requirement of its own, but interpolated frames still need scanout slots, so
+  the comparison against `CVDisplayLinkGetActualOutputVideoRefreshPeriod` is
+  sound. The practical gap was observability, which is addressed above.
+- **No source file was silently excluded from the build.** The project's
+  membership exception list is its explicit member list, which is how
+  `NetworkPermissionManager.swift` came to sit in the tree uncompiling for
+  months; that file is now removed along with its unused strings.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
@@ -19,6 +162,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence-based detector (proximity + character-consistency + spurious-modifier).
   Applied uniformly at all three keyDown entry points:
   `localKeyDownMonitor`, `onKeyboardEquivalent:`, `HIDSupport.keyDown:`.
+
+  > Superseded by the audit above: this detector and its three companions
+  > below (`MLMonotonicMillis()`, `MLPrintableANSIKeyCodeMatchesCharacter()`
+  > and `lastMouseButtonEventAtMs`) were removed, because the detector
+  > discarded real keystrokes. See *Keyboard input discarded real keystrokes*.
+
 - **`MLMonotonicMillis()`**: mach-time-based monotonic timestamp for the
   proximity check, immune to wall-clock drift.
 - **`MLPrintableANSIKeyCodeMatchesCharacter()`**: validates that the
