@@ -9,6 +9,7 @@ PROJECT_DIR="${SCRIPT_DIR:h}"
 
 XCFRAMEWORKS_DIR="${PROJECT_DIR}/xcframeworks"
 OPENSSL_DIR="${PROJECT_DIR}/Packages/OpenSSL.xcframework"
+LIBS_DIR="${PROJECT_DIR}/libs"
 
 XCFRAMEWORKS_URL="https://github.com/coofdy/moonlight-mobile-deps/releases/download/latest/moonlight-apple-xcframeworks.zip"
 OPENSSL_URL="https://github.com/krzyzanowskim/OpenSSL/releases/download/3.6.0001/OpenSSL.xcframework.zip"
@@ -35,5 +36,29 @@ else
   unzip -o "$TMP_DIR/openssl.zip" -d "${PROJECT_DIR}/Packages/"
   echo "OpenSSL.xcframework downloaded to $OPENSSL_DIR"
 fi
+
+# moonlight-common.xcodeproj resolves OpenSSL headers through HEADER_SEARCH_PATHS "../libs/**".
+# common-c includes <openssl/*.h> while the vendored Umbrella headers include <OpenSSL/*.h>,
+# so expose the framework Headers directory under both spellings. Without this step a fresh
+# clone fails to compile moonlight-common because libs/ is gitignored by design.
+echo "=== Linking OpenSSL headers into libs/ ==="
+OPENSSL_HEADERS=$(find "$XCFRAMEWORKS_DIR/OpenSSL.xcframework" "$OPENSSL_DIR" \
+  -path '*macos*arm64_x86_64/OpenSSL.framework/Versions/A/Headers' -type d 2>/dev/null | head -1)
+
+if [[ -z "$OPENSSL_HEADERS" ]]; then
+  echo "error: no macOS OpenSSL headers found under xcframeworks/ or Packages/" >&2
+  exit 1
+fi
+
+mkdir -p "$LIBS_DIR"
+for spelling in openssl OpenSSL; do
+  # On case-insensitive volumes the second spelling already resolves to the first.
+  if [[ ! -e "$LIBS_DIR/$spelling" ]]; then
+    ln -s "$OPENSSL_HEADERS" "$LIBS_DIR/$spelling"
+    echo "libs/$spelling -> $OPENSSL_HEADERS"
+  else
+    echo "libs/$spelling already present"
+  fi
+done
 
 echo "=== All frameworks ready ==="
