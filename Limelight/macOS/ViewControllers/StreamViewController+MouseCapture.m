@@ -2002,7 +2002,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 
         StreamShortcut *borderlessShortcut = [strongSelf streamShortcutForAction:MLShortcutActionToggleBorderlessWindowed];
         if ([strongSelf event:event matchesShortcut:borderlessShortcut]) {
-            [strongSelf resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"local-monitor-borderless-shortcut" event:event];
             strongSelf.pendingOptionUncaptureToken += 1;
             if ([strongSelf isWindowBorderlessMode]) {
                 [strongSelf switchToWindowedMode:nil];
@@ -2014,7 +2013,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 
         StreamShortcut *controlCenterShortcut = [strongSelf streamShortcutForAction:MLShortcutActionOpenControlCenter];
         if ([strongSelf event:event matchesShortcut:controlCenterShortcut]) {
-            [strongSelf resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"local-monitor-control-center-shortcut" event:event];
             [strongSelf presentControlCenterFromShortcut];
             return nil;
         }
@@ -2623,26 +2621,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     return NO;
 }
 
-- (void)resolveDeferredCommandModifierWithoutRemoteTapWithReason:(NSString *)reason event:(NSEvent *)event {
-    // LEGACY METHOD - NOW A PERMANENT NO-OP.
-    //
-    // The entire "deferred Command modifier" state machine has been REMOVED as
-    // part of the 2026-08-02 CI/CD refactor. It was the root cause of:
-    //   * "Double-clicking left mouse opens the Windows Start menu"
-    //   * "Ctrl / Option / Win keys don't respond in Moonlight Classic mode"
-    //
-    // Under the Streaming Standard (Parsec / UU Remote / Steam Link):
-    //   * Modifier keys are sent immediately on flagsChanged: (down/up).
-    //   * Mouse events NEVER mutate keyboard modifier state.
-    //   * There is NO timer, NO "wait and see if Cmd is followed by a key".
-    //
-    // This method is retained only to avoid removing 20+ call sites across
-    // the file in one edit (risk of introducing a typo). All call paths that
-    // previously landed here are now silent no-ops.
-    (void)reason;
-    (void)event;
-}
-
 - (BOOL)performKeyboardTranslationLocalAction:(NSString *)action {
     if (action.length == 0) {
         return NO;
@@ -2744,7 +2722,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         return NO;
     }
 
-    [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"keyboard-translation" event:event];
     [self.hidSupport releaseAllModifierKeys];
 
     if (rule.outputKind == KeyboardTranslationOutputKindRemoteShortcut) {
@@ -2832,7 +2809,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         return YES;
     }
 
-    [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"keyboard-equivalent" event:event];
 
     if ([self handleKeyboardTranslationRuleForEvent:event]) {
         return YES;
@@ -2859,7 +2835,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     }
 
     if ([self event:event matchesShortcut:disconnectOptionsShortcut]) {
-        [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"disconnect-options-shortcut" event:event];
         self.pendingOptionUncaptureToken += 1;
         [self.hidSupport releaseAllModifierKeys];
         [self performClose:nil];
@@ -2867,7 +2842,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     }
 
     if ([self event:event matchesShortcut:disconnectShortcut]) {
-        [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"disconnect-shortcut" event:event];
         self.pendingOptionUncaptureToken += 1;
         [self.hidSupport releaseAllModifierKeys];
         [self requestStreamCloseWithSource:@"keyboard-custom-disconnect"];
@@ -2875,7 +2849,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     }
 
     if ([self event:event matchesShortcut:quitShortcut]) {
-        [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"quit-shortcut" event:event];
         self.pendingOptionUncaptureToken += 1;
         [self.hidSupport releaseAllModifierKeys];
         [self performCloseAndQuitApp:nil];
@@ -2883,14 +2856,12 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     }
 
     if ([self event:event matchesShortcut:reconnectShortcut]) {
-        [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"reconnect-shortcut" event:event];
         [self.hidSupport releaseAllModifierKeys];
         [self reconnectFromMenu:nil];
         return YES;
     }
 
     if (event.keyCode == kVK_ANSI_W && eventModifierFlags == NSEventModifierFlagCommand) {
-        [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"cmd-w-swallow" event:event];
         Log(LOG_D, @"[diag] cmd+w swallowed after custom handlers: %@", MLDisconnectEventSummary(event));
         [self.hidSupport releaseAllModifierKeys];
         return YES;
@@ -2919,7 +2890,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         return YES;
     }
     
-    [self resolveDeferredCommandModifierWithoutRemoteTapWithReason:@"keyboard-equivalent-pass-through" event:event];
     [self.hidSupport keyDown:event];
     [self.hidSupport keyUp:event];
     

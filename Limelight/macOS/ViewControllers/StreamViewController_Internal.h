@@ -538,7 +538,6 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (BOOL)performKeyboardTranslationLocalAction:(NSString *)action;
 - (BOOL)handleKeyboardTranslationRuleForEvent:(NSEvent *)event;
 - (BOOL)shouldDeferCommandModifierForShortcutHandlingWithEvent:(NSEvent *)event;
-- (void)resolveDeferredCommandModifierWithoutRemoteTapWithReason:(NSString *)reason event:(NSEvent *)event;
 @end
 @interface StreamViewController (MenuUI) <MLStreamScopedCallbackOwner>
 - (NSString *)mouseModeDisplayNameForMode:(NSString *)mode;
