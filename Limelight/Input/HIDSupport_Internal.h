@@ -308,15 +308,20 @@ static inline BOOL isXbox(IOHIDDeviceRef device) {
     UInt16 vendorId = usbIdFromDevice(device, @kIOHIDVendorIDKey);
     UInt16 productId = usbIdFromDevice(device, @kIOHIDProductIDKey);
     // Microsoft Xbox controllers (vendor 0x045E):
-    //   0x02FD — Xbox One (original GIP)
-    //   0x02E0 — KingKong
-    //   0x0B00 — Xbox Elite 2 (BTH)
-    //   0x0B05 — Xbox Elite 2 (USB)
-    //   0x0B13 — Xbox Series X|S
-    //   0x0B22 — Xbox Elite Series 2 Core
+    //   0x02FD - Xbox One (original GIP)
+    //   0x0B00 - Xbox Elite 2 (BTH)
+    //   0x0B05 - Xbox Elite 2 (USB)
+    //   0x0B13 - Xbox Series X|S
+    //   0x0B22 - Xbox Elite Series 2 Core
+    //
+    // 0x02E0 is deliberately absent. It is a KingKong product id that borrows
+    // the Microsoft vendor id, so listing it here would claim the device for
+    // the Xbox report layout and hide it from isKingKong, whose axis map
+    // differs: KingKong reports the right stick on Rx/Ry and the triggers on
+    // Z/Rz, while Xbox reports the right stick on Z/Rz. Keep the two sets
+    // disjoint and let isKingKong win whenever they would overlap.
     return vendorId == 0x045E &&
         (productId == 0x02FD ||
-         productId == 0x02E0 ||
          productId == 0x0B00 ||
          productId == 0x0B05 ||
          productId == 0x0B13 ||
@@ -326,9 +331,10 @@ static inline BOOL isXbox(IOHIDDeviceRef device) {
 static inline BOOL isKingKong(IOHIDDeviceRef device) {
     UInt16 vendorId = usbIdFromDevice(device, @kIOHIDVendorIDKey);
     UInt16 productId = usbIdFromDevice(device, @kIOHIDProductIDKey);
-    // KingKong (北通宙斯 2 / Betop Zeus) devices:
-    //   0x045E:0x02e0 — shared product id (handled via Microsoft vid too)
-    //   0x2DC8:0x2000+ — known Betop vid range (e.g. BTP-A1T2/A1U2/A1S2)
+    // KingKong / Betop Zeus devices:
+    //   0x045E:0x02e0 - borrows the Microsoft vendor id, so it is the one
+    //     overlap between isXbox and isKingKong and must be settled here.
+    //   0x2DC8:0x2000+ - known Betop vid range (e.g. BTP-A1T2/A1U2/A1S2)
     if (vendorId == 0x045E && productId == 0x02e0) {
         return YES;
     }

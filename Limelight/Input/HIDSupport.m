@@ -1483,8 +1483,12 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
     HIDSupport *self = (__bridge HIDSupport *)context;
     
     IOHIDDeviceRef device = (IOHIDDeviceRef)sender;
-    
-    if (isXbox(device)) {
+
+    // KingKong claims the Microsoft vendor id, so the vendor-specific check
+    // has to win over the generic Xbox layout check regardless of how either
+    // id list evolves. The two sets are disjoint today; the negation keeps a
+    // future overlap from silently stealing the KingKong axis map.
+    if (isXbox(device) && !isKingKong(device)) {
         switch (usagePage) {
             case kHIDPage_GenericDesktop:
                 switch (usage) {
