@@ -827,11 +827,5 @@
 "Click stream window to capture mouse" = "Click stream window to capture mouse";
 
 /* Network Permission Manager dialogs */
-"Gatekeeper Blocked" = "Gatekeeper Blocked Moonlight";
-"Gatekeeper blocked Moonlight" = "macOS security mechanisms are preventing Moonlight from running.";
-"Gatekeeper blocked informative" = "Do the following:\n\n1. Open System Settings → Privacy & Security\n2. Scroll down to the block notice for Moonlight\n3. Click Open Anyway\n4. Click Open in the confirmation dialog\n\nAlternatively: Right-click Moonlight.app → Open → Confirm.";
-"Network Permission Required" = "Local Network Access Required";
-"Moonlight needs local network access" = "Moonlight needs access to your local network to discover and connect to your game host.";
-"Local network permission informative" = "Do the following:\n\n1. Open System Settings → Privacy & Security → Local Network\n2. Find Moonlight and enable the toggle\n3. Restart Moonlight";
 "Open System Settings" = "Open System Settings";
 "Dismiss" = "Dismiss";
