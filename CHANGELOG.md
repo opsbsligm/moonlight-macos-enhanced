@@ -150,6 +150,47 @@ Apple Silicon hardware.
   `NetworkPermissionManager.swift` came to sit in the tree uncompiling for
   months; that file is now removed along with its unused strings.
 
+### Third audit pass (pointer concurrency and dead input state)
+
+#### Fixed
+
+- **Relative pointer motion was both dropped and duplicated.** The
+  `mouseDeltaX` and `mouseDeltaY` pair was declared `atomic`, which only makes
+  each individual access atomic. The GameController callback ran
+  `self.mouseDeltaX += deltaX` while the CVDisplayLink output callback read the
+  value and then cleared it, so each side performs several accesses. Motion
+  added between a read and the clear that followed was erased, and a producer
+  that had already read a stale value could write back a sum that dropped
+  concurrent motion. Each axis is now a single atomic add on the producing side
+  and a single atomic exchange on the consuming side
+  (`HIDMouseDeltaAccumulator`). Verified against the implementation extracted
+  from the shipping file: the real one producer and one consumer topology and a
+  four producer, three consumer topology both conserve every unit of motion,
+  while the previous semantics failed the same harness on every run, by up to
+  100,000 units out of 1.2 million.
+
+#### Added
+
+- **A build-time behavioural gate for that handoff**, run by every architecture
+  job (`scripts/input-concurrency-tests.py`). A compound update on an atomic
+  property produces no compiler, linker or test signal, so the check is
+  behavioural. It extracts the implementation from `Limelight/Input` so it
+  cannot drift away from the code under test, and rebuilds itself against the
+  previous semantics to prove it still notices the race.
+
+#### Removed
+
+- **The deferred Command modifier stub and all ten of its call sites.** Its body
+  had been two void casts with a comment saying it was kept to avoid touching
+  the call sites, so every one of those lines read as though it resolved
+  modifier state when nothing had done so since the state machine was removed.
+- **`Package.resolved`.** It pinned the remote OpenSSL package while the project
+  references a local package whose manifest points at
+  `Packages/OpenSSL.xcframework`, and a local package contributes no pins.
+  Every command-line build deleted the file, which kept a clean working tree
+  permanently dirty.
+
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
