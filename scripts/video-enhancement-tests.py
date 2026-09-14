@@ -135,16 +135,47 @@ static BOOL scaleRuns(BOOL *supportedOut) {
     return NO;
 }
 
+static void reportSupportAndFacts(Class cls, const char *label, NSInteger width, NSInteger height) {
+    // The class answers two different questions, and only the second one is about
+    // this GPU. Printing both keeps a runner from reading isSupported as proof:
+    // measured on an Apple M2 the property is true while the slot count is zero
+    // and the low latency scaler has no supported scale factor at 1080p.
+    BOOL supported = ((BOOL (*)(id, SEL))objc_msgSend)(cls, @selector(isSupported));
+    printf("[vt] %s isSupported=%d\n", label, supported);
+
+    SEL sized = @selector(supportedScaleFactorsForFrameWidth:frameHeight:);
+    if (sized != nil && [cls respondsToSelector:sized]) {
+        id factors = ((id (*)(id, SEL, NSInteger, NSInteger))objc_msgSend)(cls, sized, width, height);
+        printf("[vt] %s supportedScaleFactors %ldx%ld=%s\n", label,
+               (long)width, (long)height,
+               factors == nil ? "none" : [[factors description] UTF8String]);
+    }
+
+    SEL make = @selector(initWithFrameWidth:frameHeight:scaleFactor:);
+    if (make != nil && [cls instancesRespondToSelector:make]) {
+        id config = ((id (*)(id, SEL, NSInteger, NSInteger, float))objc_msgSend)(
+            [cls alloc], make, width, height, (float)2.0);
+        printf("[vt] %s 2x configuration created=%d\n", label, config != nil);
+    }
+}
+
 static void probeInterpolation(void) {
     Class cfg = NSClassFromString(@"VTLowLatencyFrameInterpolationConfiguration");
     if (cfg == nil) { printf("[vt] configuration class unavailable\n"); return; }
+    reportSupportAndFacts(NSClassFromString(@"VTLowLatencySuperResolutionScalerConfiguration"),
+                          "lowLatencySuperResolution", 1280, 720);
+    reportSupportAndFacts(NSClassFromString(@"VTLowLatencySuperResolutionScalerConfiguration"),
+                          "lowLatencySuperResolution", 1920, 1080);
     SEL initSel = @selector(initWithFrameWidth:frameHeight:numberOfInterpolatedFrames:);
     if (![cfg instancesRespondToSelector:initSel]) { printf("[vt] initialiser unavailable\n"); return; }
     id obj = ((id (*)(id, SEL, NSInteger, NSInteger, NSInteger))objc_msgSend)(
         [cfg alloc], initSel, (NSInteger)1920, (NSInteger)1080, (NSInteger)1);
     if (obj == nil) { printf("[vt] configuration rejected\n"); return; }
+    BOOL fiSupported = ((BOOL (*)(id, SEL))objc_msgSend)(cfg, @selector(isSupported));
     NSInteger slots = ((NSInteger (*)(id, SEL))objc_msgSend)(obj, @selector(numberOfInterpolatedFrames));
-    printf("[vt] slots offered=%ld\n", (long)slots);
+    printf("[vt] frameInterpolation isSupported=%d slots offered=%ld\n", fiSupported, (long)slots);
+    printf("[vt] trust-isSupported would claim %s\n",
+           (fiSupported && slots < 1) ? "interpolation the hardware cannot do" : "the truth");
     if (slots < 1) return;
     Class proc = NSClassFromString(@"VTFrameProcessor");
     if (proc == nil) { printf("[vt] processor class unavailable\n"); return; }

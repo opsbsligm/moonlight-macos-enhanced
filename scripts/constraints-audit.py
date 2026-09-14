@@ -48,6 +48,10 @@ Each check below corresponds to a defect that shipped at some point:
   * a shortcut or translation rule bound to a bare key was matched straight from
     stored configuration, so a plain W or Space could be consumed locally and
     never reach the host, even though the settings form rejects such a binding.
+  * the capability matrix asked VideoToolbox whether a feature is supported and
+    showed that answer, while the same configuration reported zero interpolation
+    slots and no supported scale factor at the stream's size, so the settings page
+    advertised enhancements the GPU could not run.
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
@@ -538,6 +542,33 @@ check("shortcutCanMatchKeyboardEvent" in menu_equivalent,
 check(sum(source.count("shortcutCanMatchKeyboardEvent")
           for source in (menu_all, capture_all, shortcuts_swift)) >= 4,
       "every keyboard consumer shares one bare-key predicate")
+
+# Measured on an Apple M2: VTLowLatencyFrameInterpolationConfiguration.isSupported
+# is true, the configuration is created, a session starts, and the configuration
+# reports zero interpolation slots, so no frame can ever be inserted. The low
+# latency scaler says the same while its supported scale factors are empty at
+# 1080p. A capability matrix that reads those properties advertises work the GPU
+# cannot do, which is the report this project keeps getting about video features
+# that appear enabled and change nothing.
+derived_swift = open(os.path.join(root, "Limelight/macOS/ViewControllers/SettingsModel+DerivedValues.swift"),
+                     encoding="utf-8").read()
+video_pane = open(os.path.join(root, "Limelight/macOS/ViewControllers/SettingsVideoPane.swift"),
+                  encoding="utf-8").read()
+mfx_support = method_body(derived_swift, "static var isMetalFXSupported: Bool")
+fi_support = method_body(derived_swift,
+                         "static func lowLatencyFrameInterpolationAvailability() -> CapabilityAvailability")
+sr_support = method_body(derived_swift,
+                         "static func lowLatencySuperResolutionAvailability() -> CapabilityAvailability")
+fi_toggle = method_body(video_pane, "var frameInterpolationCapabilityAvailable: Bool")
+
+check("supportsDevice(" in mfx_support and "return true" not in mfx_support,
+      "MetalFX availability asks the GPU instead of the operating system version")
+check("numberOfInterpolatedFrames" in fi_support and "slots >= 1" in fi_support,
+      "interpolation availability counts the slots the GPU offers")
+check("__supportedScaleFactors" in sr_support and "factors.isEmpty" in sr_support,
+      "super resolution availability asks for the scale factors per frame size")
+check('id == "enhancement.vtLowLatencyFI"' in fi_toggle and "availability == .available" in fi_toggle,
+      "the interpolation control is gated by the measured capability, not a constant")
 
 
 print("%d constraint failures" % len(failures))

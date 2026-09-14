@@ -22,6 +22,10 @@ MENU = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                     "StreamViewController+MenuUI.m")
 SHORTCUTS = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                          "SettingsShortcuts.swift")
+DERIVED = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                       "SettingsModel+DerivedValues.swift")
+VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                          "SettingsVideoPane.swift")
 
 UP_GUARD = """        if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {
             // The host never saw this key go down, so it must not see it come up
@@ -186,6 +190,38 @@ def bare_menu_equivalent(text):
     return text.replace(MENU_EQUIV, "    guard true,\n", 1)
 
 
+
+MFX_QUERY = "      return MTLFXSpatialScalerDescriptor.supportsDevice(device)\n"
+FI_DECISION = "      return slots >= 1 ? .available : .unavailable\n"
+SR_GUARD = "      guard !factors.isEmpty else { return .unavailable }\n"
+FI_TOGGLE = """  private var frameInterpolationCapabilityAvailable: Bool {
+    settingsModel.videoCapabilityMatrix.items.first(where: { $0.id == "enhancement.vtLowLatencyFI" })?
+      .availability == .available
+  }"""
+
+
+def unmeasured_mfx(text):
+    once(text, MFX_QUERY, "MetalFX query")
+    return text.replace(MFX_QUERY, "      return true\n", 1)
+
+
+def unmeasured_interpolation(text):
+    once(text, FI_DECISION, "interpolation decision")
+    return text.replace(FI_DECISION, "      return .available\n", 1)
+
+
+def unmeasured_scaler(text):
+    once(text, SR_GUARD, "scaler guard")
+    return text.replace(SR_GUARD, "      _ = factors\n", 1)
+
+
+def constant_toggle(text):
+    once(text, FI_TOGGLE, "interpolation toggle gate")
+    return text.replace(FI_TOGGLE, """  private var frameInterpolationCapabilityAvailable: Bool {
+    return true
+  }""", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -205,6 +241,10 @@ MUTATIONS = [
     ("bare-menu-gate", MENU, bare_menu_gate, "the responder gate ignores the floor"),
     ("bare-rule-gate", CAPTURE, bare_rule_gate, "a bare translation rule eats a gameplay key"),
     ("bare-menu-equiv", SHORTCUTS, bare_menu_equivalent, "a bare key becomes a menu key equivalent"),
+    ("unmeasured-mfx", DERIVED, unmeasured_mfx, "MetalFX availability falls back to trusting the OS version"),
+    ("unmeasured-fi", DERIVED, unmeasured_interpolation, "interpolation claims available without slots"),
+    ("unmeasured-sr", DERIVED, unmeasured_scaler, "the scaler ignores an empty scale factor list"),
+    ("constant-fi-toggle", VIDEO_PANE, constant_toggle, "the interpolation control ignores the measured capability"),
 ]
 
 
