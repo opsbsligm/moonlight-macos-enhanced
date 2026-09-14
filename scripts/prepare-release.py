@@ -16,7 +16,7 @@ version the gate will accept, then re-asks.
   prepare-release.py --apply         promote the Unreleased section for that tag
   prepare-release.py --self-test     run the fixtures
 """
-import argparse, importlib.util, os, re, subprocess, sys
+import argparse, contextlib, importlib.util, io, os, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UNRELEASED = "## [Unreleased]"
@@ -127,8 +127,13 @@ def self_test():
 
         def attempt(tag, changelog, build=42, apply=False):
             open(changelog_path, "w", encoding="utf-8").write(changelog)
-            rc = run(argparse.Namespace(tag=tag, changelog=changelog_path, project=project_path,
-                                        build_number=build, tags="", apply=apply))
+            # The report the script prints is what a release engineer reads; in
+            # the fixtures it would bury the verdicts.
+            captured = io.StringIO()
+            with contextlib.redirect_stdout(captured):
+                rc = run(argparse.Namespace(tag=tag, changelog=changelog_path,
+                                            project=project_path, build_number=build,
+                                            tags="", apply=apply))
             return rc, open(changelog_path, encoding="utf-8").read()
 
         rc, text = attempt("v1.3.9-build42", unreleased_only)

@@ -15,7 +15,7 @@ The version, the build number and the changelog are read from this repository, s
 nothing has to be kept in step by hand. Pass --self-test to exercise the rule set
 against fixtures without touching the real tree.
 """
-import argparse, os, re, subprocess, sys
+import argparse, importlib.util, os, re, subprocess, sys
 
 TAG_RE = re.compile(
     r"^v(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
@@ -129,6 +129,20 @@ def self_test():
     return 1 if failures else 0
 
 
+def preparation_self_test(repo="."):
+    """Run the release preparation fixtures from this same CI entry point.
+
+    The workflow runs `release-gate.py --self-test`, and the preparation step
+    exists only to satisfy the rules checked here, so its fixtures belong to the
+    same verdict: a gate whose release procedure is broken still reports green.
+    """
+    path = os.path.join(repo, "scripts", "prepare-release.py")
+    spec = importlib.util.spec_from_file_location("prepare_release", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.self_test()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=".")
@@ -139,7 +153,7 @@ def main():
     args = ap.parse_args()
 
     if args.self_test:
-        return self_test()
+        return max(self_test(), preparation_self_test(args.repo))
     if not args.tag:
         print("error: --tag is required")
         return 2

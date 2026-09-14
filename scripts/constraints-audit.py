@@ -55,7 +55,13 @@ Each check below corresponds to a defect that shipped at some point:
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
-root = sys.argv[1] if len(sys.argv) > 1 else "."
+# The audit is also the CI entry point for the assertion battery, so the battery's
+# own runs have to opt out or the two would call each other forever. Flags are
+# separated from the positional root because the root is a path, not an option.
+flags = [a for a in sys.argv[1:] if a.startswith("--")]
+positional = [a for a in sys.argv[1:] if not a.startswith("--")]
+root = positional[0] if positional else "."
+run_battery = "--no-battery" not in flags
 failures = []
 
 def check(ok, message):
@@ -570,6 +576,24 @@ check("__supportedScaleFactors" in sr_support and "factors.isEmpty" in sr_suppor
 check('id == "enhancement.vtLowLatencyFI"' in fi_toggle and "availability == .available" in fi_toggle,
       "the interpolation control is gated by the measured capability, not a constant")
 
+
+if run_battery:
+    # An assertion that stops failing on a regression is worse than no assertion,
+    # because it reads as coverage. The battery plants regressions in the real
+    # source and requires this file to reject every one, so it belongs to the
+    # constraints and not to a step someone can drop: the CI job runs this script,
+    # and running it is enough.
+    battery = os.path.join(root, "scripts", "assertion-battery.py")
+    proc = subprocess.run([sys.executable, battery, "--no-audit-recursion"],
+                          capture_output=True, text=True, cwd=root)
+    summary = [line for line in proc.stdout.splitlines() if "mutations caught" in line]
+    print("%s assertion battery: %s" % ("ok" if proc.returncode == 0 else "FAIL",
+                                        summary[0].strip() if summary else "no verdict reported"))
+    if proc.returncode != 0:
+        print(proc.stdout[-1500:])
+        failures.append("the assertion battery failed to catch a planted regression")
+else:
+    print("skip assertion battery (invoked by the battery itself)")
 
 print("%d constraint failures" % len(failures))
 sys.exit(1 if failures else 0)

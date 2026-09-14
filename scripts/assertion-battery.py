@@ -249,7 +249,10 @@ MUTATIONS = [
 
 
 def audit_failed():
-    proc = subprocess.run([sys.executable, os.path.join(root, "scripts", "constraints-audit.py")],
+    # constraints-audit.py runs the battery as its final check, so a battery that
+    # asks it a question must say clearly not to ask back.
+    proc = subprocess.run([sys.executable, os.path.join(root, "scripts", "constraints-audit.py"),
+                           "--no-battery"],
                           capture_output=True, text=True, cwd=root)
     detail = [line for line in (proc.stdout + proc.stderr).splitlines() if "FAIL" in line]
     return proc.returncode != 0, detail
@@ -259,6 +262,8 @@ def main():
     keep = None
     if "--keep-broken" in sys.argv:
         keep = sys.argv[sys.argv.index("--keep-broken") + 1]
+    if "--no-audit-recursion" in sys.argv:
+        print("(audit recursion suppressed: this run was started by the audit)")
 
     original = {path: open(path, encoding="utf-8").read()
                 for path in {p for _, p, _, _ in MUTATIONS}}
