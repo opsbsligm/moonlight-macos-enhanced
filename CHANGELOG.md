@@ -319,6 +319,47 @@ Apple Silicon hardware.
   fires rather than passing vacuously.
 
 
+### Fourth audit pass (capture-end key debt and measured capabilities)
+
+- **A key that was still held when capture ended stayed pressed forever.**
+  Releasing the mouse set `shouldSendInputEvents = NO`, and `keyUp:` forwards only
+  while that flag is on, so the release of an action key held at that moment never
+  reached the host; session teardown released the eight modifiers and the mouse
+  buttons but never an ordinary key. Holding a movement key and pressing the
+  capture shortcut left the remote holding that key for the rest of the session.
+  Every key code forwarded as a press is now recorded in the encoding it was sent
+  in, spent on a forwarded release, and replayed as a release from the uncapture
+  funnel and from teardown.
+- **Stored configuration could take a bare gameplay key from the host.** The
+  responder gate, the keyboard translation matcher, and an `NSMenuItem` key
+  equivalent all consume the key they match, and each of them decided from stored
+  shortcuts whether a press was theirs, so a binding without a modifier would
+  silently delete W or Space. The settings form rejects such a binding, which is
+  why it survived review; the hot path no longer relies on that. One predicate now
+  requires at least one relevant modifier at all three sites.
+- **Three video capabilities claimed hardware that is not present.** MetalFX
+  availability asked the operating system version; low-latency interpolation and
+  low-latency super resolution asked `isSupported`. Measured on an Apple M2
+  (macOS 27 build 26A428): `VTLowLatencyFrameInterpolationConfiguration.isSupported`
+  is true, the configuration is created, `startSessionWithConfiguration:` succeeds,
+  and the configuration reports zero interpolation slots, while the low-latency
+  scaler's supported scale factors are empty at 1920x1080 and offer only 1.5 at
+  1280x720 with a 2x configuration refusing to be created. Interpolation now
+  counts the slots across 720p, 1080p and 4K, super resolution reads the supported
+  scale factors per size, and MetalFX asks the device. The probe prints both the
+  support property and the measured facts on every run.
+- **Release preparation became a command instead of a scramble.** The gate refuses
+  a tag with no `CHANGELOG.md` section, and `BUILD_NUMBER` is
+  `git rev-list --count HEAD`, so the tag for a commit is derivable from it.
+  `scripts/prepare-release.py` prints that tag, relays the gate's objections, and
+  promotes the Unreleased heading only when the changelog is the sole objection.
+- **Assertions now have to fail to be believed.** `scripts/assertion-battery.py`
+  applies 22 realistic regressions to the real source -- a guard prefixed with
+  `NO &&`, a guard missing its return, a clear moved after the dispatch, a held-key
+  set left nil so records fall into a nil receiver, a modifier floor of zero, a
+  capability that trusts `isSupported` -- and CI fails unless every one of them is
+  caught. Constraint coverage is 64 checks.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
