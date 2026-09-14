@@ -25,6 +25,9 @@ Each check below corresponds to a defect that shipped at some point:
   * the local network probe and its defaults keys were defined after their only
     call sites, which the local toolchain happened to accept and a stricter one
     does not.
+  * the key-equivalent gate sent DOWN and UP back to back for every key it did
+    not consume and then swallowed the event, so no key could be held and two
+    keys could never overlap. That is the reported "W and Space collide" defect.
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
@@ -152,6 +155,54 @@ check(0 <= first_line_of(
           "static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void)")
       < first_line_of("@implementation AppDelegateForAppKit"),
       "the local network probe is defined ahead of the code that calls it")
+
+
+# Gameplay input contract. A held key needs two separate deliveries: the DOWN
+# edge from -keyDown: and the UP edge from -keyUp:. The key-equivalent gate used
+# to emit both edges itself and return YES, which made every key a tap and made
+# any overlap impossible. The gate now hands unconsumed keys back to AppKit, and
+# HIDSupport must keep forwarding each edge without a seen-keys or timing filter,
+# because every such filter ever added here dropped real gameplay input.
+capture = open(os.path.join(root, "Limelight/macOS/ViewControllers",
+                            "StreamViewController+MouseCapture.m"),
+               encoding="utf-8").read()
+
+def method_body(src, signature):
+    start = src.index(signature)
+    brace = src.index("{", start)
+    depth = 0
+    for i in range(brace, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[brace:i + 1]
+    raise AssertionError("unbalanced braces after " + signature)
+
+gate = method_body(capture, "- (BOOL)onKeyboardEquivalent:(NSEvent *)event")
+check(not ("[self.hidSupport keyDown:event]" in gate
+           and "[self.hidSupport keyUp:event]" in gate),
+      "the key-equivalent gate never emits both edges for one key")
+returns = re.findall(r"return\s+(YES|NO)\s*;", gate)
+check(bool(returns) and returns[-1] == "NO",
+      "the key-equivalent gate hands unconsumed keys back to AppKit")
+
+check("[self.hidSupport keyDown:event]"
+          in method_body(capture, "- (void)keyDown:(NSEvent *)event")
+      and "[self.hidSupport keyUp:event]"
+          in method_body(capture, "- (void)keyUp:(NSEvent *)event"),
+      "the responder forwards the DOWN and the UP edge separately")
+
+hid = open(os.path.join(root, "Limelight/Input/HIDSupport.m"),
+           encoding="utf-8").read()
+hid_down = method_body(hid, "- (void)keyDown:(NSEvent *)event")
+forbidden_filters = ("NSMutableSet", "NSDate", "dispatch_after", "lastKeyCode")
+check(not [f for f in forbidden_filters if f in hid_down],
+      "HID keyDown forwards every edge without a seen-keys or timing filter"
+      if not [f for f in forbidden_filters if f in hid_down] else
+      "HID keyDown filters edges through: %s"
+      % [f for f in forbidden_filters if f in hid_down])
 
 print("%d constraint failures" % len(failures))
 sys.exit(1 if failures else 0)
