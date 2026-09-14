@@ -358,7 +358,7 @@ Apple Silicon hardware.
   `NO &&`, a guard missing its return, a clear moved after the dispatch, a held-key
   set left nil so records fall into a nil receiver, a modifier floor of zero, a
   capability that trusts `isSupported` -- and CI fails unless every one of them is
-  caught. Constraint coverage is 64 checks.
+  caught. Constraint coverage reached 64 checks at that point.
 
 ### Fifth audit pass (unmapped key codes)
 
@@ -375,10 +375,36 @@ Apple Silicon hardware.
   virtual key codes from the SDK header, and the audit parses the table and
   requires that every code a game can bind has a row, that no physical code
   appears twice (the dictionary build in `init:` keeps the last row and drops the
-  earlier one in silence), and that no row maps to zero. Constraint coverage is
-  72 checks and the assertion battery 26 mutations, which now include a zero guard
-  neutered on each edge, the space row deleted, and a duplicated row.
+  earlier one in silence), and that no row maps to zero. The mutations added
+  with these checks are a zero guard neutered on each edge, the space row
+  deleted, and a duplicated row.
 
+### Sixth audit pass (a gate that could not see)
+
+- **The localization gate checked nothing on the CI runner.** It scanned the
+  sources with `grep -rhoE` and a pattern containing a `(?:` group. BSD grep on
+  macOS accepts that and the local run reported 162 keys; the ubuntu audit
+  runner's grep produced nothing, its stderr was captured and thrown away, and
+  the step printed "0 keys referenced in code" followed by "localization
+  coverage is complete on both sides". Both missing-key lists were empty because
+  nothing had been scanned. The scan now reads the sources itself, and
+  `scan_health()` refuses an empty scan: call sites counted as plain text with no
+  keys found can only mean the scanner is blind, and that is a failure, not a
+  clean tree.
+- **153 call sites were invisible to it as well.** `NSLocalizedString` and
+  `MLString` are ObjC macros over the same lookup and every one of their call
+  sites passes an `@"..."` literal, while the pattern allowed only a bare quote,
+  so those keys were never compared against either layer. Two of them,
+  `Reconnecting…` and `Reconnecting… (%ld)`, have no entry in either table and
+  rendered as the raw English key in the reconnect overlay; both are now
+  translated. The audit sees 259 keys instead of 162.
+- **A gate whose proof can be switched off is not a gate.** The localization
+  self-test has no opt-out, and `scripts/assertion-battery.py` now judges a
+  mutation by the gate that is supposed to notice it, so the localization audit
+  is exercised by three of its own regressions: a health rule that always
+  accepts, a pattern that loses the `@"..."` branch, and a scan that shells out to
+  the host grep again. Constraint coverage is 74 checks and the battery 29
+  mutations.
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
