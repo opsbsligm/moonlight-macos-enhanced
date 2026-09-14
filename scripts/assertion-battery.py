@@ -33,6 +33,10 @@ BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
 WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
 WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                              "StreamViewController+WindowModes.m")
+VIDEO_RULES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                      "SettingsModel+VideoPageRules.swift")
+PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
+
 
 # A mutation is judged by the gate that is supposed to notice it. Both gates run an
 # extra proof of their own when invoked normally, so the battery has to tell the
@@ -224,8 +228,8 @@ def bare_menu_equivalent(text):
 MFX_QUERY = "      return MTLFXSpatialScalerDescriptor.supportsDevice(device)\n"
 FI_DECISION = "      return slots >= 1 ? .available : .unavailable\n"
 SR_GUARD = "      guard !factors.isEmpty else { return .unavailable }\n"
-FI_TOGGLE = """  private var frameInterpolationCapabilityAvailable: Bool {
-    settingsModel.videoCapabilityMatrix.items.first(where: { $0.id == "enhancement.vtLowLatencyFI" })?
+FI_TOGGLE = """  var frameInterpolationIsCapable: Bool {
+    videoCapabilityMatrix.items.first(where: { $0.id == \"enhancement.vtLowLatencyFI\" })?
       .availability == .available
   }"""
 
@@ -246,8 +250,13 @@ def unmeasured_scaler(text):
 
 
 def constant_toggle(text):
+    """Make the interpolation gate believe the GPU can always interpolate.
+
+    The rule lives on the model now, because the page and the thing that checks the
+    page have to be measured against one answer. Breaking it here breaks both.
+    """
     once(text, FI_TOGGLE, "interpolation toggle gate")
-    return text.replace(FI_TOGGLE, """  private var frameInterpolationCapabilityAvailable: Bool {
+    return text.replace(FI_TOGGLE, """  var frameInterpolationIsCapable: Bool {
     return true
   }""", 1)
 
@@ -376,6 +385,27 @@ def stop_without_release(text):
     return text.replace(TEARDOWN_BEFORE_STOP, "", 1)
 
 
+def drop_swift_debug_condition(text):
+    """Stop compiling the Debug-only Swift code, while its caller stays.
+
+    Naming the condition for the Swift compiler is what makes `#if DEBUG` in a
+    .swift file mean anything. Remove the line and the file reads as though it
+    were part of the app, Release is unchanged, and only a Debug link would notice.
+    """
+    return re.sub(r"\n\t+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;", "", text, count=1)
+
+
+def pane_keeps_its_own_rule(text):
+    """Move the enhancement gate back inside the page.
+
+    The words stay plausible. What disappears is any way for something outside the
+    page to disagree with it, which is the reason the rule was moved in the first
+    place -- measured, a page and a checker built from two copies disagreed.
+    """
+    return text.replace("!settingsModel.frameInterpolationControlIsEnabled",
+                        "!showsMetalTuningControls")
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -398,7 +428,7 @@ MUTATIONS = [
     ("unmeasured-mfx", DERIVED, unmeasured_mfx, "MetalFX availability falls back to trusting the OS version"),
     ("unmeasured-fi", DERIVED, unmeasured_interpolation, "interpolation claims available without slots"),
     ("unmeasured-sr", DERIVED, unmeasured_scaler, "the scaler ignores an empty scale factor list"),
-    ("constant-fi-toggle", VIDEO_PANE, constant_toggle, "the interpolation control ignores the measured capability"),
+    ("constant-fi-toggle", VIDEO_RULES, constant_toggle, "the interpolation control ignores the measured capability"),
     ("unmapped-keydown", HID, unmapped_press, "an unmapped press is forwarded as VK 0"),
     ("unmapped-keyup", HID, unmapped_release, "an unmapped release is forwarded as VK 0"),
     ("drop-space-row", HID, drop_space_row, "the mapping table loses the space bar"),
@@ -416,6 +446,11 @@ MUTATIONS = [
     ("believed-shallow", BUILD_SH, believe_shallow, "a shallow clone stamps a build number that is too small"),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("stop-without-release", WINDOW_MODES, stop_without_release, "the stream stops while the host still holds a key"),
+    ("swift-debug-condition-gone", PBXPROJ, drop_swift_debug_condition,
+     "Debug-only Swift code stops compiling while the Objective-C half keeps calling it"),
+    ("pane-keeps-own-rule", VIDEO_PANE, pane_keeps_its_own_rule,
+     "the video page recomputes the enhancement rule instead of asking the model"),
+
 ]
 
 
@@ -442,9 +477,19 @@ def main():
     for entry in MUTATIONS:
         name, path, mutate, note = entry[:4]
         gate = entry[4] if len(entry) > 4 else AUDIT_GATE
-        open(path, "w", encoding="utf-8").write(mutate(original[path]))
-        failed, detail = gate_failed(gate)
-        open(path, "w", encoding="utf-8").write(original[path])
+        # Evaluate the mutation before the file is opened. `open(path, "w")` truncates
+        # the moment it is called, and `write(mutate(...))` evaluates the file name
+        # first, so a mutation that raises part way through used to leave the real
+        # source empty -- which is how a green-looking battery run once took the video
+        # pane apart and left the tree unable to compile.
+        mutated = mutate(original[path])
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(mutated)
+        try:
+            failed, detail = gate_failed(gate)
+        finally:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(original[path])
         caught = "CAUGHT " if failed else "MISSED "
         print("%s %-18s %s" % (caught, name, note))
         if failed and detail:
@@ -459,7 +504,8 @@ def main():
         for entry in MUTATIONS:
             name, path, mutate = entry[0], entry[1], entry[2]
             if name == keep:
-                open(path, "w", encoding="utf-8").write(mutate(original[path]))
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(mutate(original[path]))
                 print("left %s applied for manual inspection" % name)
     return 1 if missed else 0
 
