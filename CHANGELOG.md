@@ -13,6 +13,24 @@ Apple Silicon hardware.
 
 ### Fixed
 
+- **CI never prepared the OpenSSL dependency.** The build job unzipped the
+  framework archive with its own inline `curl` step, so `download-frameworks.sh`
+  never ran on a runner. That script is the only place that lays down
+  `Packages/OpenSSL.xcframework` for the Swift package and the `libs/openssl`
+  header symlink for `moonlight-common`, so both inputs were missing and every job
+  failed on errors that named neither of them. The build job now runs the same
+  script a developer runs. The warning filter had already listed `libs/openssl`,
+  which is how the two definitions were known to be expected but never verified.
+- **The vendored OpenSSL bundle sat one directory too deep.** A mistargeted unzip
+  left `Packages/OpenSSL.xcframework/OpenSSL.xcframework`, so the manifest pointed
+  at an outer shell with no `Info.plist` and Xcode kept working only by finding the
+  framework inside it. `download-frameworks.sh` now flattens that shell, then
+  refuses to report success unless `Info.plist` is where the manifest looks and the
+  header symlink actually resolves.
+- **The local network probe was defined below its only call site.** The local
+  toolchain parses that order without a diagnostic, so a stricter one stops
+  compiling the file and nothing in the build warned about it. The probe and its
+  two `NSUserDefaults` keys now sit above the `@implementation` that calls them.
 - **Fresh clones could not build.** `moonlight-common.xcodeproj` resolves OpenSSL
   headers through `HEADER_SEARCH_PATHS = ../libs/**`, but `libs/openssl` was an
   undocumented hand-made symlink into a SwiftPM debug build directory, and `libs/`
