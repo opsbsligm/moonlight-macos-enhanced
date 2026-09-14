@@ -127,8 +127,20 @@ check(re.search(r'path:\s*"\.\./OpenSSL\.xcframework"', manifest) is not None,
 
 fetch = open(os.path.join(root, "scripts/download-frameworks.sh"),
              encoding="utf-8").read()
-check("Info.plist" in fetch and "flatten_if_nested" in fetch,
-      "the dependency script rejects an .xcframework shell that has no Info.plist")
+# Two separate risks: the rule can exist and never be applied, or be applied and
+# be wrong. Each half gets its own assertion so each half can fail on its own.
+check('flatten_if_nested "$OPENSSL_DIR"' in fetch
+      and re.search(r'\[\[ -f "\$\{OPENSSL_DIR\}/Info\.plist" \]\]', fetch) is not None,
+      "the dependency script flattens and then verifies the bundle the manifest names")
+layout = subprocess.run(
+    [os.path.join(root, "scripts/download-frameworks.sh"), "--self-test"],
+    capture_output=True, text=True, cwd=root)
+check(layout.returncode == 0,
+      "the layout rule accepts a valid bundle, flattens a nested one and rejects a shell"
+      if layout.returncode == 0 else
+      "dependency layout self-test failed:\n%s"
+      % ((layout.stdout + layout.stderr).strip()[-700:])
+      )
 
 delegate = open(os.path.join(root, "Limelight/macOS/AppDelegateForAppKit.m"),
                 encoding="utf-8").read()

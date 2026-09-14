@@ -49,6 +49,36 @@ flatten_if_nested() {
   mv "${TMP_DIR}/unflattened/${name}" "$target"
 }
 
+# The flattening rule above is the only thing standing between a mistargeted
+# unzip and a manifest that points at an empty directory, so it is exercised here
+# on three layouts before anything is downloaded. No network, no arguments needed.
+if [[ "${1:-}" == "--self-test" ]]; then
+  case_dir=$(mktemp -d)
+  trap 'rm -rf "$case_dir"' EXIT
+
+  mkdir -p "$case_dir/good/OpenSSL.xcframework"
+  touch "$case_dir/good/OpenSSL.xcframework/Info.plist"
+  flatten_if_nested "$case_dir/good/OpenSSL.xcframework" || {
+    echo "self-test: rejected a valid bundle" >&2; exit 1; }
+  [[ -f "$case_dir/good/OpenSSL.xcframework/Info.plist" ]] || {
+    echo "self-test: moved a valid bundle" >&2; exit 1; }
+
+  mkdir -p "$case_dir/nested/OpenSSL.xcframework/OpenSSL.xcframework"
+  touch "$case_dir/nested/OpenSSL.xcframework/OpenSSL.xcframework/Info.plist"
+  flatten_if_nested "$case_dir/nested/OpenSSL.xcframework" || {
+    echo "self-test: refused to flatten a nested bundle" >&2; exit 1; }
+  [[ -f "$case_dir/nested/OpenSSL.xcframework/Info.plist" ]] || {
+    echo "self-test: flattening left the manifest target empty" >&2; exit 1; }
+
+  mkdir -p "$case_dir/broken/OpenSSL.xcframework"
+  if flatten_if_nested "$case_dir/broken/OpenSSL.xcframework" 2>/dev/null; then
+    echo "self-test: accepted a directory that is not an .xcframework" >&2; exit 1;
+  fi
+
+  echo "dependency layout self-test passed"
+  exit 0
+fi
+
 echo "=== Downloading xcframeworks (FFmpeg, Opus, SDL2, OpenSSL) ==="
 if [[ -d "$XCFRAMEWORKS_DIR" && $(ls -A "$XCFRAMEWORKS_DIR" 2>/dev/null | wc -l) -gt 0 ]]; then
   echo "xcframeworks/ already exists, skipping download"
