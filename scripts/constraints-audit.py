@@ -45,6 +45,9 @@ Each check below corresponds to a defect that shipped at some point:
   * releasing the mouse switched input forwarding off while a key was still held,
     and keyUp: is gated on that flag, so the host never saw the release and kept
     the movement key pressed for the rest of the session.
+  * a shortcut or translation rule bound to a bare key was matched straight from
+    stored configuration, so a plain W or Space could be consumed locally and
+    never reach the host, even though the settings form rejects such a binding.
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
@@ -389,11 +392,11 @@ def statements(body):
     """The body as stripped lines, so a guard is checked as code and not prose."""
     return [line.strip() for line in body.split("\n")]
 
-def guard_returns(body, condition_prefix, action, before):
-    """Require a guard whose condition is the test and whose block returns early.
+def guard_exits(body, condition_prefix, action, before, exit_statement="return;"):
+    """Require a guard whose condition is the test and whose block exits early.
 
     A plain substring search is not enough: a condition neutered with "NO &&",
-    moved into a comment, or left without a return all keep the words present
+    moved into a comment, or left without an exit all keep the words present
     while the behaviour is gone. This asks for the shape that executes.
     """
     lines = statements(body)
@@ -404,8 +407,8 @@ def guard_returns(body, condition_prefix, action, before):
     joined = "\n".join(block)
     if action not in joined:
         return "%s is missing from the guard block" % action
-    if "return;" not in block:
-        return "the guard block never returns, so the event still reaches the host"
+    if exit_statement not in block:
+        return "the guard block never executes %r, so the event still reaches the host" % exit_statement
     dispatch = [i for i, line in enumerate(lines) if line.startswith(before)]
     if not dispatch:
         return "no %s call to compare against" % before
@@ -415,7 +418,7 @@ def guard_returns(body, condition_prefix, action, before):
 
 
 down_body = method_body(capture_all, "- (void)keyDown:(NSEvent *)event")
-problem = guard_returns(
+problem = guard_exits(
     down_body,
     "if ([SettingsWindowObjCBridge isSettingsPresentedInWindow:",
     "noteKeyboardKeyDownSuppressedForEvent",
@@ -426,7 +429,7 @@ check(problem is None, "keys the settings page owns are never forwarded to the h
 hid_all = open(os.path.join(root, "Limelight/Input/HIDSupport.m"), encoding="utf-8").read()
 hid_up = method_body(hid_all, "- (void)keyUp:(NSEvent *)event")
 hid_down = method_body(hid_all, "- (void)keyDown:(NSEvent *)event")
-problem = guard_returns(
+problem = guard_exits(
     hid_up,
     "if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:",
     "removeObject:",
@@ -485,7 +488,7 @@ for problem, message in [
 ]:
     check(problem is None, message if problem is None else "%s is not effective: %s" % (message, problem))
 
-check(guard_returns(hid_release, "if (self.keyboardHeldKeyReleaseInProgress)",
+check(guard_exits(hid_release, "if (self.keyboardHeldKeyReleaseInProgress)",
                     "self.keyboardHeldKeyReleaseInProgress = YES",
                     "LiSendKeyboardEventCtx") is None,
       "the held-key release cannot re-enter itself")
@@ -499,6 +502,42 @@ check("- (void)releaseAllHeldKeys;" in open(os.path.join(root, "Limelight/Input/
 check("[self releaseAllHeldKeys];"
       in method_body(hid_all, "- (void)tearDownKeyboardStateForSessionEnd:(const char *)reason"),
       "session teardown releases the keys the host still holds")
+
+# A shortcut bound to a bare key deletes a gameplay key from the host: the
+# responder gate answers YES, a translation rule swallows the press, and a menu
+# key equivalent claims the key before the stream view sees it. Settings rejects
+# such a shortcut, so the streaming path has to stop relying on that being the
+# only line of defence: stored shortcuts and rules are decoded from disk.
+menu_all = open(os.path.join(root, "Limelight/macOS/ViewControllers/StreamViewController+MenuUI.m"),
+                encoding="utf-8").read()
+shortcuts_swift = open(os.path.join(root, "Limelight/macOS/ViewControllers/SettingsShortcuts.swift"),
+                       encoding="utf-8").read()
+menu_gate = method_body(menu_all, "- (BOOL)event:(NSEvent *)event matchesShortcut:(StreamShortcut *)shortcut")
+rule_match = method_body(capture_all,
+                         "- (KeyboardTranslationRule *)keyboardTranslationRuleMatchingEvent:(NSEvent *)event")
+swift_gate = method_body(shortcuts_swift,
+                         "static func shortcutCanMatchKeyboardEvent(_ shortcut: StreamShortcut?) -> Bool")
+menu_equivalent = method_body(shortcuts_swift,
+                              "static func menuKeyEquivalent(for shortcut: StreamShortcut) -> String")
+
+for problem, message in [
+    (guard_exits(menu_gate, "if (![StreamShortcutProfile shortcutCanMatchKeyboardEvent:shortcut])",
+                 "return NO;", "return event.keyCode == shortcut.keyCode", "return NO;"),
+     "the responder gate refuses a shortcut that needs no modifier"),
+    (guard_exits(rule_match, "if (![StreamShortcutProfile shortcutCanMatchKeyboardEvent:trigger])",
+                 "continue;", "if (event.keyCode == trigger.keyCode", "continue;"),
+     "a translation rule on a bare key cannot swallow a gameplay press"),
+]:
+    check(problem is None, message if problem is None else "%s is not effective: %s" % (message, problem))
+
+check("modifierOnly" in swift_gate and "hasKeyCode" in swift_gate
+      and ">= 1" in swift_gate and "return false" in swift_gate,
+      "the bare-key predicate keeps its modifier floor")
+check("shortcutCanMatchKeyboardEvent" in menu_equivalent,
+      "the menu key equivalent refuses a shortcut bound to a bare key")
+check(sum(source.count("shortcutCanMatchKeyboardEvent")
+          for source in (menu_all, capture_all, shortcuts_swift)) >= 4,
+      "every keyboard consumer shares one bare-key predicate")
 
 
 print("%d constraint failures" % len(failures))

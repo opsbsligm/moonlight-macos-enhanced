@@ -18,6 +18,10 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HID = os.path.join(root, "Limelight", "Input", "HIDSupport.m")
 CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                        "StreamViewController+MouseCapture.m")
+MENU = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                    "StreamViewController+MenuUI.m")
+SHORTCUTS = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                         "SettingsShortcuts.swift")
 
 UP_GUARD = """        if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {
             // The host never saw this key go down, so it must not see it come up
@@ -153,6 +157,35 @@ def late_uncapture_release(text):
     return rest.replace(UNCAPTURE_OFF, UNCAPTURE_OFF + UNCAPTURE_CALL, 1)
 
 
+
+FLOOR = "    return modifierCount(relevantModifierFlags(shortcut.modifierFlags)) >= 1\n"
+MENU_GATE = "    if (![StreamShortcutProfile shortcutCanMatchKeyboardEvent:shortcut]) {\n"
+RULE_GATE = "        if (![StreamShortcutProfile shortcutCanMatchKeyboardEvent:trigger]) {\n"
+MENU_EQUIV = "    guard StreamShortcutProfile.shortcutCanMatchKeyboardEvent(shortcut),\n"
+
+
+def bare_predicate(text):
+    once(text, FLOOR, "modifier floor")
+    return text.replace(FLOOR, FLOOR.replace(">= 1", ">= 0"), 1)
+
+
+def bare_menu_gate(text):
+    once(text, MENU_GATE, "responder gate")
+    return text.replace(MENU_GATE,
+                        MENU_GATE.replace("if (![", "if (NO && !["), 1)
+
+
+def bare_rule_gate(text):
+    once(text, RULE_GATE, "translation matcher")
+    return text.replace(RULE_GATE,
+                        RULE_GATE.replace("if (![", "if (NO && !["), 1)
+
+
+def bare_menu_equivalent(text):
+    once(text, MENU_EQUIV, "menu key equivalent")
+    return text.replace(MENU_EQUIV, "    guard true,\n", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -168,6 +201,10 @@ MUTATIONS = [
     ("drop-teardown", HID, drop_teardown_release, "session teardown no longer releases held keys"),
     ("drop-uncapture", CAPTURE, drop_uncapture_release, "capture release forgets held keys entirely"),
     ("late-uncapture", CAPTURE, late_uncapture_release, "held keys released after input is switched off"),
+    ("bare-predicate", SHORTCUTS, bare_predicate, "the modifier floor is dropped to zero"),
+    ("bare-menu-gate", MENU, bare_menu_gate, "the responder gate ignores the floor"),
+    ("bare-rule-gate", CAPTURE, bare_rule_gate, "a bare translation rule eats a gameplay key"),
+    ("bare-menu-equiv", SHORTCUTS, bare_menu_equivalent, "a bare key becomes a menu key equivalent"),
 ]
 
 
