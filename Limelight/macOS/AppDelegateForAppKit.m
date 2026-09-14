@@ -260,12 +260,14 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
     NSMutableArray<NSString *> *failures = [NSMutableArray array];
     void (^refuse)(NSString *) = ^(NSString *reason) { [failures addObject:reason]; };
 
+    // No title is set on purpose: a window title is user-facing text, the
+    // localizability checker is right to say so, and a Diagnostic window that
+    // never outlives its own process has nothing to title.
     NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(-12000, -12000, 1100, 700)
                                                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
                                                             | NSWindowStyleMaskResizable)
                                                     backing:NSBackingStoreBuffered
                                                       defer:NO];
-    window.title = @"render-probe";
     [window orderFrontRegardless];
     MLProbeSpin(0.4);
 

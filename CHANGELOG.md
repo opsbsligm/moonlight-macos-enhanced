@@ -480,6 +480,15 @@ that silently stops running, and a baseline that accepts anything.
   rather than the window behind it, and zero read-through is the designed
   behaviour. Materials are now measured where they actually exist, in the Core
   Animation layer tree, and read-through is reported without being asserted.
+- **The analyzer gate caught the new probe on its first run, and the probe was
+  wrong to object.** `NonLocalizedStringChecker` reported one more user-facing
+  string than accepted, in the probe's own `window.title = @"render-probe"`. The
+  title bought the probe nothing and a diagnostic window that never outlives its
+  own process has nothing to title, so the string was deleted rather than the
+  baseline widened; the run then matched the accepted 106 findings again. Worth
+  recording because it is the gate behaving as designed on code written to make
+  the gate better.
+
 - **The verifier is checked for teeth**: eight doctored reports -- a second
   window, a page that is not inside the content view, two pages stacked, a fade
   that never finished, a page left mounted after dismissal, a blank capture, no
