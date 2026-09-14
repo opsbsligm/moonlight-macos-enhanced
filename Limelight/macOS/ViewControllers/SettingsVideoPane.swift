@@ -41,12 +41,12 @@ struct VideoView: View {
     settingsModel.selectedSmoothnessLatencyMode == SettingsModel.smoothnessLatencyCustom
   }
 
-  private var normalizedRendererMode: String {
-    SettingsModel.normalizedVideoRendererMode(settingsModel.selectedVideoRendererMode)
-  }
-
+  // The renderer gate, the enhancement capability, and which sentence explains
+  // either one are decided on the model (SettingsModel+VideoPageRules.swift) so
+  // that the Debug render probe can assert this page agrees with them. Reading a
+  // second copy of the rule here would make that check meaningless.
   private var showsMetalTuningControls: Bool {
-    normalizedRendererMode == "Metal Renderer"
+    settingsModel.videoRendererModeIsMetal
   }
 
   private var showsManualHdrLuminanceControls: Bool {
@@ -57,11 +57,6 @@ struct VideoView: View {
   private var showsManualHdrLuminanceHint: Bool {
     settingsModel.selectedHdrClientDisplayProfile == "Manual"
       && settingsModel.selectedHdrMetadataSource == "Host"
-  }
-
-  private var frameInterpolationCapabilityAvailable: Bool {
-    settingsModel.videoCapabilityMatrix.items.first(where: { $0.id == "enhancement.vtLowLatencyFI" })?
-      .availability == .available
   }
 
   // The renderer publishes which video pipeline is actually running for the
@@ -80,19 +75,6 @@ struct VideoView: View {
         .textSelection(.enabled)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-  }
-
-  private var frameInterpolationDetailKey: String {
-    if !showsMetalTuningControls {
-      return "Frame Interpolation Metal only detail"
-    }
-    return frameInterpolationCapabilityAvailable
-      ? "Frame Interpolation detail"
-      : "Frame Interpolation unavailable detail"
-  }
-
-  private var upscalingDetailKey: String {
-    showsMetalTuningControls ? "Upscaling detail" : "Upscaling Metal only detail"
   }
 
   private var metalTuningDetailKey: String {
@@ -211,11 +193,11 @@ struct VideoView: View {
                 }
               }
               .labelsHidden()
-              .disabled(!showsMetalTuningControls)
+              .disabled(!settingsModel.upscalingControlIsEnabled)
               .frame(maxWidth: .infinity, alignment: .trailing)
             })
 
-          SettingDescriptionRow(textKey: upscalingDetailKey)
+          SettingDescriptionRow(textKey: settingsModel.upscalingExplanationKey)
           SettingDescriptionRow(textKey: "AI enhancement recommended hint")
           SettingDescriptionRow(textKey: "Scale vs Upscaling hint")
 
@@ -236,11 +218,11 @@ struct VideoView: View {
                 }
               }
               .labelsHidden()
-              .disabled(!showsMetalTuningControls || !frameInterpolationCapabilityAvailable)
+              .disabled(!settingsModel.frameInterpolationControlIsEnabled)
               .frame(maxWidth: .infinity, alignment: .trailing)
             })
 
-          SettingDescriptionRow(textKey: frameInterpolationDetailKey)
+          SettingDescriptionRow(textKey: settingsModel.frameInterpolationExplanationKey)
 
           Divider()
 

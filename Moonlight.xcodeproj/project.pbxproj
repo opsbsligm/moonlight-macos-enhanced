@@ -145,6 +145,7 @@
 				macOS/ViewControllers/SettingsStore.swift,
 				macOS/ViewControllers/SettingsStreamPane.swift,
 				macOS/ViewControllers/SettingsVideoPane.swift,
+				"macOS/ViewControllers/SettingsModel+VideoPageRules.swift",
 				macOS/ViewControllers/SettingsView.swift,
 				macOS/ViewControllers/LiquidGlass/SettingsOverlayPresenter.swift,
 				macOS/ViewControllers/LiquidGlass/LiquidGlassTabBar.swift,
@@ -459,6 +460,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac2;
 				PRODUCT_NAME = Moonlight;
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				// Swift needs the condition named, not just the preprocessor macro: without
+				// this, `#if DEBUG` in a .swift file silently compiles to nothing, which is how
+				// a Debug-only probe expectation class disappeared from Release-visible headers.
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};

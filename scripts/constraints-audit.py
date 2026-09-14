@@ -653,7 +653,9 @@ fi_support = method_body(derived_swift,
                          "static func lowLatencyFrameInterpolationAvailability() -> CapabilityAvailability")
 sr_support = method_body(derived_swift,
                          "static func lowLatencySuperResolutionAvailability() -> CapabilityAvailability")
-fi_toggle = method_body(video_pane, "var frameInterpolationCapabilityAvailable: Bool")
+video_rules_path = os.path.join(root, "Limelight/macOS/ViewControllers/SettingsModel+VideoPageRules.swift")
+video_rules = open(video_rules_path, encoding="utf-8").read()
+fi_rule = swift_block(video_rules, "var frameInterpolationIsCapable: Bool")
 
 check("supportsDevice(" in mfx_support and "return true" not in mfx_support,
       "MetalFX availability asks the GPU instead of the operating system version")
@@ -661,8 +663,14 @@ check("numberOfInterpolatedFrames" in fi_support and "slots >= 1" in fi_support,
       "interpolation availability counts the slots the GPU offers")
 check("__supportedScaleFactors" in sr_support and "factors.isEmpty" in sr_support,
       "super resolution availability asks for the scale factors per frame size")
-check('id == "enhancement.vtLowLatencyFI"' in fi_toggle and "availability == .available" in fi_toggle,
+check('id == "enhancement.vtLowLatencyFI"' in fi_rule and "availability == .available" in fi_rule,
       "the interpolation control is gated by the measured capability, not a constant")
+fi_enabled = swift_block(video_rules, "var frameInterpolationControlIsEnabled: Bool")
+check("frameInterpolationIsCapable" in fi_enabled and "videoRendererModeIsMetal" in fi_enabled,
+      "the interpolation control's live state is one expression, so the control and the "
+      "sentence beside it cannot disagree")
+check(".disabled(!settingsModel.frameInterpolationControlIsEnabled)" in video_pane,
+      "the video page disables the interpolation control through that one expression")
 
 
 
@@ -688,6 +696,66 @@ def method_bodies(source):
             index += 1
         yield source[match.start():index + 1]
 
+
+# A Debug-only Swift file is only Debug-only if the Swift compiler is told the
+# condition exists. This project carried no SWIFT_ACTIVE_COMPILATION_CONDITIONS at
+# all, so `#if DEBUG` in a .swift file compiled to nothing while the Objective-C
+# half of the same feature compiled and reached for a class that had never been
+# emitted. Nothing about that is visible in a Release build, which is the worst
+# kind of silent: the shipped binary looks clean because the code was never there.
+PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
+project_text = open(PBXPROJ, encoding="utf-8").read()
+swift_debug_files = [os.path.relpath(os.path.join(directory, name), root)
+                     for directory, _, names in os.walk(os.path.join(root, "Limelight"))
+                     for name in sorted(names)
+                     if name.endswith(".swift")
+                     and "#if DEBUG" in open(os.path.join(directory, name), encoding="utf-8").read()]
+if swift_debug_files:
+    target_list = re.search(r"isa = PBXNativeTarget;.*?buildConfigurationList = (\w{24})",
+                            project_text, re.S)
+    debug_id = None
+    if target_list:
+        listed = re.search(r"%s.*?buildConfigurations = \((.*?)\);" % target_list.group(1),
+                           project_text, re.S)
+        if listed:
+            debug_match = re.search(r"(\w{24}) /\* Debug \*/", listed.group(1))
+            debug_id = debug_match.group(1) if debug_match else None
+    debug_block = ""
+    if debug_id:
+        started = project_text.find("%s /* Debug */ = {" % debug_id)
+        if started != -1:
+            debug_block = project_text[started:project_text.find("name = Debug;", started)]
+    conditions = re.search(r"SWIFT_ACTIVE_COMPILATION_CONDITIONS\s*=\s*([^;]+);", debug_block)
+    check(bool(conditions) and "DEBUG" in (conditions.group(1) if conditions else ""),
+          "Debug builds define the condition %d Debug-only Swift file(s) are written against"
+          % len(swift_debug_files)
+          if swift_debug_files else "no Debug-only Swift files to guard")
+    for relative in swift_debug_files:
+        check(relative.split("/")[-1] in project_text,
+              "a Debug-only Swift file is listed for the target, so it is really compiled"
+              if relative.split("/")[-1] in project_text
+              else "%s is not in the project file and would ship nothing" % relative)
+
+# The video page and the Debug render probe read one rule about which enhancement
+# controls are live and which sentence explains them. The rule used to live inside
+# the page, where nothing could compare it against what the page then displayed;
+# copying it back into the page would put the claim out of reach again, so the
+# page is only allowed to ask the model.
+VIDEO_PAGE = os.path.join(root, "Limelight", "macOS", "ViewControllers", "SettingsVideoPane.swift")
+video_page = open(VIDEO_PAGE, encoding="utf-8").read()
+check("settingsModel.frameInterpolationControlIsEnabled" in video_page
+      and "settingsModel.upscalingControlIsEnabled" in video_page,
+      "the video page asks the model whether an enhancement control is live")
+check("videoCapabilityMatrix.items.first" not in video_page
+      and 'normalizedVideoRendererMode(' not in video_page,
+      "the video page does not keep its own copy of the enhancement rule"
+      if "videoCapabilityMatrix.items.first" not in video_page
+      and 'normalizedVideoRendererMode(' not in video_page
+      else "the video page recomputes a rule the model already answers, so the page and "
+           "the check on it can drift apart")
+check("settingsModel.frameInterpolationExplanationKey" in video_page
+      and "settingsModel.upscalingExplanationKey" in video_page,
+      "the video page shows the explanation its own rules chose")
 
 def compiled_sources(scan_root):
     base = os.path.join(scan_root, "Limelight")
