@@ -568,6 +568,18 @@ check(not unresolvable, "every mapping token resolves to a key code"
       if not unresolvable else "a mapping entry uses a code this audit cannot resolve: %s"
       % unresolvable[0])
 
+# The gap has to be a decision rather than an omission. Anything not in the table
+# is ignored by the guard above, which is only defensible while the list of what is
+# left out says why, and a row added without editing that list makes the list a lie.
+undocumented = set(mac_keycodes.KVK_CODES) - mapped_names
+stale = {name for name in mac_keycodes.UNMAPPED_BY_CHOICE if name not in undocumented}
+check(undocumented == set(mac_keycodes.UNMAPPED_BY_CHOICE),
+      "every key the table does not answer for is documented with a reason"
+      if not (undocumented - set(mac_keycodes.UNMAPPED_BY_CHOICE) or stale) else
+      "undocumented key gaps: %s; reasons left stale: %s"
+      % (sorted(undocumented - set(mac_keycodes.UNMAPPED_BY_CHOICE)) or "none",
+         sorted(stale) or "none"))
+
 repeated = sorted({code for code in physical_codes if physical_codes.count(code) > 1})
 check(not repeated, "no physical code is mapped twice"
       if not repeated else "physical codes %s appear twice, and the dictionary build keeps "
@@ -653,6 +665,75 @@ check('id == "enhancement.vtLowLatencyFI"' in fi_toggle and "availability == .av
       "the interpolation control is gated by the measured capability, not a constant")
 
 
+
+
+# These are findings from `xcodebuild analyze` that were real defects, kept as
+# rules rather than left to be rediscovered: a CGEvent created on every gamepad
+# navigation press and never released, a CGPath helper that handed out a +1
+# reference under a name that did not say so (one caller released it and the
+# caller in another file leaked one per shadow refresh), and the HID manager
+# outliving the object that its four run loop callbacks point into.
+def method_bodies(source):
+    """Every method definition with its body, for rules that live per method."""
+    for match in re.finditer(r"^[-+]\s*\([^\n]*?\{", source, re.M):
+        brace = source.index("{", match.start())
+        depth, index = 0, brace
+        while index < len(source):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            index += 1
+        yield source[match.start():index + 1]
+
+
+def compiled_sources(scan_root):
+    base = os.path.join(scan_root, "Limelight")
+    for directory, _, names in os.walk(base):
+        for name in sorted(names):
+            if name.endswith(".m"):
+                path = os.path.join(directory, name)
+                yield path, open(path, encoding="utf-8").read()
+
+
+CREATED = re.compile(r"(\w+)\s*=\s*CG\w*(?:Create|Copy)\w*\(")
+unowned = []
+for source_path, text in compiled_sources(root):
+    for body in method_bodies(text):
+        signature = body.split("\n")[0]
+        for name in set(CREATED.findall(body)):
+            released = re.search(r"\w*Release\(\s*%s\s*\)" % re.escape(name), body)
+            returned = re.search(r"return\s+%s\s*;" % re.escape(name), body)
+            if not released and not (returned and "CF_RETURNS_RETAINED" in signature):
+                unowned.append("%s: %s is created and then neither released nor "
+                               "declared owned" % (os.path.relpath(source_path, root), name))
+check(not unowned, "every CoreFoundation reference created here is accounted for"
+      if not unowned else "; ".join(unowned[:3]))
+
+unannotated = ["%s: %s" % (os.path.relpath(source_path, root), body.split("\n")[0].strip())
+               for source_path, text in compiled_sources(root)
+               for body in method_bodies(text)
+               if re.match(r"^[-+]\s*\(CG(?:Mutable)?PathRef\s*\*?\)", body)
+               and "CF_RETURNS_RETAINED" not in body.split("\n")[0]]
+check(not unannotated, "a path handed to a caller says who owns it"
+      if not unannotated else "CF_RETURNS_RETAINED is missing: " + "; ".join(unannotated[:3]))
+
+dealloc_body = method_body(hid_all, "- (void)dealloc")
+check("CFRelease(_hidManager);" in dealloc_body,
+      "the HID manager cannot outlive the object its run loop callbacks point into")
+problem = ordered_once(dealloc_body, "IOHIDManagerUnscheduleFromRunLoop(",
+                       "CFRelease(_hidManager)", "unscheduling the HID manager")
+check(problem is None, "the HID manager is unscheduled before it is released"
+      if problem is None else "the dealloc net is not ordered: " + problem)
+
+analyzer = subprocess.run([sys.executable,
+                           os.path.join(root, "scripts", "analyzer-audit.py"), "--self-test"],
+                          capture_output=True, text=True, cwd=root)
+check(analyzer.returncode == 0, "the analyzer gate can tell a clean tree from a blind sweep"
+      if analyzer.returncode == 0 else "the analyzer gate self test failed:\n"
+      + analyzer.stdout[-700:])
 
 # The localization scan used to be a `grep -rhoE` whose pattern contained a (?:
 # group. BSD grep on macOS accepted it and reported 162 keys, while the ubuntu

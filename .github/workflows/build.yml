@@ -424,9 +424,66 @@ jobs:
         path: dist/Moonlight-macOS-Enhanced-universal.dmg
         if-no-files-found: error
 
+  analyze:
+    name: Static analyzer
+    needs: audit
+    runs-on: macos-26
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Prepare vendored dependencies
+      run: |
+        ./scripts/download-frameworks.sh
+
+    - name: Analyze the project sources
+      # The analyzer sees the thing a reviewer cannot see in a diff: a CoreFoundation
+      # reference created in one method and released in nobody's method. It found a
+      # CGEvent leaked on every gamepad navigation press, a CGPath whose +1
+      # reference one caller released and another leaked on every shadow refresh,
+      # and the HID manager left scheduled with callbacks into a freed object.
+      # Run it on a cold cache so every file is really analysed.
+      run: |
+        set -o pipefail
+        xcodebuild \
+          -project Moonlight.xcodeproj \
+          -scheme "Moonlight for macOS" \
+          -configuration Debug \
+          -destination 'platform=macOS,arch=arm64' \
+          -derivedDataPath "$RUNNER_TEMP/analyze" \
+          analyze 2>&1 | tee "$RUNNER_TEMP/analyze.log"
+
+    - name: Verify no finding was added
+      # Compared against scripts/analyzer-baseline.json by file, checker and message
+      # shape. The audit refuses a sweep that did not run, because an analyzer that
+      # analysed nothing reports nothing, and this repository has twice mistaken that
+      # silence for cleanliness.
+      run: python3 scripts/analyzer-audit.py --log "$RUNNER_TEMP/analyze.log"
+
+    - name: Upload the analyzer transcript
+      # The baseline is keyed by file, checker and message shape, so a different
+      # clang can legitimately disagree about a finding. The transcript is what
+      # makes that arguable instead of mysterious, and it is the only record of a
+      # sweep that no longer exists once the runner is gone.
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: analyzer-transcript
+        path: ${{ runner.temp }}/analyze.log
+        if-no-files-found: error
+
   build:
     name: build
-    needs: [build_arch, build_universal]
+    needs: [build_arch, build_universal, analyze]
     runs-on: ubuntu-latest
     if: always()
 
@@ -435,6 +492,7 @@ jobs:
       run: |
         echo "build_arch result: ${{ needs.build_arch.result }}"
         echo "build_universal result: ${{ needs.build_universal.result }}"
+        echo "analyze result: ${{ needs.analyze.result }}"
 
         if [ "${{ needs.build_arch.result }}" != "success" ]; then
           echo "build_arch did not succeed"
@@ -443,6 +501,11 @@ jobs:
 
         if [ "${{ needs.build_universal.result }}" != "success" ]; then
           echo "build_universal did not succeed"
+          exit 1
+        fi
+
+        if [ "${{ needs.analyze.result }}" != "success" ]; then
+          echo "the static analyzer job did not succeed"
           exit 1
         fi
 

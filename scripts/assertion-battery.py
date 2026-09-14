@@ -25,6 +25,9 @@ SHORTCUTS = os.path.join(root, "Limelight", "macOS", "ViewControllers",
 DERIVED = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                        "SettingsModel+DerivedValues.swift")
 L10N = os.path.join(root, "scripts", "l10n-audit.py")
+ANALYZER = os.path.join(root, "scripts", "analyzer-audit.py")
+COLLECTION_VIEW = os.path.join(root, "Limelight", "macOS", "Views", "CollectionView.m")
+APP_CELL = os.path.join(root, "Limelight", "macOS", "ViewControllers", "AppCell.m")
 
 # A mutation is judged by the gate that is supposed to notice it. Both gates run an
 # extra proof of their own when invoked normally, so the battery has to tell the
@@ -32,6 +35,7 @@ L10N = os.path.join(root, "scripts", "l10n-audit.py")
 AUDIT_GATE = (os.path.join(root, "scripts", "constraints-audit.py"), ["--no-battery"])
 # The localization gate has no opt-out: its self-test is part of the gate.
 L10N_GATE = (L10N, [])
+ANALYZER_GATE = (ANALYZER, ["--self-test"])
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                           "SettingsVideoPane.swift")
 
@@ -246,6 +250,8 @@ def constant_toggle(text):
 
 UNMAPPED_GUARD = "        if (translated == 0) {\n"
 SPACE_ROW = "    {kVK_Space, 0x20},\n"
+ISO_ROW = "    {kVK_ISO_Section, 0xE2},\n"
+JIS_ROW = "    {kVK_JIS_Yen, 0x7D},\n"
 W_ROW = "    {kVK_ANSI_W, 'W'},\n"
 
 
@@ -262,6 +268,11 @@ def unmapped_release(text):
 def drop_space_row(text):
     once(text, SPACE_ROW, "space mapping")
     return text.replace(SPACE_ROW, "", 1)
+
+
+def undocumented_mapping(text):
+    once(text, ISO_ROW, "ISO section mapping")
+    return text.replace(ISO_ROW, JIS_ROW + ISO_ROW, 1)
 
 
 def duplicate_w_row(text):
@@ -294,6 +305,39 @@ def grep_scanned(text):
     return text.replace(IMPORTS, "import io, os, re, subprocess, sys\n", 1)
 
 
+
+EVENT_RELEASE = "    CFRelease(cgEvent);\n"
+PATH_ANNOTATION = " CF_RETURNS_RETAINED {"
+HID_RELEASE = "        CFRelease(_hidManager);\n"
+SWEEP_RULE = "def sweep_health(analyzed, source_count, scan_root=\".\"):\n"
+ADDED_RULE = "if key not in baseline"
+
+
+def leak_the_key_event(text):
+    once(text, EVENT_RELEASE, "key event release")
+    return text.replace(EVENT_RELEASE, "", 1)
+
+
+def unowned_path_helper(text):
+    once(text, PATH_ANNOTATION, "path ownership annotation")
+    return text.replace(PATH_ANNOTATION, " {", 1)
+
+
+def hid_manager_outlives(text):
+    once(text, HID_RELEASE, "HID manager release")
+    return text.replace(HID_RELEASE, "", 1)
+
+
+def blind_sweep(text):
+    once(text, SWEEP_RULE, "sweep health rule")
+    return text.replace(SWEEP_RULE, SWEEP_RULE + "    return None\n", 1)
+
+
+def accept_new_findings(text):
+    once(text, ADDED_RULE, "new finding rule")
+    return text.replace(ADDED_RULE, "if False", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -321,6 +365,12 @@ MUTATIONS = [
     ("unmapped-keyup", HID, unmapped_release, "an unmapped release is forwarded as VK 0"),
     ("drop-space-row", HID, drop_space_row, "the mapping table loses the space bar"),
     ("duplicate-row", HID, duplicate_w_row, "a physical code is mapped twice so one row wins"),
+    ("undocumented-mapping", HID, undocumented_mapping, "a key gap closes without the list saying why"),
+    ("leaked-key-event", COLLECTION_VIEW, leak_the_key_event, "a gamepad press leaks its synthesized key event"),
+    ("unowned-path-helper", APP_CELL, unowned_path_helper, "a path hands out +1 without saying so"),
+    ("hid-manager-outlives", HID, hid_manager_outlives, "the HID manager survives the object its callbacks use"),
+    ("blind-sweep", ANALYZER, blind_sweep, "an analyzer that did not run reads as clean", ANALYZER_GATE),
+    ("accept-new-findings", ANALYZER, accept_new_findings, "a new finding class slips past the baseline", ANALYZER_GATE),
     ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),
     ("at-blind-scan", L10N, at_blind_scan, "the at-quoted call sites go unseen again", L10N_GATE),
     ("grep-scanned", L10N, grep_scanned, "the scan shells out to the host grep dialect", AUDIT_GATE),
