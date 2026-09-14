@@ -120,6 +120,9 @@ check(not intel_labels,
 # errors that named neither missing input.
 check("./scripts/download-frameworks.sh" in workflow,
       "CI prepares vendored dependencies through the shared script")
+check("scripts/video-enhancement-tests.py" in workflow,
+      "CI measures the video enhancement paths instead of trusting object creation")
+
 check("xcframeworks.zip" not in workflow,
       "CI does not duplicate the dependency download inline")
 
