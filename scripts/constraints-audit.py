@@ -705,36 +705,75 @@ def method_bodies(source):
 # kind of silent: the shipped binary looks clean because the code was never there.
 PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
 project_text = open(PBXPROJ, encoding="utf-8").read()
+
+
+def configuration_blocks(source):
+    """Every XCBuildConfiguration block, so a rule can ask one language at a time."""
+    blocks = {}
+    for match in re.finditer(r"^\t\t(\w{24}) /\* (\w+) \*/ = \{$", source, re.M):
+        depth, index = 1, match.end()
+        while index < len(source):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            index += 1
+        blocks[match.group(1)] = (match.group(2), source[match.end():index])
+    return blocks
+
+
+def defines_condition(block, key):
+    """True when a build setting lists a bare flag, ignoring a substring match.
+
+    NDEBUG has to count as absent here: matching "DEBUG" inside "NDEBUG" would
+    call a Release-only macro the Debug one.
+    """
+    match = re.search(key + r"\s*=\s*((?:[^;\"']|\"[^\"']*\")*)\s*;", block, re.S)
+    if not match:
+        return False
+    return any(token == "DEBUG" or token.startswith("DEBUG=")
+               for token in re.split(r"[^0-9A-Za-z_=]+", match.group(1)))
+
+
+configs = configuration_blocks(project_text)
+check(len(configs) >= 2, "the project file exposes %d build configurations to read" % len(configs)
+      if len(configs) >= 2 else "the project file parsed to %d build configurations, which is "
+                                "too few to tell Debug from Release" % len(configs))
+debug_blocks = [body for name, body in configs.values() if name == "Debug"]
+objc_defines_debug = any(defines_condition(body, "GCC_PREPROCESSOR_DEFINITIONS")
+                         for body in debug_blocks)
+swift_defines_debug = any(defines_condition(body, "SWIFT_ACTIVE_COMPILATION_CONDITIONS")
+                          for body in debug_blocks)
+# The asymmetry, not the missing line, is the defect: a project with no DEBUG
+# anywhere is consistent, and a project that names it for one language and not the
+# other is how a Debug-only feature ends up half-compiled. This happened here -- the
+# Debug configuration defined DEBUG=1 for C-family sources and nothing for Swift, so
+# `#if DEBUG` in a .swift file compiled to nothing while the Objective-C caller of
+# the class inside it was still compiled and linked against a header that had no
+# such class. A Release build shows nothing wrong, because in Release the code is
+# absent on both sides.
+check(not objc_defines_debug or swift_defines_debug,
+      "the Debug configuration names DEBUG for Swift as well as for C-family sources"
+      if not objc_defines_debug or swift_defines_debug
+      else "the Debug configuration defines DEBUG for Objective-C but not for Swift, so every "
+           "`#if DEBUG` in a .swift file compiles to nothing while its caller stays compiled")
+
 swift_debug_files = [os.path.relpath(os.path.join(directory, name), root)
                      for directory, _, names in os.walk(os.path.join(root, "Limelight"))
                      for name in sorted(names)
                      if name.endswith(".swift")
                      and "#if DEBUG" in open(os.path.join(directory, name), encoding="utf-8").read()]
 if swift_debug_files:
-    target_list = re.search(r"isa = PBXNativeTarget;.*?buildConfigurationList = (\w{24})",
-                            project_text, re.S)
-    debug_id = None
-    if target_list:
-        listed = re.search(r"%s.*?buildConfigurations = \((.*?)\);" % target_list.group(1),
-                           project_text, re.S)
-        if listed:
-            debug_match = re.search(r"(\w{24}) /\* Debug \*/", listed.group(1))
-            debug_id = debug_match.group(1) if debug_match else None
-    debug_block = ""
-    if debug_id:
-        started = project_text.find("%s /* Debug */ = {" % debug_id)
-        if started != -1:
-            debug_block = project_text[started:project_text.find("name = Debug;", started)]
-    conditions = re.search(r"SWIFT_ACTIVE_COMPILATION_CONDITIONS\s*=\s*([^;]+);", debug_block)
-    check(bool(conditions) and "DEBUG" in (conditions.group(1) if conditions else ""),
+    check(swift_defines_debug,
           "Debug builds define the condition %d Debug-only Swift file(s) are written against"
-          % len(swift_debug_files)
-          if swift_debug_files else "no Debug-only Swift files to guard")
-    for relative in swift_debug_files:
-        check(relative.split("/")[-1] in project_text,
-              "a Debug-only Swift file is listed for the target, so it is really compiled"
-              if relative.split("/")[-1] in project_text
-              else "%s is not in the project file and would ship nothing" % relative)
+          % len(swift_debug_files))
+for relative in swift_debug_files:
+    check(relative.split("/")[-1] in project_text,
+          "a Debug-only Swift file is listed for the target, so it is really compiled"
+          if relative.split("/")[-1] in project_text
+          else "%s is not in the project file and would ship nothing" % relative)
 
 # The video page and the Debug render probe read one rule about which enhancement
 # controls are live and which sentence explains them. The rule used to live inside
