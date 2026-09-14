@@ -171,6 +171,17 @@ jobs:
       # rebuilds the pre-fix shape to prove the scenarios can fail.
       run: python3 scripts/keyboard-concurrency-tests.py
 
+    - name: Verify the settings page renders embedded
+      # Goals that are visual cannot be signed off by a compile, and the two
+      # visual goals here were waiting on a human eye that was not available. The
+      # app carries a Debug-only entry point, inert unless ML_RENDER_PROBE is set,
+      # which drives the production settings presenter and measures the result:
+      # no second window, the page inside that same window's content, the fade
+      # finished, dismissal clean, real pixels drawn, and a Core Animation
+      # backdrop layer present so a glass material is actually composited. The run
+      # gets its own HOME, so its database and preferences are its own.
+      run: python3 scripts/render-probe.py --timeout 1500
+
     - name: Verify video enhancement paths
       # MetalFX scaling and VT frame interpolation are both object-creation
       # APIs: the call succeeds, the build stays green and the feature can still

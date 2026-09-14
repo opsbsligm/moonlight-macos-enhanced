@@ -761,7 +761,7 @@ check(not stopping_without_release,
 # fixtures, and the preparation step exists only to satisfy that gate).
 scripts_dir = os.path.join(root, "scripts")
 gate_names = sorted(n for n in os.listdir(scripts_dir)
-                    if n.endswith(("-audit.py", "-tests.py"))
+                    if n.endswith(("-audit.py", "-tests.py", "-probe.py"))
                     or n in ("release-gate.py", "prepare-release.py", "assertion-battery.py"))
 pipeline = open(os.path.join(root, ".github", "workflows", "build.yml"), encoding="utf-8").read()
 INVOKES = re.compile(r"os\.path\.join|subprocess|sys\.executable|importlib")

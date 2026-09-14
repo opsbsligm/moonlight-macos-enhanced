@@ -29,6 +29,412 @@ typedef enum : NSUInteger {
     DarkTheme,
 } Theme;
 
+
+#ifdef DEBUG
+// A render probe, compiled only for Debug and inert unless ML_RENDER_PROBE is set.
+//
+// The embedded settings page and the glass surfaces are the two things a build
+// cannot sign off on its own: a page can open in a second window and still pass
+// every compile-time rule, and a glass material can be absent while the source
+// still says the right words. Both were reported as "needs a human eye" and the
+// human eye was blocked, so the claims sat unverified. This probe drives the
+// production presenter through the production call and measures what actually
+// happened, so scripts/render-probe.py can assert it without a stream session
+// and without touching anyone's settings: the runner points HOME at a scratch
+// directory, so the database and preferences under test are the probe's own.
+static void MLProbeSpin(NSTimeInterval seconds) {
+    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:seconds];
+    while ([until timeIntervalSinceNow] > 0) {
+        NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                            untilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]
+                                               inMode:NSDefaultRunLoopMode
+                                              dequeue:YES];
+        if (event) {
+            [NSApp sendEvent:event];
+        }
+    }
+}
+
+static NSUInteger MLProbeCountMatching(NSView *root, BOOL (^match)(NSView *)) {
+    NSUInteger found = match(root) ? 1 : 0;
+    for (NSView *child in root.subviews) {
+        found += MLProbeCountMatching(child, match);
+    }
+    return found;
+}
+
+static NSDictionary *MLProbePixels(NSString *path, NSBitmapImageRep *rep) {
+    NSUInteger wide = rep.pixelsWide, high = rep.pixelsHigh;
+    double sum = 0, sumSquared = 0;
+    NSUInteger sampled = 0;
+    NSMutableSet<NSNumber *> *colours = [NSMutableSet set];
+    for (NSUInteger y = 0; y < high; y += 3) {
+        for (NSUInteger x = 0; x < wide; x += 3) {
+            NSColor *colour = [rep colorAtX:(NSInteger)x y:(NSInteger)y];
+            if (colour == nil) {
+                continue;
+            }
+            NSColor *rgb = [colour colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+            CGFloat red = [rgb redComponent], green = [rgb greenComponent];
+            CGFloat blue = [rgb blueComponent];
+            CGFloat luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+            sum += luminance;
+            sumSquared += luminance * luminance;
+            sampled++;
+            [colours addObject:@((NSUInteger)(red * 31) << 10 | (NSUInteger)(green * 31) << 5
+                                 | (NSUInteger)(blue * 31))];
+        }
+    }
+    double mean = sampled ? sum / sampled : 0;
+    double variance = sampled ? sumSquared / sampled - mean * mean : 0;
+    if (path) {
+        NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        [png writeToFile:path atomically:YES];
+    }
+    return @{ @"mean": @(mean),
+              @"stddev": @(sqrt(MAX(variance, 0))),
+              @"distinctColours": @(colours.count),
+              @"sampled": @(sampled) };
+}
+
+static NSImage *MLProbePatternImage(NSSize size) {
+    NSImage *image = [[NSImage alloc] initWithSize:size];
+    [image lockFocus];
+    [[NSColor whiteColor] set];
+    NSRectFill(NSMakeRect(0, 0, size.width, size.height));
+    const CGFloat cell = 22;
+    for (CGFloat y = 0; y < size.height; y += cell) {
+        for (CGFloat x = 0; x < size.width; x += cell) {
+            BOOL dark = (((NSInteger)(x / cell)) + ((NSInteger)(y / cell))) % 2 == 0;
+            [[NSColor colorWithSRGBRed:dark ? 0.05 : 0.95
+                                 green:dark ? 0.05 : 0.95
+                                  blue:dark ? 0.05 : 0.95
+                                 alpha:1] set];
+            NSRectFill(NSMakeRect(x, y, cell, cell));
+        }
+    }
+    [image unlockFocus];
+    return image;
+}
+
+static NSImage *MLProbeSolidImage(NSSize size, CGFloat red, CGFloat green, CGFloat blue) {
+    NSImage *image = [[NSImage alloc] initWithSize:size];
+    [image lockFocus];
+    [[NSColor colorWithSRGBRed:red green:green blue:blue alpha:1] set];
+    NSRectFill(NSMakeRect(0, 0, size.width, size.height));
+    [image unlockFocus];
+    return image;
+}
+
+static NSDictionary<NSString *, NSNumber *> *MLProbeClassInventory(NSView *root) {
+    NSMutableDictionary<NSString *, NSNumber *> *tally = [NSMutableDictionary dictionary];
+    NSMutableArray<NSView *> *queue = [NSMutableArray arrayWithObject:root];
+    while (queue.count) {
+        NSView *view = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        NSString *name = NSStringFromClass([view class]);
+        tally[name] = @(tally[name].unsignedIntegerValue + 1);
+        [queue addObjectsFromArray:view.subviews];
+    }
+    return tally;
+}
+
+static NSDictionary *MLProbeBlockAnalysis(NSBitmapImageRep *rep, NSRange xRange, NSRange yRange) {
+    const NSInteger block = 24;
+    NSUInteger blocks = 0, smoothed = 0, patterned = 0, flat = 0;
+    double varianceSum = 0;
+    for (NSInteger y = (NSInteger)yRange.location; y + block <= (NSInteger)(NSMaxRange(yRange)); y += block) {
+        for (NSInteger x = (NSInteger)xRange.location; x + block <= (NSInteger)(NSMaxRange(xRange)); x += block) {
+            double sum = 0, squared = 0;
+            NSUInteger n = 0;
+            for (NSInteger dy = 0; dy < block; dy += 2) {
+                for (NSInteger dx = 0; dx < block; dx += 2) {
+                    NSColor *colour = [rep colorAtX:x + dx y:y + dy];
+                    NSColor *rgb = [colour colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+                    CGFloat luminance = 0.2126 * [rgb redComponent] + 0.7152 * [rgb greenComponent]
+                                        + 0.0722 * [rgb blueComponent];
+                    sum += luminance;
+                    squared += luminance * luminance;
+                    n++;
+                }
+            }
+            if (!n) continue;
+            double mean = sum / n;
+            double variance = squared / n - mean * mean;
+            double stddev = sqrt(MAX(variance, 0));
+            varianceSum += stddev;
+            blocks++;
+            // A checkerboard cell of 22 px swings between .05 and .95; a page that
+            // simply covers it sits at a steady ~.93; glass over it sits between.
+            if (stddev > 0.30) {
+                patterned++;
+            } else if (stddev > 0.02 && stddev < 0.25 && mean > 0.10 && mean < 0.90) {
+                smoothed++;
+            } else if (stddev <= 0.02) {
+                flat++;
+            }
+        }
+    }
+    return @{ @"blocks": @(blocks), @"patterned": @(patterned), @"smoothedMidTone": @(smoothed),
+              @"flat": @(flat), @"meanBlockStddev": @(blocks ? varianceSum / blocks : 0) };
+}
+
+static NSDictionary *MLProbeTranslucentRegions(NSBitmapImageRep *patternRep,
+                                               NSBitmapImageRep *solidRep,
+                                               NSString **descriptionOut) {
+    const NSInteger block = 24;
+    NSInteger wide = (NSInteger)patternRep.pixelsWide, high = (NSInteger)patternRep.pixelsHigh;
+    NSUInteger changed = 0, considered = 0;
+    NSInteger minX = NSIntegerMax, maxX = NSIntegerMin, minY = NSIntegerMax, maxY = NSIntegerMin;
+    for (NSInteger y = 0; y + block <= high; y += block) {
+        for (NSInteger x = 0; x + block <= wide; x += block) {
+            double shift = 0;
+            NSUInteger samples = 0;
+            for (NSInteger dy = 0; dy < block; dy += 3) {
+                for (NSInteger dx = 0; dx < block; dx += 3) {
+                    NSColor *a = [[patternRep colorAtX:x + dx y:y + dy]
+                                  colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+                    NSColor *b = [[solidRep colorAtX:x + dx y:y + dy]
+                                  colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+                    if (!a || !b) continue;
+                    shift += fabs([a redComponent] - [b redComponent])
+                           + fabs([a greenComponent] - [b greenComponent])
+                           + fabs([a blueComponent] - [b blueComponent]);
+                    samples++;
+                }
+            }
+            if (!samples) continue;
+            considered++;
+            if (shift / samples > 0.05) {
+                changed++;
+                minX = MIN(minX, x); maxX = MAX(maxX, x + block);
+                minY = MIN(minY, y); maxY = MAX(maxY, y + block);
+            }
+        }
+    }
+    if (descriptionOut && changed) {
+        // Captured bitmaps are top-down, so say so rather than letting a reader
+        // read the band as AppKit coordinates.
+        *descriptionOut = [NSString stringWithFormat:@"%lu of %lu blocks read the backdrop through "
+                           "the page, spanning y %ld..%ld and x %ld..%ld from the top edge",
+                           (unsigned long)changed, (unsigned long)considered,
+                           (long)minY, (long)maxY, (long)minX, (long)maxX];
+    }
+    return @{ @"changedBlocks": @(changed), @"consideredBlocks": @(considered) };
+}
+
+static void MLProbeRecordLayers(NSView *root, NSMutableDictionary<NSString *, NSNumber *> *tally) {
+    NSMutableArray<NSView *> *queue = [NSMutableArray arrayWithObject:root];
+    while (queue.count) {
+        NSView *view = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        CALayer *layer = view.layer;
+        NSArray<CALayer *> *layers = layer ? [layer.sublayers arrayByAddingObject:layer] : @[];
+        for (CALayer *candidate in layers) {
+            NSString *name = NSStringFromClass([candidate class]);
+            tally[name] = @(tally[name].unsignedIntegerValue + 1);
+            for (NSString *marker in @[@"Glass", @"Material", @"VisualEffect", @"Backdrop"]) {
+                if ([name rangeOfString:marker options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                    NSString *key = [@"material:" stringByAppendingString:name];
+                    tally[key] = @(tally[key].unsignedIntegerValue + 1);
+                }
+            }
+        }
+        [queue addObjectsFromArray:view.subviews];
+    }
+}
+
+static void MLRunRenderProbeAndExitIfRequested(void) {
+    if (getenv("ML_RENDER_PROBE") == NULL) {
+        return;
+    }
+
+    NSString *output = NSProcessInfo.processInfo.environment[@"ML_RENDER_PROBE_OUTPUT"]
+                       ?: [NSHomeDirectory() stringByAppendingPathComponent:@"render-probe"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:output
+                             withIntermediateDirectories:YES
+                                              attributes:nil
+                                                   error:nil];
+
+    NSMutableDictionary *report = [NSMutableDictionary dictionary];
+    NSMutableArray<NSString *> *failures = [NSMutableArray array];
+    void (^refuse)(NSString *) = ^(NSString *reason) { [failures addObject:reason]; };
+
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(-12000, -12000, 1100, 700)
+                                                  styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                                                            | NSWindowStyleMaskResizable)
+                                                    backing:NSBackingStoreBuffered
+                                                      defer:NO];
+    window.title = @"render-probe";
+    [window orderFrontRegardless];
+    MLProbeSpin(0.4);
+
+    NSView *content = window.contentView;
+    report[@"contentSize"] = NSStringFromSize(content.bounds.size);
+    // A high contrast pattern behind the page: without it the offscreen window
+    // captures as black and a glass material has nothing to bend, so "is the
+    // glass doing anything" cannot be measured at all.
+    NSImageView *backdrop = [[NSImageView alloc] initWithFrame:content.bounds];
+    backdrop.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    backdrop.image = MLProbePatternImage(content.bounds.size);
+    [content addSubview:backdrop];
+    MLProbeSpin(0.2);
+
+    NSBitmapImageRep *beforeRep = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
+    [content cacheDisplayInRect:content.bounds toBitmapImageRep:beforeRep];
+    report[@"beforePresent"] = MLProbePixels([output stringByAppendingPathComponent:@"01-window-before.png"],
+                                             beforeRep);
+    report[@"backdropBlocksBeforePresent"] = MLProbeBlockAnalysis(
+        beforeRep, NSMakeRange(0, (NSUInteger)content.bounds.size.width),
+        NSMakeRange(0, (NSUInteger)content.bounds.size.height));
+
+    NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
+    NSSet<NSView *> *subviewsBefore = [NSSet setWithArray:content.subviews];
+
+    [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
+    MLProbeSpin(1.0);
+
+    NSMutableArray<NSString *> *addedWindows = [NSMutableArray array];
+    for (NSWindow *candidate in NSApp.windows) {
+        if (![windowsBefore containsObject:candidate] && candidate != window) {
+            [addedWindows addObject:[NSString stringWithFormat:@"%@/%@",
+                                     NSStringFromClass([candidate class]), candidate.title]];
+        }
+    }
+    report[@"windowsAddedByPresentingSettings"] = addedWindows;
+    if (addedWindows.count != 0) {
+        refuse([NSString stringWithFormat:@"presenting settings opened %lu new window(s): %@",
+                (unsigned long)addedWindows.count, [addedWindows componentsJoinedByString:@", "]]);
+    }
+    if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+        refuse(@"the presenter did not record settings as presented in the window it was given");
+    }
+
+    NSMutableArray<NSView *> *addedViews = [NSMutableArray array];
+    for (NSView *candidate in content.subviews) {
+        if (![subviewsBefore containsObject:candidate]) {
+            [addedViews addObject:candidate];
+        }
+    }
+    report[@"viewsAddedToWindowContent"] = @(addedViews.count);
+    if (addedViews.count != 1) {
+        refuse([NSString stringWithFormat:@"the settings page added %lu views to the window content, expected 1",
+                (unsigned long)addedViews.count]);
+    }
+
+    NSView *overlay = addedViews.firstObject;
+    if (overlay) {
+        report[@"overlayClass"] = NSStringFromClass([overlay class]);
+        report[@"overlayAlpha"] = @(overlay.alphaValue);
+        report[@"overlayInsideWindowContent"] = @([overlay isDescendantOf:content]);
+        report[@"overlayFrame"] = NSStringFromRect(overlay.frame);
+        if (overlay.alphaValue < 0.99) {
+            refuse([NSString stringWithFormat:@"the settings page is still at alpha %.3f after the fade",
+                    overlay.alphaValue]);
+        }
+        if (![overlay isDescendantOf:content]) {
+            refuse(@"the settings page is not inside the window's own content view");
+        }
+
+        NSUInteger visualEffects = MLProbeCountMatching(overlay, ^BOOL(NSView *view) {
+            return [view isKindOfClass:[NSVisualEffectView class]];
+        });
+        NSDictionary<NSString *, NSNumber *> *inventory = MLProbeClassInventory(overlay);
+        NSMutableDictionary<NSString *, NSNumber *> *layers = [NSMutableDictionary dictionary];
+        MLProbeRecordLayers(overlay, layers);
+        report[@"layerInventory"] = layers;
+        report[@"visualEffectViews"] = @(visualEffects);
+        report[@"classInventory"] = inventory;
+        NSMutableArray<NSString *> *glassBackings = [NSMutableArray array];
+        [inventory enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSNumber *count, BOOL *stop) {
+            // The hosting view is named after the SwiftUI page it hosts, so its
+            // class name mentioning "Glass" says nothing about a material.
+            BOOL isHosting = [name rangeOfString:@"NSHostingView"].location != NSNotFound;
+            BOOL looksGlassy = [name rangeOfString:@"Glass" options:NSCaseInsensitiveSearch].location != NSNotFound
+                               || [name rangeOfString:@"VisualEffect" options:NSCaseInsensitiveSearch].location != NSNotFound
+                               || [name rangeOfString:@"Material" options:NSCaseInsensitiveSearch].location != NSNotFound;
+            if (looksGlassy && !isHosting) {
+                [glassBackings addObject:[NSString stringWithFormat:@"%@ x%lu", name,
+                                          (unsigned long)count.unsignedIntegerValue]];
+            }
+        }];
+        report[@"glassBackings"] = glassBackings;
+
+        NSBitmapImageRep *compositeRep = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
+        [content cacheDisplayInRect:content.bounds toBitmapImageRep:compositeRep];
+        report[@"compositePixels"] = MLProbePixels([output stringByAppendingPathComponent:@"03-composite.png"],
+                                                   compositeRep);
+        report[@"behindPageBlocks"] = MLProbeBlockAnalysis(
+            compositeRep, NSMakeRange(0, (NSUInteger)content.bounds.size.width),
+            NSMakeRange(0, (NSUInteger)content.bounds.size.height));
+
+        // How much of the page lets the window backdrop through. Reported, not
+        // asserted: the page deliberately sits on an opaque base, so its materials
+        // read the page's own content rather than the window behind it, and a zero
+        // here is the designed behaviour, not a missing material. What a material
+        // exists at all is measured from the layer tree below.
+        backdrop.image = MLProbeSolidImage(content.bounds.size, 0.95, 0.10, 0.10);
+        MLProbeSpin(0.3);
+        NSBitmapImageRep *overSolid = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
+        [content cacheDisplayInRect:content.bounds toBitmapImageRep:overSolid];
+        NSString *where = nil;
+        NSDictionary *readThrough = MLProbeTranslucentRegions(compositeRep, overSolid, &where);
+        report[@"readThroughPageBlocks"] = readThrough;
+        report[@"readThroughPageWhere"] = where ?: @"no block changed when only the backdrop changed"
+                                           " (expected while the page base is opaque)";
+
+        NSMutableArray<NSString *> *materialLayers = [NSMutableArray array];
+        [layers enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSNumber *count, BOOL *stop) {
+            if ([name hasPrefix:@"material:"]) {
+                [materialLayers addObject:[NSString stringWithFormat:@"%@ x%lu",
+                                           [name substringFromIndex:@"material:".length],
+                                           (unsigned long)count.unsignedIntegerValue]];
+            }
+        }];
+        report[@"materialLayers"] = materialLayers;
+        if (materialLayers.count == 0) {
+            refuse([NSString stringWithFormat:@"the settings page has no backdrop or material layer, so no "
+                   @"Liquid Glass material is being composited; layers present: %lu",
+                    (unsigned long)layers.count]);
+        }
+
+        NSBitmapImageRep *rep = [overlay bitmapImageRepForCachingDisplayInRect:overlay.bounds];
+        [overlay cacheDisplayInRect:overlay.bounds toBitmapImageRep:rep];
+        NSDictionary *pixels = MLProbePixels([output stringByAppendingPathComponent:@"02-settings-page.png"], rep);
+
+        report[@"settingsPagePixels"] = pixels;
+        double stddev = [pixels[@"stddev"] doubleValue];
+        NSUInteger distinct = [pixels[@"distinctColours"] unsignedIntegerValue];
+        if (stddev < 0.08 || distinct < 40) {
+            refuse([NSString stringWithFormat:@"the settings page rendered as flat: stddev %.3f, %lu distinct colours",
+                    stddev, (unsigned long)distinct]);
+        }
+
+        [SettingsOverlayPresenter dismissSettingsFromWindow:window];
+        MLProbeSpin(0.6);
+        report[@"overlayStillMountedAfterDismiss"] = @([overlay isDescendantOf:content]);
+        report[@"presentedAfterDismiss"] = @([SettingsOverlayPresenter isSettingsPresentedInWindow:window]);
+        if ([SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+            refuse(@"the presenter still reports settings as presented after dismissal");
+        }
+        if ([overlay isDescendantOf:content]) {
+            refuse(@"the settings page is still mounted after dismissal");
+        }
+    }
+
+    report[@"failures"] = failures;
+    NSData *json = [NSJSONSerialization dataWithJSONObject:report
+                                                  options:NSJSONWritingPrettyPrinted
+                                                    error:nil];
+    [json writeToFile:[output stringByAppendingPathComponent:@"report.json"] atomically:YES];
+    fprintf(stderr, "[render-probe] %s\n", failures.count
+            ? [[failures componentsJoinedByString:@"; "] UTF8String]
+            : "settings embedded in one window, glass present, page drew pixels");
+    fflush(stderr);
+    exit(failures.count ? 1 : 0);
+}
+#endif
+
 @interface AppDelegateForAppKit () <NSApplicationDelegate, NSWindowDelegate>
 @property (nonatomic, strong) NSWindowController *aboutWC;
 @property (nonatomic, weak) NSWindow *mainWindow;
@@ -180,6 +586,10 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)notification {
+#ifdef DEBUG
+    // Runs and exits when asked; otherwise this is a no-op.
+    MLRunRenderProbeAndExitIfRequested();
+#endif
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(languageChanged:) name:@"LanguageChanged" object:nil];
     [[LanguageManager shared] applyAppLanguage];
 
