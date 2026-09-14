@@ -36,6 +36,12 @@ Each check below corresponds to a defect that shipped at some point:
   * settings was a second NSWindow, which is how the app acquired two competing
     window layers, and the only thing keeping the embedded page embedded was a
     reviewer remembering that it used to be a window.
+  * a branch that consumed a key still let its release through, because AppKit
+    only asks the key-equivalent question on keyDown, so the host saw a key come
+    up that it never saw go down.
+  * keys the settings page did not use walked the responder chain back to the
+    stream view and were forwarded, so typing in settings moved the character on
+    the host.
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
@@ -344,6 +350,59 @@ check(bridge_body.count("SettingsOverlayPresenter.") == 3
       and "func presentSettings(inWindow" in bridge_body
       and "SettingsOverlayPresenter.present(in: window, hostId: hostId)" in bridge_body,
       "the settings bridge forwards all three calls to the presenter and adds nothing")
+
+
+# AppKit asks the key-equivalent question on keyDown only. A branch that consumes
+# a key therefore has to say so, or the matching keyUp still reaches -keyUp: and
+# the host is told a key was released that it never saw pressed. The pairing is
+# invisible in review because the two halves live in different methods.
+capture_all = open(os.path.join(root, "Limelight/macOS/ViewControllers/StreamViewController+MouseCapture.m"),
+                   encoding="utf-8").read()
+gate_source = capture_all[capture_all.index("- (BOOL)onKeyboardEquivalent:"):]
+gate_source = gate_source[:gate_source.index("\n@end")]
+gate_lines = gate_source.split("\n")
+bare = [i for i, line in enumerate(gate_lines) if line.strip() == "return YES;"]
+reasons = [any("MLIsKeyboardKeyEvent(event)" in l or "swallowed key kVK=" in l
+               for l in gate_lines[max(0, i - 12):i][::-1][:8]) for i in bare]
+check(len(bare) == 2 and all(reasons),
+      "the only unpaired swallows left are the two documented paths"
+      if len(bare) == 2 and all(reasons) else
+      "unpaired keyDown paths in the gate: %d, reasons matched: %s" % (len(bare), reasons))
+paired = gate_source.count("return [self consumeKeyDownEvent:event];")
+check(paired >= 8,
+      "every shortcut branch that consumes a key records the debt"
+      if paired >= 8 else "only %d consuming branches record the debt" % paired)
+
+monitor_start = capture_all.index("self.localKeyDownMonitor = [NSEvent addLocalMonitorForEventsMatchingMask")
+monitor_body = capture_all[monitor_start:capture_all.index("    }];", monitor_start)]
+check("return nil;" not in monitor_body
+      and monitor_body.count("consumeMonitoredKeyDownEvent:") == 3,
+      "the key monitor suppresses only by recording the debt"
+      if "return nil;" not in monitor_body and monitor_body.count("consumeMonitoredKeyDownEvent:") == 3 else
+      "bare suppressions in the monitor: %d, recorded: %d"
+      % (monitor_body.count("return nil;"), monitor_body.count("consumeMonitoredKeyDownEvent:")))
+
+down_body = method_body(capture_all, "- (void)keyDown:(NSEvent *)event")
+check("isSettingsPresentedInWindow" in down_body
+      and "noteKeyboardKeyDownSuppressedForEvent" in down_body,
+      "keys the settings page owns are never forwarded to the host")
+
+hid_all = open(os.path.join(root, "Limelight/Input/HIDSupport.m"), encoding="utf-8").read()
+hid_up = method_body(hid_all, "- (void)keyUp:(NSEvent *)event")
+hid_down = method_body(hid_all, "- (void)keyDown:(NSEvent *)event")
+check("keyboardSuppressedKeyDownKeyCodes containsObject:" in hid_up
+      and hid_up.index("keyboardSuppressedKeyDownKeyCodes containsObject:")
+          < hid_up.index("LiSendKeyboardEventCtx"),
+      "a release whose press was consumed never reaches the host")
+check("keyboardSuppressedKeyDownKeyCodes removeObject:" in hid_down,
+      "a forwarded press clears any stale record for that key")
+check("keyboardSuppressedKeyDownKeyCodes removeAllObjects"
+      in method_body(hid_all, "- (void)tearDownKeyboardStateForSessionEnd:(const char *)reason"),
+      "session teardown drops every outstanding consumed-key record")
+check("noteKeyboardKeyDownSuppressedForEvent"
+      in open(os.path.join(root, "Limelight/Input/HIDSupport.h"), encoding="utf-8").read(),
+      "the consumed-key contract is part of the public HID interface")
+
 
 print("%d constraint failures" % len(failures))
 sys.exit(1 if failures else 0)
