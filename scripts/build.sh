@@ -1,11 +1,16 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Full build orchestration: download deps -> build -> package DMG
 # Usage: scripts/build.sh [--no-deps] [--no-dmg] [--debug]
 
-SCRIPT_DIR="${0:A:h}"
-PROJECT_DIR="${SCRIPT_DIR:h}"
+# "${0:A:h}" is a zsh modifier for the script directory, and it reads as an
+# unbound variable under bash. Resolving the directory from BASH_SOURCE works on
+# both the macOS developer machine and the ubuntu audit runner, so the same
+# script is genuinely the single entry point for both.
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+PROJECT_DIR="$(dirname -- "$SCRIPT_DIR")"
 
 CONFIGURATION="Release"
 SKIP_DEPS=0

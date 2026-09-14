@@ -1,11 +1,16 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Integration test: verify app bundle structure, code signature, and launch
 # Usage: scripts/integration-test.sh [path-to-app]
 
-SCRIPT_DIR="${0:A:h}"
-PROJECT_DIR="${SCRIPT_DIR:h}"
+# "${0:A:h}" is a zsh modifier for the script directory, and it reads as an
+# unbound variable under bash. Resolving the directory from BASH_SOURCE works on
+# both the macOS developer machine and the ubuntu audit runner, so the same
+# script is genuinely the single entry point for both.
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+PROJECT_DIR="$(dirname -- "$SCRIPT_DIR")"
 
 APP_PATH="${1:-${PROJECT_DIR}/build/xcode/derivedData/Build/Products/Release/Moonlight.app}"
 PASS=0

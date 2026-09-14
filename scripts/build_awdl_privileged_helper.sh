@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 if [[ "${PLATFORM_NAME:-}" != "macosx" ]]; then

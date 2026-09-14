@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Download binary frameworks required for building Moonlight.
@@ -10,8 +10,13 @@ set -euo pipefail
 # and libs/openssl absent, so every pipeline run failed before compiling.
 # The layout checks at the bottom turn that class of failure into a clear error.
 
-SCRIPT_DIR="${0:A:h}"
-PROJECT_DIR="${SCRIPT_DIR:h}"
+# "${0:A:h}" is a zsh modifier for the script directory, and it reads as an
+# unbound variable under bash. Resolving the directory from BASH_SOURCE works on
+# both the macOS developer machine and the ubuntu audit runner, so the same
+# script is genuinely the single entry point for both.
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+PROJECT_DIR="$(dirname -- "$SCRIPT_DIR")"
 
 XCFRAMEWORKS_DIR="${PROJECT_DIR}/xcframeworks"
 OPENSSL_DIR="${PROJECT_DIR}/Packages/OpenSSL.xcframework"
