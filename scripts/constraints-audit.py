@@ -751,6 +751,24 @@ l10n = subprocess.run([sys.executable, os.path.join(root, "scripts", "l10n-audit
 check(l10n.returncode == 0, "the localization audit passes with its scan proven running"
       if l10n.returncode == 0 else "the localization audit failed:\n" + l10n.stdout[-700:])
 
+# BUILD_NUMBER is `git rev-list --count HEAD`, which two places used to compute
+# independently: the shell script that CI injects, and the release preparer. The
+# preparer counted raw commits, so in a shallow clone it derived v1.3.9-build71
+# for the same commit CI stamped 1407, and the changelog heading it wrote would
+# have named a build no binary ever carried. One script owns the number, and that
+# script has to refuse an incomplete history instead of reporting its depth.
+build_script = open(os.path.join(root, "Limelight", "build-number.sh"), encoding="utf-8").read()
+guards = [(cond, body) for cond, body in
+          re.findall(r"(?ms)^if\b(.*?)\bthen\b(.*?)^fi\b", build_script)
+          if "is-shallow-repository" in cond]
+check(len(guards) == 1 and "--print" in guards[0][0]
+      and re.search(r"\bexit\s+[1-9]", guards[0][1]) is not None,
+      "the build number refuses a history it cannot count completely")
+
+preparer = open(os.path.join(root, "scripts", "prepare-release.py"), encoding="utf-8").read()
+check('"rev-list"' not in preparer and "build-number.sh" in preparer,
+      "the release tag takes its build number from the one script that owns it")
+
 if run_battery:
     # An assertion that stops failing on a regression is worse than no assertion,
     # because it reads as coverage. The battery plants regressions in the real

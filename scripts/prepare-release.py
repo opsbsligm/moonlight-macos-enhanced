@@ -34,6 +34,24 @@ def git(*args):
     return subprocess.run(["git"] + list(args), cwd=ROOT, capture_output=True, text=True).stdout
 
 
+def build_number(repo=ROOT):
+    """Ask the one script that owns BUILD_NUMBER, never re-derive it here.
+
+    Counting commits a second way is how a release tool and CI disagree about
+    what a commit is called: build-number.sh refuses a shallow clone, a plain
+    rev-list silently returns the size of the shallow window instead.
+    """
+    out = subprocess.run(["sh", os.path.join(repo, "Limelight", "build-number.sh"), "--print"],
+                         cwd=repo, capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit("build-number.sh refused to name the build: %s"
+                         % (out.stderr.strip() or out.stdout.strip() or "exit %d" % out.returncode))
+    value = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ""
+    if not value.isdigit():
+        raise SystemExit("build-number.sh --print did not print a number: %r" % out.stdout)
+    return int(value)
+
+
 def promote(text, version):
     """Give the Unreleased section the release's version and open a new one.
 
@@ -57,7 +75,7 @@ def evaluate(args):
     project = open(project_path, encoding="utf-8").read()
     versions = gate.marketing_versions(project)
     declared = sorted(versions)[0] if len(versions) == 1 else None
-    build = args.build_number if args.build_number is not None else git("rev-list", "--count", "HEAD").strip()
+    build = args.build_number if args.build_number is not None else str(build_number())
     tag = args.tag or ("v%s-build%s" % (declared, build) if declared and build else None)
     if tag is None:
         raise SystemExit("MARKETING_VERSION must declare exactly one value")

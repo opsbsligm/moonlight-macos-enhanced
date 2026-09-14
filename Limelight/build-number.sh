@@ -36,6 +36,18 @@ if [ -z "$bundleVersion" ]; then
     exit 0
 fi
 
+# The count is only the truth when the history is complete. A shallow clone
+# reports the size of the shallow window instead, so a release prepared in one
+# would carry a build number far below the one CI stamps on the same commit.
+# Observed on this tree: 71 locally against 1407 from CI, on the same commit.
+# --print is the channel CI and the release tooling use, so it refuses rather
+# than hand them an identity that is quietly wrong.
+if [ "${1:-}" = "--print" ] && \
+   [ "$("$git" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+    echo "error: $PWD is a shallow clone, so rev-list --count HEAD reports $bundleVersion instead of the real total; run: git fetch --unshallow" >&2
+    exit 1
+fi
+
 # --print mode: emit the resolved number on stdout and write nothing. CI uses
 # this to inject BUILD_NUMBER on the xcodebuild command line, the only channel
 # proven to take effect for command-line builds.

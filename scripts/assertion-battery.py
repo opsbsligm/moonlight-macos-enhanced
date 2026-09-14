@@ -28,6 +28,8 @@ L10N = os.path.join(root, "scripts", "l10n-audit.py")
 ANALYZER = os.path.join(root, "scripts", "analyzer-audit.py")
 COLLECTION_VIEW = os.path.join(root, "Limelight", "macOS", "Views", "CollectionView.m")
 APP_CELL = os.path.join(root, "Limelight", "macOS", "ViewControllers", "AppCell.m")
+PREPARER = os.path.join(root, "scripts", "prepare-release.py")
+BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
 
 # A mutation is judged by the gate that is supposed to notice it. Both gates run an
 # extra proof of their own when invoked normally, so the battery has to tell the
@@ -311,6 +313,13 @@ PATH_ANNOTATION = " CF_RETURNS_RETAINED {"
 HID_RELEASE = "        CFRelease(_hidManager);\n"
 SWEEP_RULE = "def sweep_health(analyzed, source_count, scan_root=\".\"):\n"
 ADDED_RULE = "if key not in baseline"
+BUILD_VIA_SCRIPT = "else str(build_number())"
+SHALLOW_GUARD = r'''if [ "${1:-}" = "--print" ] && \
+   [ "$("$git" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+    echo "error: $PWD is a shallow clone, so rev-list --count HEAD reports $bundleVersion instead of the real total; run: git fetch --unshallow" >&2
+    exit 1
+fi
+'''
 
 
 def leak_the_key_event(text):
@@ -336,6 +345,18 @@ def blind_sweep(text):
 def accept_new_findings(text):
     once(text, ADDED_RULE, "new finding rule")
     return text.replace(ADDED_RULE, "if False", 1)
+
+
+
+def recounted_build(text):
+    once(text, BUILD_VIA_SCRIPT, "build number asked of the shared script")
+    return text.replace(BUILD_VIA_SCRIPT,
+                        'else git("rev-list", "--count", "HEAD").strip()', 1)
+
+
+def believe_shallow(text):
+    once(text, SHALLOW_GUARD, "shallow history refusal")
+    return text.replace(SHALLOW_GUARD, "", 1)
 
 
 MUTATIONS = [
@@ -374,6 +395,8 @@ MUTATIONS = [
     ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),
     ("at-blind-scan", L10N, at_blind_scan, "the at-quoted call sites go unseen again", L10N_GATE),
     ("grep-scanned", L10N, grep_scanned, "the scan shells out to the host grep dialect", AUDIT_GATE),
+    ("recounted-build", PREPARER, recounted_build, "the release tool counts commits its own way"),
+    ("believed-shallow", BUILD_SH, believe_shallow, "a shallow clone stamps a build number that is too small"),
 ]
 
 

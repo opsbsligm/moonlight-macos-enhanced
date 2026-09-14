@@ -129,6 +129,61 @@ def self_test():
     return 1 if failures else 0
 
 
+def build_number_self_test(repo="."):
+    """A shallow clone has to stop the release, not slow it down quietly.
+
+    BUILD_NUMBER is `git rev-list --count HEAD`, and in a shallow clone that
+    counts the shallow window instead of the history: this tree reported 71
+    locally while CI stamped the same commit 1407. Nothing objected until the
+    DMG was already built. The fixture builds a real three-commit repository,
+    clones it at depth one, and requires the script to refuse the clone and to
+    still print the true number for the complete one.
+    """
+    import shutil, tempfile
+    script = os.path.abspath(os.path.join(repo, "Limelight", "build-number.sh"))
+    tmp = tempfile.mkdtemp(prefix="release-gate-shallow-")
+    failures = 0
+    try:
+        full = os.path.join(tmp, "full")
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        for step in (["init", "-q", full],
+                     ["-C", full, "commit", "-q", "--allow-empty", "-m", "one"],
+                     ["-C", full, "commit", "-q", "--allow-empty", "-m", "two"],
+                     ["-C", full, "commit", "-q", "--allow-empty", "-m", "three"]):
+            subprocess.run(["git"] + step, check=True, capture_output=True, text=True, env=env)
+        shallow = os.path.join(tmp, "shallow")
+        clone = subprocess.run(["git", "clone", "--quiet", "--depth", "1",
+                                "file://" + full, shallow],
+                               capture_output=True, text=True, env=env)
+        if clone.returncode != 0:
+            print("FAIL the fixture could not make a shallow clone: %s" % clone.stderr.strip())
+            return 1
+
+        def probe(cwd):
+            out = subprocess.run(["sh", script, "--print"], cwd=cwd, env=dict(env, SRCROOT=cwd),
+                                 capture_output=True, text=True)
+            return out
+
+        deep = probe(full)
+        ok = deep.returncode == 0 and deep.stdout.strip().splitlines()[-1:] == ["3"]
+        print("%-4s a complete history prints the real commit count" % ("ok" if ok else "FAIL"))
+        failures += 0 if ok else 1
+
+        shallow_run = probe(shallow)
+        named_shallow = "shallow" in shallow_run.stderr.lower()
+        ok = shallow_run.returncode != 0 and named_shallow
+        print("%-4s a shallow clone is refused, not believed (%s)"
+              % ("ok" if ok else "FAIL",
+                 "exit %d" % shallow_run.returncode if shallow_run.returncode else "it printed a number"))
+        failures += 0 if ok else 1
+        if not ok and not named_shallow:
+            print("     stderr: %s" % shallow_run.stderr.strip()[:160])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return failures
+
+
 def preparation_self_test(repo="."):
     """Run the release preparation fixtures from this same CI entry point.
 
@@ -153,7 +208,8 @@ def main():
     args = ap.parse_args()
 
     if args.self_test:
-        return max(self_test(), preparation_self_test(args.repo))
+        return max(self_test(), preparation_self_test(args.repo),
+                   build_number_self_test(args.repo))
     if not args.tag:
         print("error: --tag is required")
         return 2
