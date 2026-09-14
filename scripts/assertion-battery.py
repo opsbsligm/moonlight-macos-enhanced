@@ -30,6 +30,7 @@ COLLECTION_VIEW = os.path.join(root, "Limelight", "macOS", "Views", "CollectionV
 APP_CELL = os.path.join(root, "Limelight", "macOS", "ViewControllers", "AppCell.m")
 PREPARER = os.path.join(root, "scripts", "prepare-release.py")
 BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
+WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
 
 # A mutation is judged by the gate that is supposed to notice it. Both gates run an
 # extra proof of their own when invoked normally, so the battery has to tell the
@@ -314,6 +315,7 @@ HID_RELEASE = "        CFRelease(_hidManager);\n"
 SWEEP_RULE = "def sweep_health(analyzed, source_count, scan_root=\".\"):\n"
 ADDED_RULE = "if key not in baseline"
 BUILD_VIA_SCRIPT = "else str(build_number())"
+KEYBOARD_STEP = "      run: python3 scripts/keyboard-concurrency-tests.py\n"
 SHALLOW_GUARD = r'''if [ "${1:-}" = "--print" ] && \
    [ "$("$git" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
     echo "error: $PWD is a shallow clone, so rev-list --count HEAD reports $bundleVersion instead of the real total; run: git fetch --unshallow" >&2
@@ -359,6 +361,12 @@ def believe_shallow(text):
     return text.replace(SHALLOW_GUARD, "", 1)
 
 
+
+def unplug_gate(text):
+    once(text, KEYBOARD_STEP, "keyboard gate wiring")
+    return text.replace(KEYBOARD_STEP, "", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -397,6 +405,7 @@ MUTATIONS = [
     ("grep-scanned", L10N, grep_scanned, "the scan shells out to the host grep dialect", AUDIT_GATE),
     ("recounted-build", PREPARER, recounted_build, "the release tool counts commits its own way"),
     ("believed-shallow", BUILD_SH, believe_shallow, "a shallow clone stamps a build number that is too small"),
+    ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
 ]
 
 

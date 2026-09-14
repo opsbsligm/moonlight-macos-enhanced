@@ -162,6 +162,15 @@ jobs:
       # still notices the race.
       run: python3 scripts/input-concurrency-tests.py
 
+    - name: Verify two keys held at once
+      # Pressing W and Space together -- walk and jump -- is the report this
+      # gate exists for. A held-key table with the right words in it can still
+      # tangle two concurrent keys, and neither the compiler nor a reviewer
+      # notices. The harness extracts the state machine from Limelight/Input,
+      # drives it with real NSEvents in the shapes a pair of hands produces, and
+      # rebuilds the pre-fix shape to prove the scenarios can fail.
+      run: python3 scripts/keyboard-concurrency-tests.py
+
     - name: Verify video enhancement paths
       # MetalFX scaling and VT frame interpolation are both object-creation
       # APIs: the call succeeds, the build stays green and the feature can still

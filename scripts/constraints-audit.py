@@ -728,6 +728,34 @@ problem = ordered_once(dealloc_body, "IOHIDManagerUnscheduleFromRunLoop(",
 check(problem is None, "the HID manager is unscheduled before it is released"
       if problem is None else "the dealloc net is not ordered: " + problem)
 
+# A gate nobody wired is worse than no gate: it sits in scripts/ looking like
+# coverage while CI never runs it. Every audit and harness has to be reachable
+# from the workflow, directly or through another reachable script, because one
+# gate legitimately drives another (release-gate --self-test runs the preparation
+# fixtures, and the preparation step exists only to satisfy that gate).
+scripts_dir = os.path.join(root, "scripts")
+gate_names = sorted(n for n in os.listdir(scripts_dir)
+                    if n.endswith(("-audit.py", "-tests.py"))
+                    or n in ("release-gate.py", "prepare-release.py", "assertion-battery.py"))
+pipeline = open(os.path.join(root, ".github", "workflows", "build.yml"), encoding="utf-8").read()
+INVOKES = re.compile(r"os\.path\.join|subprocess|sys\.executable|importlib")
+reachable = {n for n in gate_names if n in pipeline}
+grew = True
+while grew:
+    grew = False
+    for name in gate_names:
+        if name in reachable:
+            continue
+        for host in sorted(reachable):
+            host_text = open(os.path.join(scripts_dir, host), encoding="utf-8").read()
+            if any(name in line and INVOKES.search(line) for line in host_text.splitlines()):
+                reachable.add(name)
+                grew = True
+                break
+orphaned = sorted(set(gate_names) - reachable)
+check(not orphaned, "every gate in scripts is reachable from the workflow"
+      if not orphaned else "written but never run by CI: " + ", ".join(orphaned))
+
 analyzer = subprocess.run([sys.executable,
                            os.path.join(root, "scripts", "analyzer-audit.py"), "--self-test"],
                           capture_output=True, text=True, cwd=root)
