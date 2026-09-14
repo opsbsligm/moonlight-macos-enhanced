@@ -91,19 +91,22 @@ jobs:
       matrix:
         include:
           - variant: arm64
-            runner: macos-26-arm64
+            # "macos-26-arm64" is the image name in the runner-images docs, not
+            # a label. The label that selects the arm64 machine is macos-26, and
+            # a runs-on that names the image matches no hosted runner: the job
+            # then sits queued with no failure and no log to read.
+            runner: macos-26
             destination: 'platform=macOS,arch=arm64'
             archs: 'arm64'
             display_name: Apple Silicon
           - variant: x86_64
-            # GitHub publishes no Intel macOS runner (and macOS 26 requires
-            # Apple Silicon hardware), so x86_64 is cross-compiled on the
-            # arm64 runner. Every vendored xcframework ships a
-            # macos-arm64_x86_64 slice, which makes this link-compatible.
-            # The image label names arm64 explicitly. macOS 26 does not run on
-            # Intel hardware at all, and the bare macos-26 label is the spelling
-            # that historically denoted an Intel image.
-            runner: macos-26-arm64
+            # x86_64 is cross-compiled on the arm64 image on purpose. Intel
+            # macOS is hosted, as macos-26-intel and macos-26-large, but using
+            # it would tie every release to a second machine class for no
+            # benefit: each vendored xcframework ships a
+            # macos-arm64_x86_64 slice, so the x86_64 link is satisfied from an
+            # arm64 runner.
+            runner: macos-26
             destination: 'platform=macOS,arch=x86_64'
             archs: 'x86_64'
             display_name: Intel
@@ -274,7 +277,7 @@ jobs:
   build_universal:
     name: Build universal
     needs: build_arch
-    runs-on: macos-26-arm64
+    runs-on: macos-26
 
     steps:
     - name: Download arm64 app artifact

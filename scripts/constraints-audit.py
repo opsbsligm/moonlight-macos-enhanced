@@ -12,6 +12,9 @@ Each check below corresponds to a defect that shipped at some point:
     broke both architecture jobs.
   * the x86_64 job asked for a macos-26-intel runner that GitHub does not
     publish, so it could never start.
+  * both macOS jobs asked for macos-26-arm64, which is an image name and not a
+    label, so both sat queued with no failure to read. The earlier check accepted
+    it because it only looked for the -intel suffix.
   * the workflow declared no permissions and no concurrency group, so every job
     inherited whatever default write scope the repository settings allow and
     each push queued a second full macOS matrix.
@@ -110,12 +113,32 @@ check(re.search(r"^permissions:\n  contents: read$", head, re.M) is not None,
 check(re.search(r"^concurrency:$", head, re.M) is not None,
       "CI limits each ref to one live run through a concurrency group")
 
-intel_labels = sorted(set(re.findall(
-    r"^\s*(?:runner|runs-on):\s*(macos-[0-9]+(?:-intel)?)\s*$", workflow, re.M)))
-check(not intel_labels,
-      "every macOS runner label names an arm64 image"
-      if not intel_labels else
-      "macOS runner labels that do not name an arm64 image: %s" % intel_labels)
+# GitHub names a hosted image and its label differently, and only the label works
+# in runs-on. For macOS 26 the arm64 label is macos-26 while macos-26-arm64 is the
+# image name in the docs; naming the image matches no runner, and the job then sits
+# queued with no failure and no log. The allowlist is the published label set, so
+# an invented spelling fails here instead of stalling a pipeline.
+MACOS_ARM64_LABELS = {"macos-latest", "macos-26", "macos-26-xlarge",
+                      "macos-15", "macos-15-xlarge"}
+MACOS_INTEL_LABELS = {"macos-latest-large", "macos-26-large", "macos-26-intel",
+                      "macos-15-large", "macos-15-intel"}
+UBUNTU_LABELS = {"ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04"}
+
+macos_labels = sorted(set(re.findall(
+    r"^\s*(?:runner|runs-on):\s*(macos-[A-Za-z0-9.-]+)\s*$", workflow, re.M)))
+ubuntu_labels = sorted(set(re.findall(
+    r"^\s*runs-on:\s*(ubuntu-[A-Za-z0-9.-]+)\s*$", workflow, re.M)))
+unknown = [label for label in macos_labels + ubuntu_labels
+           if label not in MACOS_ARM64_LABELS | MACOS_INTEL_LABELS | UBUNTU_LABELS]
+check(not unknown,
+      "every runner label is one GitHub publishes"
+      if not unknown else
+      "runner labels GitHub does not publish: %s" % unknown)
+off_arm64 = [label for label in macos_labels if label not in MACOS_ARM64_LABELS]
+check(not off_arm64,
+      "every macOS job builds on the arm64 image, which cross-links both slices"
+      if not off_arm64 else
+      "macOS jobs that depend on an Intel image: %s" % off_arm64)
 
 
 # Dependency preparation has to go through one entry point. The build job used to
