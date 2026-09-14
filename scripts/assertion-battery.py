@@ -464,6 +464,32 @@ def localize_a_localized_string(text):
 
 LOGGER = os.path.join(root, "Limelight", "Utility", "Logger.m")
 
+HOSTS_VC = os.path.join(root, "Limelight", "macOS", "ViewControllers", "HostsViewController.m")
+
+RETRY_SHAPE = """    BOOL retryableElsewhere = reason == PairFailureReasonNetwork ||
+                              reason == PairFailureReasonTimeout;
+"""
+TIMEOUT_CASE = """        case PairFailureReasonTimeout:
+            return NSLocalizedString(@"Pairing timed out. Make sure the host PC is reachable and try again.", @"Pairing timed out");
+"""
+
+
+def guess_the_retry_from_text(text):
+    """The shape that shipped: decide the retry by searching the message for words."""
+    return once(text, RETRY_SHAPE, "the retry decision").replace(
+        RETRY_SHAPE,
+        """    NSString *lowered = detail.lowercaseString ?: @"";
+    BOOL retryableElsewhere = [lowered containsString:@"timeout"] ||
+                              [lowered containsString:@"network"] ||
+                              [lowered containsString:@"\u8bf7\u6c42\u8d85\u65f6"];
+""", 1)
+
+
+def drop_a_reason_from_the_wording(text):
+    """A new reason arrives and one screen never learns to answer it."""
+    return once(text, TIMEOUT_CASE, "the timeout wording").replace(TIMEOUT_CASE, "", 1)
+
+
 MARKER_LITERAL = '@"[curated] repeated %ld time(s) within %.1fs (last: %@)"'
 BROWSER_MATCH = '[line containsString:@"[curated] repeated "]'
 
@@ -541,6 +567,10 @@ MUTATIONS = [
      "the summary Logger.m writes stops carrying the marker the browser folds on"),
     ("fold-on-prose", DIAGNOSTICS, fold_on_prose_again,
      "the log browser folds on a Chinese sentence instead of the marker"),
+    ("guessed-pairing-retry", HOSTS_VC, guess_the_retry_from_text,
+     "the pairing retry is decided by searching the failure text for words again"),
+    ("unanswered-pair-reason", HOSTS_VC, drop_a_reason_from_the_wording,
+     "a pairing reason reaches a screen that has no wording for it"),
 ]
 
 

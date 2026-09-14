@@ -976,6 +976,43 @@ check(written is not None and written.group(1).startswith(repeat_marker)
       % (repeat_marker, written.group(1) if written else "no [curated] literal in Logger.m"))
 check('[line containsString:@"' + repeat_marker + '"]' in diagnostics,
 "the log browser folds on that marker and not on the prose around it")
+# Pairing tells the screen why it failed. It used to hand over a sentence and let
+# the screen guess: HostsViewController searched the failure text for "timeout",
+# "network", "disconnected" and three Chinese phrases to decide whether to retry at a
+# second address, so the decision moved whenever either side reworded anything, and a
+# host that refused in words the list happened to contain was retried while one that
+# refused in other words was not. The enum is the contract now, so every case has to
+# arrive and every case has to be answered.
+pair_header = open(os.path.join(root, "Limelight/Network/PairManager.h"), encoding="utf-8").read()
+pair_source = open(os.path.join(root, "Limelight/Network/PairManager.m"), encoding="utf-8").read()
+hosts_vc = open(os.path.join(root, "Limelight/macOS/ViewControllers/HostsViewController.m"),
+                encoding="utf-8").read()
+check("- (void) pairFailedWithReason:(PairFailureReason)reason detail:(NSString*)detail;"
+      in pair_header and "- (void) pairFailed:(NSString*)message;" not in pair_header,
+      "pairing reports a reason instead of a sentence to be read")
+
+reasons = re.findall(r"\bPairFailureReason([A-Z][A-Za-z]+)\b", pair_header)
+reason_cases = sorted(set(reasons))
+answered = sorted({m.group(1) for m in
+                   re.finditer(r"case\s+PairFailureReason([A-Z][A-Za-z]+)\s*:", hosts_vc)})
+check(bool(reason_cases) and answered == reason_cases,
+      "every pairing reason the network layer can report has wording behind it"
+      if answered == reason_cases else
+      "pairing reasons with no wording in HostsViewController: %s"
+      % ", ".join(sorted(set(reason_cases) - set(answered)) or "none; extra: "
+                  + ", ".join(sorted(set(answered) - set(reason_cases)))))
+
+retry_shape = method_body(hosts_vc, "- (void)pairFailedWithReason:(PairFailureReason)reason "
+                                    "detail:(NSString*)detail")
+check("PairFailureReasonNetwork" in retry_shape and "PairFailureReasonTimeout" in retry_shape,
+      "the retry decision reads the reason and not the words around it")
+guessed = sorted({token for token in ("timeout", "network", "disconnected", "\u8bf7\u6c42\u8d85\u65f6")
+                  if re.search(r'containsString:@"[^"]*%s' % token, hosts_vc, re.I)})
+check(not guessed and "isTransientNetworkPairFailureMessage" not in hosts_vc,
+      "no pairing decision is made by searching a failure message for words"
+      if not guessed and "isTransientNetworkPairFailureMessage" not in hosts_vc else
+      "pairing still guesses from message text: " + (", ".join(guessed) or "the old helper"))
+
 # MLString is one macro over one lookup. It used to be a #define inside
 # StreamViewController_Internal.h, which left AppDelegate and ConnectionEditor with
 # no macro at all, HostsViewController undefining NSLocalizedString to write its own,
