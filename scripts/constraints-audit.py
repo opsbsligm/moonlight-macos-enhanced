@@ -204,5 +204,22 @@ check(not [f for f in forbidden_filters if f in hid_down],
       "HID keyDown filters edges through: %s"
       % [f for f in forbidden_filters if f in hid_down])
 
+
+# The gate only has power because AppKit calls it from -performKeyEquivalent:
+# before normal key delivery. If it ever gets wired somewhere else, or the view
+# stops forwarding to it, the gate becomes dead code and the real path is
+# -keyDown: alone, which would leave this audit asserting a contract nobody
+# enforces. The call sites are therefore pinned.
+callers = subprocess.run(
+    ["grep", "-rn", "--include=*.m", "--include=*.h", "-e", "onKeyboardEquivalent", "."],
+    capture_output=True, text=True, cwd=root).stdout.splitlines()
+# A message send only: declarations and log strings mention the selector too.
+sites = sorted(set(l.split(":", 1)[0].lstrip("./") for l in callers
+                   if re.search(r"\[[^\]]*onKeyboardEquivalent:", l)))
+check(sites == ["Limelight/macOS/Views/StreamViewMac.m"],
+      "the keyboard gate is reached only from the stream view's key-equivalent hook"
+      if sites == ["Limelight/macOS/Views/StreamViewMac.m"] else
+      "unexpected keyboard gate call sites: %s" % sites)
+
 print("%d constraint failures" % len(failures))
 sys.exit(1 if failures else 0)
