@@ -382,20 +382,74 @@ check("return nil;" not in monitor_body
       "bare suppressions in the monitor: %d, recorded: %d"
       % (monitor_body.count("return nil;"), monitor_body.count("consumeMonitoredKeyDownEvent:")))
 
+def statements(body):
+    """The body as stripped lines, so a guard is checked as code and not prose."""
+    return [line.strip() for line in body.split("\n")]
+
+def guard_returns(body, condition_prefix, action, before):
+    """Require a guard whose condition is the test and whose block returns early.
+
+    A plain substring search is not enough: a condition neutered with "NO &&",
+    moved into a comment, or left without a return all keep the words present
+    while the behaviour is gone. This asks for the shape that executes.
+    """
+    lines = statements(body)
+    guards = [i for i, line in enumerate(lines) if line.startswith(condition_prefix)]
+    if len(guards) != 1:
+        return "expected exactly one line starting with %r, found %d" % (condition_prefix, len(guards))
+    block = lines[guards[0] + 1:guards[0] + 8]
+    joined = "\n".join(block)
+    if action not in joined:
+        return "%s is missing from the guard block" % action
+    if "return;" not in block:
+        return "the guard block never returns, so the event still reaches the host"
+    dispatch = [i for i, line in enumerate(lines) if line.startswith(before)]
+    if not dispatch:
+        return "no %s call to compare against" % before
+    if guards[0] > dispatch[0]:
+        return "the guard sits after the dispatch, which is too late"
+    return None
+
+
 down_body = method_body(capture_all, "- (void)keyDown:(NSEvent *)event")
-check("isSettingsPresentedInWindow" in down_body
-      and "noteKeyboardKeyDownSuppressedForEvent" in down_body,
-      "keys the settings page owns are never forwarded to the host")
+problem = guard_returns(
+    down_body,
+    "if ([SettingsWindowObjCBridge isSettingsPresentedInWindow:",
+    "noteKeyboardKeyDownSuppressedForEvent",
+    "[self.hidSupport keyDown:event]")
+check(problem is None, "keys the settings page owns are never forwarded to the host"
+      if problem is None else "settings guard is not effective: " + problem)
 
 hid_all = open(os.path.join(root, "Limelight/Input/HIDSupport.m"), encoding="utf-8").read()
 hid_up = method_body(hid_all, "- (void)keyUp:(NSEvent *)event")
 hid_down = method_body(hid_all, "- (void)keyDown:(NSEvent *)event")
-check("keyboardSuppressedKeyDownKeyCodes containsObject:" in hid_up
-      and hid_up.index("keyboardSuppressedKeyDownKeyCodes containsObject:")
-          < hid_up.index("LiSendKeyboardEventCtx"),
-      "a release whose press was consumed never reaches the host")
-check("keyboardSuppressedKeyDownKeyCodes removeObject:" in hid_down,
-      "a forwarded press clears any stale record for that key")
+problem = guard_returns(
+    hid_up,
+    "if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:",
+    "removeObject:",
+    "LiSendKeyboardEventCtx")
+check(problem is None, "a release whose press was consumed never reaches the host"
+      if problem is None else "the release path is not effective: " + problem)
+def clears_before(body, clear_prefix, dispatch_prefix):
+    """Require one clear, and require it ahead of the dispatch."""
+    lines = statements(body)
+    clears = [i for i, line in enumerate(lines) if line.startswith(clear_prefix)]
+    dispatch = [i for i, line in enumerate(lines) if line.startswith(dispatch_prefix)]
+    if len(clears) != 1:
+        return "expected exactly one line starting with %r, found %d" % (clear_prefix, len(clears))
+    if not dispatch:
+        return "no %s call to compare against" % dispatch_prefix
+    if clears[0] > dispatch[0]:
+        return "the record is cleared after the dispatch, which is too late"
+    return None
+
+
+problem = clears_before(
+    hid_down,
+    "[self.keyboardSuppressedKeyDownKeyCodes removeObject:",
+    "LiSendKeyboardEventCtx")
+check(problem is None, "a forwarded press clears any stale record for that key"
+      if problem is None else "the stale-record clear is not effective: " + problem)
 check("keyboardSuppressedKeyDownKeyCodes removeAllObjects"
       in method_body(hid_all, "- (void)tearDownKeyboardStateForSessionEnd:(const char *)reason"),
       "session teardown drops every outstanding consumed-key record")
