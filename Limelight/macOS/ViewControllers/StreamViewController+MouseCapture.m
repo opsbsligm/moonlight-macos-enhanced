@@ -4,6 +4,7 @@
 //
 
 #import "StreamViewController_Internal.h"
+#import "Moonlight-Swift.h"
 
 // ---------------------------------------------------------------------------
 // SIMPLIFIED REFACTOR (2026-08-02): Deferred Command Logic REMOVED.
@@ -1997,7 +1998,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         }
 
         if ([strongSelf handleKeyboardTranslationRuleForEvent:event]) {
-            return nil;
+            return [strongSelf consumeMonitoredKeyDownEvent:event];
         }
 
         StreamShortcut *borderlessShortcut = [strongSelf streamShortcutForAction:MLShortcutActionToggleBorderlessWindowed];
@@ -2008,13 +2009,13 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
             } else {
                 [strongSelf switchToBorderlessMode:nil];
             }
-            return nil;
+            return [strongSelf consumeMonitoredKeyDownEvent:event];
         }
 
         StreamShortcut *controlCenterShortcut = [strongSelf streamShortcutForAction:MLShortcutActionOpenControlCenter];
         if ([strongSelf event:event matchesShortcut:controlCenterShortcut]) {
             [strongSelf presentControlCenterFromShortcut];
-            return nil;
+            return [strongSelf consumeMonitoredKeyDownEvent:event];
         }
 
         return event;
@@ -2298,6 +2299,17 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)keyDown:(NSEvent *)event {
+    // The settings page is a child of this content region, so a key the page does
+    // not use still walks the responder chain back to this view. While the page
+    // owns the region that key belongs to the page: forwarding it would make
+    // typing in settings move the character on the host, and the page would look
+    // like it steals gameplay keys the moment it is opened. Recording it as
+    // consumed also pairs the release, because -keyUp: pays that debt off.
+    if ([SettingsWindowObjCBridge isSettingsPresentedInWindow:self.view.window]) {
+        [self.hidSupport noteKeyboardKeyDownSuppressedForEvent:event];
+        return;
+    }
+
     [self.hidSupport keyDown:event];
 }
 
@@ -2742,6 +2754,25 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 
 #pragma mark - KeyboardNotifiable
 
+// A branch that consumes a key has to say so, because AppKit only consults the
+// key-equivalent stage on keyDown. The matching keyUp arrives at -keyUp: through
+// ordinary dispatch no matter what the branch returned, and HIDSupport would
+// forward a release for a key the host never saw pressed. These two helpers are
+// the only way a consumer here records that debt, and -keyUp: pays it off.
+//
+// Do not call these for non-keyboard events, where keyCode is undefined, or for
+// events dropped after teardown, where the release is already suppressed because
+// input is switched off.
+- (BOOL)consumeKeyDownEvent:(NSEvent *)event {
+    [self.hidSupport noteKeyboardKeyDownSuppressedForEvent:event];
+    return YES;
+}
+
+- (NSEvent *)consumeMonitoredKeyDownEvent:(NSEvent *)event {
+    [self.hidSupport noteKeyboardKeyDownSuppressedForEvent:event];
+    return nil;
+}
+
 - (BOOL)onKeyboardEquivalent:(NSEvent *)event {
     // -----------------------------------------------------------------------
     // SINGLE ENTRY GATE (2026-08-02 architectural fix)
@@ -2811,7 +2842,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 
 
     if ([self handleKeyboardTranslationRuleForEvent:event]) {
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
     
     if (event.keyCode == kVK_ANSI_1 && eventModifierFlags == NSEventModifierFlagCommand) {
@@ -2838,56 +2869,56 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         self.pendingOptionUncaptureToken += 1;
         [self.hidSupport releaseAllModifierKeys];
         [self performClose:nil];
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:disconnectShortcut]) {
         self.pendingOptionUncaptureToken += 1;
         [self.hidSupport releaseAllModifierKeys];
         [self requestStreamCloseWithSource:@"keyboard-custom-disconnect"];
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:quitShortcut]) {
         self.pendingOptionUncaptureToken += 1;
         [self.hidSupport releaseAllModifierKeys];
         [self performCloseAndQuitApp:nil];
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:reconnectShortcut]) {
         [self.hidSupport releaseAllModifierKeys];
         [self reconnectFromMenu:nil];
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
 
     if (event.keyCode == kVK_ANSI_W && eventModifierFlags == NSEventModifierFlagCommand) {
         Log(LOG_D, @"[diag] cmd+w swallowed after custom handlers: %@", MLDisconnectEventSummary(event));
         [self.hidSupport releaseAllModifierKeys];
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:[self streamShortcutForAction:MLShortcutActionTogglePerformanceOverlay]]) {
         self.pendingOptionUncaptureToken += 1;
         [self toggleOverlay];
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:[self streamShortcutForAction:MLShortcutActionToggleMouseMode]]) {
         self.pendingOptionUncaptureToken += 1;
         [self toggleMouseMode];
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:[self streamShortcutForAction:MLShortcutActionToggleFullscreenControlBall]]) {
         self.pendingOptionUncaptureToken += 1;
         [self toggleFullscreenControlBallVisibility];
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:[self streamShortcutForAction:MLShortcutActionOpenControlCenter]]) {
         [self presentControlCenterFromShortcut];
-        return YES;
+        return [self consumeKeyDownEvent:event];
     }
     
     // -----------------------------------------------------------------------

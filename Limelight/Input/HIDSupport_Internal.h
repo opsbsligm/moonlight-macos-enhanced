@@ -89,6 +89,11 @@
 @property (nonatomic) NSUInteger keyboardRemoteModifierMask;
 @property (atomic) BOOL keyboardModifierReleaseInProgress;
 @property (atomic) BOOL keyboardTeardownAlreadyCalled;
+/// Virtual key codes whose keyDown was consumed locally. The host never learned
+/// the key went down, so the matching keyUp has to be consumed as well; the set
+/// holds at most one entry per physical key and is cleared by a forwarded
+/// keyDown of the same key, by session teardown, and by consuming the release.
+@property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 @property (atomic) BOOL coreHIDFreeMouseAbsoluteSyncScheduled;
 @property (atomic) uint64_t coreHIDFreeMouseAbsoluteSyncToken;
 @property (nonatomic) dispatch_queue_t inputQueue;

@@ -13,6 +13,21 @@ Apple Silicon hardware.
 
 ### Fixed
 
+- **A key consumed locally still released itself on the host.** AppKit only asks
+  the key-equivalent question on `keyDown:`, so every branch that swallowed a key
+  -- the translation rules, the borderless and control-centre shortcuts,
+  disconnect, quit, reconnect, and `Command+W` -- still had its `keyUp:` delivered
+  and forwarded. The host was told a key came up that it never saw go down, which
+  is what makes a local shortcut look like the game letting go of a key
+  mid-action. Consuming a key now records it; the matching release is consumed as
+  well; a forwarded press of the same key clears the record, so a stale entry can
+  never stick a key down on the host; and session teardown drops the table.
+- **Typing in settings moved the character on the host.** The settings page is a
+  child of the stream content region, so any key the page did not use walked the
+  responder chain back to the stream view and was forwarded to the machine. While
+  the page owns the region those keys are kept locally and recorded as consumed,
+  so their releases pair as well.
+
 - **The CI pipeline never started.** `build.yml` carried a step with a name and
   no command, and the step after it with two commands. GitHub loads neither: the
   run after that commit reported failure inside a minute, which is no time at all

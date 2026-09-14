@@ -43,6 +43,18 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 
 - (void)releaseAllModifierKeys;
 
+/// Records that a key's keyDown was consumed locally and never forwarded, so the
+/// matching keyUp must not be forwarded either.
+///
+/// AppKit only offers the key-equivalent stage on keyDown: a view that consumes a
+/// key still receives its keyUp through normal dispatch. Forwarding that release
+/// tells the host a key went up that it never saw go down, which is how a local
+/// shortcut looks like a gameplay key releasing on its own. Call this from every
+/// branch that consumes a real key event; do not call it for non-keyboard events
+/// (keyCode is undefined there) or for events dropped after teardown (the
+/// release is already suppressed because input is off).
+- (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event;
+
 /// Returns YES once tearDownKeyboardStateForSessionEnd has run.
 /// Safe to poll from any thread. Readonly atomic BOOL.
 @property (atomic, readonly) BOOL keyboardTeardownAlreadyCalled;

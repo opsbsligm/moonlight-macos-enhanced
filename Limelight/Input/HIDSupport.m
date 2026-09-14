@@ -950,6 +950,16 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     [self syncKeyboardModifierStateForEvent:event];
 }
 
+- (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event {
+    if (event == nil || event.type != NSEventTypeKeyDown) {
+        return;
+    }
+    if (self.keyboardSuppressedKeyDownKeyCodes == nil) {
+        self.keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
+    }
+    [self.keyboardSuppressedKeyDownKeyCodes addObject:@(event.keyCode)];
+}
+
 - (void)keyDown:(NSEvent *)event {
     if (event == nil || event.type != NSEventTypeKeyDown) {
         return;
@@ -961,6 +971,10 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     // gate below is the complete fix; no timing or glyph heuristics are needed
     // (and every previous attempt at those dropped genuine gameplay input).
     if (self.shouldSendInputEvents) {
+        // This press is going through, so any record of an earlier suppressed
+        // press of the same key is stale: keeping it would swallow this release
+        // and leave the key held down on the host forever.
+        [self.keyboardSuppressedKeyDownKeyCodes removeObject:@(event.keyCode)];
         [self syncKeyboardModifierStateForEvent:event];
         short keyCode = 0x8000 | [self translateKeyCodeWithEvent:event];
         char modifiers = [self translateKeyModifierWithEvent:event];
@@ -979,6 +993,16 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         return;
     }
     if (self.shouldSendInputEvents) {
+        NSNumber *physicalKeyCode = @(event.keyCode);
+        if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {
+            // The host never saw this key go down, so it must not see it come up
+            // either: an unmatched release reads as the key being let go by
+            // itself, which is what made local shortcuts look like gameplay keys
+            // releasing mid-action.
+            [self.keyboardSuppressedKeyDownKeyCodes removeObject:physicalKeyCode];
+            return;
+        }
+
         [self syncKeyboardModifierStateForEvent:event];
         short keyCode = 0x8000 | [self translateKeyCodeWithEvent:event];
         char modifiers = [self translateKeyModifierWithEvent:event];
@@ -1044,6 +1068,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         return;
     }
     self.keyboardTeardownAlreadyCalled = YES;
+    [self.keyboardSuppressedKeyDownKeyCodes removeAllObjects];
     Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: start (physicalMask=0x%lx remoteMask=0x%lx send=%d)",
         reason ?: "",
         (unsigned long)self.keyboardPhysicalModifierSourceMask,
