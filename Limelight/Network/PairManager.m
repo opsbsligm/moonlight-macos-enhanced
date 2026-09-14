@@ -39,11 +39,14 @@
                                                fallbackError:401 fallbackRequest:[_httpManager newHttpServerInfoRequest]]];
     if ([serverInfoResp isStatusOk]) {
         if ([[serverInfoResp getStringTag:@"state"] hasSuffix:@"_SERVER_BUSY"]) {
-            [_callback pairFailed:@"You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again."];
+            // The sentence belongs to the screen, not to the request that failed.
+            [_callback pairFailedWithReason:PairFailureReasonHostBusy
+                                     detail:@"the host is still running a previous session"];
         } else if (![[serverInfoResp getStringTag:@"PairStatus"] isEqual:@"1"]) {
             NSString* appversion = [serverInfoResp getStringTag:@"appversion"];
             if (appversion == nil || appversion.length == 0) {
-                [_callback pairFailed:@"Missing XML element"];
+                [_callback pairFailedWithReason:PairFailureReasonMalformedReply
+                                         detail:@"Missing XML element"];
                 return;
             }
             int serverMajorVersion = (appversion.length > 0) ? [[appversion substringToIndex:1] intValue] : 0;
@@ -53,24 +56,29 @@
         }
     }
     else {
-        [_callback pairFailed:serverInfoResp.statusMessage];
+        // A negative status code is an NSURL error code: the request never got a
+        // reply, which is a different decision from the host answering and refusing.
+        [_callback pairFailedWithReason:(serverInfoResp.statusCode < 0 ?
+                                         PairFailureReasonNetwork : PairFailureReasonRejected)
+                                 detail:serverInfoResp.statusMessage];
     }
 }
 
 - (void) finishPairing:(OSBackgroundTaskIdentifier)bgId
            forResponse:(HttpResponse*)resp
      withFallbackError:(NSString*)errorMsg {
-    BOOL shouldAttemptUnpair = YES;
-    if (resp != nil && ![resp isStatusOk] && resp.statusCode < 0) {
-        // Network-level failures can happen after host already accepted pairing.
-        // Avoid force-unpair in that case to prevent reverting a successful pair.
-        shouldAttemptUnpair = NO;
+    // One fact, named once: a negative status code is an NSURL error code the HTTP
+    // layer stored, which means the request never got an answer. That is the same
+    // fact behind two decisions here -- do not undo a pairing the host may already
+    // have accepted, and tell the screen this is worth trying another address for.
+    BOOL networkLevelFailure = (resp != nil && resp.statusCode < 0);
+    if (networkLevelFailure) {
         Log(LOG_W, @"Skipping unpair due to transient network error during pairing: %ld (%@)",
             (long)resp.statusCode,
             resp.statusMessage ?: @"Unknown error");
     }
 
-    if (shouldAttemptUnpair) {
+    if (!networkLevelFailure) {
         [_httpManager executeRequestSynchronously:[HttpRequest requestWithUrlRequest:[_httpManager newUnpairRequest]]];
         // Clear any pinned server cert so a failed pairing doesn't leave stale cert pinning
         [_httpManager setServerCert:nil];
@@ -88,14 +96,13 @@
         errorMsg = resp.statusMessage;
     }
 
-    // The HTTP layer surfaces NSURL timeout errors (e.g. the long PIN-entry
-    // timeout) by storing the error code in statusCode. Distinguish a timeout
-    // from an actual rejection so the user sees the right message.
-    if (resp != nil && resp.statusCode == NSURLErrorTimedOut) {
-        errorMsg = @"Pairing timed out. Make sure the host PC is reachable and try again.";
-    }
+    // A sentence for the user belongs to the screen that shows it, so this reports
+    // which kind of failure it was and leaves the wording there.
+    PairFailureReason reason = (resp != nil && resp.statusCode == NSURLErrorTimedOut) ?
+        PairFailureReasonTimeout : (networkLevelFailure ? PairFailureReasonNetwork
+                                                        : PairFailureReasonRejected);
 
-    [_callback pairFailed:errorMsg];
+    [_callback pairFailedWithReason:reason detail:errorMsg];
 }
 
 - (void) finishPairing:(OSBackgroundTaskIdentifier)bgId withSuccess:(NSData*)derCertBytes {

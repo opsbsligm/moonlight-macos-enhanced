@@ -283,6 +283,11 @@
 "Host Offline Alert" = "%@ is offline. Would you like to try to wake it up?";
 "Enter PIN" = "Enter the following PIN on %@: %@";
 "Pairing Failed" = "Pairing Failed";
+"You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again." = "You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again.";
+"The host replied without the information pairing needs." = "The host replied without the information pairing needs.";
+"The host could not be reached." = "The host could not be reached.";
+"Pairing timed out. Make sure the host PC is reachable and try again." = "Pairing timed out. Make sure the host PC is reachable and try again.";
+"The host refused the pairing request." = "The host refused the pairing request.";
 "Disconnect Alert" = "Disconnect from stream, or close and quit the app?";
 "Could not connect to host. Ensure GameStream is enabled in GeForce Experience on your PC." = "Could not connect to host. Ensure GameStream is enabled in GeForce Experience on your PC.";
 

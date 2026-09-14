@@ -283,6 +283,11 @@
 "Host Offline Alert" = "%@ 处于离线状态，您想尝试唤醒它吗？";
 "Enter PIN" = "在 %@ 上输入以下 PIN 码: %@";
 "Pairing Failed" = "配对失败";
+"You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again." = "宿主机上仍有会话在运行，无法配对。请退出正在运行的游戏或重启宿主机后重试。";
+"The host replied without the information pairing needs." = "宿主机返回的信息不完整，无法完成配对。";
+"The host could not be reached." = "无法连接到宿主机。";
+"Pairing timed out. Make sure the host PC is reachable and try again." = "配对超时。请确认宿主机可以访问后重试。";
+"The host refused the pairing request." = "宿主机拒绝了配对请求。";
 "Disconnect Alert" = "断开串流，还是关闭并退出应用？";
 "Could not connect to host. Ensure GameStream is enabled in GeForce Experience on your PC." = "无法连接到主机。请确保已在 GeForce Experience 中启用 GameStream。";
 

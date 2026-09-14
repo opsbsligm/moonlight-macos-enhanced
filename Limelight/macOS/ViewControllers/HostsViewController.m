@@ -737,20 +737,6 @@
     return [self joinHost:pairHost withPort:(p - 1)];
 }
 
-- (BOOL)isTransientNetworkPairFailureMessage:(NSString *)message {
-    NSString *msg = message.lowercaseString ?: @"";
-    NSArray<NSString *> *tokens = @[
-        @"timeout", @"timed out", @"network", @"disconnected", @"connection",
-        @"请求超时", @"网络连接已中断", @"无法连接"
-    ];
-    for (NSString *token in tokens) {
-        if ([msg containsString:token]) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
 - (void)startPairingForHost:(TemporaryHost *)host atAddress:(NSString *)pairingAddress {
     self.pairingAddressInFlight = pairingAddress;
     Log(LOG_I, @"Pairing target resolved: host=%@ active=%@ local=%@ address=%@ external=%@ selected=%@ fallback=%@",
@@ -893,16 +879,26 @@
     });
 }
 
-- (void)pairFailed:(NSString*)message {
+// What the pairing attempt should do next is decided by the reason the request
+// reported, never by the wording that came with it. It used to search the failure
+// text for "timeout", "network", "disconnected" and three Chinese phrases, which
+// meant the retry depended on which language the sentence happened to arrive in:
+// a host that refused in words the list did not contain was retried anyway, a host
+// that refused in words it did contain was not, and rewording either side moved the
+// behaviour with no test to notice.
+- (void)pairFailedWithReason:(PairFailureReason)reason detail:(NSString*)detail {
+    BOOL retryableElsewhere = reason == PairFailureReasonNetwork ||
+                              reason == PairFailureReasonTimeout;
+
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!self.pairingFallbackAttempted &&
             self.pairingFallbackAddress.length > 0 &&
-            [self isTransientNetworkPairFailureMessage:message]) {
+            retryableElsewhere) {
             self.pairingFallbackAttempted = YES;
             NSString *retryAddress = self.pairingFallbackAddress;
             Log(LOG_W, @"Pairing failed at %@ with transient error (%@). Retrying once at %@",
                 self.pairingAddressInFlight ?: @"",
-                message ?: @"",
+                detail ?: @"",
                 retryAddress);
 
             if (self.pairAlert != nil) {
@@ -928,9 +924,32 @@
             [self.view.window endSheet:self.pairAlert.window];
             self.pairAlert = nil;
         }
-        [AlertPresenter displayAlert:NSAlertStyleWarning title:NSLocalizedString(@"Pairing Failed", @"Pairing Failed") message:message window:self.view.window completionHandler:nil];
+        [AlertPresenter displayAlert:NSAlertStyleWarning title:NSLocalizedString(@"Pairing Failed", @"Pairing Failed") message:[self localizedMessageForPairFailureReason:reason detail:detail] window:self.view.window completionHandler:nil];
         [self->_discMan startDiscovery];
     });
+}
+
+- (NSString *)localizedMessageForPairFailureReason:(PairFailureReason)reason detail:(NSString*)detail {
+    // The sentences the network layer used to carry are here, because this is the
+    // file with a language table behind it. Anything the host itself said is shown
+    // as it arrived, alongside something the user can act on.
+    switch (reason) {
+        case PairFailureReasonHostBusy:
+            return NSLocalizedString(@"You cannot pair while a previous session is still running on the host PC. Quit any running games or reboot the host PC, then try pairing again.", @"Pairing blocked by a running session");
+        case PairFailureReasonMalformedReply:
+            return NSLocalizedString(@"The host replied without the information pairing needs.", @"Pairing reply was missing a field");
+        case PairFailureReasonNetwork:
+            return detail.length > 0
+                ? [NSString stringWithFormat:@"%@\n%@",
+                       NSLocalizedString(@"The host could not be reached.", @"Pairing could not reach the host"), detail]
+                : NSLocalizedString(@"The host could not be reached.", @"Pairing could not reach the host");
+        case PairFailureReasonTimeout:
+            return NSLocalizedString(@"Pairing timed out. Make sure the host PC is reachable and try again.", @"Pairing timed out");
+        case PairFailureReasonRejected:
+            return detail.length > 0 ? detail
+                : NSLocalizedString(@"The host refused the pairing request.", @"Pairing was refused");
+    }
+    return NSLocalizedString(@"The host refused the pairing request.", @"Pairing was refused");
 }
 
 - (void)alreadyPaired {
