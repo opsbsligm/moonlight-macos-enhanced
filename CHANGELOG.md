@@ -453,6 +453,39 @@ which five belong to the analyzer findings fixed here: a leaked key event, a pat
 helper that stops declaring ownership, a HID manager left alive, an analyzer sweep
 that silently stops running, and a baseline that accepts anything.
 
+### Eighth audit pass (a version number that depended on the clone)
+
+- **The build number was a property of the working tree, not of the commit.**
+  The universal DMG CI published for a commit carries `CFBundleVersion` 1407,
+  while the release tool on the same commit named it `v1.3.9-build71`, and the
+  gate that promotes the changelog heading raised no objection. A release cut
+  locally would have tagged a build no binary ever carried, and the mismatch
+  was invisible until the package already existed.
+  Root cause: two places computed the number independently. `build-number.sh`
+  injects it for CI, and `prepare-release.py` counted commits again with its own
+  `git rev-list --count HEAD`. The working tree is a shallow clone, so that
+  second count returned the size of the shallow window (71) rather than the
+  history (1407); CI checks out with `fetch-depth: 0`, so only the local number
+  was wrong, which is the wrong one to be wrong, because the local number is the
+  one that writes the changelog heading and the tag.
+  Fix: `--print` now refuses a shallow clone instead of reporting its depth; the
+  PreAction path still writes its baseline, so building in the IDE is unchanged.
+  `prepare-release.py` asks that script, so one number has one owner and the
+  refusal is inherited rather than duplicated. `release-gate.py --self-test`
+  builds a three-commit repository, clones it at depth one and requires the
+  refusal, and requires the complete clone to still print 3 -- a wording check
+  would have passed on a guard that never ran. Two constraints pin both halves
+  and the battery plants each one: 37/37 mutations caught. Unshallowing the
+  working tree then reproduced the CI figure exactly, which is how the fix was
+  confirmed rather than assumed.
+- **Checked, not changed: the frameworks CI ships are unsigned.** OpenSSL inside
+  the CI package has no signature at all, while the copy in a locally built app
+  is `adhoc,runtime`. A `dlopen` probe built for arm64 loads the unsigned copy
+  without error, because the main binary is linker-signed adhoc and does not ask
+  for library validation, so this does not break launching and no code was
+  changed for it. It does mean the package cannot be notarised and a downloaded
+  DMG needs to be opened once through Finder's Open menu.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
