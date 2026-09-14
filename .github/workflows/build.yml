@@ -171,6 +171,20 @@ jobs:
       # rebuilds the pre-fix shape to prove the scenarios can fail.
       run: python3 scripts/keyboard-concurrency-tests.py
 
+    - name: Verify the modifier mapping sends the key that was pressed
+      # This module is the single source of truth for Command-to-Win, Control-to-Ctrl,
+      # Option-to-Alt and Shift-to-Shift, each side to its own side, and it was the one
+      # part of the input pipeline with no test, no constraint and no scenario naming it
+      # at all. A table entry pointing at the wrong side, or two mac keys collapsing onto
+      # one remote key, would have shipped silently and arrived as "my keyboard feels
+      # wrong in games". The harness compiles the shipped file, walks all eight modifier
+      # keys through keycode to physical slot to remote bit to Windows virtual key, and
+      # checks the virtual keys against values written out in the harness rather than
+      # against the same table. Two planted variants -- both hands of a modifier
+      # answering as the left hand, and the flags path answering Command with Alt --
+      # have to fail the same scenarios.
+      run: python3 scripts/keyboard-modifier-mapping-tests.py
+
     - name: Verify the timeout overlay can reach its submenus
       # The overlay's three buttons used to find the stream menu's Window, Monitor
       # and Quality submenus by comparing each item's title against a Chinese
