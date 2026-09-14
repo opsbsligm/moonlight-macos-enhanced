@@ -13,6 +13,17 @@ Apple Silicon hardware.
 
 ### Fixed
 
+- **No key could be held down, and two keys could not overlap.** The key
+  equivalent gate in `StreamViewController+MouseCapture.m` ended by calling
+  `keyDown:` and `keyUp:` back to back for every key it had not consumed, then
+  returned `YES` so AppKit never delivered the event again. Holding `W` therefore
+  reached the host as `DOWN,UP,DOWN,UP` from autorepeat instead of one held edge,
+  and the `UP` that closed `W` was queued before the next key was read, so a
+  second key could never be held alongside it. That is the reported "W and Space
+  collide" symptom, and it affected every held key and every combination. The gate
+  now returns `NO` for keys it does not consume, so `-keyDown:` and `-keyUp:`
+  deliver the two edges separately, which is the contract the branches above
+  already used for the keys they deliberately let through.
 - **CI never prepared the OpenSSL dependency.** The build job unzipped the
   framework archive with its own inline `curl` step, so `download-frameworks.sh`
   never ran on a runner. That script is the only place that lays down
