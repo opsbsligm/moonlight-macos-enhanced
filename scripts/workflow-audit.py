@@ -42,7 +42,22 @@ RULES = {
     "WF017": "workflow file cannot be parsed",
     "WF018": "step name is empty, so a failing step cannot be identified in the log",
     "WF019": "a shell script names an interpreter the audit runner does not have",
+    "WF020": "a shell script uses zsh syntax that the interpreter it names cannot run",
 }
+
+# A script that switched from zsh to bash while keeping a zsh-only construct
+# parses cleanly and fails at run time, inside a build phase, with a message that
+# points at nothing useful. These are the constructs that survive bash -n.
+ZSH_ONLY_SYNTAX = (
+    (r"\$\{=", "forced word splitting"),
+    (r"\$\{\^", "glob-flagged expansion"),
+    (r"\$\{\(", "bracketed expansion flags"),
+    (r"\$\{[A-Za-z_][A-Za-z0-9_]*:[ahlrtueqQA]\}", "history-style modifier"),
+    (r"\bfor\s+[A-Za-z_][A-Za-z0-9_]*\s*\(", "parenthesised for list"),
+    (r"\b(?:autoload|zmodload|setopt|whence|vared)\b", "zsh-only builtin"),
+    (r"\bprint\s+-[a-zA-Z]\b", "zsh print flags"),
+    (r"\$\{pipestatus\[", "zsh pipe status array"),
+)
 
 # The audit job runs on ubuntu, so a shebang has to resolve there as well as on
 # the macOS machine that wrote it. /bin/zsh exists on macOS and not on ubuntu,
@@ -123,6 +138,46 @@ def matrix_keys(job):
         if isinstance(entry, dict):
             keys.update(entry.keys())
     return keys
+
+
+def strip_shell_comments(text):
+    """Drop comments, so the dialect scan does not read prose as code."""
+    kept = []
+    for line in text.split("\n"):
+        if line.lstrip().startswith("#"):
+            kept.append("")
+            continue
+        index, quote = 0, None
+        while index < len(line):
+            char = line[index]
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in (chr(39), chr(34)):
+                quote = char
+            elif char == "#" and (index == 0 or line[index - 1] in " \t"):
+                line = line[:index]
+                break
+            index += 1
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def audit_shell_dialect(root):
+    """Report zsh-only syntax in scripts that no longer run under zsh."""
+    findings = []
+    scripts = sorted(root.glob("scripts/*.sh")) + sorted(root.glob("Limelight/*.sh")) \
+        + sorted((root / ".github").glob("**/*.sh"))
+    for script in scripts:
+        body = strip_shell_comments(script.read_text(errors="replace"))
+        hits = []
+        for pattern, label in ZSH_ONLY_SYNTAX:
+            for match in re.finditer(pattern, body):
+                line = body[:match.start()].count("\n") + 1
+                hits.append("line %d: %s (%s)" % (line, label, match.group(0)))
+        if hits:
+            findings.append(("WF020", str(script.relative_to(root)), "; ".join(sorted(hits))))
+    return findings
 
 
 def audit_script_shebangs(root):
@@ -545,12 +600,47 @@ def shebang_controls():
     return findings
 
 
+def dialect_controls():
+    """The dialect scan must catch the zsh forms and forgive the bash lookalikes."""
+    findings = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "scripts").mkdir()
+        (root / "scripts" / "bash_idioms.sh").write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "value=\"${DEF:-fallback}\"      # default, not a modifier\n"
+            "tail=\"${value##*/}\"            # strip prefix, not a modifier\n"
+            "part=\"${value:2:3}\"             # substring, not a modifier\n"
+            "echo \"$value $tail $part\"      # bash splits this on its own\n"
+            "# a note about ${=ARCHS} is prose, not code" + "\n",
+            encoding="utf-8")
+        clean = audit_shell_dialect(root)
+        if clean:
+            findings.append("the bash idiom control reports %s" % (clean,))
+        (root / "scripts" / "zsh_left_behind.sh").write_text(
+            "#!/usr/bin/env bash\n"
+            "setopt extended_glob\n"
+            "for arch in ${=ARCHS}; do echo \"$arch\"; done\n",
+            encoding="utf-8")
+        found = audit_shell_dialect(root)
+        codes = {code for code, _, _ in found}
+        if codes != {"WF020"} or "zsh_left_behind.sh" not in found[0][1]:
+            findings.append("the zsh control reports %s" % (found,))
+        else:
+            detail = found[0][2]
+            if "forced word splitting" not in detail or "zsh-only builtin" not in detail:
+                findings.append("the zsh control names only %s" % detail)
+    return findings
+
+
 def self_test():
     failures = []
     present = present_script_control()
     if present:
         failures.append("the committed-script control reports %s" % (present,))
     failures.extend(shebang_controls())
+    failures.extend(dialect_controls())
     good = audit_document(load_yaml(GOOD), "good.yml")
     if good:
         failures.append("the good fixture reports %s" % (good,))
@@ -586,6 +676,7 @@ def main(argv):
             continue
         problems.extend(audit_document(doc, path.name))
     problems.extend(audit_script_shebangs(ROOT))
+    problems.extend(audit_shell_dialect(ROOT))
     if problems:
         for code, where, detail in sorted(problems):
             print("%s: %s: %s  [%s]" % (code, where, detail, RULES[code]))

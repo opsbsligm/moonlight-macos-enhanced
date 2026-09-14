@@ -35,7 +35,13 @@ Apple Silicon hardware.
   themselves with `${0:A:h}`, a zsh modifier bash reads as an unbound variable,
   now resolve the project directory from `BASH_SOURCE`. `workflow-audit.py`
   rejects any shebang that does not resolve on both kinds of runner, checked with
-  a portable, a zsh-only and a missing-shebang control.
+  a portable, a zsh-only and a missing-shebang control. The port initially left
+  `${=ARCHS}` behind in the helper build phase, which is zsh forced word splitting
+  and fails at run time under bash, so `bash -n` reported nothing and both
+  architecture jobs died in that step; the loop now splits the way bash splits,
+  verified by running the phase with `ARCHS="arm64 x86_64"` and reading the two
+  slices back with `lipo`, and the audit rejects zsh-only syntax in any script
+  that no longer runs under zsh.
 - **A clean checkout never downloaded the frameworks.** `download-frameworks.sh`
   decided the frameworks were present by asking whether `xcframeworks/` was
   non-empty, and the repository commits `xcframeworks/.gitignore` so the
