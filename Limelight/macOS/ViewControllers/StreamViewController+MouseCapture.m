@@ -2890,10 +2890,24 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         return YES;
     }
     
-    [self.hidSupport keyDown:event];
-    [self.hidSupport keyUp:event];
-    
-    return YES;
+    // -----------------------------------------------------------------------
+    // PASS-THROUGH
+    //
+    // Nothing here consumed the event, so hand it back to AppKit. It arrives at
+    // -keyDown:, which sends the DOWN edge, and later at -keyUp:, which sends
+    // the UP edge. That pair is the whole reason the host can see a key held.
+    //
+    // This block used to emit DOWN and UP back to back and then return YES,
+    // which turned every key into a tap: holding W reached the host as
+    // DOWN,UP,DOWN,UP from autorepeat instead of one held edge, and a second
+    // key could never overlap the first, because the UP that closed W was
+    // already queued before the next key was read. That is the reported
+    // "W and Space collide" symptom, and it affected every held key and every
+    // combination, not just those two. The branches above already return NO for
+    // the keys they deliberately let through, so this is the same contract the
+    // rest of the method has always used.
+    // -----------------------------------------------------------------------
+    return NO;
 }
 
 
