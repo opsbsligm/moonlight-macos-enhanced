@@ -67,6 +67,16 @@ Apple Silicon hardware.
 
 ### Added
 
+- **The Liquid Glass rules are now executable.** `scripts/liquid-glass-audit.py`
+  checks the glass surface for the decisions already made: the native material is
+  used and grouped in a `GlassEffectContainer`, no blur, `NSVisualEffectView` or
+  system Material stands in for it, the accent stays cold with blue and green above
+  red, the shared transition is still 0.22s, no glass path picks its own duration,
+  and nothing overshoots and settles back. Its fixture suite breaks each rule on
+  its own to prove each one fires. Note that the pixel-level appearance cannot be
+  measured from a headless session: `ImageRenderer` returns a flat 502 byte image
+  there, and `screencapture` returns black, so that confirmation needs a real
+  window session.
 - **Release tags are checked against the tree they point at.**
   `scripts/release-gate.py` refuses a tag whose base version is not the project's
   `MARKETING_VERSION`, whose `-buildN` suffix is not the build number this commit

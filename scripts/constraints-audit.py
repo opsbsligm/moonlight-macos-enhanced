@@ -129,6 +129,9 @@ check("scripts/release-gate.py" in release_job,
 check("scripts/release-gate.py --self-test" in workflow,
       "the release tag rules are exercised on every change")
 
+check("scripts/liquid-glass-audit.py" in workflow,
+      "CI checks the glass surface instead of relying on review memory")
+
 check("scripts/video-enhancement-tests.py" in workflow,
       "CI measures the video enhancement paths instead of trusting object creation")
 
