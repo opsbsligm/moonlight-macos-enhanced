@@ -15,6 +15,16 @@ Each check below corresponds to a defect that shipped at some point:
   * the workflow declared no permissions and no concurrency group, so every job
     inherited whatever default write scope the repository settings allow and
     each push queued a second full macOS matrix.
+  * CI unzipped the framework archive with its own inline curl step, so the shared
+    preparation script never ran on a runner and both Packages/OpenSSL.xcframework
+    and the libs/openssl header symlink were absent: every job failed before the
+    compiler could report anything.
+  * the vendored OpenSSL bundle sat one directory too deep while Package.swift
+    named the outer shell, which Xcode only tolerated by finding the framework
+    inside it.
+  * the local network probe and its defaults keys were defined after their only
+    call sites, which the local toolchain happened to accept and a stricter one
+    does not.
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
@@ -98,6 +108,38 @@ check(not intel_labels,
       "every macOS runner label names an arm64 image"
       if not intel_labels else
       "macOS runner labels that do not name an arm64 image: %s" % intel_labels)
+
+
+# Dependency preparation has to go through one entry point. The build job used to
+# unzip the archive itself, which silently skipped the rest of the script: a
+# runner then had no Packages/OpenSSL.xcframework for the Swift package and no
+# libs/openssl symlink for moonlight-common, so both architecture jobs died with
+# errors that named neither missing input.
+check("./scripts/download-frameworks.sh" in workflow,
+      "CI prepares vendored dependencies through the shared script")
+check("xcframeworks.zip" not in workflow,
+      "CI does not duplicate the dependency download inline")
+
+manifest = open(os.path.join(root, "Packages/OpenSSL-Package", "Package.swift"),
+                encoding="utf-8").read()
+check(re.search(r'path:\s*"\.\./OpenSSL\.xcframework"', manifest) is not None,
+      "the OpenSSL binary target resolves to Packages/OpenSSL.xcframework")
+
+fetch = open(os.path.join(root, "scripts/download-frameworks.sh"),
+             encoding="utf-8").read()
+check("Info.plist" in fetch and "flatten_if_nested" in fetch,
+      "the dependency script rejects an .xcframework shell that has no Info.plist")
+
+delegate = open(os.path.join(root, "Limelight/macOS/AppDelegateForAppKit.m"),
+                encoding="utf-8").read()
+
+def first_line_of(needle):
+    return delegate.index(needle) if needle in delegate else -1
+
+check(0 <= first_line_of(
+          "static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void)")
+      < first_line_of("@implementation AppDelegateForAppKit"),
+      "the local network probe is defined ahead of the code that calls it")
 
 print("%d constraint failures" % len(failures))
 sys.exit(1 if failures else 0)
