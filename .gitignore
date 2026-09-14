@@ -97,3 +97,6 @@ xccheckout/
 *.iml
 
 
+
+# Locally assembled delivery bundles, named after the build number they carry.
+dist/
