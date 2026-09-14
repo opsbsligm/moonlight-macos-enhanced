@@ -628,6 +628,82 @@ that silently stops running, and a baseline that accepts anything.
   was, which left the checksum line in `git status` on every session and taught a
   reader to skim past the output that is supposed to show an uncommitted change.
 
+### Twelfth audit pass (wording that decided behaviour)
+
+- **Three buttons on the connection-timeout overlay did nothing at all in the
+  English interface, and had done so since the day they shipped.** The overlay offers
+  Resolution, Bitrate and Display Mode by popping up the stream menu's Monitor,
+  Quality and Window submenus. It found them by comparing each item's title against a
+  Chinese literal, and the titles come out of the language table, where `Monitor`
+  reads 屏幕 and `Window` reads 窗口. In the Chinese interface the comparison held; in
+  English the loop matched nothing, `popUpMenuPositioningItem:` was never reached, and
+  the buttons returned without a crash, without a log line and without a build
+  failure. Any check that read the source for the word it compared against stayed
+  satisfied the entire time. The three items are now built with an integer tag and the
+  overlay asks for that tag, and `scripts/stream-menu-addressing-tests.py` compiles the
+  lookup that ships, hands it menus wearing both languages' titles, and rebuilds the
+  title comparison to show that it still finds nothing in English.
+- **A file with no localization macro shipped its strings untranslated.** `MLString`
+  was a `#define` inside `StreamViewController_Internal.h`, so only the stream files
+  could use it: `AppDelegateForAppKit` and `ConnectionEditorViewController` had no
+  macro and passed bare literals to the UI, `HostsViewController` `#undef`-ed
+  `NSLocalizedString` and re-pointed it, and `ContainerViewController` called the
+  manager inline and produced `localize:MLString(...)`, which asks the table twice and
+  returns the second answer. One header, `Limelight/macOS/Localization.h`, owns the
+  macro now, and 108 more call sites go through it. While doing that the two tables
+  were read instead of counted: each declared 23 keys more than it had, and the plist
+  keeps the last of a repeated pair, so the entry above it was dead text every reader
+  of the file believed was live -- seven Chinese keys carried two competing answers
+  each, including `Audio` (音频 or 声音) and `Balanced` (常规 or 均衡), and whichever
+  line happened to come last was what users read. Three keys had also drifted onto one
+  side only. Both tables now declare 862 keys, once each, identically.
+- **A button could get stuck reading "Copied" forever.** The feedback after copying
+  the log scheduled its own undo and then asked the button whether it still read
+  `Copied` before putting the previous title back. Click the button twice within the
+  1.5 seconds and the second click recorded "Copied" as the title to restore. Switch
+  the interface language within those 1.5 seconds and the comparison never matched at
+  all. The button now carries which click owns it, and only that click puts its title
+  back.
+- **Pairing decided whether to retry by reading its own error message.** It reported a
+  failure as one sentence, and `HostsViewController` lowercased it and searched for
+  "timeout", "timed out", "network", "disconnected", "connection" and three Chinese
+  phrases to decide whether the failure looked transient enough to try a second
+  address. The object that wrote the sentence already knew: it tested `statusCode`
+  against `NSURLErrorTimedOut`, and one line earlier tested the same field for a
+  negative value to decide whether to undo the pairing. One fact drove two decisions
+  and only one of them read it. Pairing reports a `PairFailureReason` now, the retry
+  reads that, and the five sentences the network layer carried have moved to the file
+  with a language table behind them.
+- **The log browser folded repeated warnings by looking for a Chinese fragment in a
+  different file.** `Logger.m` wrote its suppression summary as prose and the browser
+  matched `内重复`, so rewording the summary switched the folding off with nothing
+  printed anywhere. The marker between the two is ASCII now, and a constraint reads it
+  from both ends.
+- **Five alert and report strings showed `\n` on screen instead of breaking a line.**
+  Four carried an escaped backslash-n inside an `NSAlert`, and a fifth used a real
+  newline against a table key that spelled it escaped, so that key never found its own
+  translation and the diagnostic report header stayed untranslated in both languages.
+- **The localization gate could not read a long key, and reported three of them as
+  missing translations.** Its pattern stopped at 120 characters, so alert strings of
+  121, 140 and 161 characters were looked up as their own prefix -- and the cap was the
+  real defect, because a key too long to read could only ever be reported as absent,
+  never as unread. Keys are read one character or one escape pair at a time now, which
+  also stops an escaped quote from splitting a key in two; both shapes are self-test
+  cases. The gate also refused to notice 23 repeated declarations per table and three
+  keys declared on one side only, because it compared sets and never counts.
+- **The static analyzer stopped reporting 64 findings it had been told to accept.**
+  Wrapping the literals moved the translation behind a method call, and its own run for
+  this tree named the remaining count per file: 17 sites left, two files off the list
+  entirely. The baseline carries what the transcript said, not a rounder number.
+
+Constraints went from 100 to 110, each of the ten new ones reading a shape rather than
+a word -- the three submenus have to advertise the tag they are addressed by, each
+overlay button has to name its own section, one header has to own the localization
+macro, no string may be localized twice, the log marker has to be the one `Logger.m`
+writes, and every pairing reason has to have wording behind it. The planted-regression
+battery went from 42 to 51 and every one is still caught.
+
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
