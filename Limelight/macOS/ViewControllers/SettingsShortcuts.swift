@@ -172,6 +172,21 @@ final class StreamShortcutProfile: NSObject {
     flags.intersection([.control, .option, .shift, .command, .function])
   }
 
+  /// True only for a shortcut that cannot fire unless a modifier is held.
+  ///
+  /// Every consumer of a matched shortcut takes the key away from the game: the
+  /// responder gate returns YES, a translation rule swallows the press, and an
+  /// NSMenuItem key equivalent is claimed before the stream view ever sees the
+  /// event. A shortcut bound to a bare key therefore deletes a movement or action
+  /// key from the host, which is the "W and Space collide" report. The settings
+  /// form rejects such a shortcut, but the streaming path cannot depend on that:
+  /// shortcuts and translation rules are decoded from per-host stored data, and
+  /// normalization repairs identity, not validity.
+  @objc static func shortcutCanMatchKeyboardEvent(_ shortcut: StreamShortcut?) -> Bool {
+    guard let shortcut, !shortcut.modifierOnly, shortcut.hasKeyCode else { return false }
+    return modifierCount(relevantModifierFlags(shortcut.modifierFlags)) >= 1
+  }
+
   @objc static func actionOrder() -> [String] {
     orderedActions
   }
@@ -253,7 +268,11 @@ final class StreamShortcutProfile: NSObject {
   }
 
   @objc static func menuKeyEquivalent(for shortcut: StreamShortcut) -> String {
-    guard !shortcut.modifierOnly, let key = keySymbol(for: shortcut.keyCode) else {
+    // A bare key here becomes an NSMenuItem key equivalent with an empty modifier
+    // mask, and AppKit hands that key to the menu before the stream view sees it:
+    // the game loses the key without the app ever logging a suppression.
+    guard StreamShortcutProfile.shortcutCanMatchKeyboardEvent(shortcut),
+          let key = keySymbol(for: shortcut.keyCode) else {
       return ""
     }
 

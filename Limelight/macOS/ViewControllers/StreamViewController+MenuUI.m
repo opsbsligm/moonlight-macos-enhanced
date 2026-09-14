@@ -83,7 +83,7 @@
 }
 
 - (BOOL)event:(NSEvent *)event matchesShortcut:(StreamShortcut *)shortcut {
-    if (!shortcut || shortcut.modifierOnly || shortcut.keyCode == StreamShortcut.noKeyCode) {
+    if (![StreamShortcutProfile shortcutCanMatchKeyboardEvent:shortcut]) {
         return NO;
     }
     if (!MLIsKeyboardKeyEvent(event)) {

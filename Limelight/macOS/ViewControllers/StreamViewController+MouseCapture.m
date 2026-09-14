@@ -2566,7 +2566,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     NSArray<KeyboardTranslationRule *> *rules = [SettingsClass keyboardTranslationRulesFor:self.app.host.uuid];
     for (KeyboardTranslationRule *rule in rules) {
         StreamShortcut *trigger = rule.trigger;
-        if (trigger == nil || trigger.modifierOnly || !trigger.hasKeyCode) {
+        if (![StreamShortcutProfile shortcutCanMatchKeyboardEvent:trigger]) {
             continue;
         }
 
