@@ -635,6 +635,7 @@
 "Video Enhancement Runtime Detail Warmup" = "VideoToolbox 超分正在预热中，Moonlight 会暂时使用回退缩放链路。";
 "Video Enhancement Runtime Detail Fallback" = "当前请求的增强器没有实际启用，Moonlight 正在使用回退缩放链路。";
 "Video Frame Interpolation Runtime Detail Idle" = "这里会在串流开始后显示当前实际生效的插帧状态。";
+"Video Frame Interpolation Runtime Detail No Interpolation Slots" = "本机未提供插帧槽位，因此不会产生额外帧。";
 "Video Frame Interpolation Runtime Detail Off" = "当前串流没有启用插帧。";
 "Video Frame Interpolation Runtime Detail Active" = "这里显示当前实际正在使用的插帧引擎。";
 "Video Frame Interpolation Runtime Detail Warmup" = "低延迟插帧正在预热中，准备好后会自动接管。";

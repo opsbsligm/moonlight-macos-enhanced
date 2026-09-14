@@ -312,12 +312,22 @@ static float MLComputeRenderedOnePercentLowFps(const uint16_t *samples, NSUInteg
     return 1000.0f / (float)averageWorstFrameTimeMs;
 }
 
-static BOOL MLMetalFXIsSupported(void)
+static BOOL MLMetalFXIsSupported(id<MTLDevice> device)
 {
 #if ML_HAS_METALFX
     if (@available(macOS 13.0, *)) {
-        // If MetalFX is weak-linked on older systems, class lookup will be nil.
-        return NSClassFromString(@"MTLFXSpatialScalerDescriptor") != nil;
+        // Class lookup only proves the symbol linked. A GPU that ships the class
+        // but cannot run a scaler still passes that test and then hands back a nil
+        // scaler, which the caller would report as an unexplained fallback. The
+        // descriptor is the API that answers the real question, so ask it. The
+        // class check stays because MetalFX is weak-linked on older systems.
+        if (NSClassFromString(@"MTLFXSpatialScalerDescriptor") == nil) {
+            return NO;
+        }
+        if (device == nil) {
+            device = MLSharedMetalDevice();
+        }
+        return device != nil && [MTLFXSpatialScalerDescriptor supportsDevice:device];
     }
 #endif
     return NO;
@@ -2156,6 +2166,9 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     if ([normalizedReason containsString:@"refresh rate unavailable"]) {
         return @"Video Frame Interpolation Runtime Detail Refresh Rate Unknown";
     }
+    if ([normalizedReason containsString:@"no interpolation slots"]) {
+        return @"Video Frame Interpolation Runtime Detail No Interpolation Slots";
+    }
     if (engine == MLActiveVideoFrameInterpolationEngineNone) {
         return @"Video Frame Interpolation Runtime Detail Off";
     }
@@ -3130,7 +3143,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                  isSupportedByValues:VTSuperResolutionScalerConfiguration.supportedScaleFactors];
     }
 
-    BOOL metalFXSupported = MLMetalFXIsSupported();
+    BOOL metalFXSupported = MLMetalFXIsSupported(_device);
 
     switch (_requestedEnhancementMode) {
         case MLRequestedVideoEnhancementModeAuto:
@@ -3418,6 +3431,28 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                         return;
                     }
                     self->_frameInterpolationWarmupInFlight = NO;
+                });
+                return;
+            }
+
+            // The configuration object is created even on a GPU with no
+            // interpolation hardware; what such a machine reports back is zero
+            // slots. Verified on Apple M2: every request from 720p to 4K, and
+            // both initialisers, came back with numberOfInterpolatedFrames == 0,
+            // while startSessionWithConfiguration:error: still succeeded. Starting
+            // the session anyway is exactly what let the interface claim frame
+            // interpolation while no additional frame was ever produced, so the
+            // slot count, not the session result, decides whether the feature runs.
+            if (configuration.numberOfInterpolatedFrames < 1) {
+                Log(LOG_W, @"[video] VT frame interpolation offered 0 slots for %ldx%ld; staying off",
+                    (long)streamWidth, (long)streamHeight);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (warmupGeneration != self->_frameInterpolationWarmupGeneration) {
+                        return;
+                    }
+                    self->_frameInterpolationWarmupInFlight = NO;
+                    [self logActiveFrameInterpolationEngine:MLActiveVideoFrameInterpolationEngineNone
+                                                     reason:@"the system offered no interpolation slots"];
                 });
                 return;
             }
@@ -4085,7 +4120,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         return NO;
     }
 
-    if (!MLMetalFXIsSupported()) {
+    if (!MLMetalFXIsSupported(_device)) {
         return NO;
     }
 
@@ -4235,7 +4270,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         if (!enhancementWarmupPending) {
             [self teardownEnhancementProcessor];
         }
-        _activeEnhancementEngine = MLMetalFXIsSupported()
+        _activeEnhancementEngine = MLMetalFXIsSupported(_device)
             ? MLActiveVideoEnhancementEngineMetalFXQuality
             : MLActiveVideoEnhancementEngineBasicScaling;
         [self logActiveEnhancementEngine:_activeEnhancementEngine
