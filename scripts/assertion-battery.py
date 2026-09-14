@@ -55,6 +55,19 @@ def once(text, needle, where):
     return text
 
 
+def replace_nth(text, needle, repl, position, where):
+    """Replace only the nth occurrence, for anchors that appear once per edge."""
+    index, seen = -1, 0
+    while True:
+        index = text.find(needle, index + 1)
+        if index == -1:
+            raise SystemExit("anchor found %d times, expected >= %d: %s"
+                             % (seen, position, where))
+        seen += 1
+        if seen == position:
+            return text[:index] + repl + text[index + len(needle):]
+
+
 def neuter_if(text):
     return once(text, UP_GUARD, "keyUp guard").replace(
         "if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {",
@@ -222,6 +235,32 @@ def constant_toggle(text):
   }""", 1)
 
 
+
+UNMAPPED_GUARD = "        if (translated == 0) {\n"
+SPACE_ROW = "    {kVK_Space, 0x20},\n"
+W_ROW = "    {kVK_ANSI_W, 'W'},\n"
+
+
+def unmapped_press(text):
+    return replace_nth(text, UNMAPPED_GUARD,
+                       "        if (NO && translated == 0) {\n", 1, "keyDown zero guard")
+
+
+def unmapped_release(text):
+    return replace_nth(text, UNMAPPED_GUARD,
+                       "        if (NO && translated == 0) {\n", 2, "keyUp zero guard")
+
+
+def drop_space_row(text):
+    once(text, SPACE_ROW, "space mapping")
+    return text.replace(SPACE_ROW, "", 1)
+
+
+def duplicate_w_row(text):
+    once(text, W_ROW, "W mapping")
+    return text.replace(W_ROW, W_ROW + W_ROW, 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -245,6 +284,10 @@ MUTATIONS = [
     ("unmeasured-fi", DERIVED, unmeasured_interpolation, "interpolation claims available without slots"),
     ("unmeasured-sr", DERIVED, unmeasured_scaler, "the scaler ignores an empty scale factor list"),
     ("constant-fi-toggle", VIDEO_PANE, constant_toggle, "the interpolation control ignores the measured capability"),
+    ("unmapped-keydown", HID, unmapped_press, "an unmapped press is forwarded as VK 0"),
+    ("unmapped-keyup", HID, unmapped_release, "an unmapped release is forwarded as VK 0"),
+    ("drop-space-row", HID, drop_space_row, "the mapping table loses the space bar"),
+    ("duplicate-row", HID, duplicate_w_row, "a physical code is mapped twice so one row wins"),
 ]
 
 

@@ -99,6 +99,8 @@ static struct KeyMapping keys[] = {
     {kVK_ANSI_KeypadClear, 0xFE},
     {kVK_ANSI_KeypadDivide, 0x6F},
     {kVK_ANSI_KeypadEnter, 0x0D},
+    {kVK_ISO_Section, 0xE2},
+    {kVK_ContextualMenu, 0x5D},
     {kVK_ANSI_KeypadMinus, 0x6D},
     {kVK_ANSI_KeypadEquals, 0xBB},
     {kVK_ANSI_Keypad0, 0x60},
@@ -980,7 +982,17 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         // and leave the key held down on the host forever.
         [self.keyboardSuppressedKeyDownKeyCodes removeObject:@(event.keyCode)];
         [self syncKeyboardModifierStateForEvent:event];
-        short keyCode = 0x8000 | [self translateKeyCodeWithEvent:event];
+        short translated = [self translateKeyCodeWithEvent:event];
+        if (translated == 0) {
+            // Zero is not a virtual key, it is the table saying it has no entry for
+            // this hardware: the ISO section key, the JIS keys, and any code a new
+            // keyboard adds. Sending zero hands the host a key that does not exist;
+            // ignoring the key is the honest answer, and ignoring it on both edges
+            // is what keeps the press and the release paired.
+            Log(LOG_D, @"[input] Ignoring unmapped key: keyCode=%hu", event.keyCode);
+            return;
+        }
+        short keyCode = 0x8000 | translated;
         char modifiers = [self translateKeyModifierWithEvent:event];
         PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
         if (!HIDValidateInputContext(inputCtx, "keyDown")) {
@@ -1011,7 +1023,13 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         }
 
         [self syncKeyboardModifierStateForEvent:event];
-        short keyCode = 0x8000 | [self translateKeyCodeWithEvent:event];
+        short translated = [self translateKeyCodeWithEvent:event];
+        if (translated == 0) {
+            // The press was ignored for the same reason, so the release must be
+            // ignored too rather than reaching the host on its own.
+            return;
+        }
+        short keyCode = 0x8000 | translated;
         char modifiers = [self translateKeyModifierWithEvent:event];
         // This release is going through, so the held-key record for it is spent.
         [self.keyboardForwardedKeyDownKeyCodes removeObject:@(keyCode)];

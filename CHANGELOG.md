@@ -360,6 +360,25 @@ Apple Silicon hardware.
   capability that trusts `isSupported` -- and CI fails unless every one of them is
   caught. Constraint coverage is 64 checks.
 
+### Fifth audit pass (unmapped key codes)
+
+- **A key with no mapping was forwarded as virtual key 0.**
+  `translateKeyCodeWithEvent:` answers 0 when the table has no entry, and callers
+  used that value as if it were a key code. 0 is not a Windows virtual key, so
+  the host received a press for a key that exists on no keyboard and had no
+  matching release path for it. Measured on this Mac: `kVK_ISO_Section` (10) and
+  `kVK_ContextualMenu` (110) have no rows, and every code a newer keyboard adds
+  reaches the same path. Both edges now refuse zero before dispatch, and the two
+  missing rows are in the table -- the press that is ignored on the way down is
+  ignored on the way up, so the pair stays paired.
+- **The table itself is now under test.** `scripts/mac_keycodes.py` records the
+  virtual key codes from the SDK header, and the audit parses the table and
+  requires that every code a game can bind has a row, that no physical code
+  appears twice (the dictionary build in `init:` keeps the last row and drops the
+  earlier one in silence), and that no row maps to zero. Constraint coverage is
+  72 checks and the assertion battery 26 mutations, which now include a zero guard
+  neutered on each edge, the space row deleted, and a duplicated row.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul

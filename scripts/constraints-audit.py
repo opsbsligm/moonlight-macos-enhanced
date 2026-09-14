@@ -48,6 +48,9 @@ Each check below corresponds to a defect that shipped at some point:
   * a shortcut or translation rule bound to a bare key was matched straight from
     stored configuration, so a plain W or Space could be consumed locally and
     never reach the host, even though the settings form rejects such a binding.
+  * a key the mapping table has no entry for was translated to 0 and forwarded,
+    so the host received a virtual key that exists on no keyboard and held it:
+    the ISO section key and the contextual-menu key were both missing rows.
   * the capability matrix asked VideoToolbox whether a feature is supported and
     showed that answer, while the same configuration reported zero interpolation
     slots and no supported scale factor at the stream's size, so the settings page
@@ -512,6 +515,79 @@ check("- (void)releaseAllHeldKeys;" in open(os.path.join(root, "Limelight/Input/
 check("[self releaseAllHeldKeys];"
       in method_body(hid_all, "- (void)tearDownKeyboardStateForSessionEnd:(const char *)reason"),
       "session teardown releases the keys the host still holds")
+
+# The mapping table is the whole keyboard contract, and translateKeyCodeWithEvent:
+# answers 0 when the table has no entry. 0 is not a Windows virtual key, so every
+# unmapped press used to be forwarded as VK 0: the host held a key that exists on
+# no keyboard, because a release for a code it never saw go down does not clear
+# anything. Two codes were missing from the table and any code a new keyboard adds
+# still hits that path, so both halves have to be pinned: the table has to answer
+# for the keys a game can bind, and both edges have to refuse zero rather than
+# forward it. A row that maps to zero, or a duplicated physical code that the
+# dictionary build in init: silently overwrites, are the same defect in disguise.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mac_keycodes
+
+
+def table_rows(source):
+    """The mapping table as (mac, windows) token pairs, braces scoped."""
+    region = re.search(r"static struct KeyMapping keys\[\] = \{(.*?)\n\};", source, re.S)
+    if region is None:
+        return None
+    return re.findall(r"^\s*\{\s*([^,{}]+?)\s*,\s*([^,{}]+?)\s*\},\s*$", region.group(1), re.M)
+
+
+def keycode_value(token):
+    """Resolve a table token to its integer code: a kVK_ name, char literal, or number."""
+    token = token.strip()
+    if token in mac_keycodes.KVK_CODES:
+        return mac_keycodes.KVK_CODES[token]
+    if re.fullmatch(r"'.{1}'", token):
+        return ord(token[1:2])
+    return int(token, 0)
+
+
+mapping_rows = table_rows(hid_all)
+check(bool(mapping_rows), "the Mac-to-Windows key mapping table can be parsed"
+      if mapping_rows else "the key mapping table in HIDSupport.m is missing or unparseable")
+
+mapped_names = {mac.strip() for mac, _ in mapping_rows or () if mac.strip().startswith("kVK_")}
+unbound = sorted(set(mac_keycodes.REQUIRED_MAPPED_KEYS) - mapped_names)
+check(not unbound, "the mapping table answers for every key a game can bind"
+      if not unbound else "the mapping table has no entry for: %s" % ", ".join(unbound))
+
+try:
+    physical_codes = [keycode_value(mac) for mac, _ in mapping_rows or ()]
+    host_codes = [keycode_value(windows) for _, windows in mapping_rows or ()]
+    unresolvable = []
+except ValueError as error:
+    physical_codes, host_codes = [], []
+    unresolvable = [str(error)]
+
+check(not unresolvable, "every mapping token resolves to a key code"
+      if not unresolvable else "a mapping entry uses a code this audit cannot resolve: %s"
+      % unresolvable[0])
+
+repeated = sorted({code for code in physical_codes if physical_codes.count(code) > 1})
+check(not repeated, "no physical code is mapped twice"
+      if not repeated else "physical codes %s appear twice, and the dictionary build keeps "
+                           "only the last row for them"
+      % ", ".join("0x%02X" % code for code in repeated))
+
+zero_rows = sorted({mac.strip() for (mac, _), code in zip(mapping_rows or (), host_codes)
+                    if code == 0})
+check(not zero_rows, "no mapping entry forwards VK 0"
+      if not zero_rows else "%s map to 0, which is the same defect as a missing row"
+      % ", ".join(zero_rows))
+
+for edge, body in (("keyDown:", hid_down), ("keyUp:", hid_up)):
+    problem = guard_exits(body, "if (translated == 0) {", "return;", "LiSendKeyboardEventCtx")
+    check(problem is None, "%s refuses an unmapped key instead of forwarding VK 0" % edge
+          if problem is None else "%s does not refuse an unmapped key: %s" % (edge, problem))
+
+check("{kVK_ISO_Section, 0xE2}," in hid_all and "{kVK_ContextualMenu, 0x5D}," in hid_all,
+      "the two codes measured on this Mac are in the table instead of hitting the zero path")
+
 
 # A shortcut bound to a bare key deletes a gameplay key from the host: the
 # responder gate answers YES, a translation rule swallows the press, and a menu
