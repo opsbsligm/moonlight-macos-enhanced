@@ -342,6 +342,72 @@ static void MLProbeCollectAppKitAXNodes(id element, NSUInteger depth, NSUInteger
     }
 }
 
+// The same tree walk, collecting the controls that open a collapsed section instead
+// of the text. The capability matrix lives inside a DisclosureGroup that ships
+// collapsed (`settings.app.videoCapabilityStatusExpanded` defaults to false) and
+// SwiftUI vends nothing inside a collapsed group: measured on a clean launch every
+// matrix row and all three of its segments are absent from the accessibility tree,
+// while on a machine where the section had once been opened by hand they are all
+// present. A check that only reads what is on screen would then pass or fail
+// according to the history of the machine, which is the opposite of a check.
+static void MLProbeCollectDisclosureTriangles(id element, NSUInteger depth,
+                                             NSMutableArray<id> *triangles) {
+    if (element == nil || depth > 40 || triangles.count > 64) {
+        return;
+    }
+    if ([element isKindOfClass:[NSString class]] || [element isKindOfClass:[NSNumber class]]) {
+        return;
+    }
+    id<NSAccessibility> ax = (id<NSAccessibility>)element;
+    NSString *role = [ax respondsToSelector:@selector(accessibilityRole)] ? [ax accessibilityRole] : nil;
+    if ([role isEqualToString:NSAccessibilityDisclosureTriangleRole]
+        && ![triangles containsObject:element]) {
+        // Collected by identity, not by count: the walk reaches the same hosted
+        // element through the accessibility children and through the view tree, and
+        // measured without this it reported 65 triangles for the one section the page
+        // has. Pressing one control sixty-five times would have looked like a pass and
+        // proved nothing about the control the label sits beside.
+        [triangles addObject:element];
+    }
+    for (id child in [ax accessibilityChildren]) {
+        MLProbeCollectDisclosureTriangles(child, depth + 1, triangles);
+    }
+    if ([element isKindOfClass:[NSView class]]) {
+        for (NSView *child in [(NSView *)element subviews]) {
+            MLProbeCollectDisclosureTriangles(child, depth + 1, triangles);
+        }
+    }
+}
+
+// Press the triangles that are there. Whether a press is wanted is decided by the
+// caller from the label the page itself displays, because pressing a disclosure that
+// is already open closes it, and because the wording belongs to the page: the string
+// arrives through the page's own rules, so renaming it moves this check with it
+// instead of leaving it comparing an English literal baked in here.
+static NSInteger MLProbePressDisclosureTriangles(NSArray<id> *triangles) {
+    NSInteger pressed = 0;
+    for (id triangle in triangles) {
+        id<NSAccessibility> ax = (id<NSAccessibility>)triangle;
+        if ([ax respondsToSelector:@selector(accessibilityPerformPress)]) {
+            [ax accessibilityPerformPress];
+            pressed += 1;
+        }
+    }
+    return pressed;
+}
+
+static BOOL MLProbeNodesVendText(NSArray<NSDictionary *> *nodes, NSString *text) {
+    if (!text.length) {
+        return NO;
+    }
+    for (NSDictionary *node in nodes) {
+        if ([node[@"text"] isEqualToString:text]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 // A ScrollView only realises the rows inside its viewport, so a page longer than
 // the window cannot be read from one look: the rows below the fold are simply not
 // in the tree. Find the scroller the page actually uses so the checker can read
@@ -384,11 +450,32 @@ static NSArray<NSDictionary *> *MLProbeReadableNodes(NSView *root) {
 
 // Present one named pane and record everything the checker needs to decide
 // whether that pane is telling the truth about this machine.
+// The key the app page keeps the Advanced section's state under. Kept next to the
+// probe rather than in a header because nothing but the probe uses it, and the audit
+// pairs it against the string in the SwiftUI source so a rename cannot leave this
+// half pointing at a preference that no longer exists.
+static NSString *const MLProbeAdvancedSectionCollapsedKey
+    = @"settings.app.videoCapabilityStatusExpanded";
+
 static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *output,
                                NSInteger pane, NSString *name, NSMutableDictionary *report) {
     NSView *content = window.contentView;
     [[NSUserDefaults standardUserDefaults] setInteger:pane forKey:@"selected-settings-pane"];
     [[NSUserDefaults standardUserDefaults] synchronize];
+
+    // Start the pass in the state a first run would be in. The point is not to tidy
+    // the preferences: reading the collapsed section only after opening it proves the
+    // reachability once, on whatever machine happens to have the switch already set,
+    // while forcing it closed proves it on every run, and the value is restored below
+    // so the run leaves the user's own choice alone.
+    NSUserDefaults *probeDefaults = [NSUserDefaults standardUserDefaults];
+    id previousAdvancedState = [probeDefaults objectForKey:MLProbeAdvancedSectionCollapsedKey];
+    BOOL forcedTheSectionShut = NO;
+    if ([name isEqualToString:@"appPane"]) {
+        [probeDefaults setObject:@(NO) forKey:MLProbeAdvancedSectionCollapsedKey];
+        [probeDefaults synchronize];
+        forcedTheSectionShut = YES;
+    }
 
     NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
     NSSet<NSView *> *subviewsBefore = [NSSet setWithArray:content.subviews];
@@ -454,10 +541,29 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     // two different machines. Reported through `expectationsFromPageModel` so a
     // silent fallback to a stand-in is visible in the report instead of plausible.
     id presentedModel = [SettingsOverlayPresenter presentedSettingsModelForProbeInWindow:window];
-    result[@"expectations"] = [MLDebugProbeExpectations currentForModel:presentedModel];
+    NSDictionary *expectation = [MLDebugProbeExpectations currentForModel:presentedModel];
+    result[@"expectations"] = expectation;
 
     MLProbeActivateAccessibility();
     result[@"readableContent"] = MLProbeReadableNodes(overlay);
+
+    // Open the collapsed half of the page the way a user reaches it, then read again.
+    // The state is taken from the label the page shows: it is the page's own answer,
+    // and pressing a triangle that is already open would shut it.
+    NSArray<NSDictionary *> *readBeforeOpening = result[@"readableContent"];
+    NSMutableArray<id> *triangles = [NSMutableArray array];
+    MLProbeCollectDisclosureTriangles(overlay, 0, triangles);
+    BOOL sectionShutAsDisplayed = MLProbeNodesVendText(readBeforeOpening,
+                                                       expectation[@"advancedSectionCollapsedLabel"]);
+    NSInteger trianglesPressed = sectionShutAsDisplayed ? MLProbePressDisclosureTriangles(triangles) : 0;
+    if (trianglesPressed) {
+        MLProbeSpin(0.8);
+    }
+    result[@"disclosureTriangles"] = @(triangles.count);
+    result[@"advancedSectionCollapsed"] = @(sectionShutAsDisplayed);
+    result[@"forcedTheSectionShut"] = @(forcedTheSectionShut);
+    result[@"disclosuresPressed"] = @(trianglesPressed);
+    result[@"readableContentExpanded"] = MLProbeReadableNodes(overlay);
 
     // Read the rest of the page. The enhancement controls and the capability matrix
     // are below the fold, and a ScrollView that has not been scrolled has no such
@@ -508,6 +614,12 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     MLProbeSpin(0.5);
     result[@"presentedAfterDismiss"] = @([SettingsOverlayPresenter isSettingsPresentedInWindow:window]);
     result[@"stillMountedAfterDismiss"] = @([overlay isDescendantOf:content]);
+    if (previousAdvancedState) {
+        [probeDefaults setObject:previousAdvancedState forKey:MLProbeAdvancedSectionCollapsedKey];
+    } else if (forcedTheSectionShut) {
+        [probeDefaults removeObjectForKey:MLProbeAdvancedSectionCollapsedKey];
+    }
+    [probeDefaults synchronize];
     report[name] = result;
 }
 

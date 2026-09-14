@@ -78,6 +78,13 @@ final class DebugProbeExpectations: NSObject {
         "frameInterpolation": localize("Frame Interpolation"),
         "upscaling": localize("Upscaling"),
       ],
+      // The Advanced section holds the capability matrix and ships collapsed, and a
+      // collapsed SwiftUI group vends nothing inside it. The probe has to open it to
+      // read it, and the only honest way to tell "open" from "closed" is the wording
+      // the page itself puts beside the triangle, so that wording is handed over
+      // rather than duplicated: renaming it moves the checker along with it.
+      "advancedSectionCollapsedLabel": localize("Collapsed"),
+      "advancedSectionExpandedLabel": localize("Expanded"),
       "capabilityRows": capabilityRows,
       "enhancementAvailability": Dictionary(
         uniqueKeysWithValues: model.videoCapabilityMatrix.items

@@ -775,6 +775,32 @@ for relative in swift_debug_files:
           if relative.split("/")[-1] in project_text
           else "%s is not in the project file and would ship nothing" % relative)
 
+# The capability matrix sits in a collapsed DisclosureGroup, so the only reading that
+# proves anything is taken after the probe presses the section open. That claim lives
+# in two files: the probe has to press, the checker has to read the pressed pass. Bind
+# them together, and bind the defaults key the probe forces shut to the string the page
+# actually stores the state under, so a rename cannot leave the probe forcing a
+# preference nothing reads.
+APP_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers", "SettingsAppPane.swift")
+app_pane = open(APP_PANE, encoding="utf-8").read()
+PROBE_APP = os.path.join(root, "Limelight", "macOS", "AppDelegateForAppKit.m")
+probe_app = open(PROBE_APP, encoding="utf-8").read()
+RENDER_PROBE = os.path.join(root, "scripts", "render-probe.py")
+render_probe = open(RENDER_PROBE, encoding="utf-8").read()
+probe_key = re.search(r'MLProbeAdvancedSectionCollapsedKey\s*\n?\s*= @"([^"]+)"', probe_app)
+check(bool(probe_key) and probe_key.group(1) in app_pane,
+      "the probe forces the same preference the app page stores the section state under"
+      if probe_key and probe_key.group(1) in app_pane
+      else "the probe forces %r, which the app page never reads, so the section state it "
+           "checks is not the one the page uses" % (probe_key.group(1) if probe_key else None,))
+check("accessibilityPerformPress" in probe_app and "readableContentExpanded" in probe_app
+      and 'texts_of(pane, "readableContentExpanded")' in render_probe,
+      "the capability claims are checked only against the pass that pressed the section open"
+      if "accessibilityPerformPress" in probe_app and "readableContentExpanded" in probe_app
+      and 'texts_of(pane, "readableContentExpanded")' in render_probe
+      else "the probe or the checker stopped pairing the capability claims with the pass "
+           "taken after the collapsed section was opened, so a collapsed page reads as clean")
+
 # The video page and the Debug render probe read one rule about which enhancement
 # controls are live and which sentence explains them. The rule used to live inside
 # the page, where nothing could compare it against what the page then displayed;

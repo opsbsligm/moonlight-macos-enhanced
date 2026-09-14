@@ -37,12 +37,23 @@ DERIVED = os.path.join(ROOT, "build-render-probe")
 def readable_texts(pane):
     """Every string the page vends to an assistive client, top and bottom of the scroll."""
     texts = set()
-    for key in ("readableContent", "readableContentScrolled"):
+    for key in ("readableContent", "readableContentExpanded", "readableContentScrolled"):
         for node in pane.get(key) or []:
             text = node.get("text")
             if text:
                 texts.add(text)
     return texts
+
+
+def texts_of(pane, key):
+    """What one reading pass vended, kept apart from the other passes.
+
+    Merging the passes into one set is what let a collapsed section read as clean:
+    the rows above the fold and the rows that only exist once the section is open
+    look identical in a union, and only the second set can prove the lower half of
+    the page was ever looked at.
+    """
+    return set(node.get("text") for node in pane.get(key) or [] if node.get("text"))
 
 
 def paired_control(nodes, title):
@@ -129,11 +140,37 @@ def verify_panes(report, refusals, out_dir):
                           "live" if want else "disabled", control.get("text")))
 
         if name == "appPane":
+            # The capability matrix lives in a DisclosureGroup that ships collapsed,
+            # and a collapsed SwiftUI group vends nothing inside it. Measured on a
+            # clean launch every row of it is absent from the tree; measured on a
+            # machine where somebody once opened it, every row is there. Checking the
+            # merged text of all passes let the second machine certify the first, so
+            # the claims are checked against the pass taken after the section was
+            # pressed open, and the press is only believable when the page itself
+            # said it was shut.
+            shut_words = expectation.get("advancedSectionCollapsedLabel")
+            open_words = expectation.get("advancedSectionExpandedLabel")
+            expect(bool(shut_words) and bool(open_words),
+                   "the page gave no wording for the Advanced section's state, so the "
+                   "reading pass cannot be tied to the section being open at all")
+            before_opening = texts_of(pane, "readableContent")
+            after_opening = texts_of(pane, "readableContentExpanded")
+            if shut_words in before_opening:
+                expect(int(pane.get("disclosuresPressed") or 0) >= 1,
+                       "%s says the Advanced section is shut and the probe pressed nothing, "
+                       "so %d capability rows were never on the page to be compared"
+                       % (name, len(expectation.get("capabilityRows") or [])))
+            expect(open_words in after_opening,
+                   "%s read its capability claims from a pass in which the Advanced section "
+                   "is still shut, so nothing below it was seen" % name)
+            expect(shut_words not in after_opening,
+                   "%s claims the section is open but the page still reads %r, so the "
+                   "capability rows beside that word were not on screen" % (name, shut_words))
             for row in expectation.get("capabilityRows") or []:
                 for field in ("title", "availability", "detail"):
                     value = row.get(field)
                     if value:
-                        expect(value in texts,
+                        expect(value in after_opening,
                                "the capability matrix does not show %s's %s (%r)"
                                % (row.get("id"), field, value[:44]))
 
@@ -270,20 +307,34 @@ def sample_panes():
         {"role": "AXStaticText", "text": "off", "x": 800, "y": 300},
     ]
 
-    def pane(pane_id, nodes, expectation, capture):
-        return {"requestedPane": pane_id, "storedPane": pane_id, "windowsAdded": [],
+    def pane(pane_id, nodes, expectation, capture, **extra):
+        report = {"requestedPane": pane_id, "storedPane": pane_id, "windowsAdded": [],
                 "windowsAddedHostingSettings": [], "viewsAdded": 1,
                 "presentedAfterDismiss": False, "stillMountedAfterDismiss": False,
                 "readableContent": nodes, "expectations": expectation, "capture": capture}
+        report.update(extra)
+        return report
 
     stream_expectation = {"expectationsFromPageModel": True, "videoStrings": ["runtime path", "off"]}
     stream_nodes = [node for node in video_nodes if node["text"] in ("runtime path", "off")]
     app_expectation = {
         "expectationsFromPageModel": True, "videoStrings": [],
+        "advancedSectionCollapsedLabel": "Collapsed",
+        "advancedSectionExpandedLabel": "Expanded",
         "capabilityRows": [{"id": "enhancement.vtLowLatencyFI", "title": "VT interpolation",
                             "availability": "Unavailable", "detail": "no slots on this Mac"}],
     }
+    # The fixture models a first run: the section is shut, so the matrix rows exist
+    # only in the pass taken after the triangle was pressed. A fixture that started
+    # open would test the collapsed path nowhere.
     app_nodes = [
+        {"role": "AXDisclosureTriangle", "text": "", "x": 280, "y": 120},
+        {"role": "AXStaticText", "text": "Capability Status", "x": 300, "y": 120},
+        {"role": "AXStaticText", "text": "Collapsed", "x": 900, "y": 120},
+    ]
+    app_nodes_open = [
+        app_nodes[0], app_nodes[1],
+        {"role": "AXStaticText", "text": "Expanded", "x": 900, "y": 120},
         {"role": "AXStaticText", "text": "VT interpolation", "x": 300, "y": 200},
         {"role": "AXStaticText", "text": "Unavailable", "x": 700, "y": 200},
         {"role": "AXStaticText", "text": "no slots on this Mac", "x": 300, "y": 180},
@@ -291,7 +342,10 @@ def sample_panes():
     return {
         "streamPane": pane(0, stream_nodes, stream_expectation, SAMPLE_CAPTURES[0]),
         "videoPane": pane(1, video_nodes, video_expectation, SAMPLE_CAPTURES[1]),
-        "appPane": pane(3, app_nodes, app_expectation, SAMPLE_CAPTURES[2]),
+        "appPane": pane(3, app_nodes, app_expectation, SAMPLE_CAPTURES[2],
+                        disclosureTriangles=1, advancedSectionCollapsed=True,
+                        forcedTheSectionShut=True, disclosuresPressed=1,
+                        readableContentExpanded=app_nodes_open),
     }
 
 
@@ -364,9 +418,22 @@ def self_test():
                  lambda report: report["videoPane"].update({"readableContent": [node for node in report["videoPane"]["readableContent"]
                                                               if node["text"] != "MetalFX"]})),
                 ("the capability matrix hides what Video Toolbox can do",
-                 lambda report: report["appPane"].update({"readableContent": [
-                     node for node in report["appPane"]["readableContent"]
+                 lambda report: report["appPane"].update({"readableContentExpanded": [
+                     node for node in report["appPane"]["readableContentExpanded"]
                      if node["text"] != "Unavailable"]})),
+                ("the collapsed section was never opened but its wording is claimed",
+                 lambda report: report["appPane"].update({"readableContentExpanded": [
+                     node for node in report["appPane"]["readableContentExpanded"]
+                     if node["text"] != "Expanded"]})),
+                ("the probe swears it opened a section that was shut",
+                 lambda report: report["appPane"].update({"disclosuresPressed": 0})),
+                ("the matrix is read from the pass that never opened anything",
+                 lambda report: report["appPane"].update(
+                     {"readableContentExpanded": report["appPane"]["readableContent"],
+                      "advancedSectionCollapsed": False, "disclosuresPressed": 0})),
+                ("the page stopped saying which state the section is in",
+                 lambda report: report["appPane"]["expectations"].update(
+                     {"advancedSectionExpandedLabel": ""})),
                 ("selecting a pane does not change what is drawn",
                  lambda report: report["videoPane"].update({"capture": SAMPLE_CAPTURES[0]})),
                 ("the pane selection never reached the page",
@@ -422,6 +489,10 @@ def main():
               % (name, len(pane.get("readableContent") or []),
                  expectation.get("expectationsFromPageModel"),
                  expectation.get("enhancementAvailability")))
+        print("%-10s section shut as displayed: %r | triangles found: %r | pressed: %r | "
+              "readable rows once open: %3d"
+              % ("", pane.get("advancedSectionCollapsed"), pane.get("disclosureTriangles"),
+                 pane.get("disclosuresPressed"), len(pane.get("readableContentExpanded") or [])))
     print("artifacts: %s" % ", ".join(sorted(name for name in os.listdir(out) if name.endswith(".png"))))
 
     refusals = verify(report, out)

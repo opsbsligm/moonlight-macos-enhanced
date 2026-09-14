@@ -36,6 +36,7 @@ WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
 VIDEO_RULES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                       "SettingsModel+VideoPageRules.swift")
 PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
+RENDER_PROBE = os.path.join(root, "scripts", "render-probe.py")
 
 
 # A mutation is judged by the gate that is supposed to notice it. Both gates run an
@@ -395,6 +396,17 @@ def drop_swift_debug_condition(text):
     return re.sub(r"\n\t+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;", "", text, count=1)
 
 
+def read_the_matrix_while_it_is_shut(text):
+    """Take the capability claims from the pass that opened nothing.
+
+    The Advanced section ships collapsed and SwiftUI vends nothing inside a collapsed
+    group, so the merged text of every pass makes a machine that never opened the
+    section look the same as one that did. Renaming the channel the checker reads is
+    how that split disappears without any line of the check being edited.
+    """
+    return text.replace("readableContentExpanded", "readableContentNeverOpened")
+
+
 def pane_keeps_its_own_rule(text):
     """Move the enhancement gate back inside the page.
 
@@ -448,6 +460,8 @@ MUTATIONS = [
     ("stop-without-release", WINDOW_MODES, stop_without_release, "the stream stops while the host still holds a key"),
     ("swift-debug-condition-gone", PBXPROJ, drop_swift_debug_condition,
      "Debug-only Swift code stops compiling while the Objective-C half keeps calling it"),
+    ("matrix-read-while-shut", RENDER_PROBE, read_the_matrix_while_it_is_shut,
+     "the capability matrix is certified from a pass in which its section stayed shut"),
     ("pane-keeps-own-rule", VIDEO_PANE, pane_keeps_its_own_rule,
      "the video page recomputes the enhancement rule instead of asking the model"),
 
