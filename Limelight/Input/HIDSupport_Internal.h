@@ -346,10 +346,10 @@ static inline BOOL isKingKong(IOHIDDeviceRef device) {
     UInt16 vendorId = usbIdFromDevice(device, @kIOHIDVendorIDKey);
     UInt16 productId = usbIdFromDevice(device, @kIOHIDProductIDKey);
     // KingKong / Betop Zeus devices:
-    //   0x045E:0x02e0 - borrows the Microsoft vendor id, so it is the one
+    //   0x045E:0x02E0 - borrows the Microsoft vendor id, so it is the one
     //     overlap between isXbox and isKingKong and must be settled here.
     //   0x2DC8:0x2000+ - known Betop vid range (e.g. BTP-A1T2/A1U2/A1S2)
-    if (vendorId == 0x045E && productId == 0x02e0) {
+    if (vendorId == 0x045E && productId == 0x02E0) {
         return YES;
     }
     if (vendorId == 0x2DC8 && (productId == 0x2000 || productId == 0x2020 || productId == 0x2100)) {
