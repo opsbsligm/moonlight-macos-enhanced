@@ -94,6 +94,16 @@
 /// holds at most one entry per physical key and is cleared by a forwarded
 /// keyDown of the same key, by session teardown, and by consuming the release.
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
+
+/// Key codes the host was told went down, in the encoding that was dispatched
+/// (0x8000 | translated), so the release can replay the exact same code. Capture
+/// can end while a key is still physically held: keyUp: is gated on
+/// shouldSendInputEvents, so that release would be dropped and the host would
+/// keep the key pressed for the rest of the session.
+@property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+
+/// Reentry guard for -releaseAllHeldKeys, matching the modifier release guard.
+@property (atomic) BOOL keyboardHeldKeyReleaseInProgress;
 @property (atomic) BOOL coreHIDFreeMouseAbsoluteSyncScheduled;
 @property (atomic) uint64_t coreHIDFreeMouseAbsoluteSyncToken;
 @property (nonatomic) dispatch_queue_t inputQueue;

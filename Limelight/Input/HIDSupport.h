@@ -41,6 +41,19 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
 
+/// Sends UP for every key this session forwarded a DOWN for, then clears the
+/// record.
+///
+/// Mouse capture and keyboard forwarding switch off together, and keyUp: stops
+/// forwarding while they are off. A key that is still physically held down when
+/// capture ends therefore never reaches the host as a release, which leaves the
+/// host holding it for the rest of the session: holding a movement key and
+/// releasing the mouse makes the remote character run forever. Call this from
+/// every path that turns input forwarding off, before it turns them off, while
+/// the input context is still alive. Releasing a key that the host already
+/// released is harmless; the reverse is not.
+- (void)releaseAllHeldKeys;
+
 - (void)releaseAllModifierKeys;
 
 /// Records that a key's keyDown was consumed locally and never forwarded, so the

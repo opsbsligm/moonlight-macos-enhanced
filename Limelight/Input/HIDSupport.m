@@ -717,6 +717,10 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         self.freeMouseVirtualCursorGainY = 1.0;
         self.inputDiagnosticsLock = [[NSObject alloc] init];
         self.pressedMouseButtonsMask = 0;
+        // The held-key record has to exist before the first keyDown: sending a
+        // message to nil drops the record silently, which is the same stuck-key
+        // bug this set exists to prevent, just quieter.
+        self.keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];
         [self resetInputDiagnostics];
 
         // SIMPLIFIED: Print the active keyboard mapping matrix once at init.
@@ -982,6 +986,9 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         if (!HIDValidateInputContext(inputCtx, "keyDown")) {
             return;
         }
+        // Record the press in the exact encoding that is about to be dispatched,
+        // so capture can end safely with this key still held down.
+        [self.keyboardForwardedKeyDownKeyCodes addObject:@(keyCode)];
         HIDDispatchInput(self, inputCtx, ^{
             LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
         });
@@ -1006,6 +1013,8 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         [self syncKeyboardModifierStateForEvent:event];
         short keyCode = 0x8000 | [self translateKeyCodeWithEvent:event];
         char modifiers = [self translateKeyModifierWithEvent:event];
+        // This release is going through, so the held-key record for it is spent.
+        [self.keyboardForwardedKeyDownKeyCodes removeObject:@(keyCode)];
         PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
         if (!HIDValidateInputContext(inputCtx, "keyUp")) {
             return;
@@ -1052,6 +1061,36 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     self.keyboardModifierReleaseInProgress = NO;
 }
 
+- (void)releaseAllHeldKeys {
+    if (self.keyboardHeldKeyReleaseInProgress) {
+        return;
+    }
+    self.keyboardHeldKeyReleaseInProgress = YES;
+
+    // Take the records out first: a stray keyUp: racing on the main queue must
+    // not find a record it can pair with a release we are already sending.
+    NSArray<NSNumber *> *held = self.keyboardForwardedKeyDownKeyCodes.allObjects;
+    [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];
+    if (held.count == 0) {
+        self.keyboardHeldKeyReleaseInProgress = NO;
+        return;
+    }
+
+    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    if (!HIDValidateInputContext(inputCtx, "releaseAllHeldKeys")) {
+        self.keyboardHeldKeyReleaseInProgress = NO;
+        return;
+    }
+    HIDDispatchInput(self, inputCtx, ^{
+        for (NSNumber *keyCode in held) {
+            LiSendKeyboardEventCtx(inputCtx, keyCode.shortValue, KEY_ACTION_UP, 0);
+        }
+    });
+    Log(LOG_I, @"[input] Released %lu held key(s) as input forwarding turned off", (unsigned long)held.count);
+
+    self.keyboardHeldKeyReleaseInProgress = NO;
+}
+
 - (void)tearDownKeyboardStateForSessionEnd:(const char *)reason {
     // Idempotency gate. Five teardown paths all want to call this function:
     //   1. performCloseStreamWindow (user hit the disconnect shortcut)
@@ -1074,6 +1113,10 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         (unsigned long)self.keyboardPhysicalModifierSourceMask,
         (unsigned long)self.keyboardRemoteModifierMask,
         self.shouldSendInputEvents ? 1 : 0);
+
+    // 0) Release keys the host still believes are pressed, before input is
+    //    switched off, so an action key held at disconnect cannot stay stuck.
+    [self releaseAllHeldKeys];
 
     // 1) Release remote modifier state FIRST, while inputContext may still
     //    be valid. This sends 8 KEY_ACTION_UP packets so the remote PC

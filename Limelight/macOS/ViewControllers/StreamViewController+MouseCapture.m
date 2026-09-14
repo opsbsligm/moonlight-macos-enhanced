@@ -3088,6 +3088,10 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     self.streamView.prefersHiddenLocalCursor = NO;
     [self.streamView refreshPreferredLocalCursor];
 
+    // Keyboard first: input forwarding is about to switch off, and keyUp: stops
+    // forwarding once it has, so a movement key held while the mouse is released
+    // would never reach the host as a release.
+    [self.hidSupport releaseAllHeldKeys];
     [self.hidSupport releaseAllPressedMouseButtons];
     self.pendingMouseUncaptureAfterButtonsReleased = NO;
     self.pendingMouseUncaptureRecheckScheduled = NO;
