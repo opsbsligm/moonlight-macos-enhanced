@@ -453,6 +453,43 @@ which five belong to the analyzer findings fixed here: a leaked key event, a pat
 helper that stops declaring ownership, a HID manager left alive, an analyzer sweep
 that silently stops running, and a baseline that accepts anything.
 
+### Tenth audit pass (the two visual claims stopped waiting for a human)
+
+- **The embedded settings page is now proven at runtime, not in source.** The
+  goal that settings should live in the same interface as the stream, and the goal
+  that the surface should read as Liquid Glass, had both been answered with "needs
+  a human eye" for several passes while the machine sat running a build from before
+  the work. A gate that cannot see is not a gate, so the app now carries a
+  Debug-only entry point, inert unless `ML_RENDER_PROBE` is set, which drives the
+  production `SettingsOverlayPresenter` through the production call against a
+  window of its own and measures what happened; `scripts/render-probe.py` builds
+  that Debug binary, runs it with `HOME` pointed at a scratch directory so the
+  database and preferences under test are the probe's own, and reads the report.
+  On this machine the report says: no window opened, the page arrived as exactly
+  one view inside that same window's content view, the fade finished to alpha 1,
+  dismissal unmounted it and cleared the presenter's record, the page drew real
+  pixels, and four `CABackdropLayer` instances are composited inside it. The
+  rendered page was inspected as a PNG and is legible: back control, the five-pane
+  tab bar, localized Chinese strings, popups and switches.
+- **Two measurements that were wrong, corrected before they could mislead.** The
+  first glass check counted AppKit views whose class name contains "Glass" and
+  passed -- on the hosting view's own name, which merely contains
+  `LiquidGlassSettingsView`. The second swapped the backdrop under the page and
+  refused when nothing moved, which would have failed the shipping code: the page
+  sits on a deliberate opaque base, so its materials read the page's own content
+  rather than the window behind it, and zero read-through is the designed
+  behaviour. Materials are now measured where they actually exist, in the Core
+  Animation layer tree, and read-through is reported without being asserted.
+- **The verifier is checked for teeth**: eight doctored reports -- a second
+  window, a page that is not inside the content view, two pages stacked, a fade
+  that never finished, a page left mounted after dismissal, a blank capture, no
+  material layer, an empty report -- are each refused. The wiring rule now covers
+  `-probe.py` as well, so a probe that exists but is never run is itself a failure.
+- **What this still does not prove**: how the material looks over a live stream.
+  The probe composites the real view tree; it cannot judge taste, and the pixel
+  check here deliberately stops short of asserting a backdrop read-through it
+  cannot justify.
+
 ### Ninth audit pass (the two-key report, made checkable)
 
 - **Walking and jumping at the same time is now a scenario CI runs.** The report
