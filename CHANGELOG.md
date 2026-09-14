@@ -21,11 +21,21 @@ Apple Silicon hardware.
   pipeline looked broken rather than miswritten. The syntax step in the same job
   reported success throughout, because `yaml.safe_load` tolerates both shapes: it
   keeps the last duplicate key and never asks whether a step can execute. That
-  step now runs `scripts/workflow-audit.py`, which checks the eighteen rules a
-  plain parse cannot see -- one per fixture, plus a control that proves a
-  reference to a committed script stays quiet -- and it installs its own parser,
+  step now runs `scripts/workflow-audit.py`, which checks the nineteen rules a
+  plain parse cannot see -- each broken by its own fixture or control, including
+  one that proves a reference to a committed script stays quiet -- and it installs
+  its own parser,
   because the runner image does not promise PyYAML and a guard that silently loses
   its dependency reports success while checking nothing.
+- **The dependency script only ran on macOS.** `download-frameworks.sh` began with
+  `#!/bin/zsh`, so on the ubuntu audit runner the kernel could not find the
+  interpreter and Python reported the script itself as missing: the constraint
+  that runs its layout self-test failed while naming the wrong file, and every
+  local run passed because macOS ships zsh. The four scripts that located
+  themselves with `${0:A:h}`, a zsh modifier bash reads as an unbound variable,
+  now resolve the project directory from `BASH_SOURCE`. `workflow-audit.py`
+  rejects any shebang that does not resolve on both kinds of runner, checked with
+  a portable, a zsh-only and a missing-shebang control.
 
 - **No key could be held down, and two keys could not overlap.** The key
   equivalent gate in `StreamViewController+MouseCapture.m` ended by calling

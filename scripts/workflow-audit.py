@@ -41,7 +41,15 @@ RULES = {
     "WF016": "an expression block is left open, so the rest of the line is literal text",
     "WF017": "workflow file cannot be parsed",
     "WF018": "step name is empty, so a failing step cannot be identified in the log",
+    "WF019": "a shell script names an interpreter the audit runner does not have",
 }
+
+# The audit job runs on ubuntu, so a shebang has to resolve there as well as on
+# the macOS machine that wrote it. /bin/zsh exists on macOS and not on ubuntu,
+# and the kernel reports the missing interpreter as the script itself being
+# absent, so the failure names the wrong file.
+RUNNER_INTERPRETERS = {"/bin/bash", "/bin/sh", "/usr/bin/env bash", "/usr/bin/env sh"}
+
 
 JOB_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 EXPR_OPEN = re.compile(r"\$\{\{")
@@ -115,6 +123,24 @@ def matrix_keys(job):
         if isinstance(entry, dict):
             keys.update(entry.keys())
     return keys
+
+
+def audit_script_shebangs(root):
+    """Check every shell script the audit job exercises can start on ubuntu."""
+    findings = []
+    scripts = sorted(root.glob("scripts/*.sh")) + sorted((root / ".github").glob("**/*.sh"))
+    for script in scripts:
+        first = script.read_text(errors="replace").split("\n", 1)[0].strip()
+        if not first.startswith("#!"):
+            findings.append(("WF019", str(script.relative_to(root)), "no shebang line at all"))
+            continue
+        interpreter = first[2:].strip()
+        if interpreter.endswith(" bash") or interpreter.endswith(" sh"):
+            head, _, argument = interpreter.rpartition(" ")
+            interpreter = "%s %s" % (head.strip(), argument) if head else interpreter
+        if interpreter not in RUNNER_INTERPRETERS:
+            findings.append(("WF019", str(script.relative_to(root)), "shebang %r" % first))
+    return findings
 
 
 def audit_needs_graph(jobs, name):
@@ -496,11 +522,35 @@ def present_script_control():
         return audit_document(load_yaml(PRESENT_SCRIPTS), "present.yml", root=root)
 
 
+def shebang_controls():
+    """The shebang rule needs both a passing and a failing tree to be believed."""
+    findings = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "scripts").mkdir()
+        (root / "scripts" / "portable.sh").write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+        (root / "scripts" / "posix.sh").write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
+        clean = audit_script_shebangs(root)
+        if clean:
+            findings.append("the portable-script control reports %s" % (clean,))
+        (root / "scripts" / "mac_only.sh").write_text("#!/bin/zsh\necho ok\n", encoding="utf-8")
+        found = audit_script_shebangs(root)
+        if [code for code, where, _ in found] != ["WF019"] or found[0][1] != "scripts/mac_only.sh":
+            findings.append("the zsh control reports %s, expected one WF019 naming mac_only.sh" % (found,))
+        (root / "scripts" / "mac_only.sh").unlink()
+        (root / "scripts" / "bare.sh").write_text("echo ok\n", encoding="utf-8")
+        missing = audit_script_shebangs(root)
+        if [code for code, where, _ in missing] != ["WF019"] or missing[0][1] != "scripts/bare.sh":
+            findings.append("the missing-shebang control reports %s" % (missing,))
+    return findings
+
+
 def self_test():
     failures = []
     present = present_script_control()
     if present:
         failures.append("the committed-script control reports %s" % (present,))
+    failures.extend(shebang_controls())
     good = audit_document(load_yaml(GOOD), "good.yml")
     if good:
         failures.append("the good fixture reports %s" % (good,))
@@ -515,7 +565,7 @@ def self_test():
     if failures:
         return 1
     print(
-        "workflow-audit self test: %d rules, each broken by its own fixture and named correctly"
+        "workflow-audit self test: %d rules, each broken by a fixture or control and named correctly"
         % len(RULES)
     )
     return 0
@@ -535,6 +585,7 @@ def main(argv):
             problems.append((fatal, path.name, detail))
             continue
         problems.extend(audit_document(doc, path.name))
+    problems.extend(audit_script_shebangs(ROOT))
     if problems:
         for code, where, detail in sorted(problems):
             print("%s: %s: %s  [%s]" % (code, where, detail, RULES[code]))
