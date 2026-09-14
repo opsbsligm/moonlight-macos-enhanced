@@ -312,6 +312,8 @@
 "Unknown" = "Unknown";
 
 "Poor Connection" = "⚠️ Poor Connection";
+"Reconnecting…" = "Reconnecting…";
+"Reconnecting… (%ld)" = "Reconnecting… (%ld)";
 
 "Gamepad Mouse Emulation (!)" = "Gamepad Mouse Emulation";
 "Gamepad Mouse Hint" = "Use the gamepad as a mouse. Right stick moves, A clicks.";

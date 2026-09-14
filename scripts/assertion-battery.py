@@ -24,6 +24,14 @@ SHORTCUTS = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                          "SettingsShortcuts.swift")
 DERIVED = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                        "SettingsModel+DerivedValues.swift")
+L10N = os.path.join(root, "scripts", "l10n-audit.py")
+
+# A mutation is judged by the gate that is supposed to notice it. Both gates run an
+# extra proof of their own when invoked normally, so the battery has to tell the
+# gate it is asking not to ask back.
+AUDIT_GATE = (os.path.join(root, "scripts", "constraints-audit.py"), ["--no-battery"])
+# The localization gate has no opt-out: its self-test is part of the gate.
+L10N_GATE = (L10N, [])
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                           "SettingsVideoPane.swift")
 
@@ -261,6 +269,31 @@ def duplicate_w_row(text):
     return text.replace(W_ROW, W_ROW + W_ROW, 1)
 
 
+
+SCAN_HEALTH = "def scan_health(keys_found, tokens_present):\n"
+# Built from single characters so no layer of quoting can eat a metacharacter:
+# AT_TOLERANT is the backslash-paren-question-quote the audit compiles, and
+# AT_BLIND is the same pattern with the at-sign branch removed.
+AT_TOLERANT = chr(92) + "(?@?" + chr(34)
+AT_BLIND = chr(92) + "(?" + chr(34)
+IMPORTS = "import io, os, re, sys\n"
+
+
+def blind_scan_health(text):
+    once(text, SCAN_HEALTH, "scan health rule")
+    return text.replace(SCAN_HEALTH, SCAN_HEALTH + "    return None\n", 1)
+
+
+def at_blind_scan(text):
+    once(text, AT_TOLERANT, "at-quoted call pattern")
+    return text.replace(AT_TOLERANT, AT_BLIND, 1)
+
+
+def grep_scanned(text):
+    once(text, IMPORTS, "localization imports")
+    return text.replace(IMPORTS, "import io, os, re, subprocess, sys\n", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -288,14 +321,17 @@ MUTATIONS = [
     ("unmapped-keyup", HID, unmapped_release, "an unmapped release is forwarded as VK 0"),
     ("drop-space-row", HID, drop_space_row, "the mapping table loses the space bar"),
     ("duplicate-row", HID, duplicate_w_row, "a physical code is mapped twice so one row wins"),
+    ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),
+    ("at-blind-scan", L10N, at_blind_scan, "the at-quoted call sites go unseen again", L10N_GATE),
+    ("grep-scanned", L10N, grep_scanned, "the scan shells out to the host grep dialect", AUDIT_GATE),
 ]
 
 
-def audit_failed():
-    # constraints-audit.py runs the battery as its final check, so a battery that
-    # asks it a question must say clearly not to ask back.
-    proc = subprocess.run([sys.executable, os.path.join(root, "scripts", "constraints-audit.py"),
-                           "--no-battery"],
+def gate_failed(gate):
+    # A gate that runs the battery as one of its own checks has to be told not to
+    # ask back, which is what the flags carried with each gate are for.
+    script, extra_args = gate
+    proc = subprocess.run([sys.executable, script] + list(extra_args),
                           capture_output=True, text=True, cwd=root)
     detail = [line for line in (proc.stdout + proc.stderr).splitlines() if "FAIL" in line]
     return proc.returncode != 0, detail
@@ -308,15 +344,17 @@ def main():
     if "--no-audit-recursion" in sys.argv:
         print("(audit recursion suppressed: this run was started by the audit)")
 
-    original = {path: open(path, encoding="utf-8").read()
-                for path in {p for _, p, _, _ in MUTATIONS}}
+    original = {entry[1]: open(entry[1], encoding="utf-8").read()
+                for entry in MUTATIONS}
     missed = []
-    for name, path, mutate, note in MUTATIONS:
+    for entry in MUTATIONS:
+        name, path, mutate, note = entry[:4]
+        gate = entry[4] if len(entry) > 4 else AUDIT_GATE
         open(path, "w", encoding="utf-8").write(mutate(original[path]))
-        failed, detail = audit_failed()
+        failed, detail = gate_failed(gate)
         open(path, "w", encoding="utf-8").write(original[path])
         caught = "CAUGHT " if failed else "MISSED "
-        print("%s %-16s %s" % (caught, name, note))
+        print("%s %-18s %s" % (caught, name, note))
         if failed and detail:
             print("        %s" % detail[0].strip()[:160])
         if not failed:
@@ -326,7 +364,8 @@ def main():
     if missed:
         print("assertions that a real regression would slip past: %s" % ", ".join(missed))
     if keep:
-        for name, path, mutate, _ in MUTATIONS:
+        for entry in MUTATIONS:
+            name, path, mutate = entry[0], entry[1], entry[2]
             if name == keep:
                 open(path, "w", encoding="utf-8").write(mutate(original[path]))
                 print("left %s applied for manual inspection" % name)

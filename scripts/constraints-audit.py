@@ -653,6 +653,23 @@ check('id == "enhancement.vtLowLatencyFI"' in fi_toggle and "availability == .av
       "the interpolation control is gated by the measured capability, not a constant")
 
 
+
+# The localization scan used to be a `grep -rhoE` whose pattern contained a (?:
+# group. BSD grep on macOS accepted it and reported 162 keys, while the ubuntu
+# audit runner's grep produced nothing, the audit printed "0 keys referenced in
+# code", both missing-key lists were empty because nothing had been scanned, and
+# the step reported that coverage is complete. The pattern also allowed only a
+# bare quote, so all 153 ObjC call sites that pass an @"..." literal to the same
+# lookup through NSLocalizedString and MLString were invisible: the audit was
+# blind twice over on the only keys it claimed to check.
+l10n_script = open(os.path.join(root, "scripts", "l10n-audit.py"), encoding="utf-8").read()
+check(re.search(r"^import .*\bsubprocess\b", l10n_script, re.M) is None,
+      "the localization scan reads the sources itself instead of trusting a host grep")
+l10n = subprocess.run([sys.executable, os.path.join(root, "scripts", "l10n-audit.py")],
+                      capture_output=True, text=True, cwd=root)
+check(l10n.returncode == 0, "the localization audit passes with its scan proven running"
+      if l10n.returncode == 0 else "the localization audit failed:\n" + l10n.stdout[-700:])
+
 if run_battery:
     # An assertion that stops failing on a regression is worse than no assertion,
     # because it reads as coverage. The battery plants regressions in the real
