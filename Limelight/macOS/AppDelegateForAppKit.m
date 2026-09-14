@@ -38,6 +38,52 @@ typedef enum : NSUInteger {
 @property (nonatomic, assign) BOOL didAttemptPermissionRepair;
 @end
 
+// These two keys and the probe below are declared ahead of the @implementation
+// on purpose. Every call site lives inside a method body, and C requires a
+// visible declaration before use: the current toolchain happens to accept the
+// reverse order, a stricter one reports an undeclared function and the file
+// stops building. Keeping the definitions first removes that dependency.
+// ---------------------------------------------------------------------------
+
+static NSString * const kMoonlightFirstLaunchKey = @"MoonlightFirstLaunchCompleted.v2";
+static NSString * const kMoonlightLocalNetworkTriggeredKey = @"MoonlightLocalNetworkTriggered.v1";
+
+// Send a single UDP broadcast packet to the GameStream discovery port (47989).
+// This has two critical effects on macOS 12+:
+//   a) Triggers the system LocalNetwork permission prompt the FIRST time it runs.
+//   b) Serves as a fallback discovery probe for Sunshine/GFE hosts that don't respond to mDNS.
+// Never blocks; runs on a background queue. Does not require any entitlement beyond NSLocalNetworkUsageDescription.
+static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void) {
+    @autoreleasepool {
+        int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (fd < 0) {
+            Log(LOG_W, @"[Connect] socket() failed for LocalNetwork trigger");
+            return;
+        }
+
+        int one = 1;
+        setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 200000 }; // 200ms send timeout max
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+        struct sockaddr_in sin;
+        memset(&sin, 0, sizeof(sin));
+        sin.sin_family = AF_INET;
+        sin.sin_len = sizeof(sin);
+        sin.sin_port = htons(47989);
+        sin.sin_addr.s_addr = htonl(INADDR_BROADCAST); // 255.255.255.255
+
+        // GameStream HTTP serverinfo payload fragment — anything works, we just need a
+        // real datagram so the kernel reports us as "using local networking" to TCC.
+        const char *probe = "GET /serverinfo HTTP/1.0\r\n\r\n";
+        ssize_t n = sendto(fd, probe, strlen(probe), 0,
+                           (struct sockaddr *)&sin, sizeof(sin));
+        Log(LOG_I, @"[Connect] LocalNetwork trigger UDP probe sent: %zd bytes (errno=%d)",
+            n, (int)(n < 0 ? errno : 0));
+        close(fd);
+    }
+}
+
 @implementation AppDelegateForAppKit
 
 static const void *MoonlightOriginalMenuItemTitleKey = &MoonlightOriginalMenuItemTitleKey;
@@ -172,45 +218,6 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 // 3. No double-popups: welcome window OR permission guide, never both at the same time
 // 4. All permission operations are NON-DESTRUCTIVE on normal launch. tccutil reset = opt-in only.
 // 5. Full diagnostics: any connection issue → "Help → 诊断连接问题" gives a complete report.
-
-static NSString * const kMoonlightFirstLaunchKey = @"MoonlightFirstLaunchCompleted.v2";
-static NSString * const kMoonlightLocalNetworkTriggeredKey = @"MoonlightLocalNetworkTriggered.v1";
-
-// Send a single UDP broadcast packet to the GameStream discovery port (47989).
-// This has two critical effects on macOS 12+:
-//   a) Triggers the system LocalNetwork permission prompt the FIRST time it runs.
-//   b) Serves as a fallback discovery probe for Sunshine/GFE hosts that don't respond to mDNS.
-// Never blocks; runs on a background queue. Does not require any entitlement beyond NSLocalNetworkUsageDescription.
-static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void) {
-    @autoreleasepool {
-        int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (fd < 0) {
-            Log(LOG_W, @"[Connect] socket() failed for LocalNetwork trigger");
-            return;
-        }
-
-        int one = 1;
-        setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
-        struct timeval tv = { .tv_sec = 0, .tv_usec = 200000 }; // 200ms send timeout max
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-        struct sockaddr_in sin;
-        memset(&sin, 0, sizeof(sin));
-        sin.sin_family = AF_INET;
-        sin.sin_len = sizeof(sin);
-        sin.sin_port = htons(47989);
-        sin.sin_addr.s_addr = htonl(INADDR_BROADCAST); // 255.255.255.255
-
-        // GameStream HTTP serverinfo payload fragment — anything works, we just need a
-        // real datagram so the kernel reports us as "using local networking" to TCC.
-        const char *probe = "GET /serverinfo HTTP/1.0\r\n\r\n";
-        ssize_t n = sendto(fd, probe, strlen(probe), 0,
-                           (struct sockaddr *)&sin, sizeof(sin));
-        Log(LOG_I, @"[Connect] LocalNetwork trigger UDP probe sent: %zd bytes (errno=%d)",
-            n, (int)(n < 0 ? errno : 0));
-        close(fd);
-    }
-}
 
 - (void)scheduleConnectionHealthCheck {
     self.didAttemptPermissionRepair = NO;
