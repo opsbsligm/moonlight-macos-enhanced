@@ -9,6 +9,7 @@
 import AppKit
 import CoreGraphics
 import Metal
+import MetalFX
 import SwiftUI
 import VideoToolbox
 
@@ -416,9 +417,15 @@ extension SettingsModel {
   static var touchscreenModes: [String] = ["Trackpad", "Touchscreen"]
   static var displayModes: [String] = ["Windowed", "Fullscreen", "Borderless Windowed"]
 
+  /// MetalFX needs a GPU that can run a spatial scaler.
+  ///
+  /// An operating system version only says the symbols exist, and a GPU without a
+  /// scaler is a real configuration: the version test reports available on exactly
+  /// the machines where the scaler will never run.
   static var isMetalFXSupported: Bool {
+    guard let device = MTLCreateSystemDefaultDevice() else { return false }
     if #available(macOS 13.0, *) {
-      return true
+      return MTLFXSpatialScalerDescriptor.supportsDevice(device)
     }
     return false
   }
@@ -455,16 +462,46 @@ extension SettingsModel {
     return .available
   }
 
+  /// Frame counts the GPU can actually work with, at the sizes a stream uses.
+  ///
+  /// `isSupported` only says the class can be talked to: measured on an Apple M2 it
+  /// returns true, creating the configuration succeeds, and starting a session
+  /// succeeds, while the configuration reports zero interpolation slots and no
+  /// frame can ever be inserted. Asking for supported scale factors is the same
+  /// lesson on the scaler side: the property says yes, the per-size list is empty
+  /// at 1080p and offers only 1.5x at 720p. The renderer already refuses to treat
+  /// those answers as proof of a working pipeline; the capability matrix may not be
+  /// less careful than the thing it describes.
+  private static let capabilityProbeSizes: [(width: Int, height: Int)] = [
+    (width: 1280, height: 720),
+    (width: 1920, height: 1080),
+    (width: 3840, height: 2160),
+  ]
+
   private static func lowLatencySuperResolutionAvailability() -> CapabilityAvailability {
     if #available(macOS 26.0, *) {
-      return VTLowLatencySuperResolutionScalerConfiguration.isSupported ? .available : .unavailable
+      guard VTLowLatencySuperResolutionScalerConfiguration.isSupported else { return .unavailable }
+      let factors = capabilityProbeSizes.flatMap {
+        VTLowLatencySuperResolutionScalerConfiguration
+          .__supportedScaleFactors(forFrameWidth: $0.width, frameHeight: $0.height)
+          .map { $0.floatValue }
+      }
+      guard !factors.isEmpty else { return .unavailable }
+      return factors.contains(2) ? .available : .limited
     }
     return .unavailable
   }
 
   private static func lowLatencyFrameInterpolationAvailability() -> CapabilityAvailability {
     if #available(macOS 26.0, *) {
-      return VTLowLatencyFrameInterpolationConfiguration.isSupported ? .available : .unavailable
+      guard VTLowLatencyFrameInterpolationConfiguration.isSupported else { return .unavailable }
+      let slots = capabilityProbeSizes.compactMap {
+        VTLowLatencyFrameInterpolationConfiguration(
+          frameWidth: $0.width,
+          frameHeight: $0.height,
+          numberOfInterpolatedFrames: 1)?.numberOfInterpolatedFrames
+      }.max() ?? 0
+      return slots >= 1 ? .available : .unavailable
     }
     return .unavailable
   }
