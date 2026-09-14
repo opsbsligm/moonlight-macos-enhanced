@@ -36,6 +36,18 @@ Apple Silicon hardware.
   now resolve the project directory from `BASH_SOURCE`. `workflow-audit.py`
   rejects any shebang that does not resolve on both kinds of runner, checked with
   a portable, a zsh-only and a missing-shebang control.
+- **A clean checkout never downloaded the frameworks.** `download-frameworks.sh`
+  decided the frameworks were present by asking whether `xcframeworks/` was
+  non-empty, and the repository commits `xcframeworks/.gitignore` so the
+  directory exists in the first place. Every clean checkout therefore skipped the
+  download, and the next step failed with no explanation: the header search passed
+  a root that did not exist to `find`, which fails the pipeline under
+  `set -euo pipefail` before the script's own error message can print, and
+  `head -n 1` aborts the same way when it closes the pipe early. Readiness is now
+  judged per bundle, each with its own `Info.plist`; each search root is tested
+  before use; and the self-test covers the placeholder directory, a complete tree,
+  a bundle missing its manifest, an absent search root, a truncated search, and
+  both header spellings resolving.
 
 - **No key could be held down, and two keys could not overlap.** The key
   equivalent gate in `StreamViewController+MouseCapture.m` ended by calling

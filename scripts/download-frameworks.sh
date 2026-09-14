@@ -38,6 +38,59 @@ fail() {
 # (OpenSSL.xcframework/OpenSSL.xcframework), which Xcode can still stumble
 # through locally while Package.swift points at the outer shell. Flatten it so
 # the resolved bundle is the one the manifest names.
+# The xcframeworks archive is only needed when the bundles it provides are
+# absent. The old probe asked whether xcframeworks/ was non-empty, and the
+# repository commits xcframeworks/.gitignore on purpose so the directory exists
+# in a clean checkout, so on every clean checkout the answer was "already
+# prepared" and nothing was ever downloaded. Readiness now means the bundles the
+# build links against are present with their own Info.plist.
+REQUIRED_BUNDLES="FFmpeg.xcframework Opus.xcframework SDL2.xcframework"
+
+missing_bundles() {
+  local dir="$1" bundle missing=""
+  for bundle in $REQUIRED_BUNDLES; do
+    if [[ ! -f "${dir}/${bundle}/Info.plist" ]]; then
+      missing="${missing:+${missing} }${bundle}"
+    fi
+  done
+  printf '%s' "$missing"
+}
+
+# Searching two roots with one find call fails the whole pipeline whenever one
+# root is absent, and head -1 closes the pipe early, which also fails it. Under
+# set -euo pipefail both killed the script before its own error message could
+# print, so a missing dependency looked like an unexplained exit 1.
+first_openssl_headers() {
+  local root hit
+  for root in "$@"; do
+    [[ -d "$root" ]] || continue
+    hit=$(find "$root" -type d -path '*macos*arm64_x86_64/OpenSSL.framework/Versions/A/Headers' 2>/dev/null | head -n 1 || true)
+    if [[ -n "$hit" ]]; then
+      printf '%s' "$hit"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# moonlight-common includes <openssl/*.h> while the vendored umbrella headers
+# include <OpenSSL/*.h>, and libs/ is gitignored by design, so both spellings are
+# exposed as links to one Headers directory.
+link_openssl_headers() {
+  local headers="$1" libs_dir="$2" spelling
+  [[ -d "$headers" ]] || fail "no such headers directory: ${headers}"
+  mkdir -p "$libs_dir"
+  for spelling in openssl OpenSSL; do
+    # On a case-insensitive volume the second spelling already resolves.
+    if [[ ! -e "${libs_dir}/${spelling}" ]]; then
+      ln -s "$headers" "${libs_dir}/${spelling}"
+      echo "${libs_dir}/${spelling} -> ${headers}"
+    else
+      echo "${libs_dir}/${spelling} already present"
+    fi
+  done
+}
+
 flatten_if_nested() {
   local target="$1"
   local name
@@ -80,23 +133,66 @@ if [[ "${1:-}" == "--self-test" ]]; then
     echo "self-test: accepted a directory that is not an .xcframework" >&2; exit 1;
   fi
 
+  # Readiness has to be judged by the bundles, not by the directory existing:
+  # the placeholder .gitignore the repository commits makes an unprepared
+  # directory look prepared to any emptiness test.
+  mkdir -p "$case_dir/placeholder/xcframeworks"
+  : > "$case_dir/placeholder/xcframeworks/.gitignore"
+  missing=$(missing_bundles "$case_dir/placeholder/xcframeworks")
+  [[ "$missing" == "FFmpeg.xcframework Opus.xcframework SDL2.xcframework" ]] || {
+    echo "self-test: a directory holding only .gitignore counted as prepared (missing: ${missing:-none})" >&2; exit 1; }
+
+  for bundle in $REQUIRED_BUNDLES; do
+    mkdir -p "$case_dir/complete/xcframeworks/${bundle}"
+    touch "$case_dir/complete/xcframeworks/${bundle}/Info.plist"
+  done
+  [[ -z "$(missing_bundles "$case_dir/complete/xcframeworks")" ]] || {
+    echo "self-test: a complete tree reported $(missing_bundles "$case_dir/complete/xcframeworks") as missing" >&2; exit 1; }
+
+  mv "$case_dir/complete/xcframeworks/Opus.xcframework/Info.plist" "$TMP_DIR/parked-Info.plist"
+  [[ "$(missing_bundles "$case_dir/complete/xcframeworks")" == "Opus.xcframework" ]] || {
+    echo "self-test: a bundle without Info.plist did not count as missing" >&2; exit 1; }
+
+  # The header search has to survive an absent root and a truncated result, the
+  # two shapes that used to abort the script in silence.
+  mkdir -p "$case_dir/headers/Packages/OpenSSL.xcframework/macos-arm64_x86_64/OpenSSL.framework/Versions/A/Headers"
+  mkdir -p "$case_dir/headers/Packages/OpenSSL.xcframework/macos-arm64_x86_64-simulator/OpenSSL.framework/Versions/A/Headers"
+  found=$(first_openssl_headers \
+    "$case_dir/headers/xcframeworks/OpenSSL.xcframework" \
+    "$case_dir/headers/Packages/OpenSSL.xcframework" | head -1) || {
+    echo "self-test: an absent first root aborted the header search" >&2; exit 1; }
+  [[ -d "$found" && "$found" == *"/macos-arm64_x86_64/OpenSSL.framework/Versions/A/Headers" ]] || {
+    echo "self-test: header search returned ${found:-nothing}" >&2; exit 1; }
+
+  link_openssl_headers "$found" "$case_dir/headers/libs"
+  [[ -e "$case_dir/headers/libs/openssl" && -e "$case_dir/headers/libs/OpenSSL" ]] || {
+    echo "self-test: the header links do not resolve under both spellings" >&2; exit 1; }
+
+  if first_openssl_headers "$case_dir/headers/nowhere" "$case_dir/headers/also-nowhere"; then
+    echo "self-test: the header search reported success with nothing to find" >&2; exit 1;
+  fi
+
   echo "dependency layout self-test passed"
   exit 0
 fi
 
 echo "=== Downloading xcframeworks (FFmpeg, Opus, SDL2, OpenSSL) ==="
-if [[ -d "$XCFRAMEWORKS_DIR" && $(ls -A "$XCFRAMEWORKS_DIR" 2>/dev/null | wc -l) -gt 0 ]]; then
-  echo "xcframeworks/ already exists, skipping download"
+xcframeworks_missing=$(missing_bundles "$XCFRAMEWORKS_DIR")
+if [[ -z "$xcframeworks_missing" ]]; then
+  echo "xcframeworks/ holds ${REQUIRED_BUNDLES}, skipping download"
 else
   curl -L --fail -o "$TMP_DIR/xcframeworks.zip" "$XCFRAMEWORKS_URL"
   mkdir -p "$XCFRAMEWORKS_DIR"
   unzip -o "$TMP_DIR/xcframeworks.zip" -d "$XCFRAMEWORKS_DIR"
   echo "xcframeworks downloaded to $XCFRAMEWORKS_DIR"
+  xcframeworks_missing=$(missing_bundles "$XCFRAMEWORKS_DIR")
+  [[ -z "$xcframeworks_missing" ]] || \
+    fail "the archive did not provide ${xcframeworks_missing}; xcframeworks/ holds $(ls -A "$XCFRAMEWORKS_DIR" | tr '\n' ' ')"
 fi
 
 echo "=== Downloading OpenSSL.xcframework ==="
-if [[ -d "$OPENSSL_DIR" ]]; then
-  echo "OpenSSL.xcframework already exists, skipping download"
+if [[ -f "$OPENSSL_DIR/Info.plist" ]]; then
+  echo "OpenSSL.xcframework already holds a manifest, skipping download"
 else
   curl -L --fail -o "$TMP_DIR/openssl.zip" "$OPENSSL_URL"
   mkdir -p "${PROJECT_DIR}/Packages"
@@ -113,24 +209,14 @@ flatten_if_nested "$OPENSSL_DIR" || fail "${OPENSSL_DIR} is missing"
 # so expose the framework Headers directory under both spellings. Without this step a fresh
 # clone fails to compile moonlight-common because libs/ is gitignored by design.
 echo "=== Linking OpenSSL headers into libs/ ==="
-OPENSSL_HEADERS=$(find "$XCFRAMEWORKS_DIR/OpenSSL.xcframework" "$OPENSSL_DIR" \
-  -path '*macos*arm64_x86_64/OpenSSL.framework/Versions/A/Headers' -type d 2>/dev/null | head -1)
+OPENSSL_HEADERS=$(first_openssl_headers "$XCFRAMEWORKS_DIR/OpenSSL.xcframework" "$OPENSSL_DIR") || OPENSSL_HEADERS=""
 
 if [[ -z "$OPENSSL_HEADERS" ]]; then
-  echo "error: no macOS OpenSSL headers found under xcframeworks/ or Packages/" >&2
+  echo "error: no macOS OpenSSL headers found under ${XCFRAMEWORKS_DIR}/OpenSSL.xcframework or ${OPENSSL_DIR}" >&2
   exit 1
 fi
 
-mkdir -p "$LIBS_DIR"
-for spelling in openssl OpenSSL; do
-  # On case-insensitive volumes the second spelling already resolves to the first.
-  if [[ ! -e "$LIBS_DIR/$spelling" ]]; then
-    ln -s "$OPENSSL_HEADERS" "$LIBS_DIR/$spelling"
-    echo "libs/$spelling -> $OPENSSL_HEADERS"
-  else
-    echo "libs/$spelling already present"
-  fi
-done
+link_openssl_headers "$OPENSSL_HEADERS" "$LIBS_DIR"
 
 # A dangling symlink reads as "present" to [[ -e ]] only when it resolves, but a
 # symlink copied from a stale tree can point at a path that no longer exists.
