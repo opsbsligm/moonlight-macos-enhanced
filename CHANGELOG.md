@@ -13,6 +13,20 @@ Apple Silicon hardware.
 
 ### Fixed
 
+- **The CI pipeline never started.** `build.yml` carried a step with a name and
+  no command, and the step after it with two commands. GitHub loads neither: the
+  run after that commit reported failure inside a minute, which is no time at all
+  for a job that cross-compiles two architectures, and there was no job list to
+  read. A workflow that dies while being parsed leaves no log to diagnose, so the
+  pipeline looked broken rather than miswritten. The syntax step in the same job
+  reported success throughout, because `yaml.safe_load` tolerates both shapes: it
+  keeps the last duplicate key and never asks whether a step can execute. That
+  step now runs `scripts/workflow-audit.py`, which checks the eighteen rules a
+  plain parse cannot see -- one per fixture, plus a control that proves a
+  reference to a committed script stays quiet -- and it installs its own parser,
+  because the runner image does not promise PyYAML and a guard that silently loses
+  its dependency reports success while checking nothing.
+
 - **No key could be held down, and two keys could not overlap.** The key
   equivalent gate in `StreamViewController+MouseCapture.m` ended by calling
   `keyDown:` and `keyUp:` back to back for every key it had not consumed, then

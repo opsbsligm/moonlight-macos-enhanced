@@ -33,6 +33,18 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
+    - name: Set up Python for the audits
+      # The workflow audit needs PyYAML, which the runner image does not promise.
+      # A guard that silently loses its parser is worse than no guard, because it
+      # reports success while checking nothing. One pinned interpreter and one
+      # pinned parser keep the failure loud.
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+
+    - name: Install the parser used by the workflow audit
+      run: python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
+
     - name: Verify localization coverage
       run: python3 scripts/l10n-audit.py
 
@@ -56,9 +68,14 @@ jobs:
       # any given commit the real tree usually refuses every candidate tag.
       run: python3 scripts/release-gate.py --self-test
 
-    - name: Verify workflow syntax and shell script hygiene
+    - name: Verify the workflow can actually run
+      # A plain yaml.safe_load accepts a step whose run: key was dropped, and a
+      # step with two run: keys. GitHub accepts neither: the run turns red before
+      # any job exists, so the pipeline reports failure with no job list and no
+      # log. These rules cover what a parse cannot see.
       run: |
-        python3 -c "import yaml; yaml.safe_load(open('.github/workflows/build.yml')); print('workflow yaml ok')"
+        python3 scripts/workflow-audit.py --self-test
+        python3 scripts/workflow-audit.py
         for script in scripts/*.sh; do
           bash -n "$script"
           echo "shell syntax ok: $script"
