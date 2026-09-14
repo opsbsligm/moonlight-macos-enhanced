@@ -40,6 +40,7 @@ jobs:
       run: python3 scripts/source-membership-audit.py
 
     - name: Verify project constraints
+      run: python3 scripts/constraints-audit.py
 
     - name: Verify the liquid glass rules
       # A glass look can be faked with a blur and a material, and the fake passes
@@ -48,7 +49,6 @@ jobs:
       run: |
         python3 scripts/liquid-glass-audit.py --self-test
         python3 scripts/liquid-glass-audit.py
-      run: python3 scripts/constraints-audit.py
 
     - name: Verify the release tag rule set
       # The gate below only helps if its rules are exercised on every change.
