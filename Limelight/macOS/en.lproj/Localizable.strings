@@ -83,7 +83,6 @@
 "MFI" = "MFI";
 "Desktop Sync" = "Desktop Sync";
 "Fast Response" = "Fast Response";
-"Compatibility" = "Compatibility";
 "GameController" = "GameController";
 "CoreHID" = "CoreHID";
 "Recommended" = "Recommended";
@@ -268,6 +267,7 @@
 "Add" = "Add";
 "Wake" = "Wake";
 "Close and Quit App" = "Close and Quit App";
+"Quit App" = "Quit App";
 "Disconnect from Stream" = "Disconnect from Stream";
 "Pointer & Scroll Tuning" = "Pointer & Scroll Tuning";
 
@@ -354,8 +354,6 @@
 "Paired" = "Paired";
 "Unpaired" = "Unpaired";
 "Online" = "Online";
-"Offline" = "Offline";
-"Unknown" = "Unknown";
 
 /* Microphone */
 "Microphone" = "Microphone";
@@ -509,7 +507,6 @@
 "Add Host" = "Add Host";
 "Preferences" = "Preferences";
 "Preferences…" = "Preferences…";
-"Settings" = "Settings";
 
 /* Host Menu */
 "Wake PC" = "Wake PC";
@@ -688,7 +685,6 @@
 "Allow Drawable Timeout" = "Allow Drawable Timeout";
 "Allow Drawable Timeout detail" = "Controls whether Metal Renderer allows drawable acquisition to time out while waiting on the window server.";
 "Hybrid" = "Hybrid";
-"Host" = "Host";
 "Client Override" = "Client Override";
 "Manual" = "Manual";
 "HDR Manual Luminance Host detail" = "Manual luminance only applies when HDR Metadata Source is set to Hybrid or Client Override.";
@@ -703,7 +699,6 @@
 "Mild" = "Mild";
 "Strong" = "Strong";
 "Conservative" = "Conservative";
-"Balanced" = "Balanced";
 "Peak" = "Peak";
 "Preserve Highlights" = "Preserve Highlights";
 "Preserve Midtones" = "Preserve Midtones";
@@ -789,26 +784,15 @@
 "Auto Sync" = "Auto Sync";
 
 /* In-Stream Control Center / Overlay Menu */
-"Mouse" = "Mouse";
 "Locked Mouse Mode" = "Locked Mouse Mode";
-"Free Mouse Movement" = "Free Mouse Movement";
-"Desktop Sync" = "Desktop Sync";
-"Fast Response" = "Fast Response";
 "Lock Mouse to Window" = "Lock Mouse to Window";
 "Scroll Mode" = "Scroll Mode";
-"High Precision" = "High Precision";
-"Notched" = "Notched";
-"Physical Wheel Mode" = "Physical Wheel Mode";
-"High Precision Wheel Speed" = "High Precision Wheel Speed";
 "Keyboard" = "Keyboard";
 "Touch Keyboard" = "Touch Keyboard";
-"Controller" = "Controller";
 "Auto Gamepad" = "Auto Gamepad";
 "Disable" = "Disable";
 "Xbox 360 Controller" = "Xbox 360 Controller";
 "DS4 Controller" = "DS4 Controller";
-"Reconnect Stream" = "Reconnect Stream";
-"Window" = "Window";
 "Window Mode" = "Window Mode";
 "Fullscreen Mode" = "Fullscreen Mode";
 "Borderless Window" = "Borderless Window";
@@ -822,17 +806,11 @@
 "Auto Bitrate" = "Auto";
 "Custom Bitrate" = "Custom";
 "Apply" = "Apply";
-"Audio" = "Audio";
-"Volume" = "Volume";
 "Network" = "Network";
-"Connection Method" = "Connection Method";
-"Auto (Recommended)" = "Auto (Recommended)";
 "Logs" = "Logs";
 "Show Log" = "Show Log";
 "Copy Log" = "Copy Log";
 "More" = "More";
-"Close and Quit App" = "Close and Quit App";
-"Disconnect from Stream" = "Disconnect from Stream";
 "Press and hold modifier keys to release mouse" = "Press and hold modifier keys to release mouse";
 "Move mouse outside window to release" = "Move mouse outside window to release";
 "Show control center to release mouse" = "Show control center to release mouse";
@@ -861,3 +839,96 @@
 "Raw" = "Raw";
 "Raw Line" = "Raw Line";
 "Search keyword / host / error code / category" = "Search keyword / host / error code / category";
+
+/* Connection editor (endpoints, sources, status) */
+"Connection options - %@" = "Connection options - %@";
+"Default connection" = "Default connection";
+"This session's connection" = "This session's connection";
+"Address" = "Address";
+"Source" = "Source";
+"Add address (IP / hostname / IPv6, port optional)" = "Add address (IP / hostname / IPv6, port optional)";
+"Remove" = "Remove";
+"Test all" = "Test all";
+"No default (automatic)" = "No default (automatic)";
+"Current" = "Current";
+"LAN" = "LAN";
+"Internet" = "Internet";
+"Manual address" = "Manual address";
+"Online (%d ms)" = "Online (%d ms)";
+"Host status: %@" = "Host status: %@";
+"Automatic choice: %@" = "Automatic choice: %@";
+"Edit connection options" = "Edit connection options";
+"Saving a new address replaces the current connection options." = "Saving a new address replaces the current connection options.";
+
+/* Local network permission repair, and the diagnostic report heading */
+"===== Moonlight connection diagnostic report =====\n" = "===== Moonlight connection diagnostic report =====\n";
+"tccutil reset succeeded" = "tccutil reset succeeded";
+"tccutil reset failed (exit=%d). Turn the Local Network switch off and on again by hand in System Settings." = "tccutil reset failed (exit=%d). Turn the Local Network switch off and on again by hand in System Settings.";
+"Local network permission was reset, please allow access" = "Local network permission was reset, please allow access";
+"Resetting the local network permission failed" = "Resetting the local network permission failed";
+"macOS is about to ask whether Moonlight may access your local network. Tap Allow." = "macOS is about to ask whether Moonlight may access your local network. Tap Allow.";
+"If that prompt does not appear, turn Moonlight on by hand in:" = "If that prompt does not appear, turn Moonlight on by hand in:";
+"System Settings → Privacy & Security → Local Network → Moonlight" = "System Settings → Privacy & Security → Local Network → Moonlight";
+"The full diagnostic report was written to the console log (Help → Diagnose Connection Problems can rerun it at any time)." = "The full diagnostic report was written to the console log (Help → Diagnose Connection Problems can rerun it at any time).";
+"Open Local Network Settings" = "Open Local Network Settings";
+"Got it" = "Got it";
+"Moonlight cannot find your game host?" = "Moonlight cannot find your game host?";
+"Hosts are usually missing because Local Network permission has not been granted." = "Hosts are usually missing because Local Network permission has not been granted.";
+"Work through these steps:" = "Work through these steps:";
+"1. Open System Settings → Privacy & Security → Local Network and turn Moonlight on" = "1. Open System Settings → Privacy & Security → Local Network and turn Moonlight on";
+"2. If macOS never showed the Local Network prompt, run Help → Diagnose Connection Problems" = "2. If macOS never showed the Local Network prompt, run Help → Diagnose Connection Problems";
+"3. You can also press the + button at the top right of the main window and add the host address by hand." = "3. You can also press the + button at the top right of the main window and add the host address by hand.";
+"Diagnose Connection Problems…" = "Diagnose Connection Problems…";
+
+/* Connection timeout overlay, log overlay and its controls */
+"The host is still starting or resuming the stream, which takes far longer than the video stage.\nYou can keep waiting, reconnect by hand, or leave and re-enter." = "The host is still starting or resuming the stream, which takes far longer than the video stage.\nYou can keep waiting, reconnect by hand, or leave and re-enter.";
+"The host is slow to start" = "The host is slow to start";
+"Reconnect timed out" = "Reconnect timed out";
+"Reconnecting is taking far too long and the connection may already be gone.\nCheck the network, or adjust the settings." = "Reconnecting is taking far too long and the connection may already be gone.\nCheck the network, or adjust the settings.";
+"The network is not responding, trying to reconnect…" = "The network is not responding, trying to reconnect…";
+"No video data has arrived for 15 seconds.\nCheck the network, or try one of the actions below." = "No video data has arrived for 15 seconds.\nCheck the network, or try one of the actions below.";
+"The connection is unstable or there is no picture" = "The connection is unstable or there is no picture";
+"Try reconnecting" = "Try reconnecting";
+"Keep waiting" = "Keep waiting";
+"Stop streaming" = "Stop streaming";
+"Display mode" = "Display mode";
+"Connection" = "Connection";
+"Recommended profile" = "Recommended profile";
+"View log" = "View log";
+"Copy log" = "Copy log";
+"Connection problem" = "Connection problem";
+"Unknown error" = "Unknown error";
+"Local" = "Local";
+"Public" = "Public";
+"Default" = "Default";
+"No addresses available" = "No addresses available";
+"Default log" = "Default log";
+"All levels" = "All levels";
+"Resume updates" = "Resume updates";
+"Pause updates" = "Pause updates";
+"Pause scrolling" = "Pause scrolling";
+"Resume scrolling" = "Resume scrolling";
+"Copy raw log" = "Copy raw log";
+"Copy default log" = "Copy default log";
+"Copied" = "Copied";
+"Latest" = "Latest";
+"From now on" = "From now on";
+"Search=%@" = "Search=%@";
+"Showing %1$lu lines / %2$lu raw" = "Showing %1$lu lines / %2$lu raw";
+"Paused, %lu lines waiting" = "Paused, %lu lines waiting";
+"Showing 0 lines" = "Showing 0 lines";
+
+/* Stream health badge and the custom resolution and frame rate sheets */
+"Stuck %lus" = "Stuck %lus";
+"High packet loss" = "High packet loss";
+"Custom resolution and frame rate" = "Custom resolution and frame rate";
+"Enter the resolution (width x height) and frame rate (FPS) you want.\nA value of 0 leaves the choice to the host, which is not recommended." = "Enter the resolution (width x height) and frame rate (FPS) you want.\nA value of 0 leaves the choice to the host, which is not recommended.";
+"Width:" = "Width:";
+"Height:" = "Height:";
+
+/* Custom frame rate sheet */
+"Custom frame rate" = "Custom frame rate";
+"Enter the frame rate you want, in FPS." = "Enter the frame rate you want, in FPS.";
+
+/* Application name, shown as the window title */
+"Moonlight" = "Moonlight";

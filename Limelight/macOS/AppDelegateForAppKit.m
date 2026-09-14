@@ -8,6 +8,7 @@
 
 #import "AppDelegateForAppKit.h"
 #import "DatabaseSingleton.h"
+#import "Localization.h"
 #import "AboutViewController.h"
 #import "NSWindow+Moonlight.h"
 #import "NSResponder+Moonlight.h"
@@ -1011,7 +1012,7 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 
     // Add separator + "Diagnose Connection" item
     [helpMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *diagnoseItem = [helpMenu addItemWithTitle:@"诊断连接问题…"
+    NSMenuItem *diagnoseItem = [helpMenu addItemWithTitle:MLString(@"Diagnose Connection Problems…", nil)
                                                    action:@selector(repairLocalNetworkPermission)
                                             keyEquivalent:@""];
     [diagnoseItem setTarget:self];
@@ -1174,7 +1175,7 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
         @autoreleasepool {
             // Collect full diagnostics FIRST so we always know what state things were in.
             NSMutableString *report = [NSMutableString stringWithString:
-                @"===== Moonlight 连接诊断报告 =====\n"];
+                MLString(@"===== Moonlight connection diagnostic report =====\n", nil)];
             [report appendFormat:@"Bundle ID: %@\n", bundleID];
             [report appendFormat:@"App path: %@\n", [[NSBundle mainBundle] bundlePath]];
 
@@ -1234,24 +1235,29 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
             dispatch_async(dispatch_get_main_queue(), ^{
                 NSAlert *alert = [[NSAlert alloc] init];
                 NSString *resetSummary = resetExit == 0
-                    ? @"tccutil reset 结果：成功"
+                    ? MLString(@"tccutil reset succeeded", nil)
                     : [NSString stringWithFormat:
-                       @"tccutil reset 结果：失败（exit=%d）。请手动前往系统设置关闭再开启本地网络开关。",
+                       MLString(@"tccutil reset failed (exit=%d). Turn the Local Network switch off and on again by hand in System Settings.", nil),
                        resetExit];
                 [alert setMessageText:resetExit == 0
-                    ? @"本地网络权限已重置，请允许访问"
-                    : @"本地网络权限重置失败"];
-                [alert setInformativeText:
-                 [NSString stringWithFormat:
-                  @"系统很快会弹出「Moonlight 想要访问本地网络」的对话框，请务必点击「允许」。\n\n"
-                  @"如果对话框没有出现，请手动前往：\n"
-                  @"系统设置 → 隐私与安全性 → 本地网络 → 开启 Moonlight。\n\n"
-                  @"%@\n%@\n\n"
-                  @"完整诊断已写入控制台日志（帮助 → 诊断连接问题 可随时重新运行）。",
-                  resetSummary, resetOut.length > 0 ? resetOut : @""]];
+                    ? MLString(@"Local network permission was reset, please allow access", nil)
+                    : MLString(@"Resetting the local network permission failed", nil)];
+                // One key per sentence rather than one key for the whole paragraph:
+                // the paragraph is assembled from four sentences plus the two command
+                // outputs, and a language table line that carries four sentences and
+                // two %@ slots is a line no translator can safely edit.
+                NSMutableArray<NSString *> *guidance = [NSMutableArray arrayWithArray:@[
+                    MLString(@"macOS is about to ask whether Moonlight may access your local network. Tap Allow.", nil),
+                    MLString(@"If that prompt does not appear, turn Moonlight on by hand in:", nil),
+                    MLString(@"System Settings → Privacy & Security → Local Network → Moonlight", nil),
+                ]];
+                [guidance addObject:[NSString stringWithFormat:@"%@\n%@",
+                                     resetSummary, resetOut.length > 0 ? resetOut : @""]];
+                [guidance addObject:MLString(@"The full diagnostic report was written to the console log (Help → Diagnose Connection Problems can rerun it at any time).", nil)];
+                [alert setInformativeText:[guidance componentsJoinedByString:@"\n\n"]];
                 [alert setAlertStyle:NSAlertStyleInformational];
-                [alert addButtonWithTitle:@"打开本地网络设置"];
-                [alert addButtonWithTitle:@"知道了"];
+                [alert addButtonWithTitle:MLString(@"Open Local Network Settings", nil)];
+                [alert addButtonWithTitle:MLString(@"Got it", nil)];
                 NSWindow *window = [NSApp mainWindow] ?: [[NSApp windows] firstObject];
                 [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse rc) {
                     if (rc == NSAlertFirstButtonReturn) {
@@ -1304,14 +1310,18 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
     if (window == nil) return;
 
     NSAlert *alert = [[NSAlert alloc] init];
-    [alert setMessageText:@"Moonlight 无法发现游戏主机？"];
-    [alert setInformativeText:@"找不到主机通常是因为本地网络权限没有开启。\n\n请完成以下步骤：\n\n"
-     @"① 打开 系统设置 → 隐私与安全性 → 本地网络，开启 Moonlight\n\n"
-     @"② 如果系统之前没有弹出过「本地网络」权限提示，可以点击 帮助 → 诊断连接问题\n\n"
-     @"③ 也可以点击主窗口右上角「+」按钮手动输入主机 IP 地址直接添加。"];
+    [alert setMessageText:MLString(@"Moonlight cannot find your game host?", nil)];
+    NSArray<NSString *> *steps = @[
+        MLString(@"Hosts are usually missing because Local Network permission has not been granted.", nil),
+        MLString(@"Work through these steps:", nil),
+        MLString(@"1. Open System Settings → Privacy & Security → Local Network and turn Moonlight on", nil),
+        MLString(@"2. If macOS never showed the Local Network prompt, run Help → Diagnose Connection Problems", nil),
+        MLString(@"3. You can also press the + button at the top right of the main window and add the host address by hand.", nil),
+    ];
+    [alert setInformativeText:[steps componentsJoinedByString:@"\n\n"]];
     [alert setAlertStyle:NSAlertStyleWarning];
-    [alert addButtonWithTitle:@"打开本地网络设置"];
-    [alert addButtonWithTitle:@"知道了"];
+    [alert addButtonWithTitle:MLString(@"Open Local Network Settings", nil)];
+    [alert addButtonWithTitle:MLString(@"Got it", nil)];
     [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse returnCode) {
         if (returnCode == NSAlertFirstButtonReturn) {
             NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"];

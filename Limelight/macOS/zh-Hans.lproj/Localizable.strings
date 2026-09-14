@@ -11,8 +11,10 @@
 /* Stream Settings */
 "Resolution and FPS" = "分辨率与帧率";
 "Resolution" = "分辨率";
+"Match Display" = "跟随屏幕";
 "Custom" = "自定义";
 "Custom Resolution" = "自定义分辨率";
+"Frame Rate" = "帧率";
 "FPS" = "帧率";
 "Custom FPS" = "自定义帧率";
 "Bitrate" = "比特率";
@@ -81,7 +83,6 @@
 "MFI" = "MFI";
 "Desktop Sync" = "桌面同步";
 "Fast Response" = "快速响应";
-"Compatibility" = "兼容";
 "GameController" = "GameController";
 "CoreHID" = "CoreHID";
 "Recommended" = "推荐";
@@ -322,7 +323,7 @@
 
 /* Connection Method */
 "Connection Method" = "连接方式";
-"Auto (Recommended)" = "自动 (推荐)";
+"Auto (Recommended)" = "自动（推荐）";
 "Native Renderer (Recommended)" = "原生渲染器（推荐）";
 "Default Profile" = "默认配置";
 "Default Profile Scope" = "作为默认配置应用到所有主机，除非某台主机单独覆盖。";
@@ -353,8 +354,6 @@
 "Paired" = "已配对";
 "Unpaired" = "未配对";
 "Online" = "在线";
-"Offline" = "离线";
-"Unknown" = "未知";
 
 /* Microphone Settings */
 "Microphone" = "麦克风";
@@ -389,7 +388,7 @@
 "Steady" = "常规";
 "Aggressive" = "高规格";
 "Extreme" = "超高规格";
-"Balanced" = "常规";
+"Balanced" = "均衡";
 "High-Spec" = "高规格";
 "Ultra-Spec" = "超高规格";
 "LAN Direct" = "局域网直连";
@@ -509,7 +508,6 @@
 "Add Host" = "添加主机";
 "Preferences" = "偏好设置";
 "Preferences…" = "偏好设置…";
-"Settings" = "设置";
 
 /* Host Menu */
 "Wake PC" = "唤醒主机";
@@ -687,7 +685,6 @@
 "Allow Drawable Timeout" = "允许 Drawable 超时";
 "Allow Drawable Timeout detail" = "控制 Metal 渲染器在等待窗口服务器时，是否允许 drawable 获取超时。";
 "Hybrid" = "混合";
-"Host" = "主机";
 "Client Override" = "本机覆盖";
 "Manual" = "手动";
 "HDR Manual Luminance Host detail" = "手动亮度只会在 HDR 元数据来源设为“混合”或“本机覆盖”时生效。";
@@ -702,7 +699,6 @@
 "Mild" = "轻度";
 "Strong" = "强";
 "Conservative" = "保守";
-"Balanced" = "均衡";
 "Peak" = "峰值";
 "Preserve Highlights" = "保高光";
 "Preserve Midtones" = "保中间调";
@@ -788,26 +784,15 @@
 "Auto Sync" = "自动同步";
 
 /* In-Stream Control Center / Overlay Menu */
-"Mouse" = "鼠标";
 "Locked Mouse Mode" = "锁定鼠标模式";
-"Free Mouse Movement" = "自由鼠标移动";
-"Desktop Sync" = "桌面同步";
-"Fast Response" = "快速响应";
 "Lock Mouse to Window" = "锁定鼠标在窗口";
 "Scroll Mode" = "滚动模式";
-"High Precision" = "高精度";
-"Notched" = "段落式";
-"Physical Wheel Mode" = "物理滚轮模式";
-"High Precision Wheel Speed" = "高精度滚轮速度";
 "Keyboard" = "键盘";
 "Touch Keyboard" = "触摸键盘";
-"Controller" = "手柄";
 "Auto Gamepad" = "自动手柄";
 "Disable" = "禁用";
 "Xbox 360 Controller" = "Xbox 360 手柄";
 "DS4 Controller" = "DS4 手柄";
-"Reconnect Stream" = "重连";
-"Window" = "窗口";
 "Window Mode" = "窗口模式";
 "Fullscreen Mode" = "全屏模式";
 "Borderless Window" = "无边框窗口";
@@ -821,17 +806,11 @@
 "Auto Bitrate" = "自动";
 "Custom Bitrate" = "自定义";
 "Apply" = "应用";
-"Audio" = "声音";
-"Volume" = "音量";
 "Network" = "网络";
-"Connection Method" = "连接方式";
-"Auto (Recommended)" = "自动（推荐）";
 "Logs" = "日志";
 "Show Log" = "显示日志";
 "Copy Log" = "复制日志";
 "More" = "更多";
-"Close and Quit App" = "关闭并退出应用";
-"Disconnect from Stream" = "退出串流";
 "Press and hold modifier keys to release mouse" = "长按修饰键释放鼠标";
 "Move mouse outside window to release" = "把鼠标移到窗口外即可释放";
 "Show control center to release mouse" = "打开控制中心释放鼠标";
@@ -860,3 +839,96 @@
 "Raw" = "原始";
 "Raw Line" = "原始行";
 "Search keyword / host / error code / category" = "搜索关键字 / 主机 / 错误码 / 分类";
+
+/* Connection editor (endpoints, sources, status) */
+"Connection options - %@" = "连接方式 - %@";
+"Default connection" = "默认连接方式";
+"This session's connection" = "本次连接方式";
+"Address" = "地址";
+"Source" = "来源";
+"Add address (IP / hostname / IPv6, port optional)" = "添加地址（IP/域名/IPv6，可含端口）";
+"Remove" = "删除";
+"Test all" = "测速全部";
+"No default (automatic)" = "不设默认（自动）";
+"Current" = "当前";
+"LAN" = "局域网";
+"Internet" = "外网";
+"Manual address" = "手动地址";
+"Online (%d ms)" = "在线 (%d ms)";
+"Host status: %@" = "主机状态：%@";
+"Automatic choice: %@" = "自动选择：%@";
+"Edit connection options" = "编辑连接方式";
+"Saving a new address replaces the current connection options." = "修改地址后会替换当前连接方式";
+
+/* Local network permission repair, and the diagnostic report heading */
+"===== Moonlight connection diagnostic report =====\n" = "===== Moonlight 连接诊断报告 =====\n";
+"tccutil reset succeeded" = "tccutil reset 结果：成功";
+"tccutil reset failed (exit=%d). Turn the Local Network switch off and on again by hand in System Settings." = "tccutil reset 结果：失败（exit=%d）。请手动前往系统设置关闭再开启本地网络开关。";
+"Local network permission was reset, please allow access" = "本地网络权限已重置，请允许访问";
+"Resetting the local network permission failed" = "本地网络权限重置失败";
+"macOS is about to ask whether Moonlight may access your local network. Tap Allow." = "系统很快会弹出「Moonlight 想要访问本地网络」的对话框，请务必点击「允许」。";
+"If that prompt does not appear, turn Moonlight on by hand in:" = "如果对话框没有出现，请手动前往：";
+"System Settings → Privacy & Security → Local Network → Moonlight" = "系统设置 → 隐私与安全性 → 本地网络 → 开启 Moonlight。";
+"The full diagnostic report was written to the console log (Help → Diagnose Connection Problems can rerun it at any time)." = "完整诊断已写入控制台日志（帮助 → 诊断连接问题 可随时重新运行）。";
+"Open Local Network Settings" = "打开本地网络设置";
+"Got it" = "知道了";
+"Moonlight cannot find your game host?" = "Moonlight 无法发现游戏主机？";
+"Hosts are usually missing because Local Network permission has not been granted." = "找不到主机通常是因为本地网络权限没有开启。";
+"Work through these steps:" = "请完成以下步骤：";
+"1. Open System Settings → Privacy & Security → Local Network and turn Moonlight on" = "① 打开 系统设置 → 隐私与安全性 → 本地网络，开启 Moonlight";
+"2. If macOS never showed the Local Network prompt, run Help → Diagnose Connection Problems" = "② 如果系统之前没有弹出过「本地网络」权限提示，可以点击 帮助 → 诊断连接问题";
+"3. You can also press the + button at the top right of the main window and add the host address by hand." = "③ 也可以点击主窗口右上角「+」按钮手动输入主机 IP 地址直接添加。";
+"Diagnose Connection Problems…" = "诊断连接问题…";
+
+/* Connection timeout overlay, log overlay and its controls */
+"The host is still starting or resuming the stream, which takes far longer than the video stage.\nYou can keep waiting, reconnect by hand, or leave and re-enter." = "主机仍在启动或恢复串流，会比视频阶段慢很多。\n可继续等待，或手动重连 / 返回后重新进入。";
+"The host is slow to start" = "主机启动较慢";
+"Reconnect timed out" = "重连超时";
+"Reconnecting is taking far too long and the connection may already be gone.\nCheck the network, or adjust the settings." = "重连过程耗时过长，连接可能已断开。\n请检查网络环境或调整设置。";
+"The network is not responding, trying to reconnect…" = "网络无响应，正在尝试重连…";
+"No video data has arrived for 15 seconds.\nCheck the network, or try one of the actions below." = "已持续 15 秒未接收到视频数据。\n请检查网络连接或尝试以下操作。";
+"The connection is unstable or there is no picture" = "连接不稳定或无画面";
+"Try reconnecting" = "尝试重连";
+"Keep waiting" = "继续等待";
+"Stop streaming" = "退出串流";
+"Display mode" = "显示模式";
+"Connection" = "连接方式";
+"Recommended profile" = "推荐档位";
+"View log" = "查看日志";
+"Copy log" = "复制日志";
+"Connection problem" = "连接异常";
+"Unknown error" = "未知错误";
+"Local" = "本地";
+"Public" = "公网";
+"Default" = "默认";
+"No addresses available" = "无可用地址";
+"Default log" = "默认日志";
+"All levels" = "全部级别";
+"Resume updates" = "继续更新";
+"Pause updates" = "暂停更新";
+"Pause scrolling" = "暂停滚动";
+"Resume scrolling" = "开启滚动";
+"Copy raw log" = "复制原始日志";
+"Copy default log" = "复制默认日志";
+"Copied" = "已复制";
+"Latest" = "最新";
+"From now on" = "从现在开始";
+"Search=%@" = "搜索=%@";
+"Showing %1$lu lines / %2$lu raw" = "显示 %1$lu 行 / 原始 %2$lu 条";
+"Paused, %lu lines waiting" = "暂停中，待处理 %lu 条";
+"Showing 0 lines" = "显示 0 行";
+
+/* Stream health badge and the custom resolution and frame rate sheets */
+"Stuck %lus" = "卡住 %lus";
+"High packet loss" = "高丢包";
+"Custom resolution and frame rate" = "自定义分辨率与帧率";
+"Enter the resolution (width x height) and frame rate (FPS) you want.\nA value of 0 leaves the choice to the host, which is not recommended." = "请输入期望的分辨率（宽 x 高）和帧率（FPS）。\n设置为 0 代表由服务端决定（不建议）。";
+"Width:" = "宽:";
+"Height:" = "高:";
+
+/* Custom frame rate sheet */
+"Custom frame rate" = "自定义帧率";
+"Enter the frame rate you want, in FPS." = "请输入期望的帧率（FPS）。";
+
+/* Application name, shown as the window title */
+"Moonlight" = "Moonlight";

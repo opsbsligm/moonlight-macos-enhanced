@@ -947,10 +947,10 @@
 
 - (NSString *)currentStreamHealthBadgeText {
     if (self.streamHealthNoPayloadStreak > 0) {
-        return [NSString stringWithFormat:@"卡住%lus", (unsigned long)self.streamHealthNoPayloadStreak];
+        return [NSString stringWithFormat:MLString(@"Stuck %lus", nil), (unsigned long)self.streamHealthNoPayloadStreak];
     }
     if (self.streamHealthHighDropStreak >= 2) {
-        return @"高丢包";
+        return MLString(@"High packet loss", nil);
     }
     return MLString(@"Control Center", nil);
 }
@@ -1363,6 +1363,7 @@
 
     // 二级：窗口
     NSMenuItem *windowItem = [[NSMenuItem alloc] initWithTitle:MLString(@"Window", nil) action:nil keyEquivalent:@""];
+    windowItem.tag = StreamMenuSectionWindow;
     setSymbol(windowItem, @"macwindow");
     NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:MLString(@"Window", nil)]; 
 
@@ -1412,6 +1413,7 @@
 
     // 二级：屏幕（分辨率/帧率）
     NSMenuItem *monitorItem = [[NSMenuItem alloc] initWithTitle:MLString(@"Monitor", nil) action:nil keyEquivalent:@""];
+    monitorItem.tag = StreamMenuSectionMonitor;
     setSymbol(monitorItem, @"display");
     NSMenu *monitorMenu = [[NSMenu alloc] initWithTitle:MLString(@"Monitor", nil)];
 
@@ -1547,6 +1549,7 @@
 
     // 二级：画质（码率）
     NSMenuItem *qualityItem = [[NSMenuItem alloc] initWithTitle:MLString(@"Quality", nil) action:nil keyEquivalent:@""];
+    qualityItem.tag = StreamMenuSectionQuality;
     setSymbol(qualityItem, @"sparkles");
     NSMenu *qualityMenu = [[NSMenu alloc] initWithTitle:MLString(@"Quality", nil)];
 
@@ -1835,16 +1838,16 @@
 
 - (void)selectCustomResolutionFromMenu:(id)sender {
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"自定义分辨率与帧率";
-    alert.informativeText = @"请输入期望的分辨率（宽 x 高）和帧率（FPS）。\n设置为 0 代表由服务端决定（不建议）。";
-    [alert addButtonWithTitle:@"确定"];
-    [alert addButtonWithTitle:@"取消"];
+    alert.messageText = MLString(@"Custom resolution and frame rate", nil);
+    alert.informativeText = MLString(@"Enter the resolution (width x height) and frame rate (FPS) you want.\nA value of 0 leaves the choice to the host, which is not recommended.", nil);
+    [alert addButtonWithTitle:MLString(@"OK", nil)];
+    [alert addButtonWithTitle:MLString(@"Cancel", nil)];
     
     NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
     
     // Width
     NSTextField *widthLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 75, 50, 20)];
-    widthLabel.stringValue = @"宽:";
+    widthLabel.stringValue = MLString(@"Width:", nil);
     widthLabel.bezeled = NO;
     widthLabel.drawsBackground = NO;
     widthLabel.alignment = NSTextAlignmentRight;
@@ -1856,7 +1859,7 @@
     
     // Height
     NSTextField *heightLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 45, 50, 20)];
-    heightLabel.stringValue = @"高:";
+    heightLabel.stringValue = MLString(@"Height:", nil);
     heightLabel.bezeled = NO;
     heightLabel.drawsBackground = NO;
     heightLabel.alignment = NSTextAlignmentRight;
@@ -1965,10 +1968,10 @@
 
 - (void)selectCustomFpsFromMenu:(id)sender {
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"自定义帧率";
-    alert.informativeText = @"请输入期望的帧率（FPS）。";
-    [alert addButtonWithTitle:@"确定"];
-    [alert addButtonWithTitle:@"取消"];
+    alert.messageText = MLString(@"Custom frame rate", nil);
+    alert.informativeText = MLString(@"Enter the frame rate you want, in FPS.", nil);
+    [alert addButtonWithTitle:MLString(@"OK", nil)];
+    [alert addButtonWithTitle:MLString(@"Cancel", nil)];
     
     NSTextField *fpsField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 200, 24)];
     fpsField.placeholderString = @"60";

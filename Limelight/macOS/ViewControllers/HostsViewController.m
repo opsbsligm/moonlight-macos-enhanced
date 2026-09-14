@@ -180,7 +180,10 @@
 
     [SettingsWindowObjCBridge syncSelectedProfileWithHostId:nil];
     
-    self.parentViewController.title = @"Moonlight";
+    // The brand name does not change between languages, but routing it through the
+    // tables keeps one rule true: nothing user-visible is a bare literal, so the
+    // localizability checker has exactly one question to ask of every string here.
+    self.parentViewController.title = NSLocalizedString(@"Moonlight", @"Application name");
     self.parentViewController.view.window.subtitle = [Helpers versionNumberString];
 
     [self.parentViewController.view.window moonlight_toolbarItemForAction:@selector(addHostButtonClicked:)].enabled = YES;

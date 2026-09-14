@@ -10,6 +10,7 @@
 #import "AppsWorkspaceViewController.h"
 #import "NSWindow+Moonlight.h"
 #import "Helpers.h"
+#import "Localization.h"
 #import "Moonlight-Swift.h"
 
 @interface CustomSearchField : NSSearchField
@@ -120,9 +121,13 @@ static NSString * const MoonlightSearchToolbarItemIdentifier = @"NewSearchToolba
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier willBeInsertedIntoToolbar:(BOOL)flag {
     if ([itemIdentifier isEqualToString:MoonlightSidebarToggleToolbarItemIdentifier]) {
         NSToolbarItem *sidebarItem = [[NSToolbarItem alloc] initWithItemIdentifier:itemIdentifier];
-        sidebarItem.label = @"Toggle Sidebar";
-        sidebarItem.paletteLabel = @"Toggle Sidebar";
-        sidebarItem.toolTip = @"Toggle Sidebar";
+        // One lookup for all three. AppKit reads the label, the customisation-list
+        // name and the tooltip through different paths, and they were three copies of
+        // one English literal, so a translation had to land three times.
+        NSString *toggleTitle = MLString(@"Toggle Sidebar", nil);
+        sidebarItem.label = toggleTitle;
+        sidebarItem.paletteLabel = toggleTitle;
+        sidebarItem.toolTip = toggleTitle;
         sidebarItem.target = self;
         sidebarItem.action = @selector(toggleSidebar:);
         sidebarItem.enabled = NO;
@@ -138,7 +143,7 @@ static NSString * const MoonlightSearchToolbarItemIdentifier = @"NewSearchToolba
         NSButton *button = [NSButton buttonWithImage:sidebarImage target:self action:@selector(toggleSidebar:)];
         button.bezelStyle = NSBezelStyleTexturedRounded;
         button.imagePosition = NSImageOnly;
-        button.toolTip = [[LanguageManager shared] localize:@"Toggle Sidebar"];
+        button.toolTip = toggleTitle;
         sidebarItem.view = button;
 
         return sidebarItem;

@@ -489,8 +489,14 @@ static void AppendCuratedLineWithWarnSuppression(NSString *line, LogLevel level)
         } else {
             if (suppressed > 0) {
                 summaryLine = FormatLogLine(LOG_W,
-                                            [NSString stringWithFormat:@"[curated] %.1fs 内重复 %ld 次（最后一条：%@）",
-                                                                       kWarnRepeatSuppressWindowSec, (long)suppressed, line]);
+                                            // The marker is the contract with the log browser, which groups
+                                            // these summaries into one foldable row. It used to be Chinese
+                                            // prose, so the browser had to compare the words of a language
+                                            // it does not know, and a rewording of this sentence silently
+                                            // stopped the folding. The marker is ASCII now; the text a
+                                            // reader sees is translated where it is rendered.
+                                            [NSString stringWithFormat:@"[curated] repeated %ld time(s) within %.1fs (last: %@)",
+                                                                       (long)suppressed, kWarnRepeatSuppressWindowSec, line]);
             }
             entry[@"suppressed"] = @(0);
             entry[@"last"] = @(now);

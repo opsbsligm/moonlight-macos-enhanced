@@ -26,12 +26,26 @@
 #import <Carbon/Carbon.h>
 #include <arpa/inet.h>
 
-#define MLString(key, comment) [[LanguageManager shared] localize:key]
+#import "Localization.h"
 
 #include "Limelight.h"
 #include "Limelight-internal.h"
 
 @import VideoToolbox;
+
+// Which stream-menu submenu a button of the connection-timeout overlay should open.
+// The overlay used to look those items up by their title, comparing against a
+// Chinese literal: `if ([item.title isEqualToString:@"屏幕"])`. The titles are
+// localized, so that comparison only worked in the Chinese interface -- in English
+// the loop matched nothing, `popUpMenuPositioningItem:` was never reached, and the
+// Resolution, Bitrate and Display Mode buttons did nothing at all without saying so.
+// A tag is AppKit's contract for "this item, in whatever language it is wearing",
+// and it is set where the item is built rather than assumed from what it says.
+typedef NS_ENUM(NSInteger, StreamMenuSection) {
+    StreamMenuSectionWindow = 7201,
+    StreamMenuSectionMonitor = 7202,
+    StreamMenuSectionQuality = 7203,
+};
 
 typedef NS_ENUM(NSInteger, PendingWindowMode) {
     PendingWindowModeNone,
