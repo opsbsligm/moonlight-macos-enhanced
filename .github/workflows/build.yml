@@ -42,6 +42,12 @@ jobs:
     - name: Verify project constraints
       run: python3 scripts/constraints-audit.py
 
+    - name: Verify the release tag rule set
+      # The gate below only helps if its rules are exercised on every change.
+      # These fixtures are the only place the accept path is checked, because on
+      # any given commit the real tree usually refuses every candidate tag.
+      run: python3 scripts/release-gate.py --self-test
+
     - name: Verify workflow syntax and shell script hygiene
       run: |
         python3 -c "import yaml; yaml.safe_load(open('.github/workflows/build.yml')); print('workflow yaml ok')"
@@ -127,6 +133,15 @@ jobs:
       # wider one, then rebuilds the previous semantics to prove the check
       # still notices the race.
       run: python3 scripts/input-concurrency-tests.py
+
+    - name: Verify video enhancement paths
+      # MetalFX scaling and VT frame interpolation are both object-creation
+      # APIs: the call succeeds, the build stays green and the feature can still
+      # do nothing. The probe rescales a test pattern on the GPU and counts
+      # interpolated edge pixels, then reads the interpolation slot count back
+      # out of the configuration, because a machine with no interpolation
+      # hardware still creates the configuration and still starts the session.
+      run: python3 scripts/video-enhancement-tests.py
 
     - name: Build ${{ matrix.display_name }} package
       run: |
@@ -436,6 +451,20 @@ jobs:
       with:
         name: Moonlight-macOS-dmg-universal
         path: dist
+
+    - name: Gate the release tag
+      # The version in the release title has to be the version inside the DMGs.
+      # A tag that disagrees with MARKETING_VERSION, with the build number this
+      # commit generates, with the changelog, or with an earlier release would
+      # publish an installable package whose identity is wrong, and the only fix
+      # afterwards is to withdraw a release people have already installed.
+      env:
+        TAG: ${{ github.ref_name }}
+      run: |
+        git fetch --force --tags --quiet
+        python3 scripts/release-gate.py \
+          --tag "$TAG" \
+          --existing-tags "$(git tag --list 'v*' | paste -sd, -)"
 
     - name: Get Version
       id: version

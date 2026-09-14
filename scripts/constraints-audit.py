@@ -120,6 +120,15 @@ check(not intel_labels,
 # errors that named neither missing input.
 check("./scripts/download-frameworks.sh" in workflow,
       "CI prepares vendored dependencies through the shared script")
+# The publish step has to stay behind the gate. Without it a mistyped tag is
+# published, withdrawn and re-tagged, and every install in between keeps a wrong
+# version string.
+release_job = workflow.split("\n  release:")[-1] if "\n  release:" in workflow else ""
+check("scripts/release-gate.py" in release_job,
+      "the release job gates the tag before publishing")
+check("scripts/release-gate.py --self-test" in workflow,
+      "the release tag rules are exercised on every change")
+
 check("scripts/video-enhancement-tests.py" in workflow,
       "CI measures the video enhancement paths instead of trusting object creation")
 
