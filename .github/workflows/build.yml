@@ -97,11 +97,17 @@ jobs:
         echo "Available schemes:"
         xcodebuild -list -project Moonlight.xcodeproj || true
 
-    - name: Download XCFrameworks
+    - name: Prepare vendored dependencies
+      # Run the same script a developer runs. This step used to duplicate the
+      # xcframework download inline, which drifted away from the script and left
+      # Packages/OpenSSL.xcframework and the libs/openssl header symlink absent
+      # on every runner, so both were missing before the compiler could report
+      # anything. One shared entry point keeps the two environments identical.
       run: |
-        curl -L -o xcframeworks.zip "https://github.com/coofdy/moonlight-mobile-deps/releases/download/latest/moonlight-apple-xcframeworks.zip"
-        unzip -o xcframeworks.zip -d xcframeworks/
+        ./scripts/download-frameworks.sh
         ls -la xcframeworks/
+        ls -la Packages/OpenSSL.xcframework/
+        ls -la libs/
 
     - name: Resolve build number
       # build-number.sh is a scheme PreAction and command-line xcodebuild ignores
