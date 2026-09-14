@@ -29,7 +29,14 @@ import SwiftUI
 private typealias Pane = SettingsPaneType
 
 struct LiquidGlassSettingsView: View {
-  @StateObject var settingsModel = SettingsModel()
+  // Owned by whoever presents the page (SettingsOverlayPresenter) rather than
+  // created inside SwiftUI's view identity. As a `@StateObject` the instance the
+  // user is looking at could not be reached from outside -- reading it through the
+  // hosting controller handed back a brand new model -- so nothing could check
+  // that what the page shows is what its own rules say. Keeping it outside also
+  // stops a settings model being rebuilt, with its Video Toolbox probe and its
+  // preference reads, every time SwiftUI recreates the view value.
+  @ObservedObject var settingsModel: SettingsModel
   @ObservedObject var languageManager = LanguageManager.shared
 
   @AppStorage("selected-settings-pane") private var selectedPane: Pane = .stream
@@ -39,9 +46,10 @@ struct LiquidGlassSettingsView: View {
   /// control and reports dismissal so the presenter can remove the page.
   var onClose: (() -> Void)?
 
-  init(hostId: String? = nil, onClose: (() -> Void)? = nil) {
+  init(hostId: String? = nil, onClose: (() -> Void)? = nil, settingsModel: SettingsModel? = nil) {
     self.hostId = hostId
     self.onClose = onClose
+    self.settingsModel = settingsModel ?? SettingsModel()
   }
 
   var body: some View {

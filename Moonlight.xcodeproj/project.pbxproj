@@ -146,6 +146,7 @@
 				macOS/ViewControllers/SettingsStreamPane.swift,
 				macOS/ViewControllers/SettingsVideoPane.swift,
 				"macOS/ViewControllers/SettingsModel+VideoPageRules.swift",
+				macOS/ViewControllers/DebugVideoProbeExpectations.swift,
 				macOS/ViewControllers/SettingsView.swift,
 				macOS/ViewControllers/LiquidGlass/SettingsOverlayPresenter.swift,
 				macOS/ViewControllers/LiquidGlass/LiquidGlassTabBar.swift,

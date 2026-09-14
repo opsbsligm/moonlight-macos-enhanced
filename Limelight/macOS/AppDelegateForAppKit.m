@@ -22,6 +22,7 @@
 #import "Moonlight-Swift.h"
 #import "DataManager.h"
 #import <objc/runtime.h>
+#import <ApplicationServices/ApplicationServices.h>
 
 typedef enum : NSUInteger {
     SystemTheme,
@@ -244,6 +245,279 @@ static void MLProbeRecordLayers(NSView *root, NSMutableDictionary<NSString *, NS
     }
 }
 
+// Any AppKit text field the page happens to use. SwiftUI draws its own text, so this
+// is usually short; it is recorded because it is an independent second channel
+// when it is populated, and its emptiness is itself a measurement.
+static void MLProbeCollectTextFields(NSView *root, NSMutableArray<NSDictionary *> *texts) {
+    NSMutableArray<NSView *> *queue = [NSMutableArray arrayWithObject:root];
+    while (queue.count && texts.count < 1200) {
+        NSView *view = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        if ([view isKindOfClass:[NSTextField class]]) {
+            NSTextField *field = (NSTextField *)view;
+            NSRect inWindow = [view convertRect:view.bounds toView:nil];
+            NSRect onScreen = view.window ? [view.window convertRectToScreen:inWindow] : inWindow;
+            NSString *string = field.stringValue.length ? field.stringValue : field.placeholderString;
+            if (string.length) {
+                [texts addObject:@{ @"text": string,
+                                    @"x": @((NSInteger)onScreen.origin.x),
+                                    @"y": @((NSInteger)onScreen.origin.y),
+                                    @"enabled": @([view isAccessibilityEnabled]) }];
+            }
+        }
+        [queue addObjectsFromArray:view.subviews];
+    }
+}
+
+// Turn the accessibility tree on. AppKit only builds the tree an assistive client
+// would read once something has actually asked for it through the accessibility
+// API, and that includes the SwiftUI elements behind a hosting view: measured, the
+// protocol returned a dozen nodes before this call and several hundred after. The
+// response is not usable from inside the process it queries -- the client API hands
+// back the application element referring to itself, with no window and no text --
+// so nothing here reads the result; the checker reads the tree in-process through
+// the AppKit protocol, which is populated once the request has been made.
+static void MLProbeActivateAccessibility(void) {
+    static BOOL requested = NO;
+    if (requested) {
+        return;
+    }
+    requested = YES;
+    AXUIElementRef app = AXUIElementCreateApplication(getpid());
+    CFTypeRef children = NULL;
+    AXUIElementCopyAttributeValue(app, kAXChildrenAttribute, &children);
+    if (children) CFRelease(children);
+    CFRelease(app);
+    MLProbeSpin(0.2);
+}
+
+// The in-process channel: AppKit's own accessibility protocol, which is what
+// AppKit answers when an assistive client reaches a view. Whether it is populated
+// is a measurement, not an assumption -- asked before the app finished launching
+// it came back empty for a page that was visibly drawing text.
+static void MLProbeCollectAppKitAXNodes(id element, NSUInteger depth, NSUInteger maxNodes,
+                                        NSMutableArray<NSDictionary *> *nodes) {
+    if (element == nil || nodes.count >= maxNodes || depth > 40) {
+        return;
+    }
+    if ([element isKindOfClass:[NSString class]] || [element isKindOfClass:[NSNumber class]]) {
+        return;
+    }
+    id<NSAccessibility> ax = (id<NSAccessibility>)element;
+    NSString *role = nil, *label = nil, *title = nil, *value = nil;
+    BOOL enabled = YES;
+    NSRect frame = NSZeroRect;
+    if ([ax respondsToSelector:@selector(accessibilityRole)]) role = [ax accessibilityRole];
+    if ([ax respondsToSelector:@selector(accessibilityLabel)]) label = [ax accessibilityLabel];
+    if ([ax respondsToSelector:@selector(accessibilityTitle)]) title = [ax accessibilityTitle];
+    if ([ax respondsToSelector:@selector(accessibilityValue)]) {
+        id rawValue = [ax accessibilityValue];
+        if ([rawValue isKindOfClass:[NSString class]] || [rawValue isKindOfClass:[NSNumber class]]) {
+            value = [rawValue description];
+        }
+    }
+    if ([ax respondsToSelector:@selector(isAccessibilityEnabled)]) enabled = [ax isAccessibilityEnabled];
+    if ([ax respondsToSelector:@selector(accessibilityFrame)]) frame = [ax accessibilityFrame];
+
+    BOOL carriesText = label.length > 0 || title.length > 0 || value.length > 0;
+    BOOL isControl = [role containsString:@"Button"] || [role containsString:@"CheckBox"]
+                     || [role containsString:@"RadioButton"] || [role containsString:@"Slider"]
+                     || [role isEqualToString:NSAccessibilityPopUpButtonRole]
+                     || [role isEqualToString:NSAccessibilityStaticTextRole]
+                     || [role isEqualToString:NSAccessibilityTextFieldRole];
+    if (carriesText || isControl) {
+        [nodes addObject:@{ @"role": role ?: @"", @"label": label ?: @"", @"title": title ?: @"",
+                            @"value": value ?: @"", @"enabled": @(enabled),
+                            @"x": @((NSInteger)frame.origin.x), @"y": @((NSInteger)frame.origin.y),
+                            @"width": @((NSInteger)frame.size.width),
+                            @"height": @((NSInteger)frame.size.height) }];
+    }
+    for (id child in [ax accessibilityChildren]) {
+        MLProbeCollectAppKitAXNodes(child, depth + 1, maxNodes, nodes);
+    }
+    if ([element isKindOfClass:[NSView class]]) {
+        for (NSView *child in [(NSView *)element subviews]) {
+            MLProbeCollectAppKitAXNodes(child, depth + 1, maxNodes, nodes);
+        }
+    }
+}
+
+// A ScrollView only realises the rows inside its viewport, so a page longer than
+// the window cannot be read from one look: the rows below the fold are simply not
+// in the tree. Find the scroller the page actually uses so the checker can read
+// the bottom of it the way a user would, and report whether it managed to.
+static NSScrollView *MLProbeFindScrollView(NSView *root) {
+    NSMutableArray<NSView *> *queue = [NSMutableArray arrayWithObject:root];
+    while (queue.count) {
+        NSView *view = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        if ([view isKindOfClass:[NSScrollView class]]) {
+            return (NSScrollView *)view;
+        }
+        [queue addObjectsFromArray:view.subviews];
+    }
+    return nil;
+}
+
+static NSArray<NSDictionary *> *MLProbeReadableNodes(NSView *root) {
+    NSMutableArray<NSDictionary *> *raw = [NSMutableArray array];
+    MLProbeCollectAppKitAXNodes(root, 0, 8000, raw);
+    NSMutableArray<NSDictionary *> *readable = [NSMutableArray array];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (NSDictionary *node in raw) {
+        NSString *text = [node[@"label"] length] ? node[@"label"]
+                     : ([node[@"value"] length] ? node[@"value"] : node[@"title"]);
+        NSString *key = [NSString stringWithFormat:@"%@|%@|%@|%@|%@|%@|%@",
+                         node[@"role"], text, node[@"enabled"], node[@"x"], node[@"y"],
+                         node[@"width"], node[@"height"]];
+        if ([seen containsObject:key]) {
+            continue;
+        }
+        [seen addObject:key];
+        [readable addObject:@{ @"role": node[@"role"], @"text": text,
+                               @"enabled": node[@"enabled"],
+                               @"x": node[@"x"], @"y": node[@"y"],
+                               @"width": node[@"width"], @"height": node[@"height"] }];
+    }
+    return readable;
+}
+
+// Present one named pane and record everything the checker needs to decide
+// whether that pane is telling the truth about this machine.
+static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *output,
+                               NSInteger pane, NSString *name, NSMutableDictionary *report) {
+    NSView *content = window.contentView;
+    [[NSUserDefaults standardUserDefaults] setInteger:pane forKey:@"selected-settings-pane"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+
+    NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
+    NSSet<NSView *> *subviewsBefore = [NSSet setWithArray:content.subviews];
+    [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
+    MLProbeSpin(1.4);
+
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    result[@"requestedPane"] = @(pane);
+    result[@"storedPane"] = @([[NSUserDefaults standardUserDefaults] integerForKey:@"selected-settings-pane"]);
+
+    // Which new windows appeared while this pane was up, and which of them host a
+    // settings page. The two are recorded apart because the app can open a window
+    // for its own reasons during launch, and blaming that on the presenter would
+    // teach the next reader to ignore the rule. The claim being checked is narrow
+    // and stays hard: no other window may host the settings page.
+    NSMutableArray<NSString *> *addedWindows = [NSMutableArray array];
+    NSMutableArray<NSString *> *addedSettingsWindows = [NSMutableArray array];
+    for (NSWindow *candidate in NSApp.windows) {
+        if ([windowsBefore containsObject:candidate] || candidate == window) {
+            continue;
+        }
+        NSString *name = NSStringFromClass([candidate class]);
+        [addedWindows addObject:name];
+        BOOL hostsSettingsPage = [SettingsOverlayPresenter isSettingsPresentedInWindow:candidate]
+            || [[MLProbeClassInventory(candidate.contentView).allKeys
+                 filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"self CONTAINS %@",
+                                              @"LiquidGlassSettingsView"]] count] > 0;
+        if (hostsSettingsPage) {
+            [addedSettingsWindows addObject:name];
+        }
+    }
+    result[@"windowsAdded"] = addedWindows;
+    result[@"windowsAddedHostingSettings"] = addedSettingsWindows;
+
+    NSMutableArray<NSView *> *added = [NSMutableArray array];
+    for (NSView *candidate in content.subviews) {
+        if (![subviewsBefore containsObject:candidate]) {
+            [added addObject:candidate];
+        }
+    }
+    result[@"viewsAdded"] = @(added.count);
+    NSView *overlay = added.firstObject;
+    if (overlay == nil) {
+        report[name] = result;
+        return;
+    }
+    result[@"overlayClass"] = NSStringFromClass([overlay class]);
+
+    // One channel, the one that measurably works: AppKit's accessibility protocol,
+    // read in-process, after the app has finished launching. The client API
+    // (AXUIElementCreateApplication against this own pid) was tried first and cannot
+    // be used from inside the process it queries -- it returned the application
+    // element referring to itself with no window and no text, however the query was
+    // sequenced or which thread asked -- so it is not kept as a channel.
+    //
+    // Each entry is one distinct (role, text, enabled, position): SwiftUI vends the
+    // same elements several times over, and the position is kept in the key rather
+    // than dropped because the checker pairs a control with the label beside it and
+    // has to be able to tell two same-named rows apart from one row counted twice.
+    // The claims below are checked against the model this page is rendering from,
+    // taken through the presenter rather than a model built here: two models built
+    // at different moments of launch disagree, and then every comparison is between
+    // two different machines. Reported through `expectationsFromPageModel` so a
+    // silent fallback to a stand-in is visible in the report instead of plausible.
+    id presentedModel = [SettingsOverlayPresenter presentedSettingsModelForProbeInWindow:window];
+    result[@"expectations"] = [MLDebugProbeExpectations currentForModel:presentedModel];
+
+    MLProbeActivateAccessibility();
+    result[@"readableContent"] = MLProbeReadableNodes(overlay);
+
+    // Read the rest of the page. The enhancement controls and the capability matrix
+    // are below the fold, and a ScrollView that has not been scrolled has no such
+    // rows to read, so "the page does not say it" would otherwise be indistinguishable
+    // from "the checker never looked at the bottom".
+    NSScrollView *scroller = MLProbeFindScrollView(overlay);
+    result[@"hasScrollView"] = @(scroller != nil);
+    if (scroller) {
+        NSView *document = scroller.documentView;
+        CGFloat travel = document.frame.size.height - scroller.contentView.bounds.size.height;
+        [[scroller contentView] scrollToPoint:NSMakePoint(0, MAX(travel, 0))];
+        [scroller reflectScrolledClipView:scroller.contentView];
+        MLProbeSpin(0.7);
+        result[@"readableContentScrolled"] = MLProbeReadableNodes(overlay);
+        NSBitmapImageRep *scrolledRep = [overlay bitmapImageRepForCachingDisplayInRect:overlay.bounds];
+        [overlay cacheDisplayInRect:overlay.bounds toBitmapImageRep:scrolledRep];
+        NSString *scrolledPNG = [NSString stringWithFormat:@"11-%@-page-bottom.png", name];
+        result[@"scrolledPixels"] = MLProbePixels([output stringByAppendingPathComponent:scrolledPNG],
+                                                  scrolledRep);
+        result[@"scrolledCapture"] = scrolledPNG;
+        result[@"scrolledTravelPoints"] = @((NSInteger)MAX(travel, 0));
+    }
+
+    NSMutableArray<NSDictionary *> *fields = [NSMutableArray array];
+    MLProbeCollectTextFields(overlay, fields);
+    result[@"textFields"] = fields;
+
+    NSMutableDictionary *layers = [NSMutableDictionary dictionary];
+    MLProbeRecordLayers(overlay, layers);
+    NSMutableArray<NSString *> *materials = [NSMutableArray array];
+    [layers enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSNumber *count, BOOL *stop) {
+        if ([key hasPrefix:@"material:"]) {
+            [materials addObject:[NSString stringWithFormat:@"%@ x%lu",
+                                  [key substringFromIndex:@"material:".length],
+                                  (unsigned long)count.unsignedIntegerValue]];
+        }
+    }];
+    result[@"materialLayers"] = materials;
+
+    NSBitmapImageRep *rep = [overlay bitmapImageRepForCachingDisplayInRect:overlay.bounds];
+    [overlay cacheDisplayInRect:overlay.bounds toBitmapImageRep:rep];
+    NSString *png = [NSString stringWithFormat:@"10-%@-page.png", name];
+    result[@"pixels"] = MLProbePixels([output stringByAppendingPathComponent:png], rep);
+    result[@"capture"] = png;
+    result[@"backdropIsStillBehindPage"] = @(backdrop.superview == content);
+
+    [SettingsOverlayPresenter dismissSettingsFromWindow:window];
+    MLProbeSpin(0.5);
+    result[@"presentedAfterDismiss"] = @([SettingsOverlayPresenter isSettingsPresentedInWindow:window]);
+    result[@"stillMountedAfterDismiss"] = @([overlay isDescendantOf:content]);
+    report[name] = result;
+}
+
+static NSMutableDictionary *MLProbeReport = nil;
+static NSMutableArray<NSString *> *MLProbeFailures = nil;
+static NSString *MLProbeOutputDirectory = nil;
+static NSWindow *MLProbeWindow = nil;
+static NSView *MLProbeBackdrop = nil;
+static BOOL MLProbeArmed = NO;
+
 static void MLRunRenderProbeAndExitIfRequested(void) {
     if (getenv("ML_RENDER_PROBE") == NULL) {
         return;
@@ -424,6 +698,45 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         }
     }
 
+
+    // Hand over to the stage that runs after launch. Accessibility is the reason:
+    // measured on this tree, an app that has not finished launching vends a
+    // placeholder tree (the application element referring to itself, no window, no
+    // text), so nothing could be read from the page however hard the checker looked.
+    // The visual claims above do not need accessibility and stay where they were
+    // proven; the readable claims run once the app is really up.
+    MLProbeReport = report;
+    MLProbeFailures = failures;
+    MLProbeOutputDirectory = output;
+    MLProbeWindow = window;
+    MLProbeBackdrop = backdrop;
+    MLProbeArmed = YES;
+}
+
+static void MLFinishRenderProbeIfArmed(void) {
+    if (!MLProbeArmed) {
+        return;
+    }
+    MLProbeArmed = NO;
+    MLProbeSpin(1.0);
+
+    NSMutableDictionary *report = MLProbeReport;
+    NSMutableArray<NSString *> *failures = MLProbeFailures;
+    NSString *output = MLProbeOutputDirectory;
+
+    // What the production code believes about this machine, recorded so the
+    // checker compares the page against the rule instead of against a string
+    // someone typed into a test.
+
+
+    // Three panes of the same page. The video pane holds the enhancement controls
+    // and the readout of what the decoder is really doing; the App pane holds the
+    // capability matrix that says whether Video Toolbox and MetalFX can work here.
+    // Both used to be claims nobody could check without a human looking.
+    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 0, @"streamPane", report);
+    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 1, @"videoPane", report);
+    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 3, @"appPane", report);
+
     report[@"failures"] = failures;
     NSData *json = [NSJSONSerialization dataWithJSONObject:report
                                                   options:NSJSONWritingPrettyPrinted
@@ -539,6 +852,11 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
+#ifdef DEBUG
+    // The second half of the render probe: readable claims about the page, which
+    // need an app that has finished launching. Inert unless the first half armed it.
+    MLFinishRenderProbeIfArmed();
+#endif
     [self createMainWindow];
     self.controllerNavigation = [[ControllerNavigation alloc] init];
     [self refreshLocalizedChrome];

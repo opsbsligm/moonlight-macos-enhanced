@@ -37,6 +37,9 @@ private final class DismissBox {
   private let window: NSWindow
   private let hostId: String?
   private let hosting: NSHostingController<LiquidGlassSettingsView>
+  /// The page's model, held here so the page and anything measuring it look at one
+  /// instance instead of two. See the note on `LiquidGlassSettingsView.settingsModel`.
+  private let settingsModel: SettingsModel
   private var savedTitle: String?
   private var savedToolbarVisible: Bool?
   private var commandWMonitor: Any?
@@ -63,6 +66,23 @@ private final class DismissBox {
     presenter.show(in: content)
   }
 
+#if DEBUG
+  /// The model instance the presented page is observing, for the Debug render probe.
+  ///
+  /// The probe used to construct its own ``SettingsModel`` and compare the page
+  /// against it. Measured, the two disagreed on three settings, because a model
+  /// built before the configuration store is open answers with defaults: the page
+  /// showed Metal while the checker believed the user had chosen Native, and every
+  /// assertion it then made was a comparison between two different machines. Read
+  /// the page's own model and the claim becomes what it should be -- this page
+  /// agrees with the rules it is rendering from.
+  @objc(presentedSettingsModelForProbeInWindow:)
+  static func presentedSettingsModelForProbe(in window: NSWindow?) -> AnyObject? {
+    guard let window else { return nil }
+    return active[ObjectIdentifier(window)]?.settingsModel
+  }
+#endif
+
   @objc(dismissSettingsFromWindow:)
   static func dismiss(from window: NSWindow?) {
     guard let window else { return }
@@ -80,10 +100,11 @@ private final class DismissBox {
     self.hostId = hostId
 
     let box = DismissBox()
+    self.settingsModel = SettingsModel()
     self.hosting = NSHostingController(
-      rootView: LiquidGlassSettingsView(hostId: hostId, onClose: { [weak box] in
-        box?.action()
-      })
+      rootView: LiquidGlassSettingsView(hostId: hostId,
+                                        onClose: { [weak box] in box?.action() },
+                                        settingsModel: settingsModel)
     )
     super.init()
     box.action = { [weak self] in self?.dismiss() }
