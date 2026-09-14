@@ -191,6 +191,31 @@ Apple Silicon hardware.
   permanently dirty.
 
 
+### Pipeline policy pass
+
+#### Fixed
+
+- **The x86_64 job asked for a runner GitHub does not publish.** It requested
+  `macos-26-intel`, which is not an offered image and could never start, and
+  macOS 26 does not run on Intel hardware at all. Both architecture jobs now use
+  `macos-26-arm64`, the image that exists in the published release list, and the
+  x86_64 job cross-compiles on it. Verified locally: building with that
+  destination on Apple Silicon produces a binary that `lipo` reports as
+  `architecture: x86_64`. The bare `macos-26` label is also avoided because it
+  is the spelling that historically denoted an Intel image.
+
+#### Added
+
+- **Least privilege, one live run per ref, and assertions for both.** The
+  workflow declared no `permissions`, so every job inherited whatever write
+  scope the repository settings happen to allow; it now starts read-only and
+  only the release job raises itself to write. There was no `concurrency` group,
+  so a second push queued a second full macOS matrix and a tag release could be
+  cancelled underneath by a later push. All three policies are now asserted by
+  the audit job, and each was planted and reverted to confirm the assertion
+  fires rather than passing vacuously.
+
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
