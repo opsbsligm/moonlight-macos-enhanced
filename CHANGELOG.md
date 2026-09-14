@@ -67,6 +67,13 @@ Apple Silicon hardware.
 
 ### Added
 
+- **Release tags are checked against the tree they point at.**
+  `scripts/release-gate.py` refuses a tag whose base version is not the project's
+  `MARKETING_VERSION`, whose `-buildN` suffix is not the build number this commit
+  generates, which has no matching `CHANGELOG.md` section, or which repeats or
+  lowers an existing release. The release job runs it before publishing, and the
+  audit runs its fixture suite so the rules are exercised even on commits where
+  every real tag is correctly blocked.
 - `Limelight/build-number.sh --print` emits the resolved build number without
   writing anything, so CI can feed it to `xcodebuild`.
 - CI gate that fails a build on new warnings in first-party sources, while
