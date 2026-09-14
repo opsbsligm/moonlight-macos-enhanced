@@ -957,6 +957,79 @@ for section, _, _ in (("StreamMenuSectionWindow", 0, 0),
     check("[self popUpStreamSubmenuForSection:%s fromButton:sender]" % section in diagnostics,
           "the %s button asks for its section by name" % section)
 
+# --- the modifier mapping, from both ends ----------------------------------
+# KeyboardMapResolver is described in its own header as the only place modifier
+# mapping is defined, and the mapping it defines is the thing people buy this
+# branch for: Command to Win, Control to Ctrl, Option to Alt, Shift to Shift, each
+# side to its own side. Nothing read it -- not a test, not a constraint, not one
+# scenario naming KMR_. A table row pointing at the wrong side, two rows pointing at
+# the same one, or a virtual key one digit off would all have shipped and come back
+# as a report that the keyboard feels wrong in a game, which is the report that
+# started this whole pass. The behavioural harness compiles the file and walks all
+# eight keys; these are the shape checks that hold even where no compiler answers.
+resolver_header = open(os.path.join(root, "Limelight/Input/KeyboardMapResolver.h"),
+                       encoding="utf-8").read()
+resolver_body = open(os.path.join(root, "Limelight/Input/KeyboardMapResolver.m"),
+                     encoding="utf-8").read()
+
+# Windows virtual keys for the eight modifier keys. Written here rather than read from
+# the header, because comparing a table to itself proves nothing.
+WINDOWS_VK = {"LSHIFT": 0xA0, "RSHIFT": 0xA1, "LCONTROL": 0xA2, "RCONTROL": 0xA3,
+              "LALT": 0xA4, "RALT": 0xA5, "LWIN": 0x5B, "RWIN": 0x5C}
+declared_vk = {name: int(value, 16) for name, value in
+               re.findall(r"\bKMR_VK_(\w+)\s*=\s*(0x[0-9A-Fa-f]+)", resolver_header)}
+wrong_vk = {name: hex(declared_vk.get(name, -1)) for name, want in WINDOWS_VK.items()
+            if declared_vk.get(name) != want}
+check(not wrong_vk, "the modifier virtual keys are the Windows ones"
+      if not wrong_vk else "modifier virtual keys that are not the standard code: "
+      + ", ".join("%s=%s" % item for item in sorted(wrong_vk.items())))
+
+shifts = re.findall(r"\bKMR_Remote_(Left|Right)(Shift|Control|Alt|Meta)\s*=\s*1\s*<<\s*(\d+)",
+                    resolver_header)
+shift_numbers = [int(n) for _, _, n in shifts]
+check(len(shift_numbers) == 8 and len(set(shift_numbers)) == 8,
+      "each remote modifier bit occupies one distinct position"
+      if len(shift_numbers) == 8 and len(set(shift_numbers)) == 8 else
+      "remote modifier bits declared: %d, distinct: %d"
+      % (len(shift_numbers), len(set(shift_numbers))))
+
+table_rows = re.findall(r"(KMR_Remote_\w+)\s*,\s*//\s*(KMR_Phys_\w+)", resolver_body)
+# (remote key, physical slot) in the order the table declares them, which is the
+# order the enum gives the physical slots: a row that keeps its remote key but moves
+# is a different key per slot, so the order is part of the assertion.
+wanted_order = [("KMR_Remote_LeftShift", "KMR_Phys_LeftShift"),
+                ("KMR_Remote_RightShift", "KMR_Phys_RightShift"),
+                ("KMR_Remote_LeftControl", "KMR_Phys_LeftControl"),
+                ("KMR_Remote_RightControl", "KMR_Phys_RightControl"),
+                ("KMR_Remote_LeftAlt", "KMR_Phys_LeftOption"),
+                ("KMR_Remote_RightAlt", "KMR_Phys_RightOption"),
+                ("KMR_Remote_LeftMeta", "KMR_Phys_LeftCommand"),
+                ("KMR_Remote_RightMeta", "KMR_Phys_RightCommand")]
+check(table_rows == wanted_order,
+      "the mapping table answers each physical modifier with its own remote key"
+      if table_rows == wanted_order else
+      "the mapping table reads %s, expected %s"
+      % (table_rows or "nothing", wanted_order))
+declared_remotes = [remote for remote, _ in table_rows]
+duplicated_remote = sorted({r for r in declared_remotes
+                            if declared_remotes.count(r) > 1})
+check(len(table_rows) == len(set(declared_remotes)) == 8 and not duplicated_remote,
+      "no two physical modifiers share a remote key and none is left out"
+      if not duplicated_remote and len(table_rows) == 8 else
+      "remote keys used more than once: " + (", ".join(duplicated_remote) or "none"))
+
+# The header promises the flags path can only answer with the left key of each pair,
+# because NSEvent modifier flags do not say which side went down. If it ever names a
+# right-hand physical slot, that promise and the harness expectation both break.
+flags_body = resolver_body[resolver_body.index("KMR_RemoteMaskForAppKitFlags"):]
+flags_body = flags_body[:flags_body.index("\n}\n") + 3]
+right_in_flags = sorted({m.group(0) for m in re.finditer(r"KMR_Phys_Right\w+", flags_body)})
+check(len(right_in_flags) == 0 and flags_body.count("KMR_Phys_Left") == 4,
+      "the flags path asks for the left key of each pair, never the right"
+      if not right_in_flags and flags_body.count("KMR_Phys_Left") == 4 else
+      "the flags path names %d left and %d right physical slots"
+      % (flags_body.count("KMR_Phys_Left"), len(right_in_flags)))
+
 # Logger.m writes a one-line summary when it suppresses a repeated warning, and the
 # log browser folds those summaries into one row. The producer and the reader are in
 # different files and used to be joined by a Chinese sentence: the reader asked whether

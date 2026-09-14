@@ -464,6 +464,31 @@ def localize_a_localized_string(text):
 
 LOGGER = os.path.join(root, "Limelight", "Utility", "Logger.m")
 
+RESOLVER_M = os.path.join(root, "Limelight", "Input", "KeyboardMapResolver.m")
+RESOLVER_H = os.path.join(root, "Limelight", "Input", "KeyboardMapResolver.h")
+
+RIGHT_COMMAND_ROW = "    KMR_Remote_RightMeta,   // KMR_Phys_RightCommand"
+LWIN_DECL = "    KMR_VK_LWIN     = 0x5B,"
+FLAGS_COMMAND = "        out |= KMR_RemoteMaskForPhysical(KMR_Phys_LeftCommand);"
+
+
+def right_command_sends_the_left_win(text):
+    """Both hands of one modifier answering as the left hand."""
+    return once(text, RIGHT_COMMAND_ROW, "the right Command row").replace(
+        RIGHT_COMMAND_ROW, "    KMR_Remote_LeftMeta,    // KMR_Phys_RightCommand", 1)
+
+
+def a_virtual_key_one_digit_off(text):
+    return once(text, LWIN_DECL, "the left Win declaration").replace(
+        LWIN_DECL, "    KMR_VK_LWIN     = 0x5C,", 1)
+
+
+def the_flags_path_asks_for_the_right_hand(text):
+    """NSEvent flags do not say which side went down, so this invents an answer."""
+    return once(text, FLAGS_COMMAND, "the flags path Command line").replace(
+        FLAGS_COMMAND, "        out |= KMR_RemoteMaskForPhysical(KMR_Phys_RightCommand);", 1)
+
+
 HOSTS_VC = os.path.join(root, "Limelight", "macOS", "ViewControllers", "HostsViewController.m")
 
 RETRY_SHAPE = """    BOOL retryableElsewhere = reason == PairFailureReasonNetwork ||
@@ -571,6 +596,12 @@ MUTATIONS = [
      "the pairing retry is decided by searching the failure text for words again"),
     ("unanswered-pair-reason", HOSTS_VC, drop_a_reason_from_the_wording,
      "a pairing reason reaches a screen that has no wording for it"),
+    ("right-command-left-win", RESOLVER_M, right_command_sends_the_left_win,
+     "the right Command key sends the left Win key, so one of the two disappears"),
+    ("modifier-vk-drift", RESOLVER_H, a_virtual_key_one_digit_off,
+     "a modifier is sent as the virtual key of a different key"),
+    ("flags-invent-a-side", RESOLVER_M, the_flags_path_asks_for_the_right_hand,
+     "the flags path answers a modifier with a side it cannot know"),
 ]
 
 
