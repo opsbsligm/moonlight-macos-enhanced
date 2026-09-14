@@ -3,7 +3,8 @@
   "_accepted_reasons": {
     "NSNumber nil test read as a boolean conversion": "the retain-count checker reports any NSNumber in a condition, including a nil test, and these sites compare or test for nil",
     "VideoToolbox parameter documented as pass-NULL": "Apple's VTDecompressionSessionCreate says pass NULL for the default decoder; the header marks the parameter nonnull",
-    "CGColorRef ownership through an assign property": "the checker cannot follow a CoreFoundation reference kept in an assign property; the code retains before releasing and never calls either function with NULL"
+    "CGColorRef ownership through an assign property": "the checker cannot follow a CoreFoundation reference kept in an assign property; the code retains before releasing and never calls either function with NULL",
+    "user-facing text the localizability checker still cannot follow": "wrapping the literal in MLString moved the translation behind a method call, and the checker stopped reporting the sites it can now see through; what is left is the count the CI transcript reports for the sites it still flags, kept exact rather than rounded, because a number that only ever goes down is a number nobody re-reads"
   },
   "findings": [
     {
@@ -43,7 +44,7 @@
       "shape": "Null passed to a callee that requires a non-null 2nd parameter"
     },
     {
-      "count": 10,
+      "count": 3,
       "file": "Limelight/macOS/AppDelegateForAppKit.m",
       "checker": "optin.osx.cocoa.localizability.NonLocalizedStringChecker",
       "shape": "User-facing text should use localized string macro"
@@ -61,7 +62,7 @@
       "shape": "Converting a pointer value of type X to a primitive boolean value; instead, either compare the pointer to nil or call -boolValue"
     },
     {
-      "count": 19,
+      "count": 1,
       "file": "Limelight/macOS/ViewControllers/ConnectionEditorViewController.m",
       "checker": "optin.osx.cocoa.localizability.NonLocalizedStringChecker",
       "shape": "User-facing text should use localized string macro"
@@ -71,18 +72,6 @@
       "file": "Limelight/macOS/ViewControllers/ConnectionEditorViewController.m",
       "checker": "osx.NumberObjectConversion",
       "shape": "Converting a pointer value of type X to a primitive boolean value; instead, either compare the pointer to nil or call -boolValue"
-    },
-    {
-      "count": 3,
-      "file": "Limelight/macOS/ViewControllers/ContainerViewController.m",
-      "checker": "optin.osx.cocoa.localizability.NonLocalizedStringChecker",
-      "shape": "User-facing text should use localized string macro"
-    },
-    {
-      "count": 1,
-      "file": "Limelight/macOS/ViewControllers/HostsViewController.m",
-      "checker": "optin.osx.cocoa.localizability.NonLocalizedStringChecker",
-      "shape": "User-facing text should use localized string macro"
     },
     {
       "count": 1,
@@ -97,13 +86,13 @@
       "shape": "Value stored to X is never read"
     },
     {
-      "count": 28,
+      "count": 4,
       "file": "Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m",
       "checker": "optin.osx.cocoa.localizability.NonLocalizedStringChecker",
       "shape": "User-facing text should use localized string macro"
     },
     {
-      "count": 20,
+      "count": 9,
       "file": "Limelight/macOS/ViewControllers/StreamViewController+MenuUI.m",
       "checker": "optin.osx.cocoa.localizability.NonLocalizedStringChecker",
       "shape": "User-facing text should use localized string macro"
