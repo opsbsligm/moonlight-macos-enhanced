@@ -171,6 +171,18 @@ jobs:
       # rebuilds the pre-fix shape to prove the scenarios can fail.
       run: python3 scripts/keyboard-concurrency-tests.py
 
+    - name: Verify the timeout overlay can reach its submenus
+      # The overlay's three buttons used to find the stream menu's Window, Monitor
+      # and Quality submenus by comparing each item's title against a Chinese
+      # literal. The titles are localized, so in the English interface the
+      # comparison matched nothing, popUpMenuPositioningItem: was never reached, and
+      # Resolution, Bitrate and Display Mode did nothing at all -- no crash, no log
+      # line, no build failure. A source grep for the word it compared against would
+      # have stayed satisfied the whole time. The harness compiles the lookup that
+      # ships, hands it menus carrying both languages' titles, and rebuilds the old
+      # title comparison to prove the English case can still fail.
+      run: python3 scripts/stream-menu-addressing-tests.py
+
     - name: Verify the settings page renders embedded
       # Goals that are visual cannot be signed off by a compile, and the two
       # visual goals here were waiting on a human eye that was not available. The

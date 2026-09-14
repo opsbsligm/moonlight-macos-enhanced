@@ -915,6 +915,94 @@ orphaned = sorted(set(gate_names) - reachable)
 check(not orphaned, "every gate in scripts is reachable from the workflow"
       if not orphaned else "written but never run by CI: " + ", ".join(orphaned))
 
+# --- addressing and localization reach -------------------------------------
+# The connection-timeout overlay has three buttons that pop up the stream menu's
+# Window, Monitor and Quality submenus. The lookup used the words printed on the
+# items: `if ([item.title isEqualToString:@"屏幕"])`. The titles come from the
+# language table, so that comparison was true only in the Chinese interface, and in
+# English the loop fell through, popUpMenuPositioningItem: was never called, and
+# Resolution, Bitrate and Display Mode did nothing at all. No crash, no log line, no
+# build failure: a check that looked for the word 屏幕 in the source would have been
+# satisfied for the entire time the feature was broken for half the users. The
+# contract is now an integer both sides honour, so both halves are required here --
+# a lookup that matches nothing is indistinguishable from a menu nobody built.
+menu_ui = open(os.path.join(root, "Limelight/macOS/ViewControllers/"
+                            "StreamViewController+MenuUI.m"), encoding="utf-8").read()
+diagnostics = open(os.path.join(root, "Limelight/macOS/ViewControllers/"
+                                "StreamViewController+Diagnostics.m"), encoding="utf-8").read()
+
+TAGGED_ITEMS = (("windowItem", "StreamMenuSectionWindow"),
+                ("monitorItem", "StreamMenuSectionMonitor"),
+                ("qualityItem", "StreamMenuSectionQuality"))
+untagged = ["%s.tag = %s" % pair for pair in TAGGED_ITEMS
+            if re.search(r"\b%s\.tag\s*=\s*%s\s*;" % pair, menu_ui) is None]
+check(not untagged, "every stream submenu advertises the section it is addressed by"
+      if not untagged else "menu items that advertise no section: " + ", ".join(untagged))
+
+popup_body = method_body(diagnostics, "- (void)popUpStreamSubmenuForSection:(StreamMenuSection)"
+                                      "section fromButton:(id)sender")
+check("streamSubmenuForSection:" in popup_body and "popUpMenuPositioningItem" in popup_body,
+      "the overlay resolves its submenu by section and still pops it up")
+
+lookup_body = method_body(diagnostics, "- (NSMenu *)streamSubmenuForSection:"
+                                       "(StreamMenuSection)section")
+check("tag" in lookup_body and "isEqualToString" not in lookup_body,
+      "the section lookup reads the tag and never the words on the item"
+      if "tag" in lookup_body and "isEqualToString" not in lookup_body else
+      "streamSubmenuForSection: is deciding by title again")
+
+for section, _, _ in (("StreamMenuSectionWindow", 0, 0),
+                      ("StreamMenuSectionMonitor", 0, 0),
+                      ("StreamMenuSectionQuality", 0, 0)):
+    check("[self popUpStreamSubmenuForSection:%s fromButton:sender]" % section in diagnostics,
+          "the %s button asks for its section by name" % section)
+
+# Logger.m writes a one-line summary when it suppresses a repeated warning, and the
+# log browser folds those summaries into one row. The producer and the reader are in
+# different files and used to be joined by a Chinese sentence: the reader asked whether
+# the line contained 内重复, so rewording the summary in Logger.m switched the folding
+# off with nothing printed anywhere to say so, and the comparison was made against
+# prose in a language the reader had no reason to speak. Both halves now name the same
+# ASCII marker, so the pair is checked as a pair: a marker changed on one side has to
+# fail here rather than quietly cost a feature.
+logger = open(os.path.join(root, "Limelight/Utility/Logger.m"), encoding="utf-8").read()
+repeat_marker = "[curated] repeated "
+written = re.search(r'@"(\[curated\][^"]*)"', logger)
+check(written is not None and written.group(1).startswith(repeat_marker)
+      and all(ord(ch) < 128 for ch in written.group(1)),
+      "the summary Logger.m writes carries an ASCII marker"
+      if written is not None and written.group(1).startswith(repeat_marker) else
+      "the summary line no longer starts with %r as an ASCII marker: %s"
+      % (repeat_marker, written.group(1) if written else "no [curated] literal in Logger.m"))
+check('[line containsString:@"' + repeat_marker + '"]' in diagnostics,
+"the log browser folds on that marker and not on the prose around it")
+# MLString is one macro over one lookup. It used to be a #define inside
+# StreamViewController_Internal.h, which left AppDelegate and ConnectionEditor with
+# no macro at all, HostsViewController undefining NSLocalizedString to write its own,
+# and ContainerViewController calling the manager directly and then localizing the
+# already localized result: localize:MLString(@"...") looked the translation up twice
+# and returned the second answer. One header owns the macro now, so the macro may be
+# defined in that header and nowhere else, and nothing may wrap a call in another.
+objc_sources = []
+for directory, _, names in os.walk(os.path.join(root, "Limelight")):
+    for name in sorted(names):
+        if name.endswith((".m", ".h", ".swift")):
+            objc_sources.append(os.path.join(directory, name))
+definers = sorted(os.path.relpath(path, root) for path in objc_sources
+                  if re.search(r"^\s*#\s*define\s+MLString\b",
+                               open(path, encoding="utf-8", errors="replace").read(), re.M))
+check(definers == ["Limelight/macOS/Localization.h"],
+      "one header owns the localization macro"
+      if definers == ["Limelight/macOS/Localization.h"] else
+      "MLString is defined by: " + (", ".join(definers) or "nothing at all"))
+
+double_localized = sorted(os.path.relpath(path, root) for path in objc_sources
+                          if re.search(r"localize:\s*\(?\s*MLString\s*\(",
+                                       open(path, encoding="utf-8", errors="replace").read()))
+check(not double_localized, "no translation is looked up twice on its way to the screen"
+      if not double_localized else "a localized string is localized again in: "
+      + ", ".join(double_localized))
+
 analyzer = subprocess.run([sys.executable,
                            os.path.join(root, "scripts", "analyzer-audit.py"), "--self-test"],
                           capture_output=True, text=True, cwd=root)

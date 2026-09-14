@@ -20,6 +20,9 @@ CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                        "StreamViewController+MouseCapture.m")
 MENU = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                     "StreamViewController+MenuUI.m")
+DIAGNOSTICS = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                           "StreamViewController+Diagnostics.m")
+APPDELEGATE = os.path.join(root, "Limelight", "macOS", "AppDelegateForAppKit.m")
 SHORTCUTS = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                          "SettingsShortcuts.swift")
 DERIVED = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -418,6 +421,66 @@ def pane_keeps_its_own_rule(text):
                         "!showsMetalTuningControls")
 
 
+DIAG_TRANSIENT_CALL = '        [self showTransientTitle:MLString(@"Copied", nil)'
+APPDELEGATE_IMPORT = '#import "Localization.h"'
+
+
+def unadvertise_section(text):
+    return once(text, "    monitorItem.tag = StreamMenuSectionMonitor;\n",
+                "the monitor tag assignment").replace(
+        "    monitorItem.tag = StreamMenuSectionMonitor;\n", "", 1)
+
+
+def address_by_title_again(text):
+    """The regression that actually shipped: keep the tag, add the old words back."""
+    return once(text, "        if (item.tag == section && item.submenu != nil) {",
+                "the section lookup").replace(
+        "        if (item.tag == section && item.submenu != nil) {",
+        '        if ((item.tag == section && item.submenu != nil)\n'
+        '            || [item.title isEqualToString:@"\u5c4f\u5e55"]) {', 1)
+
+
+def point_a_button_at_the_wrong_section(text):
+    return once(text, "[self popUpStreamSubmenuForSection:StreamMenuSectionMonitor fromButton:sender];",
+                "the monitor button").replace(
+        "StreamMenuSectionMonitor fromButton:sender]",
+        "StreamMenuSectionWindow fromButton:sender]", 1)
+
+
+def a_second_localization_macro(text):
+    """A file that stops asking the shared macro and answers for itself again."""
+    return once(text, APPDELEGATE_IMPORT, "the shared localization import").replace(
+        APPDELEGATE_IMPORT,
+        APPDELEGATE_IMPORT + "\n#define MLString(key, comment) (key)", 1)
+
+
+def localize_a_localized_string(text):
+    """Wrap a finished translation in the lookup a second time."""
+    return once(text, DIAG_TRANSIENT_CALL, "the transient title call").replace(
+        '[self showTransientTitle:MLString(@"Copied", nil)',
+        '[self showTransientTitle:[[LanguageManager sharedLanguage] localize:MLString(@"Copied", nil)]',
+        1)
+
+
+LOGGER = os.path.join(root, "Limelight", "Utility", "Logger.m")
+
+MARKER_LITERAL = '@"[curated] repeated %ld time(s) within %.1fs (last: %@)"'
+BROWSER_MATCH = '[line containsString:@"[curated] repeated "]'
+
+
+def reword_the_written_marker(text):
+    """A copy edit in Logger.m that the log browser never hears about."""
+    return once(text, MARKER_LITERAL, "the summary marker").replace(
+        MARKER_LITERAL,
+        MARKER_LITERAL.replace("[curated] repeated", "[curated] suppressed", 1), 1)
+
+
+def fold_on_prose_again(text):
+    return once(text, BROWSER_MATCH, "the browser fold test").replace(
+        BROWSER_MATCH,
+        '[line localizedCaseInsensitiveContainsString:@"\u5185\u91cd\u590d"]', 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -464,7 +527,20 @@ MUTATIONS = [
      "the capability matrix is certified from a pass in which its section stayed shut"),
     ("pane-keeps-own-rule", VIDEO_PANE, pane_keeps_its_own_rule,
      "the video page recomputes the enhancement rule instead of asking the model"),
-
+    ("unadvertised-section", MENU, unadvertise_section,
+     "a submenu stops advertising the section the overlay addresses it by"),
+    ("address-by-title-again", DIAGNOSTICS, address_by_title_again,
+     "the submenu lookup compares the words on the item again"),
+    ("wrong-section-button", DIAGNOSTICS, point_a_button_at_the_wrong_section,
+     "a timeout button pops up another section's submenu"),
+    ("second-localization-macro", APPDELEGATE, a_second_localization_macro,
+     "a file answers localization for itself instead of the shared macro"),
+    ("double-lookup", DIAGNOSTICS, localize_a_localized_string,
+     "a translated string is looked up a second time on the way to the screen"),
+    ("reworded-log-marker", LOGGER, reword_the_written_marker,
+     "the summary Logger.m writes stops carrying the marker the browser folds on"),
+    ("fold-on-prose", DIAGNOSTICS, fold_on_prose_again,
+     "the log browser folds on a Chinese sentence instead of the marker"),
 ]
 
 
