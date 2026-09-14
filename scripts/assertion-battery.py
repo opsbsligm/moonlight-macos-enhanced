@@ -94,6 +94,65 @@ def late_clear(text):
     return rest.replace(DOWN_DISPATCH, DOWN_DISPATCH + DOWN_CLEAR, 1)
 
 
+DOWN_DISPATCH = """        HIDDispatchInput(self, inputCtx, ^{
+            LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
+        });
+"""
+REC = """        [self.keyboardForwardedKeyDownKeyCodes addObject:@(keyCode)];
+"""
+INIT = """        self.keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];
+"""
+CLEAR = """    [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];
+"""
+TEARDOWN = """    // 0) Release keys the host still believes are pressed, before input is
+    //    switched off, so an action key held at disconnect cannot stay stuck.
+    [self releaseAllHeldKeys];
+"""
+UNCAPTURE_CALL = """    [self.hidSupport releaseAllHeldKeys];
+"""
+UNCAPTURE_OFF = """    self.hidSupport.shouldSendInputEvents = NO;
+"""
+
+
+def no_record(text):
+    once(text, REC, "held-key record")
+    return text.replace(REC, "", 1)
+
+
+def late_record(text):
+    once(text, REC, "held-key record")
+    once(text, DOWN_DISPATCH, "keyDown dispatch")
+    rest = text.replace(REC, "", 1)
+    return rest.replace(DOWN_DISPATCH, DOWN_DISPATCH + REC, 1)
+
+
+def no_init(text):
+    once(text, INIT, "held-key record init")
+    return text.replace(INIT, "", 1)
+
+
+def leak_records(text):
+    once(text, CLEAR, "held-key release")
+    return text.replace(CLEAR, "", 1)
+
+
+def drop_teardown_release(text):
+    once(text, TEARDOWN, "session teardown")
+    return text.replace(TEARDOWN, "", 1)
+
+
+def drop_uncapture_release(text):
+    once(text, UNCAPTURE_CALL, "capture release")
+    return text.replace(UNCAPTURE_CALL, "", 1)
+
+
+def late_uncapture_release(text):
+    once(text, UNCAPTURE_CALL, "capture release")
+    once(text, UNCAPTURE_OFF, "input switch off")
+    rest = text.replace(UNCAPTURE_CALL, "", 1)
+    return rest.replace(UNCAPTURE_OFF, UNCAPTURE_OFF + UNCAPTURE_CALL, 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -102,6 +161,13 @@ MUTATIONS = [
     ("commented-guard", HID, commented_guard, "keyUp guard moved into a comment"),
     ("neuter-settings", CAPTURE, neuter_settings, "settings guard is disabled but still worded"),
     ("late-clear", HID, late_clear, "stale record cleared after the press is sent"),
+    ("no-record", HID, no_record, "forwarded presses are never recorded"),
+    ("late-record", HID, late_record, "the press is recorded after it is sent"),
+    ("no-init", HID, no_init, "the held-key set is left nil so records vanish"),
+    ("leak-records", HID, leak_records, "the held-key release keeps its records"),
+    ("drop-teardown", HID, drop_teardown_release, "session teardown no longer releases held keys"),
+    ("drop-uncapture", CAPTURE, drop_uncapture_release, "capture release forgets held keys entirely"),
+    ("late-uncapture", CAPTURE, late_uncapture_release, "held keys released after input is switched off"),
 ]
 
 

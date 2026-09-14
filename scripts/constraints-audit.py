@@ -42,6 +42,9 @@ Each check below corresponds to a defect that shipped at some point:
   * keys the settings page did not use walked the responder chain back to the
     stream view and were forwarded, so typing in settings moved the character on
     the host.
+  * releasing the mouse switched input forwarding off while a key was still held,
+    and keyUp: is gated on that flag, so the host never saw the release and kept
+    the movement key pressed for the rest of the session.
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
@@ -430,24 +433,25 @@ problem = guard_returns(
     "LiSendKeyboardEventCtx")
 check(problem is None, "a release whose press was consumed never reaches the host"
       if problem is None else "the release path is not effective: " + problem)
-def clears_before(body, clear_prefix, dispatch_prefix):
-    """Require one clear, and require it ahead of the dispatch."""
+def ordered_once(body, first_prefix, second_prefix, what):
+    """Require exactly one line starting with first_prefix, ahead of second_prefix."""
     lines = statements(body)
-    clears = [i for i, line in enumerate(lines) if line.startswith(clear_prefix)]
-    dispatch = [i for i, line in enumerate(lines) if line.startswith(dispatch_prefix)]
-    if len(clears) != 1:
-        return "expected exactly one line starting with %r, found %d" % (clear_prefix, len(clears))
-    if not dispatch:
-        return "no %s call to compare against" % dispatch_prefix
-    if clears[0] > dispatch[0]:
-        return "the record is cleared after the dispatch, which is too late"
+    firsts = [i for i, line in enumerate(lines) if line.startswith(first_prefix)]
+    seconds = [i for i, line in enumerate(lines) if line.startswith(second_prefix)]
+    if len(firsts) != 1:
+        return "expected exactly one line starting with %r, found %d" % (first_prefix, len(firsts))
+    if not seconds:
+        return "no line starting with %r to order %s against" % (second_prefix, what)
+    if firsts[0] > seconds[0]:
+        return "%s is ordered after %r, which is too late" % (what, second_prefix)
     return None
 
 
-problem = clears_before(
+problem = ordered_once(
     hid_down,
     "[self.keyboardSuppressedKeyDownKeyCodes removeObject:",
-    "LiSendKeyboardEventCtx")
+    "LiSendKeyboardEventCtx",
+    "clearing the stale consumed-key record")
 check(problem is None, "a forwarded press clears any stale record for that key"
       if problem is None else "the stale-record clear is not effective: " + problem)
 check("keyboardSuppressedKeyDownKeyCodes removeAllObjects"
@@ -456,6 +460,45 @@ check("keyboardSuppressedKeyDownKeyCodes removeAllObjects"
 check("noteKeyboardKeyDownSuppressedForEvent"
       in open(os.path.join(root, "Limelight/Input/HIDSupport.h"), encoding="utf-8").read(),
       "the consumed-key contract is part of the public HID interface")
+
+# A press the host was told about has to be recoverable when capture ends while
+# the key is still held: keyUp: stops forwarding once input is off, so an
+# unreleased press leaves the host holding the key for the whole session.
+hid_release = method_body(hid_all, "- (void)releaseAllHeldKeys")
+hid_capture_off = method_body(capture_all,
+                              "- (void)uncaptureMouseWithCode:(NSString *)code reason:(NSString *)reason")
+hid_init = method_body(hid_all, "- (instancetype)init:(TemporaryHost *)host")
+
+for problem, message in [
+    (ordered_once(hid_down, "[self.keyboardForwardedKeyDownKeyCodes addObject:",
+                  "LiSendKeyboardEventCtx", "recording the press"),
+     "a press the host is told about is recorded before it is sent"),
+    (ordered_once(hid_up, "[self.keyboardForwardedKeyDownKeyCodes removeObject:",
+                  "LiSendKeyboardEventCtx", "spending the held-key record"),
+     "a forwarded release spends the held-key record"),
+    (ordered_once(hid_release, "[self.keyboardForwardedKeyDownKeyCodes removeAllObjects]",
+                  "LiSendKeyboardEventCtx", "dropping the records"),
+     "the held-key release drops its records before sending the releases"),
+    (ordered_once(hid_capture_off, "[self.hidSupport releaseAllHeldKeys];",
+                  "self.hidSupport.shouldSendInputEvents = NO;", "releasing held keys"),
+     "capture release lets go of held keys before input forwarding is off"),
+]:
+    check(problem is None, message if problem is None else "%s is not effective: %s" % (message, problem))
+
+check(guard_returns(hid_release, "if (self.keyboardHeldKeyReleaseInProgress)",
+                    "self.keyboardHeldKeyReleaseInProgress = YES",
+                    "LiSendKeyboardEventCtx") is None,
+      "the held-key release cannot re-enter itself")
+check("KEY_ACTION_UP" in hid_release,
+      "the held-key release actually sends releases")
+check("self.keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];" in hid_init,
+      "the held-key record exists before the first key can reach it")
+check("- (void)releaseAllHeldKeys;" in open(os.path.join(root, "Limelight/Input/HIDSupport.h"),
+                                            encoding="utf-8").read(),
+      "the held-key release is part of the public HID interface")
+check("[self releaseAllHeldKeys];"
+      in method_body(hid_all, "- (void)tearDownKeyboardStateForSessionEnd:(const char *)reason"),
+      "session teardown releases the keys the host still holds")
 
 
 print("%d constraint failures" % len(failures))
