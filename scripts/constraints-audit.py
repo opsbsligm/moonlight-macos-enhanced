@@ -28,6 +28,11 @@ Each check below corresponds to a defect that shipped at some point:
   * the key-equivalent gate sent DOWN and UP back to back for every key it did
     not consume and then swallowed the event, so no key could be held and two
     keys could never overlap. That is the reported "W and Space collide" defect.
+  * the dependency script began with a zsh shebang, so the ubuntu audit runner
+    could not start it and reported the script itself as missing.
+  * settings was a second NSWindow, which is how the app acquired two competing
+    window layers, and the only thing keeping the embedded page embedded was a
+    reviewer remembering that it used to be a window.
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
@@ -235,6 +240,87 @@ check(sites == ["Limelight/macOS/Views/StreamViewMac.m"],
       "the keyboard gate is reached only from the stream view's key-equivalent hook"
       if sites == ["Limelight/macOS/Views/StreamViewMac.m"] else
       "unexpected keyboard gate call sites: %s" % sites)
+
+
+# Settings used to be its own NSWindow, rebuilt on every invocation. It is now a
+# child view controller inside the main window, and nothing in the code says so:
+# the only protection was a reviewer remembering the old design. The checks below
+# pin what "inside the same window" means in code, scoped to the settings path.
+# The permissions dialog in the same file is a real window on purpose, so the
+# window-construction ban is scoped to the presenter and the bridge, never the
+# file, or the audit would either miss the settings page or fail on the dialog.
+WINDOW_CONSTRUCTION = ("NSWindow(", "NSPanel(", "NSWindowController(", "initWithContentRect")
+
+def swift_block(text, declaration):
+    """Return the body of a Swift declaration, braces counted."""
+    start = text.find(declaration)
+    if start < 0:
+        raise AssertionError("no Swift declaration containing " + repr(declaration))
+    opening = text.index("{", start)
+    depth, index = 0, opening
+    while index < len(text):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[opening:index + 1]
+        index += 1
+    raise AssertionError("unbalanced braces after " + declaration)
+
+
+presenter_path = "Limelight/macOS/ViewControllers/LiquidGlass/SettingsOverlayPresenter.swift"
+settings_view_path = "Limelight/macOS/ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift"
+bridge_path = "Limelight/macOS/ViewControllers/SettingsHostingController.swift"
+presenter_src = open(os.path.join(root, presenter_path), encoding="utf-8").read()
+settings_view_src = open(os.path.join(root, settings_view_path), encoding="utf-8").read()
+bridge_src = open(os.path.join(root, bridge_path), encoding="utf-8").read()
+bridge_body = swift_block(bridge_src, "@objc class SettingsWindowObjCBridge")
+
+for rel, source in ((presenter_path, presenter_src), (settings_view_path, settings_view_src),
+                    ("SettingsWindowObjCBridge", bridge_body)):
+    found = [token for token in WINDOW_CONSTRUCTION if token in source]
+    check(not found, "the settings page never builds a window of its own (%s)" % rel
+          if not found else "the settings page builds a window in %s: %s" % (rel, found))
+
+# Attaching is what makes it embedded; restoring is what makes leaving invisible.
+check("parent.addChild(hosting)" in presenter_src
+      and "content.addSubview(hosting.view)" in presenter_src,
+      "the settings page is attached to the window it was asked to present in")
+check("window.toolbar?.isVisible = savedToolbarVisible" in presenter_src
+      and "window.title = savedTitle" in presenter_src,
+      "leaving the settings page restores the toolbar and the title it replaced")
+check("TabBarConfig.animationDuration" in presenter_src
+      and not re.search(r"(?i)duration\s*=\s*0?\.\d", presenter_src),
+      "the settings transition takes its duration from TabBarConfig instead of a literal")
+
+# The page swallows Command+W so the window menu cannot close the window under
+# it. A local monitor that outlives the page would swallow it everywhere.
+show_body = swift_block(presenter_src, "private func show(in content: NSView)")
+dismiss_body = swift_block(presenter_src, "private func dismiss()")
+check("installCommandWFilter()" in show_body and "installCloseObserver()" in show_body,
+      "presenting the settings page installs both of its exit paths")
+check("NSEvent.removeMonitor(commandWMonitor)" in dismiss_body
+      and "NotificationCenter.default.removeObserver(closeObserver)" in dismiss_body
+      and "hosting.view.removeFromSuperview()" in dismiss_body
+      and "hosting.removeFromParent()" in dismiss_body,
+      "leaving the settings page removes its key monitor, observer and view")
+
+# Two entry points would mean two lifetimes. The Objective-C side may only reach
+# the page through the bridge, and the bridge may only forward to the presenter.
+sends = subprocess.run(
+    ["grep", "-rn", "--include=*.m", "--include=*.h", "-e", "presentSettingsInWindow", "."],
+    capture_output=True, text=True, cwd=root).stdout.splitlines()
+send_sites = sorted(set(l.split(":", 1)[0].lstrip("./") for l in sends
+                        if re.search(r"\[[^\]]*presentSettingsInWindow:", l)))
+check(send_sites == ["Limelight/macOS/AppDelegateForAppKit.m"],
+      "settings is presented from one Objective-C site only"
+      if send_sites == ["Limelight/macOS/AppDelegateForAppKit.m"] else
+      "unexpected settings presentation sites: %s" % send_sites)
+check(bridge_body.count("SettingsOverlayPresenter.") == 3
+      and "func presentSettings(inWindow" in bridge_body
+      and "SettingsOverlayPresenter.present(in: window, hostId: hostId)" in bridge_body,
+      "the settings bridge forwards all three calls to the presenter and adds nothing")
 
 print("%d constraint failures" % len(failures))
 sys.exit(1 if failures else 0)
