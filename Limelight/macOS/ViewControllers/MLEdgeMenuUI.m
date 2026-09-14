@@ -242,7 +242,7 @@
     }
 }
 
-+ (CGPathRef)cgPathFromBezierPath:(NSBezierPath *)bezierPath {
++ (CGPathRef)cgPathFromBezierPath:(NSBezierPath *)bezierPath CF_RETURNS_RETAINED {
     NSInteger numElements = bezierPath.elementCount;
     if (numElements == 0) {
         return CGPathCreateMutable();

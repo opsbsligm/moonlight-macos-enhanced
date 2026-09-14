@@ -100,7 +100,10 @@ typedef struct {
     state.Name = gamepad.Name.pressed
 
 - (ControllerState)controllerStateFromGamepad:(GCExtendedGamepad *)gamepad {
-    ControllerState state;
+    // Zero first: the thumbstick lines below are commented out, so an
+    // uninitialised struct would store stack garbage as the previous state, and
+    // re-enabling those comparisons would read it back as a thumbstick press.
+    ControllerState state = {0};
     COPY_STATE(dpad.up);
     COPY_STATE(dpad.down);
     COPY_STATE(dpad.left);

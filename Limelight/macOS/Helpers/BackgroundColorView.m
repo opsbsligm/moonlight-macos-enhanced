@@ -24,7 +24,12 @@
 }
 
 - (void)dealloc {
-    CGColorRelease(self.backgroundCGColor);
+    // The property starts NULL and CGColorRelease(NULL) is not defined, so only
+    // release what updateLayer actually retained.
+    if (_backgroundCGColor) {
+        CGColorRelease(_backgroundCGColor);
+        _backgroundCGColor = NULL;
+    }
 }
 
 - (void)setClear:(BOOL)clear {
@@ -33,8 +38,16 @@
 }
 
 - (void)updateLayer {
-    CGColorRelease(self.backgroundCGColor);
-    self.backgroundCGColor = CGColorRetain([NSColor colorNamed:self.backgroundColorName].CGColor);
+    // Take the new reference before dropping the old one, and never call
+    // CGColorRetain or CGColorRelease with NULL: colorNamed: returns nil when the
+    // name is missing, which used to reach both calls.
+    CGColorRef named = [NSColor colorNamed:self.backgroundColorName].CGColor;
+    CGColorRef replacement = named ? CGColorRetain(named) : NULL;
+    CGColorRef previous = self.backgroundCGColor;
+    self.backgroundCGColor = replacement;
+    if (previous) {
+        CGColorRelease(previous);
+    }
     [self updateBackgroundColor];
 }
 

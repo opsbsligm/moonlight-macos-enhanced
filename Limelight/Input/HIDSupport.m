@@ -769,6 +769,19 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 
 - (void)dealloc {
     [self tearDownCoreHIDMouseDriver];
+    // The manager is a CoreFoundation reference that this object owns by hand:
+    // clang does not manage a CF typed property, so nothing releases it when we
+    // go away. Leaving it alive is worse than the leak, because it is scheduled
+    // on the main run loop with four callbacks whose context is this object, and
+    // the next gamepad event would message freed memory. The streaming paths call
+    // tearDownHidManager before dropping their reference, which leaves this NULL
+    // and therefore does nothing; this is the net for every other path.
+    if (_hidManager != NULL) {
+        IOHIDManagerUnscheduleFromRunLoop(_hidManager, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+        IOHIDManagerClose(_hidManager, kIOHIDOptionsTypeNone);
+        CFRelease(_hidManager);
+        _hidManager = NULL;
+    }
     NSLog(@"HIDSupport dealloc");
 }
 

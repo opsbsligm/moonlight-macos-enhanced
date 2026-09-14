@@ -40,6 +40,9 @@
     CGEventRef cgEvent = CGEventCreateKeyboardEvent(NULL, keyCode, down);
     CGEventSetFlags(cgEvent, modifierFlags);
     NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
+    // The event was created here, so this reference has to go with it:
+    // eventWithCGEvent: has already copied what the responder needs.
+    CFRelease(cgEvent);
     [self.responder keyDown:event];
 }
 

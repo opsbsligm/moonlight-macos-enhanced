@@ -831,7 +831,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)handleGamepadQuitNotification:(NSNotification *)note;
 - (void)showNotification:(NSString *)message;
 - (void)showNotification:(NSString *)message forSeconds:(NSTimeInterval)seconds;
-- (CGPathRef)CGPathFromNSBezierPath:(NSBezierPath *)bezierPath;
+- (CGPathRef)CGPathFromNSBezierPath:(NSBezierPath *)bezierPath CF_RETURNS_RETAINED;
 @end
 
 @interface StreamViewController (InternalTeardown)

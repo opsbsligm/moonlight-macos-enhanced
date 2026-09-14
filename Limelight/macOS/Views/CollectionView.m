@@ -120,6 +120,10 @@ const NSEventModifierFlags modifierFlagsMask = NSEventModifierFlagShift | NSEven
     CGEventRef cgEvent = CGEventCreateKeyboardEvent(NULL, keyCode, true);
     CGEventSetFlags(cgEvent, 0);
     NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
+    // eventWithCGEvent: copies the event into the NSEvent, so the create
+    // reference from CGEventCreateKeyboardEvent: is ours to drop. Without this
+    // every D-pad press leaked one event for the life of the process.
+    CFRelease(cgEvent);
     [self keyDown:event];
 }
 

@@ -196,7 +196,10 @@
     [self updateShadowPath];
 }
 
-- (CGMutablePathRef)CGPathFromPath:(NSBezierPath *)path {
+// CF_RETURNS_RETAINED because the reference this returns is the caller's to
+// release: the name alone does not say that, and the one caller that guessed
+// differently leaked a path on every shadow refresh.
+- (CGMutablePathRef)CGPathFromPath:(NSBezierPath *)path CF_RETURNS_RETAINED {
     CGMutablePathRef cgPath = CGPathCreateMutable();
     NSInteger n = [path elementCount];
 
@@ -228,7 +231,9 @@
 - (void)updateShadowPath {
     dispatch_async(dispatch_get_main_queue(), ^{
         NSBezierPath *shadowPath = [NSBezierPath bezierPathWithRoundedRect:self.appCoverArt.bounds xRadius:APP_CELL_CORNER_RADIUS yRadius:APP_CELL_CORNER_RADIUS];
-        self.appCoverArt.superview.layer.shadowPath = [self CGPathFromPath:shadowPath];
+        CGPathRef cgPath = [self CGPathFromPath:shadowPath];
+        self.appCoverArt.superview.layer.shadowPath = cgPath;
+        CGPathRelease(cgPath);
     });
 }
 

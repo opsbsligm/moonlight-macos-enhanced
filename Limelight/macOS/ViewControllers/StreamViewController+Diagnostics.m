@@ -3196,7 +3196,7 @@
 }
 
 // 辅助方法：将 NSBezierPath 转换为 CGPath
-- (CGPathRef)CGPathFromNSBezierPath:(NSBezierPath *)bezierPath {
+- (CGPathRef)CGPathFromNSBezierPath:(NSBezierPath *)bezierPath CF_RETURNS_RETAINED {
     CGMutablePathRef path = CGPathCreateMutable();
     NSInteger count = [bezierPath elementCount];
     
