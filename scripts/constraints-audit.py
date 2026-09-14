@@ -10,6 +10,11 @@ Each check below corresponds to a defect that shipped at some point:
     an Apple Development signature and produced a misleading dialog.
   * the AWDL helper assertion in CI pinned the pre-rename bundle identifier and
     broke both architecture jobs.
+  * the x86_64 job asked for a macos-26-intel runner that GitHub does not
+    publish, so it could never start.
+  * the workflow declared no permissions and no concurrency group, so every job
+    inherited whatever default write scope the repository settings allow and
+    each push queued a second full macOS matrix.
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
@@ -78,6 +83,21 @@ workflow = open(os.path.join(root, ".github/workflows/build.yml"),
                 encoding="utf-8").read()
 check("std.skyhua.MoonlightMac.AwdlPrivilegedHelper" not in workflow,
       "CI derives the helper path instead of pinning the old bundle identifier")
+
+# Workflow policies that have to be visible before the first job, checked on the
+# text so this audit keeps running on a runner without PyYAML installed.
+head = workflow.split("\njobs:")[0]
+check(re.search(r"^permissions:\n  contents: read$", head, re.M) is not None,
+      "CI defaults every job to read-only repository contents")
+check(re.search(r"^concurrency:$", head, re.M) is not None,
+      "CI limits each ref to one live run through a concurrency group")
+
+intel_labels = sorted(set(re.findall(
+    r"^\s*(?:runner|runs-on):\s*(macos-[0-9]+(?:-intel)?)\s*$", workflow, re.M)))
+check(not intel_labels,
+      "every macOS runner label names an arm64 image"
+      if not intel_labels else
+      "macOS runner labels that do not name an arm64 image: %s" % intel_labels)
 
 print("%d constraint failures" % len(failures))
 sys.exit(1 if failures else 0)
