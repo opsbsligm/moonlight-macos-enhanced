@@ -92,23 +92,27 @@ def self_test():
     fixture_log = ("## [Unreleased]\n\n## [1.3.9]\n\n## [1.3.9-build19]\n"
                    "\n## [1.3.9-build20]\n")
     cases = [
-        ("v1.3.9-build20", ["v1.3.9-build19"], True, "newer build of the shipped version"),
-        ("v1.3.9-build19", ["v1.3.9-build19"], False, "the same build again"),
-        ("v1.3.9", ["v1.3.9-build19"], False, "the bare version after a build of it"),
-        ("v1.4.0-build20", ["v1.3.9-build19"], False, "a version the project does not build"),
-        ("v1.3.8-build20", ["v1.3.9-build19"], False, "an older version"),
-        ("v1.3.9-build99", ["v1.3.9-build19"], False, "a build number that is not this commit"),
-        ("v1.3.9-chore19", ["v1.3.9-build19"], False, "an unknown suffix"),
-        ("v1.4.0", ["v1.3.9"], False, "a version with no changelog section"),
+        ("v1.3.9-build20", ["v1.3.9-build19"], True, None, "newer build of the shipped version"),
+        ("v1.3.9-build19", ["v1.3.9-build19"], False, "not newer than build 19", "the same build again"),
+        ("v1.3.9", ["v1.3.9-build19"], False, "not newer than build 19", "the bare version after a build of it"),
+        ("v1.4.0-build20", ["v1.3.9-build19"], False, "the project builds 1.3.9", "a version the project does not build"),
+        ("v1.3.8-build20", ["v1.3.9-build19"], False, "older than the released", "an older version"),
+        ("v1.3.9-build99", ["v1.3.9-build19"], False, "build 99 but this commit builds 20", "a build number that is not this commit"),
+        ("v1.3.9-chore19", ["v1.3.9-build19"], False, "is not vMAJOR.MINOR.PATCH", "an unknown suffix"),
+        ("v1.4.0", ["v1.3.9"], False, "no [1.4.0] section", "a version with no changelog section"),
     ]
     failures = 0
-    for tag, existing, expected_ok, what in cases:
+    for tag, existing, expected_ok, reason_fragment, what in cases:
         reasons = evaluate(tag, {"1.3.9"}, 20, fixture_log, existing)
         ok = not reasons
-        if ok != expected_ok:
+        # A refusal has to name the right reason. Checking only the verdict lets
+        # one broken rule hide behind another rule that happens to reject the same
+        # tag, which is how the build-number check passed with its check disabled.
+        matched = reason_fragment is None or any(reason_fragment in r for r in reasons)
+        if ok != expected_ok or not matched:
             failures += 1
-            print("FAIL expected %s for %s (%s): %s"
-                  % ("accept" if expected_ok else "refusal", tag, what, reasons))
+            print("FAIL %s (%s): %s%s" % (tag, what, reasons,
+                  "" if matched else " [right verdict, wrong reason]"))
         else:
             print("ok   %-8s %s" % ("accept" if ok else "refuse", tag + " (" + what + ")"))
     missing_log = evaluate("v1.4.0", {"1.4.0"}, 20, fixture_log, ["v1.3.9"])
