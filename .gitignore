@@ -1,5 +1,11 @@
 # Build artifacts
 build/
+# Derived data from an explicit -derivedDataPath, which a second
+# architecture check or a verification run writes next to build/.
+build-*/
+
+# Byte-code left by importing the audit scripts.
+__pycache__/
 DerivedData/
 *.app
 *.dmg
