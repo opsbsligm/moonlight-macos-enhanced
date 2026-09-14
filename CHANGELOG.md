@@ -403,8 +403,56 @@ Apple Silicon hardware.
   mutation by the gate that is supposed to notice it, so the localization audit
   is exercised by three of its own regressions: a health rule that always
   accepts, a pattern that loses the `@"..."` branch, and a scan that shells out to
-  the host grep again. Constraint coverage is 74 checks and the battery 29
-  mutations.
+  the host grep again. Constraint coverage reached 74 checks and the battery 29
+  mutations at that point.
+
+### Seventh audit pass (what the static analyzer found)
+
+- **A synthesized key event leaked on every gamepad navigation press.**
+  `CollectionView.m` and `NavigatableAlertView.m` each built a CGEvent to hand a
+  gamepad button to the responder chain and released nothing, so browsing the app
+  list with a controller leaked one event per press, in the class whose only job is
+  controller navigation. Both release it now, after `eventWithCGEvent:` has copied
+  what the responder needs.
+- **Three copies of one path helper disagreed about ownership.** Each built a
+  `CGPathRef` and returned a +1 reference under a name that did not say so. The
+  callers in `StreamViewController+Diagnostics.m` and `MLEdgeMenuUI.m` released it;
+  the caller in `AppCell.m` assigned it to `CALayer.shadowPath` and leaked a path
+  on every shadow refresh. The helpers now carry `CF_RETURNS_RETAINED`, which is
+  the compiler's version of that sentence, the leaking caller releases, and the
+  audit refuses a path-returning method that stays silent about ownership.
+- **The HID manager could outlive the object its callbacks point into.** It is a
+  CoreFoundation reference this project owns by hand -- clang does not manage a CF
+  typed property, checked by compiling a probe and reading the absence of
+  `objc_storeStrong` -- and only `tearDownHidManager` dropped it. `dealloc` now
+  unschedules, closes and releases it: left scheduled with four callbacks whose
+  context is a freed `HIDSupport`, that is a use-after-free on the next gamepad
+  event rather than merely a leak.
+- **The stored gamepad state could hold stack garbage.**
+  `controllerStateFromGamepad:` declared its struct without initialising it while
+  the thumbstick copy lines are commented out, so the "previous state" carried
+  uninitialised bytes; re-enabling those comparisons would read them back as
+  thumbstick presses.
+- **`xcodebuild analyze` is a required job now.** `scripts/analyzer-audit.py`
+  compares findings with `scripts/analyzer-baseline.json` by file, checker and
+  message shape, counted, so a new class fails, one more instance of an accepted
+  class fails, and a finding that got fixed fails until someone reads it and
+  refreshes the baseline. It refuses a sweep that did not run -- an analyzer that
+  analysed nothing reports nothing, which is the same silence this repository has
+  been bitten by twice -- and the battery plants a mutation against each of its
+  three rules.
+- Accepted findings are recorded with their reason: an NSNumber nil test that the
+  retain-count checker reads as a boolean conversion, a VideoToolbox parameter
+  Apple documents as pass-NULL while the header marks it nonnull, and a CG colour
+  reference kept in an assign property. The baseline also freezes 81 hard-coded
+  user-facing strings across five view controllers, which are now unable to grow
+  and are waiting for a translation pass.
+
+Coverage after this pass is 80 constraint checks and 35 planted mutations, of
+which five belong to the analyzer findings fixed here: a leaked key event, a path
+helper that stops declaring ownership, a HID manager left alive, an analyzer sweep
+that silently stops running, and a baseline that accepts anything.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
