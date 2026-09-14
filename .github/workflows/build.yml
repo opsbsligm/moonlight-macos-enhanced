@@ -54,6 +54,14 @@ jobs:
     - name: Verify project constraints
       run: python3 scripts/constraints-audit.py
 
+    - name: Verify the constraints can actually fail
+      # A constraint written as a search for words passes on code that has lost
+      # the behaviour: the guard can be prefixed with NO &&, moved after the
+      # event is dispatched, or left without a return and still read correctly.
+      # Each mutation here is one of those regressions, applied to the real
+      # source, and the audit has to reject every one of them.
+      run: python3 scripts/assertion-battery.py
+
     - name: Verify the liquid glass rules
       # A glass look can be faked with a blur and a material, and the fake passes
       # a code review and a build. These rules are checked against fixtures that
@@ -66,7 +74,9 @@ jobs:
       # The gate below only helps if its rules are exercised on every change.
       # These fixtures are the only place the accept path is checked, because on
       # any given commit the real tree usually refuses every candidate tag.
-      run: python3 scripts/release-gate.py --self-test
+      run: |
+        python3 scripts/release-gate.py --self-test
+        python3 scripts/prepare-release.py --self-test
 
     - name: Verify the workflow can actually run
       # A plain yaml.safe_load accepts a step whose run: key was dropped, and a
