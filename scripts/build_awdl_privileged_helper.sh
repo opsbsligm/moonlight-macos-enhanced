@@ -71,12 +71,14 @@ clang_args=(
   -I"${helper_include_dir}"
 )
 
-# zsh does NOT word-split unquoted variable expansions by default (unlike bash).
-# Without the `=` flag, ${ARCHS}="arm64 x86_64" would be passed to clang as a
-# single -arch argument "-arch arm64 x86_64", producing:
-#   clang: error: invalid arch name '-arch arm64 x86_64'
-# The `=` flag forces word splitting on IFS so each arch becomes its own -arch.
-for arch in ${=ARCHS}; do
+# ARCHS arrives as one string, "arm64 x86_64", and every architecture has to
+# become its own -arch argument, because clang rejects "-arch arm64 x86_64".
+# bash splits an unquoted expansion on IFS, which is what the loop needs. zsh
+# does not split unless forced with ${=ARCHS}, and that flag is what pinned this
+# script to zsh: under bash it is a bad substitution at run time, invisible to
+# bash -n. Unquoted $ARCHS is also strict, since set -u reports an unset ARCHS
+# instead of building a helper with no architecture at all.
+for arch in $ARCHS; do
   clang_args+=(-arch "$arch")
 done
 
