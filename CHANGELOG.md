@@ -570,6 +570,64 @@ that silently stops running, and a baseline that accepts anything.
   changed for it. It does mean the package cannot be notarised and a downloaded
   DMG needs to be opened once through Finder's Open menu.
 
+### Eleventh audit pass (what the page says, and where it was read from)
+
+- **What the settings pages display is measured now, not read off a screenshot.** The
+  video page's capability wording, whether its two enhancement controls are live, and
+  the eleven rows of the capability matrix had been signed off by looking at a captured
+  image. The app now answers those questions itself: a Debug-only class forwards the
+  rules the panes actually read, from the model the page is rendering from, and
+  `scripts/render-probe.py` refuses any report whose expectation did not come from that
+  model (`expectationsFromPageModel`), because two models built at different moments of
+  launch disagree and every comparison then happens between two different machines.
+  Reaching the text needed the in-process `NSAccessibility` protocol:
+  `AXUIElementCreateApplication(getpid())` asked from inside the process it queries
+  returns the application element referring to itself, no window and no text, on any
+  thread and with any amount of run-loop pumping; issuing that one request is enough to
+  wake AppKit's own tree, which is what the pass walks instead. It runs after
+  `applicationDidFinishLaunching:`, because asked during
+  `applicationWillFinishLaunching:` the tree is a placeholder for a page that was
+  visibly drawing text, and a control carries no label of its own, so each row is
+  paired with the nearest pop-up button to the right of its title at the same height.
+- **A Debug-only Swift file was never Debug-only.** The project defined no
+  `SWIFT_ACTIVE_COMPILATION_CONDITIONS` anywhere, so `#if DEBUG` in a `.swift` file
+  compiled to nothing while the Debug configuration defined `DEBUG=1` for C-family
+  sources, whose half of the same feature kept compiling and calling a Swift class that
+  had never been emitted. A Release build shows nothing wrong, because in Release the
+  code is absent on both sides. The rule is now stated as the shape that was actually
+  broken -- if Debug names `DEBUG` for one language it has to name it for the other --
+  and not as "if a Swift file says `#if DEBUG` then check": that first version read as
+  clean at the commit which added the build setting, because with no Debug-only Swift
+  file present it had nothing to examine and the mutation planted against it went
+  uncaught. 42/42 mutations are caught now. The shipped binary was also read rather
+  than reasoned about: the Release binary carries no probe entry point, no probe
+  strings and no expectation class, while the Debug build, whose code lives in
+  `Moonlight.debug.dylib`, carries all three.
+- **CI went red on the capability matrix while this machine kept saying green, and both
+  readings were correct.** The matrix sits in a `DisclosureGroup` whose state is stored
+  under `settings.app.videoCapabilityStatusExpanded` and defaults to collapsed, and a
+  collapsed SwiftUI group vends nothing inside it. A clean launch vends 50 readable rows
+  on the app page and none of the eleven matrix rows exist in the tree at all; a machine
+  where somebody opened that section once vends 84 rows and the same check passes. The
+  pass now starts with that preference forced off, so every run faces what a first run
+  faces, and restores it afterwards; it decides the state from the label the page itself
+  displays, taken through the page's own wording rather than a literal baked into the
+  probe, because pressing a disclosure that is already open shuts it; and it presses
+  the triangle the way a pointer does, then reads again and asserts the matrix against
+  that reading alone. One triangle is found and one pressed -- counted by identity,
+  because until then the walk reached the same hosted element through the accessibility
+  children and through the view tree and reported 65 triangles for the one section the
+  page has, and sixty-five presses would have looked like a pass. Here 50 readable rows
+  become 84; the merged text of every pass is what had let the claim survive, since a
+  machine that never opened the section and one that did are indistinguishable in a
+  union. Five further doctored reports are refused for this path and the self-test
+  refuses 24 in all, and a constraint pairs the preference the probe forces with the
+  string the app page stores it under, so a rename cannot leave the probe shutting a
+  preference nobody reads.
+- The folder a hand-off package is written into, `dist/`, is ignored. `*.dmg` already
+  was, which left the checksum line in `git status` on every session and taught a
+  reader to skim past the output that is supposed to show an uncommitted change.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
