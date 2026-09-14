@@ -728,6 +728,32 @@ problem = ordered_once(dealloc_body, "IOHIDManagerUnscheduleFromRunLoop(",
 check(problem is None, "the HID manager is unscheduled before it is released"
       if problem is None else "the dealloc net is not ordered: " + problem)
 
+# Every path that stops a stream relies on tearing the keyboard state down
+# first, because -releaseAllHeldKeys needs a live input context to tell the host
+# to let go. All four call sites do that today, and -beginStopStreamIfNeededWith
+# Reason itself switches forwarding off and NULLs the context, so a call site
+# added without the teardown would leave the host believing a key is pressed
+# forever, with no log and no visible failure in the app that stopped.
+stop_calls = re.compile(r"\[(?:self|weakSelf)\s+beginStopStreamIfNeededWithReason")
+stopping_without_release = []
+for relative in ("macOS/ViewControllers/StreamViewController.m",
+                 "macOS/ViewControllers/StreamViewController+WindowModes.m"):
+    text = open(os.path.join(root, "Limelight", relative), encoding="utf-8").read()
+    for body in method_bodies(text):
+        if "beginStopStreamIfNeededWithReason" in body.split("\n")[0]:
+            continue  # the forwarder is not a decision point
+        call = stop_calls.search(body)
+        if not call:
+            continue
+        released = body.find("tearDownKeyboardStateForSessionEnd")
+        if released < 0 or released > call.start():
+            stopping_without_release.append("%s: %s" % (relative.split("/")[-1],
+                                                        body.split("\n")[0].strip()[:60]))
+check(not stopping_without_release,
+      "a stream that stops never leaves a key down on the host"
+      if not stopping_without_release else
+      "stops the stream without releasing held keys first: " + "; ".join(stopping_without_release))
+
 # A gate nobody wired is worse than no gate: it sits in scripts/ looking like
 # coverage while CI never runs it. Every audit and harness has to be reachable
 # from the workflow, directly or through another reachable script, because one

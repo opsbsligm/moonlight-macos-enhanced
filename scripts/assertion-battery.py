@@ -31,6 +31,8 @@ APP_CELL = os.path.join(root, "Limelight", "macOS", "ViewControllers", "AppCell.
 PREPARER = os.path.join(root, "scripts", "prepare-release.py")
 BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
 WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
+WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                             "StreamViewController+WindowModes.m")
 
 # A mutation is judged by the gate that is supposed to notice it. Both gates run an
 # extra proof of their own when invoked normally, so the battery has to tell the
@@ -315,6 +317,7 @@ HID_RELEASE = "        CFRelease(_hidManager);\n"
 SWEEP_RULE = "def sweep_health(analyzed, source_count, scan_root=\".\"):\n"
 ADDED_RULE = "if key not in baseline"
 BUILD_VIA_SCRIPT = "else str(build_number())"
+TEARDOWN_BEFORE_STOP = '    [self.hidSupport tearDownKeyboardStateForSessionEnd:"performCloseStreamWindow"];\n'
 KEYBOARD_STEP = "      run: python3 scripts/keyboard-concurrency-tests.py\n"
 SHALLOW_GUARD = r'''if [ "${1:-}" = "--print" ] && \
    [ "$("$git" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
@@ -367,6 +370,12 @@ def unplug_gate(text):
     return text.replace(KEYBOARD_STEP, "", 1)
 
 
+
+def stop_without_release(text):
+    once(text, TEARDOWN_BEFORE_STOP, "keyboard teardown before the stop")
+    return text.replace(TEARDOWN_BEFORE_STOP, "", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -406,6 +415,7 @@ MUTATIONS = [
     ("recounted-build", PREPARER, recounted_build, "the release tool counts commits its own way"),
     ("believed-shallow", BUILD_SH, believe_shallow, "a shallow clone stamps a build number that is too small"),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
+    ("stop-without-release", WINDOW_MODES, stop_without_release, "the stream stops while the host still holds a key"),
 ]
 
 
