@@ -453,6 +453,44 @@ which five belong to the analyzer findings fixed here: a leaked key event, a pat
 helper that stops declaring ownership, a HID manager left alive, an analyzer sweep
 that silently stops running, and a baseline that accepts anything.
 
+### Ninth audit pass (the two-key report, made checkable)
+
+- **Walking and jumping at the same time is now a scenario CI runs.** The report
+  that started this project was not a crash but a game: W and Space together,
+  the two most basic inputs there are, behaved as if one key interfered with the
+  other. Nothing in a build, a warning, or a review can see that -- a held-key
+  table with exactly the right words in it can still tangle two concurrent keys,
+  which is what several shipped regressions did. `scripts/keyboard-concurrency-tests.py`
+  extracts the keyboard state machine from `HIDSupport.m` verbatim, compiles it,
+  and drives it with real `NSEvent`s through the same calls the stream window
+  makes. It covers both release orders of a W/Space pair, a press the settings
+  page kept while another key was legitimately forwarded, a flush that must not
+  invent a release for a key the host never saw pressed, two keys held when input
+  forwarding is switched off, an auto-repeat, and a second flush. The harness is
+  then run against the pre-fix shape -- one slot for "the key we forwarded last"
+  -- and has to reject it, so the scenarios cannot silently stop meaning anything.
+- **Two probes settled what belongs to AppKit and what belongs to us.** A window
+  offscreen answered `acceptsFirstResponder=0` for both the view controller and
+  its view, yet `makeFirstResponder:` still returned YES and the responder chain
+  delivered `keyDown:13, keyDown:49, keyUp:49, keyUp:13`: AppKit does not steal
+  Space or W in this topology, and does not merge them. Menu items, the other
+  place a key can vanish before the stream view sees it, are already guarded by
+  the modifier floor in `menuKeyEquivalent(for:)`. With the state machine passing
+  every two-key shape above, the current tree handles the reported pair correctly
+  on the evidence available; the symptom matches the build still running on the
+  machine, which predates the input work and has never been replaced.
+- **A gate nobody wired is now a failure.** Every audit and harness in `scripts/`
+  has to be reachable from the workflow, directly or through another reachable
+  script (`release-gate --self-test` legitimately drives the preparation
+  fixtures, and those fixtures exist only to satisfy that gate). Unplugging the
+  keyboard gate from the workflow is now one of the planted regressions: 38/38
+  caught.
+- **The harnesses ask xcrun for the macOS SDK by name.** A bare
+  `xcrun --show-sdk-path` answers with the Command Line Tools copy on this
+  machine, whose `.tbd` files the Xcode linker rejects with "unknown architecture
+  arm64e.x1"; a gate that fails for that reason reads like broken code and gets
+  silenced rather than fixed.
+
 ### Eighth audit pass (a version number that depended on the clone)
 
 - **The build number was a property of the working tree, not of the commit.**
