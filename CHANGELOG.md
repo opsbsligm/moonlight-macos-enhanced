@@ -1373,6 +1373,51 @@ Constraints stay at 140 on a host with an Apple toolchain, the battery went from
 The battery went from 69 to 70, constraints stay at 140 on a host with an Apple
 toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 
+### Round 27: the pipeline had a split personality, and the keyboard did not
+
+### Fixed
+
+- **One workflow used two versions of the same action.** The analyze job
+  uploaded its transcript with `actions/upload-artifact@v4`; the five other
+  uploads in the same file used `@v7`. Nothing was red. A tag is resolved
+  per job, so both halves ran, and the file had quietly grown two
+  implementations of one step -- which is exactly how a major bump arrives:
+  on some steps and not others, leaving the artifact a consumer expects to
+  read written by code nobody reviewed beside that consumer. Worse, the
+  drifted step sits behind `if: failure()`, so the day GitHub retires a
+  major is the day the job that explains a failure starts failing too. It
+  is on v7 now, like every other upload in the file.
+- **Rule WF025 keeps it that way**: inside one file, one action means one
+  version, whether the reference is a tag or a pinned commit. The rule is
+  proven from both sides -- a fixture that splits one action across two
+  majors and reports nothing else, a control with several uploads that all
+  agree and must stay silent, and `scripts/assertion-battery.py` planting
+  the partial bump as `upload-action-split-across-versions` against the
+  pipeline audit. The rule caught the real thing before the fix did.
+
+### Audited, and deliberately not changed
+
+- **The local shortcuts that release every modifier were read one by one.**
+  `Command+1`, `Command+\`` and `Command+H` outside fullscreen,
+  `Control+Command+F`, `Command+W`, and the disconnect, quit and reconnect
+  shortcuts all call `-releaseAllModifierKeys` while the stream is still
+  running, and the player's fingers are usually still on the keys at that
+  moment. That looked like the old stuck-modifier family. It is not: the
+  call zeroes `keyboardPhysicalModifierSourceMask` and
+  `keyboardRemoteModifierMask` in the same breath it sends the eight up
+  packets, so the tracker and the host are told the same thing, and every
+  later edge -- a key kept held, a key let go, another press -- recomputes a
+  diff against a state that matches. Narrowing it to "release only the
+  modifiers this one shortcut consumed" would make the two trackers answer
+  for different worlds, which is the failure the
+  `modifier-release-forgets-the-tracker` mutation exists to prevent. There
+  is no reproducible wrong outcome on the other side of that change, so the
+  code stays as it is and the two remaining bare `return YES` guards in the
+  key-equivalent gate stay as the documented, intentional swallows they are.
+
+The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
+stay at 140, and the behavioural harnesses stay at ten.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul

@@ -695,7 +695,12 @@ jobs:
       # makes that arguable instead of mysterious, and it is the only record of a
       # sweep that no longer exists once the runner is gone.
       if: failure()
-      uses: actions/upload-artifact@v4
+      # The same version as every other upload in this file. A tag resolves per job,
+      # so a step left behind on an older major keeps working while it quietly runs
+      # different code from the steps that consume what it wrote -- and the major
+      # GitHub retires is the one that turns this step's failure() path into a second,
+      # unrelated red job. workflow-audit rule WF025 keeps the file on one version.
+      uses: actions/upload-artifact@v7
       with:
         name: analyzer-transcript
         path: ${{ runner.temp }}/analyze.log

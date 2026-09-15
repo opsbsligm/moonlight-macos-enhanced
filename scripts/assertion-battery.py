@@ -67,6 +67,9 @@ COLLISION_GATE = (os.path.join(root, "scripts", "modifier-only-release-collision
 SPACE_HELD_GATE = (os.path.join(root, "scripts", "space-transition-held-key-tests.py"), [])
 NAVIGATION_GATE = (os.path.join(root, "scripts", "controller-key-navigation-tests.py"), [])
 VIDEO_GATE = (os.path.join(root, "scripts", "video-enhancement-tests.py"), [])
+# The workflow audit reads the pipeline that runs every other gate, so a mutation of
+# the pipeline itself is judged by it and by nothing else.
+WF_GATE = (os.path.join(root, "scripts", "workflow-audit.py"), [])
 # The glass ratchet is a source rule, so a reverted panel is visible to it.
 LIQUID_GATE = (os.path.join(root, "scripts", "liquid-glass-audit.py"), [])
 # And this is the runtime half of the same rule: the container is compiled and run, so a
@@ -566,6 +569,22 @@ def release_modifiers_without_clearing_the_tracker(text):
     return text.replace(cleared, "", 1)
 
 
+def drift_one_upload_action(text):
+    """Moves one upload step to a different major of the same action.
+
+    This is what a partial dependency bump leaves behind: the file still parses, every
+    job still runs, and the producer and the consumer of an artifact are now two
+    versions of one action. Only the pipeline's own audit can see that, so it has to be
+    run against the pipeline.
+    """
+    mutated = text.replace("uses: actions/upload-artifact@v7",
+                           "uses: actions/upload-artifact@v6", 1)
+    if mutated == text:
+        raise SystemExit("no upload-artifact@v7 is in the workflow any more, so this "
+                         "mutation would be proving nothing")
+    return mutated
+
+
 GLASS_PANEL_CALL = "    self.logOverlayContainer = [GlassOverlayContainer containerWithCornerRadius:12.0];"
 
 
@@ -827,6 +846,8 @@ MUTATIONS = [
     ("recounted-build", PREPARER, recounted_build, "the release tool counts commits its own way"),
     ("believed-shallow", BUILD_SH, believe_shallow, "a shallow clone stamps a build number that is too small"),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
+    ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,
+     "one workflow uses two versions of the same upload action", WF_GATE),
     ("stop-without-release", WINDOW_MODES, stop_without_release, "the stream stops while the host still holds a key"),
     ("swift-debug-condition-gone", PBXPROJ, drop_swift_debug_condition,
      "Debug-only Swift code stops compiling while the Objective-C half keeps calling it"),

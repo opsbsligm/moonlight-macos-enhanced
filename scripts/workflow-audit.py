@@ -47,6 +47,7 @@ RULES = {
     "WF022": "a job declares no `timeout-minutes`, so a hang costs the six-hour default",
     "WF023": "a third-party action is floated on a moving tag instead of a pinned commit",
     "WF024": "`pull_request` names a branch that `push` does not, so pushing there runs no CI",
+    "WF025": "one action is used at two versions in one file, so two jobs run different code for the same step",
 }
 
 # GitHub-owned actions are pinned by the platform. Anything else is owned by
@@ -261,6 +262,45 @@ def trigger_branches(doc, event):
     return []
 
 
+def action_version_drifts(doc, name):
+    """Report an action used at two versions inside one workflow file.
+
+    The analyze job uploaded its transcript with `upload-artifact@v4` while the five
+    other uploads in the same file used `v7`. Nothing refused to run: GitHub resolves
+    a tag per job, so both halves worked, and nothing said the file's own steps had
+    quietly split into two implementations of the same action. That is the shape a
+    major bump lands in -- it arrives on some steps and not others, and an artifact a
+    consumer expects to read is then written by code nobody reviewed beside the
+    consumer. Inside one file, one action means one version.
+    """
+    jobs = (doc or {}).get("jobs")
+    if not isinstance(jobs, dict):
+        return []
+    problems = []
+    first_seen = {}
+    for job_name, job in jobs.items():
+        if not isinstance(job, dict) or not isinstance(job.get("steps"), list):
+            continue
+        for step in job["steps"]:
+            if not isinstance(step, dict) or not isinstance(step.get("uses"), str):
+                continue
+            ref = step["uses"].strip()
+            if "@" not in ref or "/" not in ref.split("@")[0]:
+                continue
+            repo, version = ref.rsplit("@", 1)
+            if not version:
+                continue
+            previous = first_seen.get(repo)
+            if previous is None:
+                first_seen[repo] = version
+            elif version != previous:
+                problems.append((
+                    "WF025",
+                    "%s job %s step %r" % (name, job_name, step.get("name") or "?"),
+                    "%s@%s here, %s@%s earlier in the same file" % (repo, version, repo, previous)))
+    return problems
+
+
 def audit_document(doc, name, root=ROOT):
     """Return [(code, location, detail)] for one parsed workflow document."""
     problems = []
@@ -392,6 +432,7 @@ def audit_document(doc, name, root=ROOT):
             problems.append(("WF021", loc,
                              "runs a repository script and has no actions/checkout step"))
 
+    problems.extend(action_version_drifts(doc, name))
     problems.extend(audit_needs_graph(jobs, name))
     return problems
 
@@ -672,6 +713,19 @@ jobs:
       - name: build
         run: echo a
 """),
+    ("WF025", "one action split across two versions in one file", """
+name: splitversions
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Upload the transcript
+        uses: actions/upload-artifact@v6
+      - name: Upload the checksum
+        uses: actions/upload-artifact@v7
+"""),
 ]
 
 
@@ -791,6 +845,47 @@ jobs:
     return findings
 
 
+def version_drift_controls():
+    """Both sides of the one-action-one-version rule.
+
+    The passing shape is the real file's arrangement: several uploads that all name the
+    same version. The failing shape is the same file with one of them moved, which is
+    what a partial bump actually looks like.
+    """
+    shared = """
+name: versions
+on: push
+jobs:
+  producer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Upload the app
+        uses: actions/upload-artifact@v7
+  consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Upload the transcript
+        uses: actions/upload-artifact@v7
+"""
+    moved = shared.replace("actions/upload-artifact@v7\n  consumer",
+                           "actions/upload-artifact@v6\n  consumer", 1)
+    findings = []
+    if moved == shared:
+        findings.append("the drift control could not move one upload, so it proves nothing")
+        return findings
+    clean = audit_document(load_yaml(shared), "versions.yml")
+    if clean:
+        findings.append("the matching-version control reports %s" % (clean,))
+    found = audit_document(load_yaml(moved), "moved.yml")
+    if [code for code, _, _ in found] != ["WF025"]:
+        findings.append("the drift control reports %s, expected one WF025" % (found,))
+    elif "upload-artifact@v6" not in found[0][2] or "v7" not in found[0][2]:
+        findings.append("the drift control names %s, expected both versions" % found[0][2])
+    return findings
+
+
 def shebang_controls():
     """The shebang rule needs both a passing and a failing tree to be believed."""
     findings = []
@@ -855,6 +950,7 @@ def self_test():
         failures.append("the committed-script control reports %s" % (present,))
     failures.extend(checkout_controls())
     failures.extend(action_pin_controls())
+    failures.extend(version_drift_controls())
     failures.extend(shebang_controls())
     failures.extend(dialect_controls())
     good = audit_document(load_yaml(GOOD), "good.yml")
