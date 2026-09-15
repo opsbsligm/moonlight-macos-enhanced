@@ -22,6 +22,9 @@ assertions fire on the defect they describe.
 """
 import os, re, subprocess, sys, tempfile, textwrap
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import apple_toolchain
+
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
 SRC = "Limelight/Stream/VideoDecoderRenderer.m"
 failures = []
@@ -65,14 +68,9 @@ def warmup_body(text):
     return method_body(text, "- (void)requestFrameInterpolationWarmupForStreamWidth:")
 
 
-def clang():
-    dev = subprocess.run(["xcrun", "--sdk", "macosx", "--find", "clang"],
-                         capture_output=True, text=True)
-    if dev.returncode != 0:
-        return None, None
-    sdk = subprocess.run(["xcrun", "--sdk", "macosx", "--show-sdk-path"],
-                         capture_output=True, text=True)
-    return dev.stdout.strip(), sdk.stdout.strip()
+def toolchain():
+    """The compiler and SDK, as one matched pair. See scripts/apple_toolchain.py."""
+    return apple_toolchain.clang_and_sdk("video enhancement probe")
 
 
 PROBE = r"""
@@ -203,10 +201,7 @@ int main(void) {
 
 
 def main():
-    cc, sdk = clang()
-    if cc is None or sdk is None:
-        check(False, "clang and macOS SDK must be available to probe the GPU")
-        return 1
+    cc, sdk = toolchain()
 
     src = open(os.path.join(ROOT, SRC), encoding="utf-8").read()
 

@@ -957,6 +957,28 @@ for section, _, _ in (("StreamMenuSectionWindow", 0, 0),
     check("[self popUpStreamSubmenuForSection:%s fromButton:sender]" % section in diagnostics,
           "the %s button asks for its section by name" % section)
 
+# --- one compiler answer --------------------------------------------------
+# Every behavioural harness needs a clang and an SDK. Four of them wrote the answer
+# themselves and all four asked xcrun, so on a host whose Xcode license has not been
+# accepted from a Terminal they refused to run -- not failed, refused -- and the tree
+# looked untestable rather than testable by another route, because the Command Line
+# Tools ship a clang and an SDK that need no such consent. The pairs matter: a compiler
+# from one vendor and an SDK from the other produces "unknown architecture arm64e.x1"
+# out of the linker, which reads as broken code and gets a gate silenced. One module
+# answers now, and a harness that asks xcrun again has to be noticed here.
+harnesses = sorted(name for name in os.listdir(os.path.join(root, "scripts"))
+                   if name.endswith("-tests.py"))
+asking_again = sorted(name for name in harnesses
+                      if re.search(r"\bxcrun\b", open(os.path.join(root, "scripts", name),
+                                                        encoding="utf-8").read())
+                      and "apple_toolchain.clang_and_sdk" not in
+                      open(os.path.join(root, "scripts", name), encoding="utf-8").read())
+check(bool(harnesses) and not asking_again,
+      "every behavioural harness takes its compiler from the one module"
+      if harnesses and not asking_again else
+      "harnesses that ask xcrun for themselves: " + (", ".join(asking_again)
+                                                     or "none; no harness found at all"))
+
 # --- the modifier mapping, from both ends ----------------------------------
 # KeyboardMapResolver is described in its own header as the only place modifier
 # mapping is defined, and the mapping it defines is the thing people buy this

@@ -31,6 +31,10 @@ Exit 0 only when the shipped mapping passes every scenario and both variants fai
 """
 import os, re, subprocess, sys, tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import apple_toolchain
+
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOLVER_M = os.path.join(ROOT, "Limelight", "Input", "KeyboardMapResolver.m")
 RESOLVER_H = os.path.join(ROOT, "Limelight", "Input", "KeyboardMapResolver.h")
@@ -57,6 +61,12 @@ EXPECTATIONS = [
 ]
 
 STUB = r'''
+// AppKit, not Foundation: NSEventModifierFlags is declared by NSEvent, and the
+// resolver header only pulls in Carbon, which is why the shipped file compiles inside
+// the app (something else in its translation unit brings AppKit) while a probe that
+// includes the header alone does not. The first version of this harness asked for
+// Foundation and the CI job said so in one line.
+#import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 #include <string.h>
 #include <stdio.h>
@@ -112,8 +122,10 @@ int main(void) {
             KMR_PhysicalModifier phys = KMR_PhysicalFromKeyCode(keyCodes[i]);
             KMR_RemoteModifierMask mask = KMR_RemoteMaskForPhysical(phys);
             char note[160];
-            snprintf(note, sizeof(note), "keycode %u maps to %d remote bits, expected one",
-                     (unsigned) keyCodes[i], __builtin_popcount((unsigned) mask));
+            snprintf(note, sizeof(note),
+                     "keycode %u maps to remote mask 0x%02X, expected 0x%02X (%d bit(s))",
+                     (unsigned) keyCodes[i], (unsigned) mask, (unsigned) bitOf[i],
+                     __builtin_popcount((unsigned) mask));
             expect(mask == bitOf[i], note);
 
             unsigned short vk = KMR_RemoteVKForPhysicalKeyCode(keyCodes[i]);
@@ -129,14 +141,14 @@ int main(void) {
             { 0, 0 },
             { NSEventModifierFlagShift, KMR_Remote_LeftShift },
             { NSEventModifierFlagControl, KMR_Remote_LeftControl },
-            { NSEventModifierFlagOption, KMR_Remote_LeftOption },
+            { NSEventModifierFlagOption, KMR_Remote_LeftAlt },
             { NSEventModifierFlagCommand, KMR_Remote_LeftMeta },
             { NSEventModifierFlagShift | NSEventModifierFlagCommand,
               KMR_Remote_LeftShift | KMR_Remote_LeftMeta },
             { NSEventModifierFlagShift | NSEventModifierFlagControl |
               NSEventModifierFlagOption | NSEventModifierFlagCommand,
               KMR_Remote_LeftShift | KMR_Remote_LeftControl |
-              KMR_Remote_LeftOption | KMR_Remote_LeftMeta },
+              KMR_Remote_LeftAlt | KMR_Remote_LeftMeta },
         };
         for (size_t i = 0; i < sizeof(flagCases) / sizeof(flagCases[0]); i++) {
             KMR_RemoteModifierMask got = KMR_RemoteMaskForAppKitFlags(flagCases[i].flags);
@@ -226,28 +238,16 @@ def assemble(variant=None):
 
 
 def toolchain():
-    """The same compiler the other harnesses use.
-
-    `xcrun clang` runs the shim, which refuses on a host whose license has not been
-    accepted from a Terminal; `xcrun --find clang` answers with a path that needs no such
-    consent. The SDK is asked for by name, because the default one on some machines is the
-    Command Line Tools SDK, which has no Foundation to link.
-    """
-    found = subprocess.run(["xcrun", "--find", "clang"], capture_output=True, text=True)
-    sdk = subprocess.run(["xcrun", "--sdk", "macosx", "--show-sdk-path"],
-                         capture_output=True, text=True)
-    clang, path = found.stdout.strip(), sdk.stdout.strip()
-    if not os.path.exists(clang) or not os.path.isdir(path):
-        raise SystemExit("xcrun could not name a clang and macOS SDK to build the modifier "
-                         "mapping probe")
-    return clang, path
+    """The compiler and SDK, as one matched pair. See scripts/apple_toolchain.py."""
+    return apple_toolchain.clang_and_sdk("modifier mapping probe")
 
 
 def build_and_run(work, name, source):
     binary = os.path.join(work, name)
     clang, sdk = toolchain()
     built = subprocess.run([clang, "-fobjc-arc", "-O1", "-isysroot", sdk,
-                            "-framework", "Foundation", "-o", binary,
+                            "-framework", "AppKit", "-framework", "Foundation",
+                            "-o", binary,
                             "-x", "objective-c", "-"],
                            input=source, text=True, capture_output=True, cwd=ROOT)
     if built.returncode != 0:

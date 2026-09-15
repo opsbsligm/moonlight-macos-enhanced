@@ -26,6 +26,10 @@ Exit 0 only when both languages resolve and the old shape fails in English.
 """
 import os, re, subprocess, sys, tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import apple_toolchain
+
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INTERNAL = os.path.join(ROOT, "Limelight", "macOS", "ViewControllers", "StreamViewController_Internal.h")
 MENU_UI = os.path.join(ROOT, "Limelight", "macOS", "ViewControllers", "StreamViewController+MenuUI.m")
@@ -176,20 +180,8 @@ int main(void) {
 
 
 def toolchain():
-    """The same compiler the other harnesses use.
-
-    `xcrun clang` runs the shim, which refuses on a host whose license has not been
-    accepted from a Terminal; `xcrun --find clang` answers with a path that needs no
-    such consent. The SDK is asked for by name, because the default one on this
-    machine is the Command Line Tools SDK, which has no AppKit to link.
-    """
-    found = subprocess.run(["xcrun", "--find", "clang"], capture_output=True, text=True)
-    sdk = subprocess.run(["xcrun", "--sdk", "macosx", "--show-sdk-path"],
-                         capture_output=True, text=True)
-    clang, path = found.stdout.strip(), sdk.stdout.strip()
-    if not os.path.exists(clang) or not os.path.isdir(path):
-        raise SystemExit("xcrun could not name a clang and macOS SDK to build the addressing probe")
-    return clang, path
+    """The compiler and SDK, as one matched pair. See scripts/apple_toolchain.py."""
+    return apple_toolchain.clang_and_sdk("addressing probe")
 
 
 def build_and_run(work, source):

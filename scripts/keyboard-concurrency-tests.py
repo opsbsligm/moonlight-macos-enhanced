@@ -28,6 +28,10 @@ Exit 0 only when every scenario passes and the known-bad shape fails.
 """
 import os, re, subprocess, sys, tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import apple_toolchain
+
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE = os.path.join(ROOT, "Limelight", "Input", "HIDSupport.m")
 
@@ -307,25 +311,17 @@ int main(void) {
 
 
 def toolchain():
-    """Ask xcrun, the same way the other behavioural harness does.
+    """The compiler and SDK, as one matched pair. See scripts/apple_toolchain.py.
 
-    Hardcoding an Xcode path or an architecture would make this gate red on a
-    runner that keeps Xcode somewhere else or boots a different chip, and a gate
-    that is red for the wrong reason gets silenced.
+    A host with neither keeps the shape this file already had: the caller prints a FAIL
+    and returns a failing code, so an unusable machine reads as a red gate rather than
+    a green one -- the only difference from a silent skip that would lie.
     """
-    find = subprocess.run(["xcrun", "--find", "clang"], capture_output=True, text=True)
-    # Ask for the macOS SDK by name. A bare --show-sdk-path answers with whichever
-    # SDK the host considers default, which on this machine is the Command Line
-    # Tools copy: the Xcode linker cannot read its .tbd files ("unknown
-    # architecture arm64e.x1") and the gate would read as broken code.
-    sdk = subprocess.run(["xcrun", "--sdk", "macosx", "--show-sdk-path"],
-                         capture_output=True, text=True)
-    if find.returncode != 0 or sdk.returncode != 0:
+    try:
+        return apple_toolchain.clang_and_sdk("keyboard concurrency")
+    except SystemExit as error:
+        print("%s" % error)
         return None, None
-    clang, path = find.stdout.strip(), sdk.stdout.strip()
-    if not os.path.exists(clang) or not os.path.isdir(path):
-        return None, None
-    return clang, path
 
 
 def compile_and_run(source, label):

@@ -15,6 +15,10 @@ semantics, which must show the deviation.
 """
 import os, re, subprocess, sys, tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import apple_toolchain
+
+
 SOURCE = "Limelight/Input/HIDSupport+Pointer.m"
 CLASS = "HIDMouseDeltaAccumulator"
 
@@ -113,13 +117,8 @@ LEGACY_ATTEMPTS = 5
 
 
 def toolchain():
-    def run(*arguments):
-        command = ["xcrun", "--sdk", "macosx", *arguments]
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode != 0:
-            sys.exit("error: %s failed:\n%s" % (" ".join(command), result.stderr.strip()))
-        return result.stdout.strip()
-    return run("--find", "clang"), run("--show-sdk-path")
+    """The compiler and SDK, as one matched pair. See scripts/apple_toolchain.py."""
+    return apple_toolchain.clang_and_sdk("pointer concurrency probe")
 
 
 def extract_implementation(path):
