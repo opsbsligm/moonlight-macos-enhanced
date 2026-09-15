@@ -159,6 +159,7 @@
 				"macOS/ViewControllers/StreamViewController+WindowModes.m",
 				macOS/Views/AppCellView.m,
 				macOS/Views/CollectionView.m,
+				macOS/Views/GlassOverlayContainer.m,
 				macOS/Views/HostCellView.m,
 				macOS/Views/LinkTextField.m,
 				macOS/Views/NavigatableAlertView.m,
