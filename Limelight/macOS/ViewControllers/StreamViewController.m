@@ -419,6 +419,13 @@ highFreqMotor:(unsigned short)highFreqMotor {
             [strongSelf logMouseUncaptureStage:@"skip-still-active" code:@"MUC007" reason:@"active-space-changed"];
         }
         if (!windowInCurrentSpace) {
+            // The uncapture above is deliberately skipped while a fullscreen
+            // transition is in flight, which makes this the only path that runs --
+            // and -releaseAllModifierKeys sends eight fixed VK packets and nothing
+            // else, so a movement key held when the Space changed stayed pressed on
+            // the host with no window left on this Space to ever deliver its
+            // keyUp:. Ordinary keys go first, the order session teardown uses.
+            [strongSelf.hidSupport releaseAllHeldKeys];
             [strongSelf.hidSupport releaseAllModifierKeys];
             [strongSelf hideEdgeMenuForInactiveSpaceIfNeeded];
         }

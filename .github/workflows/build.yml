@@ -191,6 +191,13 @@ jobs:
       # rebuilds the pre-fix shape to prove the scenarios can fail.
       run: python3 scripts/keyboard-concurrency-tests.py
 
+    - name: Verify a Space change releases the keys held across it
+      # -releaseAllModifierKeys sends eight fixed VK packets and nothing else, and the
+      # active-Space path that skips the uncapture used to release nothing but those,
+      # so a movement key held while the Space changed stayed pressed on the host with
+      # no window left on that Space to deliver its keyUp:.
+      run: python3 scripts/space-transition-held-key-tests.py
+
     - name: Verify a shortcut cannot fire a pending modifier-only release
       # Ctrl+Option held alone is the mouse-capture escape hatch: 150 ms later the
       # app lets every modifier go on the host and uncaptures. Six shipped shortcuts

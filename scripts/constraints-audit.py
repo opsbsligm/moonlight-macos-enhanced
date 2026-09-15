@@ -1433,7 +1433,7 @@ except (SystemExit, OSError) as absent:
     toolchain_missing = "%s: %s" % (type(absent).__name__, absent)
 
 if run_battery:
-    # The build jobs run these eight on every change, and until now nothing ran
+    # The build jobs run these nine on every change, and until now nothing ran
     # them here, which is the same gap that hid an uncompilable header for a whole
     # round. Each one compiles the shipping source with the compiler from
     # apple_toolchain and finishes in under two seconds, so the only reason they
@@ -1445,7 +1445,7 @@ if run_battery:
     # either way: a mutation is judged by the harness that owns it, and sixty-two
     # nested runs of all seven would only teach everyone to stop running this file.
     # Making and mounting two throwaway disk images costs about as much as all
-    # eight harnesses together, so it belongs to the full run and not to the
+    # nine harnesses together, so it belongs to the full run and not to the
     # battery's sixty-odd nested ones. The cheap checksum half above is what a
     # nested run judges a mutation against.
     has_hdiutil = any(os.path.exists(os.path.join(folder, "hdiutil"))
@@ -1453,11 +1453,12 @@ if run_battery:
     if not has_hdiutil:
         print("skip the disk image self-test: this host has no hdiutil to mount an image")
     elif toolchain_missing:
-        print("skip behavioural harnesses (8 of them): %s" % toolchain_missing)
+        print("skip behavioural harnesses (9 of them): %s" % toolchain_missing)
     else:
         for behaviour in (os.path.join("scripts", "input-concurrency-tests.py"),
                           os.path.join("scripts", "keyboard-concurrency-tests.py"),
                           os.path.join("scripts", "modifier-only-release-collision-tests.py"),
+                          os.path.join("scripts", "space-transition-held-key-tests.py"),
                           os.path.join("scripts", "keyboard-modifier-mapping-tests.py"),
                           os.path.join("scripts", "keyboard-shortcut-modifier-tests.py"),
                           os.path.join("scripts", "stream-menu-addressing-tests.py"),
