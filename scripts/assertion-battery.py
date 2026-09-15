@@ -45,6 +45,7 @@ WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
 VIDEO_RULES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                       "SettingsModel+VideoPageRules.swift")
 PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
+NAVIGATION = os.path.join(root, "Limelight", "macOS", "Views", "NavigatableAlertView.m")
 RENDER_PROBE = os.path.join(root, "scripts", "render-probe.py")
 
 
@@ -63,6 +64,7 @@ ANALYZER_GATE = (ANALYZER, ["--self-test"])
 SHORTCUT_GATE = (os.path.join(root, "scripts", "keyboard-shortcut-modifier-tests.py"), [])
 COLLISION_GATE = (os.path.join(root, "scripts", "modifier-only-release-collision-tests.py"), [])
 SPACE_HELD_GATE = (os.path.join(root, "scripts", "space-transition-held-key-tests.py"), [])
+NAVIGATION_GATE = (os.path.join(root, "scripts", "controller-key-navigation-tests.py"), [])
 # The glass ratchet is a source rule, so a reverted panel is visible to it.
 LIQUID_GATE = (os.path.join(root, "scripts", "liquid-glass-audit.py"), [])
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -690,6 +692,34 @@ def drop_pending_cancel(text):
     return text[:start] + text[start:].replace(marker, "", 1)
 
 
+# A pad cannot press half a key, so the view that presses keys on its behalf has to send
+# both edges of the stroke it claims. The helper has always taken a `down:` argument and
+# always called keyDown:, and every caller passed YES: nothing downstream of it was ever
+# told the key came back up. Both halves of that mistake are worth a mutation -- a stroke
+# missing its release, and a release delivered as a second press -- because either one
+# compiles, ships, and reads on a pad as a button that does not quite work.
+CONTROLLER_STROKE = """    [self sendKey:keyCode down:YES modifiers:modifierFlags];
+    [self sendKey:keyCode down:NO modifiers:modifierFlags];"""
+
+
+def drop_controller_release(text):
+    once(text, CONTROLLER_STROKE, "the controller press-and-release pair")
+    return text.replace(CONTROLLER_STROKE,
+                        "    [self sendKey:keyCode down:YES modifiers:modifierFlags];", 1)
+
+
+EDGE_DELIVERY = """    if (down) {
+        [self.responder keyDown:event];
+    } else {
+        [self.responder keyUp:event];
+    }"""
+
+
+def swallow_controller_release(text):
+    once(text, EDGE_DELIVERY, "the delivery that matches the edge it was given")
+    return text.replace(EDGE_DELIVERY, "    [self.responder keyDown:event];", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-key-cancel", CAPTURE, drop_pending_cancel,
@@ -697,6 +727,12 @@ MUTATIONS = [
     ("space-change-keeps-a-held-key", STREAM_SVC, drop_space_held_release,
      "a Space change releases modifiers but leaves an ordinary key pressed",
      SPACE_HELD_GATE),
+    ("press-without-release", NAVIGATION, drop_controller_release,
+     "a gamepad press reaches the responder as a press and never as a release",
+     NAVIGATION_GATE),
+    ("release-as-a-press", NAVIGATION, swallow_controller_release,
+     "the release half of a gamepad stroke is delivered as a second press",
+     NAVIGATION_GATE),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
     ("drop-release", HID, drop_release, "keyUp guard no longer clears the record"),
     ("late-guard", HID, late_guard, "keyUp guard runs after the release is sent"),

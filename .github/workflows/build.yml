@@ -191,6 +191,15 @@ jobs:
       # rebuilds the pre-fix shape to prove the scenarios can fail.
       run: python3 scripts/keyboard-concurrency-tests.py
 
+    - name: Verify a gamepad press reaches the responder as a whole keystroke
+      # NavigatableAlertView synthesises the keystroke a pad cannot press: D-pad becomes
+      # Tab and Shift+Tab, A becomes Return, B Escape, X Space. Its helper takes a
+      # `down:` argument and then calls keyDown: whatever it was told, and every caller
+      # said YES, so the responder was handed the press of a stroke and never its release.
+      # The harness compiles the real view against a spy responder that records which
+      # selector ran, the key code, the flags, and the type inside the event.
+      run: python3 scripts/controller-key-navigation-tests.py
+
     - name: Verify a Space change releases the keys held across it
       # -releaseAllModifierKeys sends eight fixed VK packets and nothing else, and the
       # active-Space path that skips the uncapture used to release nothing but those,
