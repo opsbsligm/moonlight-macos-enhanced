@@ -1189,6 +1189,58 @@ Constraints went from 138 to 139 on a host with an Apple toolchain, the battery
 from 64 to 65, the behavioural harnesses from eight to nine, and workflow rules
 stay at 24.
 
+### Twenty-fourth audit pass (the gamepad press that never came back up)
+
+- **The helper always asked which edge it was sending.**
+  `-sendKey:down:modifiers:` builds its event with
+  `CGEventCreateKeyboardEvent(NULL, keyCode, down)`, so the edge is inside the
+  event, and then calls `[self.responder keyDown:event]` on every path. Every
+  caller in `-controllerEvent:` passed `YES`, which made what shipped
+  self-consistent and incomplete at the same time: a pad button was one press
+  edge, and the responder was never told the key came back up. Nothing else in
+  the tree asks for the other edge, so no gate, no crash, and no review could
+  see the difference.
+- **A responder keeps key state, and the release is the edge that ends a
+  press.** A control that actuates on release never actuates; anything that
+  pairs a press with its release stays in the pressed half of that pair. A pad
+  cannot press half a key, so the view that presses keys on its behalf may not
+  either. `pressKey:withFlags:` now sends both edges, and `-sendKey:down:` hands
+  each one to the selector that matches the event it built -- handing a release
+  to `keyDown:` would give the responder an event whose type says key-up and
+  whose selector says otherwise.
+- **Measured rather than assumed, on the alert this exists for.** Wired the way
+  `HostsViewController` wires it -- the navigatable view in the host list's
+  content view, `responder` aimed at the alert window, the buttons carrying
+  their Return and Escape key equivalents -- the A button actuates the default
+  button exactly once with both edges present, not twice, and B still dismisses
+  the sheet. The release is the missing half of the stroke, not an extra action.
+  What did not change is stated plainly: in a probe that cannot make its window
+  key, the X button's Space and the D-pad's Tab moved nothing before the change
+  and nothing after, so this pass does not claim a pad can confirm a dialog.
+  That question stays on the on-device list, where only a real focus ring can
+  answer it.
+- **The landmine that crashed the first probe.** `responder` is a `strong`
+  reference to the alert window. Attaching the navigatable view as that window's
+  own `contentView` -- the obvious next move for whoever reorganises this --
+  makes a cycle whose teardown crashes in `-[NavigatableAlertView
+  .cxx_destruct]` releasing a window that is already gone. The shipped wiring
+  avoids it, so nothing was changed here; it is written down because that crash
+  otherwise reads as a bug in whatever was just added.
+- **The tenth behavioural harness compiles the real view** --
+  `Limelight/macOS/Views/NavigatableAlertView.m`, not a model of it -- against a
+  spy `NSResponder` and records, for each of the five mapped buttons: which
+  selector ran, the key code, the modifier flags, and whether the `type` carried
+  inside the event agrees with the selector it arrived at. The left D-pad must
+  be the one stroke carrying shift, and its release must still be carrying it.
+  Rebuild the old one-edge shape out of the same source and the harness refuses
+  it. The battery carries two mutations for it, one for the missing release and
+  one for a release delivered as a second press, so neither half of the original
+  mistake can come back quietly.
+
+Constraints went from 139 to 140 on a host with an Apple toolchain, the battery
+from 65 to 67, the behavioural harnesses from nine to ten, and workflow rules
+stay at 24.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
