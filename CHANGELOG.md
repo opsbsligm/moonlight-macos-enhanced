@@ -704,6 +704,76 @@ writes, and every pairing reason has to have wording behind it. The planted-regr
 battery went from 42 to 51 and every one is still caught.
 
 
+### Thirteenth audit pass (the log browser's rows, the map nobody read, and the compiler that refused)
+
+- **The log browser showed Chinese in the English interface, and no table was ever
+  asked.** `compactPresentationForLogLine:` assembles the folded rows the browser
+  lists. Its severity tag was ASCII and its category and sentence were Chinese
+  literals written into the file, so an English interface read
+  `<INFO> [发现] 开始扫描主机`. Twenty rows now go through one helper, `MLLogRow`, which
+  keeps the tag ASCII because the browser's own filters read it and asks the table for
+  the other two halves. Twenty-five keys were added to each side; both tables are
+  892 entries, declared once each, identically, and lint clean.
+- **A gate that reported complete coverage over strings it could not see.** The first
+  version of that helper translated its own category and sentence inside itself, which
+  made all twenty call sites look like an ordinary method call to `l10n-audit`. It
+  printed 0 failures and every key accounted for. I wrote that shape on purpose to find
+  out whether the audit would notice, and it did not -- so the audit now walks a row's
+  arguments itself (`top_level_arguments()`, `log_row_keys()`, `unreadable_rows()`) and
+  refuses a row whose translatable half exists only in a value, because a key that only
+  exists at run time cannot be asked of a table either. Keys referenced in code went
+  from 350 to 382, and six row shapes are self-test cases: literal halves accepted, an
+  inline `stringWithFormat` sentence accepted, a variable holding the translation
+  refused, a row missing its sentence refused.
+- **Five localization calls would not have compiled, and the audit had read them as
+  covered.** `MLString` is a macro with two parameters, the second accepted so a call
+  site reads like `NSLocalizedString`; five of the new rows passed it one argument,
+  which is a preprocessor error rather than a comment left out. The audit's pattern read
+  the first literal of each call and reported the key as answered. Every `MLString` call
+  in the sources the audit scans is counted by argument now -- 203 of them, all two -- and
+  a `#define` line is not mistaken for a call site.
+- **Nothing in the tree had ever read the modifier map.** `KeyboardMapResolver`'s header
+  calls itself the only place modifier mapping is defined, and the mapping is the reason
+  the keyboard reports exist: Command to Win, Control to Ctrl, Option to Alt, each side
+  to its own side. Not one test, constraint or scenario named `KMR_` anywhere, so a row
+  pointing at the wrong hand, two rows pointing at one slot, or a virtual key one digit
+  off would have shipped and come back as "my keyboard feels wrong in games".
+  `scripts/keyboard-modifier-mapping-tests.py` compiles the shipped file and walks all
+  eight mac modifier keys from keycode to physical slot to remote bit to Windows virtual
+  key, with the virtual keys written out in the harness rather than read back from the
+  header, because comparing a table to itself proves nothing. Two variants built from the
+  same source have to fail: both hands answering as the left one -- the shape behind a
+  double-click sending a Win key -- and the flags path answering Command with Alt. Five
+  shape constraints keep the map checked where no compiler answers, so the eight virtual
+  keys have to be the Windows ones, the eight remote bits have to sit in eight distinct
+  positions, no remote key may be named twice, and the flags path, which cannot observe
+  a side, has to name four left slots and no right one.
+- **Four compiling harnesses had refused to run rather than failed, on this machine
+  only.** Each of them asked `xcrun` for a compiler, and the Xcode license on this host
+  has not been accepted from a Terminal, so `xcrun --find clang` and `xcodebuild` both
+  exit 69. That reads as an untestable tree, and a gate that is red for an environment
+  reason is a gate someone silences. The Command Line Tools ship their own clang and
+  their own SDK, which need no such consent; `scripts/apple_toolchain.py` hands out
+  matched pairs, because a compiler from one vendor and an SDK from the other produces
+  `unknown architecture arm64e.x1` out of the linker, which reads as broken code. All
+  four now run here: pointer concurrency (5/5 teeth), keyboard concurrency (13
+  scenarios), menu addressing in both languages, and the modifier walk.
+- **Two defects in the newest harness, found by compiling it locally.** It used
+  `NSEventModifierFlags` with only `Foundation` in its probe -- the resolver header
+  pulls in Carbon, and inside the app something else in the translation unit brings
+  AppKit -- so the error appeared only in CI, in one line, and it named
+  `KMR_Remote_LeftOption`, which the enum does not contain: the shipped name is
+  `KMR_Remote_LeftAlt`. Both are fixed, and the failure line prints the mask it got
+  against the mask it wanted, which a bit count could not say.
+
+Constraints went from 110 to 116 -- five for the shape of the modifier map, one for the
+log marker read from both ends, one so that no harness writes the compiler answer again,
+and one so that every log row names its halves where a scan can read them. The
+planted-regression battery went from 51 to 56, and every one is still caught, including
+the two new localizability injections, which fail on the row hidden behind a variable and
+the macro invoked with one argument. The localization audit's own cases went from 32 to
+38, and the audit now reads log rows whole instead of trusting the call sites around them.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
