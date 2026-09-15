@@ -212,16 +212,22 @@ int main(void) {
         // exactly like one that honours it until the glass itself is asked.
         GlassOverlayContainer *control = [GlassOverlayContainer containerWithCornerRadius:14.0];
         control.glassIsInteractive = YES;
-        BOOL interactivityHonoured = control.glassIsInteractive;
-        if (control.usesSystemGlass && system >= 27) {
-            if (@available(macOS 27.0, *)) {
-                interactivityHonoured = ((NSGlassEffectView *)control.backgroundView)
-                    .effectIsInteractive;
+        NSNumber *answered = nil;
+        if (control.usesSystemGlass) {
+            // Read the answer off the glass, by name rather than by header: the SDK this
+            // compiles against is not necessarily the system it ends up running on.
+            @try {
+                answered = [control.backgroundView valueForKey:@"effectIsInteractive"];
+            } @catch (NSException *exception) {
+                answered = nil;
             }
         }
+        BOOL interactivityHonoured = answered != nil ? [answered boolValue]
+                                                     : control.glassIsInteractive;
         failures += !Append([NSString stringWithFormat:
-                             @"a panel that asks for interactive glass gets it (host %@)",
-                             system >= 27 ? @"can answer" : @"has no interactive glass"],
+                             @"a panel that asks for interactive glass gets it (%@)",
+                             answered ? @"read back off the glass"
+                                      : @"this system's glass has no such answer"],
                             interactivityHonoured == YES);
 
         // The fallback keeps the material the panels shipped with, whichever way the
@@ -252,7 +258,8 @@ def source_for(variant=None):
         # The setter that keeps the answer but never hands it to the glass: the pill is a
         # button whose glass would sit there motionless, and nothing above this method
         # could tell.
-        mutated = body.replace(".effectIsInteractive = glassIsInteractive;", ";")
+        mutated = body.replace("MLSetGlassInteractivity(self.backgroundView, glassIsInteractive);",
+                               "MLSetGlassInteractivity(self.backgroundView, NO);")
         if mutated == body:
             raise SystemExit("the container no longer hands interactivity to the glass, so "
                              "this harness would be proving nothing")

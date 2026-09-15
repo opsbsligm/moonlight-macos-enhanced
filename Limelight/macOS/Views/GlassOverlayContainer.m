@@ -7,6 +7,24 @@
 
 #import "GlassOverlayContainer.h"
 
+// AppKit added `effectIsInteractive` in macOS 27, and a build host may compile against an
+// older SDK than the systems this runs on -- the CI image builds with the 26.x SDK, where
+// that property is simply not in the header. Asking the object rather than the header is
+// the only way to use it from both, and where the property does not exist this does
+// nothing, which is the same behaviour as a system with no interactive glass.
+static void MLSetGlassInteractivity(NSView *glass, BOOL interactive) {
+    SEL setter = NSSelectorFromString(@"setEffectIsInteractive:");
+    if (glass == nil || ![glass respondsToSelector:setter]) {
+        return;
+    }
+    NSMethodSignature *signature = [glass methodSignatureForSelector:setter];
+    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+    invocation.target = glass;
+    invocation.selector = setter;
+    [invocation setArgument:&interactive atIndex:2];
+    [invocation invoke];
+}
+
 @interface GlassOverlayContainer ()
 @property (nonatomic, strong) NSView *contentView;
 @property (nonatomic, readwrite, strong) NSView *backgroundView;
@@ -84,9 +102,7 @@
     if (!self.usesSystemGlass) {
         return;
     }
-    if (@available(macOS 27.0, *)) {
-        ((NSGlassEffectView *)self.backgroundView).effectIsInteractive = glassIsInteractive;
-    }
+    MLSetGlassInteractivity(self.backgroundView, glassIsInteractive);
 }
 
 - (BOOL)glassIsInteractive {

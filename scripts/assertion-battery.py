@@ -576,11 +576,11 @@ def glass_is_never_told_it_must_answer(text):
     pressed. A setter that stores the answer without passing it on is invisible to every
     source rule -- only the glass view knows, so the compiled container is run and asked.
     """
-    needle = (".effectIsInteractive = glassIsInteractive;")
+    needle = "MLSetGlassInteractivity(self.backgroundView, glassIsInteractive);"
     if text.count(needle) != 1:
         raise SystemExit("the container no longer hands interactivity to the glass in one "
                          "place, so this mutation would be proving nothing")
-    return text.replace(needle, ";(void)0;", 1)
+    return text.replace(needle, "MLSetGlassInteractivity(self.backgroundView, NO);", 1)
 
 
 def give_the_log_panel_its_own_vibrancy(text):
