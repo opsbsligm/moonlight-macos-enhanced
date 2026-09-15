@@ -915,6 +915,26 @@ orphaned = sorted(set(gate_names) - reachable)
 check(not orphaned, "every gate in scripts is reachable from the workflow"
       if not orphaned else "written but never run by CI: " + ", ".join(orphaned))
 
+# Running a gate is only worth something if the people who can run it do run it.
+# The audits job runs five scripts and a local run exercised two of them, so a
+# source file that no target compiled read as green here, reached CI, and failed
+# there eight minutes before a release. The job list is now the specification:
+# every audit it runs has to be reachable from this file, so one command here
+# gives the same verdict as that job and a dropped step is a finding.
+audit_job = workflow.split("\n  audit:")[-1] if "\n  audit:" in workflow else ""
+audit_job = audit_job.split("\n  build_arch:")[0]
+audits_in_job = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", audit_job)))
+here = open(os.path.join(root, "scripts", "constraints-audit.py"),
+            encoding="utf-8").read().splitlines()
+not_run_here = [name for name in audits_in_job
+                if name != "constraints-audit.py"
+                and not any(name in line and INVOKES.search(line) for line in here)]
+check(bool(audits_in_job) and not not_run_here,
+      "the local aggregate runs every audit the CI audits job runs"
+      if audits_in_job and not not_run_here else
+      "CI runs an audit that no local command runs: "
+      + (", ".join(not_run_here) if audits_in_job else "the audits job names no script"))
+
 # --- addressing and localization reach -------------------------------------
 # The connection-timeout overlay has three buttons that pop up the stream menu's
 # Window, Monitor and Quality submenus. The lookup used the words printed on the
@@ -1203,6 +1223,62 @@ l10n = subprocess.run([sys.executable, os.path.join(root, "scripts", "l10n-audit
                       capture_output=True, text=True, cwd=root)
 check(l10n.returncode == 0, "the localization audit passes with its scan proven running"
       if l10n.returncode == 0 else "the localization audit failed:\n" + l10n.stdout[-700:])
+
+# The three greps below are the audits job's other steps, and they run here for
+# the same reason the parity rule above exists. Membership is the cheap one that
+# answers "will this file ever be compiled", the glass rules are a source rule
+# with fixtures that break each one, and the workflow rules cover what a yaml
+# parse cannot see. Each is under a tenth of a second, so none of them has an
+# excuse for living only on a runner.
+membership = subprocess.run([sys.executable,
+                             os.path.join(root, "scripts", "source-membership-audit.py")],
+                            capture_output=True, text=True, cwd=root)
+check(membership.returncode == 0,
+      "every implementation file belongs to a target"
+      if membership.returncode == 0 else
+      "the source membership audit failed:\n" + membership.stdout[-900:])
+
+glass_rules = subprocess.run([sys.executable,
+                              os.path.join(root, "scripts", "liquid-glass-audit.py"),
+                              "--self-test"], capture_output=True, text=True, cwd=root)
+check(glass_rules.returncode == 0,
+      "the glass fixtures break every glass rule they claim to break"
+      if glass_rules.returncode == 0 else
+      "the liquid glass self-test failed:\n"
+      + (glass_rules.stdout + glass_rules.stderr)[-900:])
+
+glass = subprocess.run([sys.executable,
+                        os.path.join(root, "scripts", "liquid-glass-audit.py")],
+                       capture_output=True, text=True, cwd=root)
+check(glass.returncode == 0,
+      "the shipped glass surfaces satisfy the glass rules"
+      if glass.returncode == 0 else
+      "the liquid glass audit failed:\n" + glass.stdout[-900:])
+
+workflow_rules = subprocess.run([sys.executable,
+                                 os.path.join(root, "scripts", "workflow-audit.py"),
+                                 "--self-test"], capture_output=True, text=True, cwd=root)
+check(workflow_rules.returncode == 0,
+      "the workflow fixtures break every workflow rule they claim to break"
+      if workflow_rules.returncode == 0 else
+      "the workflow self-test failed:\n"
+      + (workflow_rules.stdout + workflow_rules.stderr)[-900:])
+
+pipeline_rules = subprocess.run([sys.executable,
+                                 os.path.join(root, "scripts", "workflow-audit.py")],
+                                capture_output=True, text=True, cwd=root)
+check(pipeline_rules.returncode == 0,
+      "the workflow can actually run"
+      if pipeline_rules.returncode == 0 else
+      "the workflow audit failed:\n" + pipeline_rules.stdout[-900:])
+
+tag_rules = subprocess.run([sys.executable, os.path.join(root, "scripts", "release-gate.py"),
+                            "--self-test"], capture_output=True, text=True, cwd=root)
+check(tag_rules.returncode == 0,
+      "the release tag rules reject every tag they claim to reject"
+      if tag_rules.returncode == 0 else
+      "the release gate self-test failed:\n"
+      + (tag_rules.stdout + tag_rules.stderr)[-900:])
 
 # BUILD_NUMBER is `git rev-list --count HEAD`, which two places used to compute
 # independently: the shell script that CI injects, and the release preparer. The

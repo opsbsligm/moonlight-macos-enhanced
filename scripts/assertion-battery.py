@@ -34,6 +34,8 @@ APP_CELL = os.path.join(root, "Limelight", "macOS", "ViewControllers", "AppCell.
 PREPARER = os.path.join(root, "scripts", "prepare-release.py")
 BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
 WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
+PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
+AUDIT = os.path.join(root, "scripts", "constraints-audit.py")
 WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                              "StreamViewController+WindowModes.m")
 VIDEO_RULES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -605,6 +607,26 @@ def fold_on_prose_again(text):
         '[line localizedCaseInsensitiveContainsString:@"\u5185\u91cd\u590d"]', 1)
 
 
+# The project file is the only thing that decides whether a new source file is
+# compiled at all, and a missing entry produces no error, no warning and no
+# binary: the feature simply is not in the product. The membership audit reads
+# that file, so the entry has to be loadable.
+GLASS_MEMBER_ENTRY = "\t\t\t\tmacOS/Views/GlassOverlayContainer.m,\n"
+MEMBERSHIP_STEP = 'os.path.join(root, "scripts", "source-membership-audit.py")'
+
+
+def unlisted_source(text):
+    return once(text, GLASS_MEMBER_ENTRY, "the project file's member list").replace(
+        GLASS_MEMBER_ENTRY, "", 1)
+
+
+def aggregate_stops_running_an_audit(text):
+    # Realistic shape: someone edits the aggregate to speed it up and loses a
+    # step, so CI keeps checking while the local verdict quietly stops covering it.
+    return once(text, MEMBERSHIP_STEP, "the aggregate's membership step").replace(
+        MEMBERSHIP_STEP, 'os.path.join(root, "scripts", "l10n-audit.py")', 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
@@ -686,6 +708,10 @@ MUTATIONS = [
      "a stream panel goes back to drawing the pre-glass vibrancy material", LIQUID_GATE),
     ("shortcut-releases-held-modifier", HID, release_a_modifier_the_player_is_holding,
      "a synthetic shortcut releases a modifier the player is still holding", SHORTCUT_GATE),
+    ("unlisted-source-file", PBXPROJ, unlisted_source,
+     "a source file belongs to no target, so nothing ever compiles it"),
+    ("aggregate-drops-a-ci-audit", AUDIT, aggregate_stops_running_an_audit,
+     "the local aggregate stops running an audit that CI still runs"),
 ]
 
 
