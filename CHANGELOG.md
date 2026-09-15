@@ -1241,6 +1241,58 @@ Constraints went from 139 to 140 on a host with an Apple toolchain, the battery
 from 65 to 67, the behavioural harnesses from nine to ten, and workflow rules
 stay at 24.
 
+### Twenty-fifth audit pass (zero interpolation slots had meant two different
+things)
+
+- **The numbers first, measured on the machine in front of us.** A VideoToolbox
+  probe compiled against the macOS 27 SDK and run on the Apple M2 this project
+  is tested on: `VTLowLatencyFrameInterpolationConfiguration.isSupported`
+  answers YES, a configuration is created for 640x360, 720p, 1080p, 1440p and
+  4K, `startSessionWithConfiguration:` succeeds, and every one of them reports
+  **zero** interpolated frames -- requesting one, two or three, through both
+  initialisers. macOS 27 also publishes the ceiling beside those answers: 1920
+  per side and 2073600 pixels for temporal interpolation, 640 per side and
+  230400 pixels for the 2x spatial mode. The low-latency super-resolution scaler
+  tells the same story in a different shape: `isSupported` YES,
+  `maximumDimensions` 1280x1280, 960 per side at 2x, supported scale factors
+  `(1.5)` at 720p and nothing at all at 1080p. MetalFX is the one that genuinely
+  runs on this GPU: `supportsDevice:` YES, and a rescaled checkerboard comes
+  back with interpolated edge pixels.
+- **One sentence covered two different facts.** The renderer asked the engine
+  only about the *stream size*, and any refusal there was reported as "the
+  system offered no interpolation slots". An oversized request is refused
+  exactly that way: 2560x1440 and 3840x2160 are outside the ceiling quoted
+  above, so a Mac that does have the interpolation engine, streaming at 4K, read
+  as a Mac that cannot interpolate -- while the settings page on that same Mac,
+  which asks 720p, 1080p and 4K and keeps the best answer, said Available. One
+  machine, two surfaces, opposite claims.
+- **The fix is to ask a question the engine can answer.**
+  `MLClassifyInterpolationSlots()` -- extracted from the renderer by the harness
+  and compiled -- takes the slots at the stream size, and when that is zero and
+  the stream is larger than the size the settings matrix asks about, it asks
+  again at that size. Slots there means the resolution is the story and reports
+  "the stream resolution is above the interpolation ceiling"; zero there as well
+  means the hardware, which is what the M2 gets, unchanged. The settings page
+  has its own line in both languages, and the resolution branch is tested before
+  the hardware branch because it is the narrower of the two claims.
+- **The two surfaces cannot drift by construction.** The renderer's re-ask size
+  and the Swift capability matrix's smallest probe size are compared by the
+  harness -- define against source -- and a drift fails the gate rather than
+  quietly reintroducing the contradiction this pass removed.
+- **No claim that interpolation runs.** On this M2 it does not and cannot: every
+  size, including sizes well inside the ceiling, reports zero slots. What
+  changed is that a Mac which *can* interpolate at 1080p no longer reports that
+  it cannot when the user streams at 4K, and that the line now names the thing
+  to change.
+- **Two mutations, one per half of the mistake**: collapsing the two verdicts
+  back into the hardware answer (caught by the compiled model, which refuses to
+  call a 4K stream with slots at 720p a hardware failure), and "re-asking" the
+  engine at the same refused size (caught by the source check that the re-ask
+  really builds a second configuration).
+
+Constraints stay at 140 on a host with an Apple toolchain, the battery went from
+67 to 69, the behavioural harnesses stay at ten, and workflow rules stay at 24.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
