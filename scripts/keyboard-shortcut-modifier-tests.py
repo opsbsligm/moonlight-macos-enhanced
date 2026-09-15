@@ -694,6 +694,92 @@ def release_forgets_what_was_consumed_locally(text):
                          "if (NO) {", "the suppressed-press check")
 
 
+CHAIN_PROBE = r"""
+#import <AppKit/AppKit.h>
+
+@interface KeyableWindow : NSWindow
+@end
+@implementation KeyableWindow
+- (BOOL)canBecomeKeyWindow { return YES; }
+@end
+
+@interface ChainView : NSView
+@property(atomic) NSInteger deliveries;
+@end
+@implementation ChainView
+// Reports and never consumes: what matters is whether AppKit hands the delivery to
+// the view at all, not what this view chooses to do with it.
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    self.deliveries += 1;
+    return NO;
+}
+@end
+
+int main(void) {
+    @autoreleasepool {
+        [NSApplication sharedApplication];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+        KeyableWindow *window = [[KeyableWindow alloc]
+            initWithContentRect:NSMakeRect(0, 0, 80, 20)
+                      styleMask:NSWindowStyleMaskBorderless
+                        backing:NSBackingStoreBuffered defer:YES];
+        ChainView *view = [[ChainView alloc] initWithFrame:NSMakeRect(0, 0, 80, 20)];
+        window.contentView = view;
+        [window makeKeyWindow];
+
+        NSEvent *press = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                                     modifierFlags:0 timestamp:0
+                                      windowNumber:(NSInteger)window.windowNumber
+                                           context:nil characters:@"t"
+                        charactersIgnoringModifiers:@"t" isARepeat:NO keyCode:17];
+        NSEvent *repeat = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                                      modifierFlags:0 timestamp:0
+                                       windowNumber:(NSInteger)window.windowNumber
+                                            context:nil characters:@"t"
+                         charactersIgnoringModifiers:@"t" isARepeat:YES keyCode:17];
+        // A headless host cannot make a window key, and then nothing is delivered at
+        // all -- that is the probe having no environment, not AppKit changing the
+        // rule, so the first count is printed for the caller to tell them apart.
+        [window performKeyEquivalent:press];
+        printf("after-first=%ld\n", (long)view.deliveries);
+        [window performKeyEquivalent:repeat];
+        printf("after-repeat=%ld\n", (long)view.deliveries);
+    }
+    return 0;
+}
+"""
+
+
+def key_repeat_delivery():
+    """Does the key-equivalent chain hand a repeated keyDown to the view?
+
+    The whole reason a held hotkey needs its own guard is that AppKit keeps sending
+    keyDown while a key is held. Whether those deliveries reach -performKeyEquivalent:
+    was an assumption until it was run against a live NSWindow, and an assumption about
+    someone else's framework is worth re-measuring: if a future system stops delivering
+    repeats here, the guard becomes dead code that is still swallowing a key the host
+    should have been given.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        source = os.path.join(directory, "chain.m")
+        open(source, "w", encoding="utf-8").write(CHAIN_PROBE)
+        binary = os.path.join(directory, "chain")
+        cc, sdk = apple_toolchain.clang_and_sdk("key-equivalent delivery probe")
+        built = subprocess.run([cc, "-fobjc-arc", "-fmodules",
+                                "-mmacosx-version-min=13.0", "-isysroot", sdk,
+                                "-framework", "AppKit", source, "-o", binary],
+                               capture_output=True, text=True)
+        if built.returncode != 0:
+            return None, "the delivery probe could not be compiled:\n" + built.stderr.strip()[-900:]
+        ran = subprocess.run([binary], capture_output=True, text=True)
+        if ran.returncode != 0:
+            return None, "the delivery probe could not run:\n" + (ran.stdout + ran.stderr)[-900:]
+        counts = dict(re.findall(r"(after-first|after-repeat)=(\d+)", ran.stdout))
+        if "after-first" not in counts or "after-repeat" not in counts:
+            return None, "the delivery probe answered nothing:\n" + ran.stdout[-400:]
+        return {k: int(v) for k, v in counts.items()}, None
+
+
 def check(ok, message):
     print("%-4s %s" % ("ok" if ok else "FAIL", message))
     if not ok:
@@ -728,6 +814,22 @@ def main():
               "the shipped state machine passes every scenario"
               if shipped.returncode == 0 else
               "the shipped state machine fails %d scenario(s)" % shipped.returncode)
+
+        delivered, delivery_error = key_repeat_delivery()
+        if delivery_error:
+            print("skip key-repeat delivery probe: %s" % delivery_error)
+        else:
+            check(delivered["after-first"] == 1,
+                  "the key-equivalent chain reaches the view at all"
+                  if delivered["after-first"] == 1 else
+                  "the probe delivered nothing, so it cannot say what a repeat does")
+            check(delivered["after-first"] != delivered["after-repeat"],
+                  "a repeated keyDown reaches the view as well as the first press, so a "
+                  "held hotkey needs its own guard"
+                  if delivered["after-first"] != delivered["after-repeat"] else
+                  "AppKit no longer delivers a repeated keyDown to -performKeyEquivalent:, "
+                  "so the consume-on-repeat branches are swallowing a key the host should "
+                  "have been given -- re-read the guards before trusting this harness")
 
         check("HIDSyntheticOwnedModifierMask" in source,
               "the shipped source owns the rule that a synthetic sequence may only "
