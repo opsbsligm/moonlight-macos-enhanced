@@ -1582,6 +1582,31 @@ check(menu_guard is not None,
       if menu_guard else "menuKeyEquivalent no longer limits its answer to one printable "
       "scalar, so Space and Return are handed to AppKit as words")
 
+# --- a release has to answer the press it was given ----------------------------
+# Everything a player calls a key conflict lives on the release edge: the press went
+# out as "W with Shift" and a release that carries zero tells the host to lift a key
+# it was never told about, so the sprint keeps running after the finger comes up; and
+# a press the client consumed for a local binding never reached the host at all, so
+# forwarding its release is a gameplay key coming up by itself. scripts/
+# keyboard-shortcut-modifier-tests.py proves both by reading packets off the shipped
+# -keyUp:, but it needs a compiler and the audit runner has none, so the two lines
+# that carry these properties are what the aggregate requires.
+hid_support = open(os.path.join(root, "Limelight", "Input",
+                                "HIDSupport.m"), encoding="utf-8").read()
+key_up_start = hid_support.index("- (void)keyUp:(NSEvent *)event {")
+key_up_body = hid_support[key_up_start:hid_support.index("\n}\n", key_up_start) + 3]
+release_problems = []
+if "translateKeyModifierWithEvent" not in key_up_body:
+    release_problems.append("-keyUp: no longer answers with the modifier byte its press "
+                            "used, so a release is sent for a key the host never saw")
+if "keyboardSuppressedKeyDownKeyCodes containsObject" not in key_up_body:
+    release_problems.append("-keyUp: no longer consults the record of presses consumed "
+                            "locally, so a client shortcut releases a gameplay key")
+check(not release_problems,
+      "a released key carries the modifier its press carried, and never answers a press "
+      "the client kept to itself"
+      if not release_problems else "; ".join(release_problems))
+
 # BUILD_NUMBER is `git rev-list --count HEAD`, which two places used to compute
 # independently: the shell script that CI injects, and the release preparer. The
 # preparer counted raw commits, so in a shallow clone it derived v1.3.9-build71

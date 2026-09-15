@@ -578,6 +578,24 @@ def release_modifiers_without_clearing_the_tracker(text):
     return text.replace(cleared, "", 1)
 
 
+def release_ignores_the_modifier_its_press_carried(text):
+    """Answers every key release with a modifier byte of zero.
+
+    It compiles, it still releases the key, and the simplest test passes: the press went
+    out as "W with Shift" while the release says plain "W", which the host cannot pair
+    with anything it was told, so the character keeps running after the finger lifts.
+    Only a packet-level probe of -keyUp: sees it, which is why this one is planted.
+    """
+    start = text.index("- (void)keyUp:(NSEvent *)event {")
+    end = text.index("\n}\n", start) + 3
+    body = text[start:end]
+    line = "char modifiers = [self translateKeyModifierWithEvent:event];"
+    if body.count(line) != 1:
+        raise SystemExit("the modifier byte in -keyUp: is not where this mutation "
+                         "expects it, so it would prove nothing")
+    return text[:start] + body.replace(line, "char modifiers = 0;", 1) + text[end:]
+
+
 def blanket_release_at_the_translation_rules(text):
     """Puts the release back at the translation-rule entry point, unguarded.
 
@@ -910,6 +928,9 @@ MUTATIONS = [
     ("translation-rule-clears-a-held-modifier", MOUSE_CAPTURE,
      blanket_release_at_the_translation_rules,
      "a keyboard translation rule releases a modifier the player is holding", SHORTCUT_GATE),
+    ("keyup-forgets-the-modifier-its-press-carried", HID,
+     release_ignores_the_modifier_its_press_carried,
+     "a key release does not carry the modifier byte its press carried"),
     ("naming-an-sdk-the-build-does-not-have", GLASS_CONTAINER,
      naming_an_api_only_the_newest_sdk_declares,
      "a source file names an API the build's SDK does not declare"),

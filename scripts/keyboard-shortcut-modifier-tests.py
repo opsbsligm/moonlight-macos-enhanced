@@ -67,6 +67,8 @@ METHODS = [
     "- (char)translatedModifierFlagsForEvent:(NSEvent *)event",
     "- (char)translateKeyModifierWithEvent:(NSEvent *)event",
     "- (void)keyDown:(NSEvent *)event",
+    "- (void)keyUp:(NSEvent *)event",
+    "- (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event",
     "- (void)releaseAllModifierKeys",
 ]
 
@@ -196,6 +198,8 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
 - (char)translateKeyModifierWithEvent:(NSEvent *)event;
 - (void)keyDown:(NSEvent *)event;
+- (void)keyUp:(NSEvent *)event;
+- (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event;
 - (void)releaseAllModifierKeys;
 @end
 
@@ -261,6 +265,41 @@ static NSEvent *KeyDownEvent(unsigned short keyCode, NSEventModifierFlags held) 
 // not happen again. That is the whole reason a release issued mid-hold survives.
 static void PressKey(MLModifiersUnderProbe *k, unsigned short keyCode, NSEventModifierFlags held) {
     [k keyDown:KeyDownEvent(keyCode, held)];
+}
+
+// Mirrors -keyUp:. Every symptom a player calls a key conflict lives on this edge:
+// the release that never arrives leaves the host holding the key, the release that
+// arrives with a different modifier byte than its press is a release for a key the
+// host never saw go down, and the release that answers a press the host never
+// received is a key coming up by itself. Only -keyDown: used to be probed.
+static void ReleaseKey(MLModifiersUnderProbe *k, unsigned short keyCode, NSEventModifierFlags held) {
+    [k keyUp:[NSEvent keyEventWithType:NSEventTypeKeyUp location:NSZeroPoint
+                         modifierFlags:held timestamp:0 windowNumber:0 context:nil
+                          characters:@"" charactersIgnoringModifiers:@""
+                            isARepeat:NO keyCode:keyCode]];
+}
+
+// Mirrors what onKeyboardEquivalent: does with a key it consumes locally: the press
+// is recorded as never forwarded, so the release must not be forwarded either.
+static void ConsumeKey(MLModifiersUnderProbe *k, unsigned short keyCode, NSEventModifierFlags held) {
+    [k noteKeyboardKeyDownSuppressedForEvent:[NSEvent keyEventWithType:NSEventTypeKeyDown
+                                                        location:NSZeroPoint modifierFlags:held
+                                                         timestamp:0 windowNumber:0 context:nil
+                                                      characters:@"" charactersIgnoringModifiers:@""
+                                                        isARepeat:NO keyCode:keyCode]];
+}
+
+// The record -releaseAllHeldKeys depends on. A press whose release was eaten leaves
+// an entry here, which is the difference between "the host will let go at capture
+// end" and "the host holds W for the rest of the session".
+static NSString *HeldKeys(MLModifiersUnderProbe *k) {
+    NSArray *sorted = [k.keyboardForwardedKeyDownKeyCodes.allObjects
+                       sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSNumber *number in sorted) {
+        [out addObject:[NSString stringWithFormat:@"%04X", (unsigned short)number.unsignedShortValue]];
+    }
+    return [out componentsJoinedByString:@" "];
 }
 
 static StreamShortcut *Rule(NSInteger keyCode, NSEventModifierFlags modifiers) {
@@ -460,6 +499,65 @@ int main(void) {
         Expect("the host stopped believing in an Option the player still holds", @"stopped",
                optionStillDown ? @"held" : @"stopped");
 
+        // 11. The two keys from the report, with no modifier in sight: run on W,
+        //     jump on Space, let go of the jump first. Every press has to be answered
+        //     by its own release, in order, and the held-key record has to come back
+        //     empty. This is the edge that used to be entirely unprobed.
+        Reset(k);
+        PressKey(k, kVK_ANSI_W, 0);
+        PressKey(k, kVK_Space, 0);
+        ReleaseKey(k, kVK_Space, 0);
+        ReleaseKey(k, kVK_ANSI_W, 0);
+        want = Exp();
+        Add(want, Ev(0x8000 | 0x57, YES, 0));
+        Add(want, Ev(0x8000 | 0x20, YES, 0));
+        Add(want, Ev(0x8000 | 0x20, NO, 0));
+        Add(want, Ev(0x8000 | 0x57, NO, 0));
+        Expect("running on W and jumping on Space pair every press with its release", want, Seq());
+        Expect("the held-key record is empty after a clean run-and-jump", @"", HeldKeys(k));
+
+        // 12. Space belongs to a local binding (a Parsec-style scheme binds gameplay
+        //     keys to client actions), so its press never reaches the host and its
+        //     release must not either -- while W, held across the whole thing, must
+        //     keep its own pair. A release that answers an unforwarded press is a
+        //     gameplay key coming up on its own.
+        Reset(k);
+        PressKey(k, kVK_ANSI_W, 0);
+        ConsumeKey(k, kVK_Space, 0);
+        // The record is what -releaseAllHeldKeys works from at capture end: a local
+        // binding that eats Space must not take W's entry with it, or the host keeps
+        // the run going for the rest of the session.
+        Expect("consuming Space leaves the held-W record for capture release", @"8057", HeldKeys(k));
+        ReleaseKey(k, kVK_Space, 0);
+        ReleaseKey(k, kVK_ANSI_W, 0);
+        want = Exp();
+        Add(want, Ev(0x8000 | 0x57, YES, 0));
+        Add(want, Ev(0x8000 | 0x57, NO, 0));
+        Expect("a locally consumed Space does not touch the W held across it", want, Seq());
+        Expect("and the record empties once W is really released", @"", HeldKeys(k));
+
+        // 13. Sprint on Shift, jump on Space, and let go of W while still sprinting.
+        //     The release of W has to carry the same modifier byte as its press, or the
+        //     host is told to release "W+Shift" having been told to press "W+Shift" and
+        //     nothing at all for plain W: the run keeps going after the finger lifts.
+        Reset(k);
+        FlagsChanged(k, kVK_Shift, NSEventModifierFlagShift);
+        PressKey(k, kVK_ANSI_W, NSEventModifierFlagShift);
+        PressKey(k, kVK_Space, NSEventModifierFlagShift);
+        ReleaseKey(k, kVK_ANSI_W, NSEventModifierFlagShift);
+        ReleaseKey(k, kVK_Space, NSEventModifierFlagShift);
+        FlagsChanged(k, kVK_Shift, 0);
+        want = Exp();
+        Add(want, Ev(0xA0, YES, MODIFIER_SHIFT));
+        Add(want, Ev(0x8000 | 0x57, YES, MODIFIER_SHIFT));
+        Add(want, Ev(0x8000 | 0x20, YES, MODIFIER_SHIFT));
+        Add(want, Ev(0x8000 | 0x57, NO, MODIFIER_SHIFT));
+        Add(want, Ev(0x8000 | 0x20, NO, MODIFIER_SHIFT));
+        Add(want, Ev(0xA0, NO, 0));
+        Expect("a sprint key released mid-sprint keeps the modifier its press carried", want, Seq());
+        Expect("the sprint and the run agree with the host", @"", HeldKeys(k));
+        ExpectAgreement("sprint, jump, and let go of the run first", k);
+
         printf("%d scenario failure(s)\n", gFailures);
     }
     return gFailures ? 1 : 0;
@@ -549,6 +647,53 @@ def blanket_release_returned(text):
     return text.replace(anchor, anchor + "\n    [self.hidSupport releaseAllModifierKeys];\n", 1)
 
 
+KEY_UP = "- (void)keyUp:(NSEvent *)event {"
+
+
+def key_up_body_span(text):
+    """The half-width of -keyUp:, so a mutation cannot land in -keyDown: instead.
+
+    Both methods compute their modifier byte with the same one line, so a mutation
+    written against that line alone would silently edit the wrong method and prove
+    the wrong thing.
+    """
+    start = text.index(KEY_UP)
+    end = text.index("\n}\n", start) + 3
+    return start, end
+
+
+def mutate_key_up(text, find, replace, what):
+    start, end = key_up_body_span(text)
+    body = text[start:end]
+    if body.count(find) != 1:
+        raise SystemExit("-keyUp: no longer contains the shape this mutation expects "
+                         "(%s), so it would prove nothing" % what)
+    return text[:start] + body.replace(find, replace, 1) + text[end:]
+
+
+def release_forgets_its_modifier(text):
+    """The known-bad shape: a release whose modifier byte does not match its press.
+
+    The press went out as "W with Shift". The release goes out as plain "W", which
+    the host reads as a release for a key it was never told about, so the sprint
+    keeps running after the finger lifts.
+    """
+    return mutate_key_up(text, "char modifiers = [self translateKeyModifierWithEvent:event];",
+                         "char modifiers = 0;", "the release modifier byte")
+
+
+def release_forgets_what_was_consumed_locally(text):
+    """The known-bad shape: -keyUp: no longer consults the suppressed-press record.
+
+    A key the client consumed for itself was never forwarded down. Forwarding its
+    release tells the host a gameplay key came up on its own, which is the report
+    that reads as W and Space conflicting.
+    """
+    return mutate_key_up(text,
+                         "if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {",
+                         "if (NO) {", "the suppressed-press check")
+
+
 def check(ok, message):
     print("%-4s %s" % ("ok" if ok else "FAIL", message))
     if not ok:
@@ -621,6 +766,24 @@ def main():
               "the unconditional-release shape is refused (%d scenario failure(s))"
               % bad.returncode if bad.returncode != 0 else
               "the known-bad shape passes: the scenarios have no teeth")
+        for label, shape in (("release-modifier", release_forgets_its_modifier),
+                            ("release-consumed", release_forgets_what_was_consumed_locally)):
+            damaged = shape(source)
+            if damaged == source:
+                print("FAIL the %s shape is identical to the shipped file (no teeth)" % label)
+                return 1
+            weak = run_variant(tmp, extract(damaged), label)
+            if weak is None:
+                return 1
+            check(weak.returncode != 0,
+                  "the shape where %s is refused (%d scenario failure(s))"
+                  % ("a release loses the modifier its press carried"
+                     if label == "release-modifier"
+                     else "a release answers a press the host never received",
+                     weak.returncode)
+                  if weak.returncode != 0 else
+                  "the %s shape passes: the scenarios have no teeth" % label)
+
 
     print("%d harness failure(s)" % len(check.failures))
     return 1 if check.failures else 0

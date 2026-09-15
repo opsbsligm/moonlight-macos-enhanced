@@ -1418,6 +1418,57 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 29: the edge of a key press that no probe had ever looked at
+
+### Audited, and not changed
+
+- **W and Space do not conflict inside this client, and the audit says so with
+  packets rather than with reasoning.** The report is precise -- "I mapped a
+  Parsec keyboard scheme and now even W and Space, a basic game operation,
+  fight each other" -- so every mechanism that could produce it was chased
+  down. `HIDDispatchInput` puts every packet on a `DISPATCH_QUEUE_SERIAL`, so
+  a release cannot overtake its press; each key owns its own entry in
+  `keyboardForwardedKeyDownKeyCodes`, so releasing one cannot disturb another;
+  `consumeKeyDownEvent:` records one suppressed key and touches nothing else;
+  and the eight releases in the local-shortcut handler all sit inside branches
+  that hand the keyboard away (Cmd+1, Cmd+`, Cmd+H, Ctrl+Cmd+F, disconnect,
+  disconnect options, quit, reconnect, Cmd+W), which is the test round 28
+  wrote down. There is no `LiSendGamepad` anywhere in the target, so the class
+  of bug where a button event zeroes the stick cannot happen here either. The
+  mechanism that was real is the one already fixed; what this round adds is
+  the proof, on the half of the interaction that had none.
+- **The release edge had never been probed at all.** The harness extracted
+  `-keyDown:` and never `-keyUp:`, which means every "press" in the project
+  had packet-level evidence and not one "release" did -- while stuck keys,
+  ghost releases, and a release carrying the wrong modifier byte are all
+  release-side faults.
+
+### Added
+
+- **`-keyUp:` is now in the probe, with three scenarios for the reported
+  gesture.** Running on W and jumping on Space with no modifier in sight: four
+  packets, each press answered by its own release, and the held-key record
+  empty again. Space belonging to a local binding instead -- which is exactly
+  what a Parsec-style scheme does with gameplay keys: neither its press nor
+  its release may reach the host, and the held-W record has to still be there
+  mid-way, because the entry `-releaseAllHeldKeys` reads at capture end is the
+  only thing that stops the host running for the rest of the session. And
+  sprinting on Shift while letting go of W first: the release has to carry the
+  modifier byte its press carried, or the host is told to lift a key it was
+  never handed. Both new failure shapes are built into the harness, so the
+  scenarios cannot quietly stop biting.
+- **One more aggregate rule, for the same reason as last round's two.** The
+  probe needs a compiler and the audit runner has none, so the two lines that
+  carry these properties -- the release's modifier byte and the suppressed
+  record it consults -- are what the aggregate requires, and the planted
+  mutation belongs to it rather than to the compile gate.
+
+The battery went from 74 to 75, the shipped probe's scenarios from 20 to 25,
+and the aggregate prints 147 lines of `ok` with no failures. No product file
+changed this round -- the audit found the shipping release path correct -- so
+the delivered build 1474 is still the current image, and the version bump a
+rebuild would cause is not evidence of anything.
+
 ### Round 28: two ways the keyboard took a key away, and a gate that can see
 ### inside a translation unit
 
