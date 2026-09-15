@@ -71,6 +71,13 @@ jobs:
         python3 scripts/liquid-glass-audit.py --self-test
         python3 scripts/liquid-glass-audit.py
 
+    - name: Verify the published-image checksum rule
+      # A release page that hands out a DMG nobody hashed is a download nobody can
+      # check. This half of the DMG gate runs anywhere, because a checksum is not a
+      # filesystem question; the mount half runs on the macOS job that builds the
+      # image, and both halves are wired into the local aggregate.
+      run: python3 scripts/dmg-audit.py --self-test-checksums
+
     - name: Verify the release tag rule set
       # The gate below only helps if its rules are exercised on every change.
       # These fixtures are the only place the accept path is checked, because on
@@ -360,6 +367,18 @@ jobs:
           "dist/app/Moonlight.app" || \
         hdiutil create -volname "Moonlight-${{ matrix.variant }}" -srcfolder "dist/app/Moonlight.app" -ov -format UDZO "dist/Moonlight-macOS-Enhanced-${{ matrix.variant }}.dmg"
 
+    - name: Audit the ${{ matrix.variant }} DMG
+      # Three questions the build log cannot answer. Does the image still hold the
+      # bytes that were written (hdiutil verifies the image's own checksum); is there
+      # an Applications drop target at its root (the `||` fallback above succeeds and
+      # produces an image with none, which installs nothing and stays green); and is
+      # the build number inside the image the one this commit resolved, rather than
+      # one xcconfig quietly kept from an older build.
+      run: |
+        python3 scripts/dmg-audit.py \
+          "dist/Moonlight-macOS-Enhanced-${{ matrix.variant }}.dmg" \
+          --build "$BUILD_NUMBER_RESOLVED" --write-checksums
+
     - name: Upload ${{ matrix.variant }} app artifact
       uses: actions/upload-artifact@v7
       with:
@@ -373,6 +392,16 @@ jobs:
       with:
         name: Moonlight-macOS-dmg-${{ matrix.variant }}
         path: dist/Moonlight-macOS-Enhanced-${{ matrix.variant }}.dmg
+        if-no-files-found: error
+        retention-days: 14
+
+    - name: Upload ${{ matrix.variant }} DMG checksum
+      # A separate artifact on purpose: the DMG artifact keeps holding exactly one
+      # file, so whatever consumes it today keeps consuming it unchanged.
+      uses: actions/upload-artifact@v7
+      with:
+        name: Moonlight-macOS-dmg-checksum-${{ matrix.variant }}
+        path: dist/Moonlight-macOS-Enhanced-${{ matrix.variant }}.dmg.sha256
         if-no-files-found: error
         retention-days: 14
 
@@ -539,6 +568,27 @@ jobs:
           "dist/universal/Moonlight.app" || \
         hdiutil create -volname "Moonlight-universal" -srcfolder "dist/universal/Moonlight.app" -ov -format UDZO "dist/Moonlight-macOS-Enhanced-universal.dmg"
 
+    - name: Audit the universal DMG
+      # The expected build number comes from the arm64 bundle the merge started with,
+      # not from the merged one, so an image that was made from a stale copy of the
+      # app -- or from the other side's plist after the merge overwrote it -- is
+      # refused here instead of at the release page.
+      run: |
+        expected_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+          work/arm64/Moonlight.app/Contents/Info.plist)"
+        echo "arm64 slice build: $expected_build"
+        python3 scripts/dmg-audit.py \
+          "dist/Moonlight-macOS-Enhanced-universal.dmg" \
+          --build "$expected_build" --write-checksums
+
+    - name: Upload universal DMG checksum
+      uses: actions/upload-artifact@v7
+      with:
+        name: Moonlight-macOS-dmg-checksum-universal
+        path: dist/Moonlight-macOS-Enhanced-universal.dmg.sha256
+        if-no-files-found: error
+        retention-days: 14
+
     - name: Upload universal DMG artifact
       uses: actions/upload-artifact@v7
       with:
@@ -673,6 +723,22 @@ jobs:
         name: Moonlight-macOS-dmg-universal
         path: dist
 
+    - name: Download the DMG checksum artifacts
+      uses: actions/download-artifact@v8
+      with:
+        pattern: Moonlight-macOS-dmg-checksum-*
+        path: checksums
+        merge-multiple: true
+
+    - name: Verify the bytes being released are the bytes that were built
+      # Three copies of a 10 MB image sit between the runner and the release page, and
+      # nothing used to compare any of them. A truncated upload, a re-downloaded
+      # artifact, and an asset replaced by hand all arrive here as the same red line,
+      # and every release now carries the hash beside the file it hashes.
+      run: |
+        cp checksums/*.sha256 dist/
+        python3 scripts/dmg-audit.py --verify-checksums dist/*.sha256 --search dist
+
     - name: Gate the release tag
       # The version in the release title has to be the version inside the DMGs.
       # A tag that disagrees with MARKETING_VERSION, with the build number this
@@ -711,4 +777,7 @@ jobs:
           dist/Moonlight-macOS-Enhanced-x86_64.dmg
           dist/Moonlight-macOS-Enhanced-arm64.dmg
           dist/Moonlight-macOS-Enhanced-universal.dmg
+          dist/Moonlight-macOS-Enhanced-x86_64.dmg.sha256
+          dist/Moonlight-macOS-Enhanced-arm64.dmg.sha256
+          dist/Moonlight-macOS-Enhanced-universal.dmg.sha256
         body_path: release_body.md

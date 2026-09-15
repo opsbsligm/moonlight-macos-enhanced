@@ -1390,6 +1390,22 @@ check(analyzer_rules.returncode == 0,
       "the analyzer self-test failed:\n"
       + (analyzer_rules.stdout + analyzer_rules.stderr)[-900:])
 
+# What a DMG has to be is a three-part rule, and until now the repository had none
+# of it: the packaging step fell back from create-dmg to a bare `hdiutil create`
+# with `||`, which succeeds and produces an image with no Applications drop target,
+# and nothing in the pipeline opened an image at all. The checksum half needs no
+# toolchain, so it is checked on every host, including the ubuntu audits runner
+# that publishes the release. The mount half needs a host that can mount HFS+, so
+# it is asked rather than assumed, and a host that cannot says so out loud.
+checksum_rules = subprocess.run([sys.executable, os.path.join(root, "scripts", "dmg-audit.py"),
+                                 "--self-test-checksums"],
+                                capture_output=True, text=True, cwd=root)
+check(checksum_rules.returncode == 0,
+      "the checksum rule binds the bytes a release publishes"
+      if checksum_rules.returncode == 0 else
+      "the published-image checksum self-test failed:\n"
+      + (checksum_rules.stdout + checksum_rules.stderr)[-900:])
+
 # A machine that has never seen Xcode has no `xcrun` at all, and a missing binary
 # arrives as FileNotFoundError rather than an empty answer. Two CI runs found that
 # out by crashing: the module that hands out compilers answered a question it could
@@ -1428,7 +1444,15 @@ if run_battery:
     # failing for a reason no source caused. The battery's nested runs skip them
     # either way: a mutation is judged by the harness that owns it, and sixty-two
     # nested runs of all seven would only teach everyone to stop running this file.
-    if toolchain_missing:
+    # Making and mounting two throwaway disk images costs about as much as all
+    # seven harnesses together, so it belongs to the full run and not to the
+    # battery's sixty-odd nested ones. The cheap checksum half above is what a
+    # nested run judges a mutation against.
+    has_hdiutil = any(os.path.exists(os.path.join(folder, "hdiutil"))
+                      for folder in os.environ.get("PATH", "").split(os.pathsep) + ["/usr/bin"])
+    if not has_hdiutil:
+        print("skip the disk image self-test: this host has no hdiutil to mount an image")
+    elif toolchain_missing:
         print("skip behavioural harnesses (7 of them): %s" % toolchain_missing)
     else:
         for behaviour in (os.path.join("scripts", "input-concurrency-tests.py"),
@@ -1446,6 +1470,16 @@ if run_battery:
                   if harness.returncode == 0 else
                   "%s failed:\n" % label
                   + (harness.stdout + harness.stderr)[-1200:])
+
+        image_rules = subprocess.run([sys.executable,
+                                      os.path.join(root, "scripts", "dmg-audit.py"),
+                                      "--self-test"],
+                                     capture_output=True, text=True, cwd=root)
+        check(image_rules.returncode == 0,
+              "the disk image gate rejects an image with no drop target and a wrong build"
+              if image_rules.returncode == 0 else
+              "the disk image self-test failed:\n"
+              + (image_rules.stdout + image_rules.stderr)[-900:])
 
 # BUILD_NUMBER is `git rev-list --count HEAD`, which two places used to compute
 # independently: the shell script that CI injects, and the release preparer. The
