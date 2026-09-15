@@ -905,6 +905,31 @@ The constraint count went from 124 to 133 on a host with an Apple toolchain, and
 battery from 61 to 62: a header that names a type it cannot see, caught by the rule that
 replaced the missing build.
 
+### Seventeenth audit pass (two CI runs lost to a host that is not a Mac)
+
+- **The parity rule was written on one machine and shipped to two.** It put the seven
+  behavioural harnesses into the aggregate; the aggregate also runs on the audits job's
+  ubuntu runner, which has no clang, no macOS SDK and no `xcrun`. Seven gates failed for
+  a reason no source caused. The aggregate now asks `apple_toolchain` for a compiler pair
+  before it asks anything to compile: a host with one runs all seven, a host without one
+  prints the seven it skipped and the reason. That is not lost coverage -- the build jobs
+  run the same seven on macOS on every change -- but a red that means nothing is the exact
+  pattern this file complains about elsewhere, because it teaches people to expect a
+  failure and then to ignore it.
+- **The crash underneath it was older and worse.** `apple_toolchain.clang_and_sdk()` is
+  the one answer five harnesses ask, and on a host with no `xcrun` it did not answer
+  "none": `subprocess` raised `FileNotFoundError` and the traceback escaped, so a machine
+  that cannot compile looked like code that does not compile. It now reports an empty pair
+  and lets `clang_and_sdk` give its normal refusal.
+- **A host with no `xcrun` is reproducible on a Mac.** Empty `PATH` and call the finder:
+  before this change it raised, now it answers `('', '')`. That is a constraint, and the
+  battery plants the narrowing that would bring the crash back (63 planted regressions,
+  all caught). What still cannot be tested here is the rest of what ubuntu is -- the probe
+  covers the one thing that broke, not the whole environment, and the two runs it took to
+  find that are the honest price of developing on one platform and shipping on another.
+
+Constraints are 134 on a host with an Apple toolchain; the battery is 63.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
