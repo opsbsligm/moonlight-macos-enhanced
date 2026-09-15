@@ -310,6 +310,20 @@ jobs:
           exit 1
         fi
 
+    - name: Verify every source file reached the ${{ matrix.variant }} binary
+      # The project file lists every source it intends to compile, which is a
+      # claim about the build rather than the build. GlassOverlayContainer.m
+      # compiled on its own in a harness, was absent from that list, and appeared
+      # in no binary that anyone shipped: no target compiled it, so no target
+      # failed. This reads the class table of the linked Mach-O instead, where a
+      # file that nothing compiled cannot hide.
+      run: |
+        main_binary="build/Build/Products/Release/Moonlight.app/Contents/MacOS/Moonlight"
+        python3 scripts/compiled-source-audit.py "$main_binary" \
+          --arch "${{ matrix.archs }}" --self-test
+        python3 scripts/compiled-source-audit.py "$main_binary" \
+          --arch "${{ matrix.archs }}"
+
     - name: Package ${{ matrix.variant }} app bundle
       run: |
         mkdir -p dist/app
@@ -472,6 +486,17 @@ jobs:
           echo "Universal helper binary missing expected slices"
           exit 1
         fi
+
+    - name: Verify the merged binary lost no class
+      # A universal merge is a file-by-file copy of one slice over another, so a
+      # dropped or half-merged binary shows up as a class that exists in a slice
+      # and not in the artifact. Both slices are read, because the merge can lose
+      # either one.
+      run: |
+        main_binary="dist/universal/Moonlight.app/Contents/MacOS/Moonlight"
+        for arch in arm64 x86_64; do
+          python3 scripts/compiled-source-audit.py "$main_binary" --arch "$arch"
+        done
 
     - name: Create universal DMG
       run: |
