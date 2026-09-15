@@ -1390,13 +1390,31 @@ check(analyzer_rules.returncode == 0,
       "the analyzer self-test failed:\n"
       + (analyzer_rules.stdout + analyzer_rules.stderr)[-900:])
 
+# A machine that has never seen Xcode has no `xcrun` at all, and a missing binary
+# arrives as FileNotFoundError rather than an empty answer. Two CI runs found that
+# out by crashing: the module that hands out compilers answered a question it could
+# not answer with a traceback, so every harness on such a host looked like broken
+# code. The probe takes the compiler-finder's own word for it -- an empty pair, not
+# an exception -- with PATH emptied, which a Mac can test as well as a Linux runner.
+probe = subprocess.run(
+    [sys.executable, "-c",
+     "import sys; sys.path.insert(0, %r); import apple_toolchain; "
+     "clang, sdk = apple_toolchain._xcrun_pair(); "
+     "sys.exit(0 if not clang and not sdk else 1)" % os.path.join(root, "scripts")],
+    env={"PATH": "/nonexistent"}, capture_output=True, text=True, cwd=root)
+check(probe.returncode == 0,
+      "a host with no xcrun is answered, not crashed"
+      if probe.returncode == 0 else
+      "the compiler finder raised instead of answering: "
+      + (probe.stderr or probe.stdout)[-400:])
+
 toolchain_missing = None
 try:
     sys.path.insert(0, os.path.join(root, "scripts"))
     import apple_toolchain
     apple_toolchain.clang_and_sdk("the behavioural harnesses")
-except SystemExit as absent:
-    toolchain_missing = str(absent)
+except (SystemExit, OSError) as absent:
+    toolchain_missing = "%s: %s" % (type(absent).__name__, absent)
 
 if run_battery:
     # The build jobs run these seven on every change, and until now nothing ran

@@ -35,6 +35,7 @@ PREPARER = os.path.join(root, "scripts", "prepare-release.py")
 BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
 WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
 AUDIT = os.path.join(root, "scripts", "constraints-audit.py")
+TOOLCHAIN = os.path.join(root, "scripts", "apple_toolchain.py")
 INTERNAL = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                         "StreamViewController_Internal.h")
 WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -617,6 +618,18 @@ GLASS_MEMBER_ENTRY = "\t\t\t\tmacOS/Views/GlassOverlayContainer.m,\n"
 # translation unit that reached it failed to compile and the feature lived in no
 # binary. Only a build of the app itself notices, and this host cannot run one, so
 # the rule that does notice is shape: the class has to be reachable from the header.
+# The shared compiler finder answers "which clang, which SDK", and on a host with
+# no xcrun the answer has to be "none", not a traceback: two CI runs on ubuntu
+# learned the difference the expensive way. Narrowing the exception to something
+# that cannot happen is how a hardening like that quietly stops being one.
+NARROWED_EXCEPTION = '        except OSError:\n            return ""\n'
+
+
+def xcrun_assumed_present(text):
+    return once(text, NARROWED_EXCEPTION, "the compiler finder's answer").replace(
+        NARROWED_EXCEPTION, '        except KeyboardInterrupt:\n            return ""\n', 1)
+
+
 BLIND_IMPORT = '#import "GlassOverlayContainer.h"\n'
 
 
@@ -727,6 +740,8 @@ MUTATIONS = [
      "the local aggregate stops running an audit that CI still runs"),
     ("header-names-a-type-it-cannot-see", INTERNAL, header_blind_to_its_type,
      "a property names a first-party class that its own imports cannot see"),
+    ("xcrun-assumed-present", TOOLCHAIN, xcrun_assumed_present,
+     "a host with no xcrun gets a traceback instead of an answer"),
 ]
 
 

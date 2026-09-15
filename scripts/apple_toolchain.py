@@ -20,10 +20,20 @@ CLANG_TOOLS = "/Library/Developer/CommandLineTools"
 
 # (clang, sdk), in preference order. A pair is used only when both halves exist.
 def _xcrun_pair():
-    clang = subprocess.run(["xcrun", "--find", "clang"], capture_output=True, text=True)
-    sdk = subprocess.run(["xcrun", "--sdk", "macosx", "--show-sdk-path"],
-                         capture_output=True, text=True)
-    return clang.stdout.strip(), sdk.stdout.strip()
+    # `xcrun` does not exist on a machine that has never seen Xcode -- the audits
+    # job's ubuntu runner, or any Linux box a contributor tries -- and a missing
+    # binary arrives as FileNotFoundError from inside subprocess, not as an empty
+    # answer. That crash used to escape clang_and_sdk(), so on such a host every
+    # behavioural harness died with a traceback instead of reporting that it has no
+    # compiler, which is the difference between a gate that says "not here" and one
+    # that looks like the code under test is broken.
+    def ask(arguments):
+        try:
+            return subprocess.run(["xcrun"] + arguments,
+                                  capture_output=True, text=True).stdout.strip()
+        except OSError:
+            return ""
+    return ask(["--find", "clang"]), ask(["--sdk", "macosx", "--show-sdk-path"])
 
 
 def _command_line_tools_pair():
