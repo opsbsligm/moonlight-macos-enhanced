@@ -9,7 +9,16 @@ kind of step that gets the tag and the built version out of step.
 BUILD_NUMBER is git rev-list --count HEAD, so the tag for this commit is
 derivable from the commit itself. This script computes that tag, asks the gate
 what it objects to, and with --apply promotes the Unreleased section to the
-version the gate will accept, then re-asks.
+version the gate will accept.
+
+The promotion is what makes the next step a trap, so the script names it instead
+of leaving it to be discovered in front of a release: the edit belongs in the
+commit that is already HEAD. A normal commit is itself a commit, so it raises the
+count by one, the gate then asks for a section naming a build one higher, --apply
+writes that one too, and the tag stays one commit away forever. `git commit
+--amend` replaces HEAD, so the count does not move and the section stays correct.
+"the gate accepts it" is only ever a statement about the working tree in front of
+you, which is why every report that clears a promotion says how to commit it.
 
   prepare-release.py                 report the tag this commit builds and what
                                      still stands between it and a release
@@ -67,6 +76,34 @@ def promote(text, version):
     return text.replace(UNRELEASED, "%s\n\n%s [%s]" % (UNRELEASED, "##", version), 1)
 
 
+AMEND_HOWTO = ("Fix it with `git commit --amend`: BUILD_NUMBER is "
+               "`git rev-list --count HEAD`, and an amend replaces HEAD instead of "
+               "adding to that count, so the section keeps naming the build the "
+               "binaries carry.")
+
+
+def catchup_hint(version, text):
+    """Say when the goal is already being chased, or stay silent.
+
+    The loop is this tool following its own instructions one commit at a time: a
+    commit made for the previous refusal counts itself, the gate asks for a section
+    one build higher, and each further commit moves the target again. The
+    fingerprint is exact rather than a hunch -- the gate wants build N and the
+    changelog already carries a section for N-1. A tree that never prepared
+    anything cannot match, which matters as much as matching: a hint that fires in
+    the ordinary case is a hint that gets ignored in the case it exists for.
+    """
+    match = re.match(r"^(.*)-build(\d+)$", version)
+    if match is None:
+        return None
+    previous = "%s-build%d" % (match.group(1), int(match.group(2)) - 1)
+    if not load_gate().changelog_has(text, previous):
+        return None
+    return ("the changelog already carries [%s], one build back, so a commit made "
+            "for the previous refusal is what moved the target to %s. Stop committing "
+            "it forward. %s" % (previous, version, AMEND_HOWTO))
+
+
 def evaluate(args):
     gate = load_gate()
     changelog_path = args.changelog or os.path.join(ROOT, "CHANGELOG.md")
@@ -93,9 +130,16 @@ def run(args):
         return 0
     for reason in reasons:
         print("gate refuses: %s" % reason)
+    if [reason for reason in reasons if "CHANGELOG.md has no" in reason]:
+        hint = catchup_hint(tag[1:], text)
+        if hint:
+            print("warning: %s" % hint)
     if [reason for reason in reasons if "CHANGELOG.md has no" not in reason]:
         print("only the changelog can be prepared automatically; fix the rest first")
         return 1
+    # Promoting here is still the right edit even mid-loop: the section for the
+    # current count is the one a tag needs, and the loop is the commit that carries
+    # it, not the text. Refusing to write would leave no way out but a hand edit.
     updated = promote(text, tag[1:])
     if not args.apply:
         print("run with --apply to promote the %s heading to [%s]" % (UNRELEASED, tag[1:]))
@@ -106,7 +150,10 @@ def run(args):
     if after:
         print("the gate still refuses after promotion: %s" % "; ".join(after))
         return 1
-    print("CHANGELOG.md now carries [%s]: the gate accepts the tag" % tag[1:])
+    print("CHANGELOG.md carries [%s] in this working tree, and the gate accepts it "
+          "there." % tag[1:])
+    print("Do not commit that as a new commit. %s" % AMEND_HOWTO)
+    print("Re-run prepare-release.py after the amend to confirm it still accepts %s." % tag)
     return 0
 
 
@@ -145,29 +192,56 @@ def self_test():
 
         def attempt(tag, changelog, build=42, apply=False):
             open(changelog_path, "w", encoding="utf-8").write(changelog)
-            # The report the script prints is what a release engineer reads; in
-            # the fixtures it would bury the verdicts.
+            # The report the script prints is what a release engineer reads, so the
+            # fixtures read it too: a fix that only lives in prose still has to be
+            # the prose that is actually printed.
             captured = io.StringIO()
             with contextlib.redirect_stdout(captured):
                 rc = run(argparse.Namespace(tag=tag, changelog=changelog_path,
                                             project=project_path, build_number=build,
                                             tags="", apply=apply))
-            return rc, open(changelog_path, encoding="utf-8").read()
+            return (rc, open(changelog_path, encoding="utf-8").read(),
+                    captured.getvalue())
 
-        rc, text = attempt("v1.3.9-build42", unreleased_only)
+        rc, text, report = attempt("v1.3.9-build42", unreleased_only)
         check(rc == 1 and text == unreleased_only,
               "a report run names the missing section without editing the file")
-        rc, text = attempt("v1.3.9-build42", unreleased_only, apply=True)
+        rc, text, report = attempt("v1.3.9-build42", unreleased_only, apply=True)
         check(rc == 0 and "## [1.3.9-build42]" in text and text.count(UNRELEASED) == 1,
               "--apply promotes Unreleased and leaves a fresh Unreleased behind")
-        rc, text = attempt("v1.3.9-build42", text, apply=True)
+        # A cleared promotion used to end in "the gate accepts the tag", which is
+        # true of the working tree and misleading about the commit. The next
+        # command most people run is `git commit -m ...`, and that one commit makes
+        # the number the section just named one too old, so the release closes with
+        # a tool that reports success and a gate that refuses forever. Naming the
+        # amend, and the count that forces it, is the part under test.
+        check("--amend" in report and "rev-list --count" in report,
+              "a cleared promotion says to amend and why a new commit would undo it")
+        check("accepts the tag\n" not in report,
+              "the promotion report does not claim the tag is accepted as a verdict")
+        rc, text, report = attempt("v1.3.9-build42", text, apply=True)
         check(rc == 0 and text.count("## [1.3.9-build42]") == 1,
               "running again has nothing to do and does not duplicate the entry")
+        # The loop itself: one ordinary commit after a promotion leaves the tree
+        # asking for build 43 while 42 sits in the changelog. That shape has to be
+        # named, because the alternative reading is "prepare again", which is what
+        # keeps the loop running.
+        chased = "## [Unreleased]\n\n### Fixed\n\n- x\n\n## [1.3.9-build42]\n\n- y\n"
+        rc, text, report = attempt("v1.3.9-build43", chased, build=43, apply=True)
+        check("one build back" in report and "--amend" in report,
+              "a goal that already moved once is reported as moved, with the fix")
+        # And the same report must stay quiet in the cases that look similar but are
+        # ordinary, or the warning trains people to ignore it.
+        check("one build back" not in attempt("v1.3.9-build42", unreleased_only)[2],
+              "a first preparation is not described as a chase")
+        older = "## [Unreleased]\n\n### Fixed\n\n- x\n\n## [1.3.9-build19]\n\n- y\n"
+        check("one build back" not in attempt("v1.3.9-build42", older)[2],
+              "an older released section is not mistaken for a moved goal")
         for tag, build, message in [
             ("v1.3.9-build7", 42, "a tag naming another build is refused and never promoted"),
             ("v1.4.0-build42", 42, "a tag that disagrees with MARKETING_VERSION is refused"),
         ]:
-            rc, text = attempt(tag, unreleased_only, build=build, apply=True)
+            rc, text, report = attempt(tag, unreleased_only, build=build, apply=True)
             check(rc == 1 and text == unreleased_only, message)
 
     print("%d prepare-release self-test failures" % len(failures))

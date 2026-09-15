@@ -1418,6 +1418,71 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 32: the preparer reported success while blocking the tag
+
+- **`--apply` cleared a promotion that could not be committed.** The script
+  wrote the section the gate asked for and closed with "the gate accepts the
+  tag", which is true of the working tree in front of you and misleading
+  about the release. The next verb anyone reaches for is `git commit`, and
+  BUILD_NUMBER is `git rev-list --count HEAD`, so the commit carrying
+  `[1.3.9-build1478]` is precisely what makes HEAD build 1479. Re-asking
+  then refuses a tree whose only fault is carrying a section one build back.
+  Reproduced in a throwaway clone: prepare, commit, refuse; prepare again,
+  commit, refuse again, with the tool reporting success each round. The
+  failure shape is not a bad artifact. It is the release stalling at the
+  moment of the tag, with someone under pressure hand-editing headings to
+  make a tool stop objecting.
+
+- **The report now names the amend and the count that forces it.** The edit
+  belongs in the commit that is already HEAD, and `git commit --amend`
+  replaces HEAD instead of adding to that count, so the section keeps naming
+  the build the binaries carry. The reason travels with the advice because
+  advice gets re-litigated at release time, and because the wrong command is
+  easy to type: `git commit -qam --amend --no-edit` makes `--amend` the
+  commit message and commits normally. That is how the loop was reproduced a
+  second time while this fix was being written. The closing sentence no
+  longer claims the tag is accepted; it says the tree carries the section,
+  tells you to amend, and points at a re-run to confirm.
+
+- **The chase is named while it is still one commit long.** A refusal whose
+  changelog already carries the previous build now prints which section sits
+  one build back, states that a commit made for the previous refusal moved
+  the target, and says to stop committing it forward. The alternative
+  reading of that refusal -- prepare again -- is what keeps the loop
+  running. The fingerprint is exact rather than a hunch: the gate wants
+  build N and the changelog has N-1. A first preparation, and a released
+  section seventeen builds back, both stay silent, and both are fixtures,
+  because a warning that fires in the ordinary case is a warning that gets
+  ignored in the case it exists for. The promotion still writes in that
+  state: the section for the current count is the one a tag needs, and
+  refusing it would leave a hand edit as the only way out.
+
+- **Ten fixtures, one of them breakable.** The preparer's own self-test went
+  from five verdicts to ten: the cleared promotion has to name the amend and
+  the count; it may not present acceptance as a verdict; a moved target has
+  to be reported as moved; and two check that the hint does not fire where
+  it does not belong. Those run inside `release-gate.py --self-test`,
+  already wired into the audit job, and the battery gained `promoted-then-
+  committed`, which deletes the advice and requires that gate to notice.
+
+
+### Audited, and not changed
+
+- **The tool cannot police the command you type.** Nothing here intercepts
+  `git commit`, and the amend guidance is prose rather than an enforced
+  step: this script does not commit, and making it commit would trade a
+  misleading sentence for an unrecoverable one. What it can do is stop
+  describing an uncommitted working tree as a release, and stop being silent
+  the moment the count has moved. The end-to-end check covers both halves:
+  after an ordinary commit the warning names the section one build back, and
+  after the told amend the count does not move, HEAD itself carries the
+  section the tag names, and the script reports nothing left to prepare.
+
+
+The battery went from 76 to 77, the preparer's fixtures from five to ten, and
+this round moved no product code, so the round 31 image is still the one to
+install and test.
+
 ### Round 31: a hotkey held down fired once per autorepeat
 
 - **Holding a bound key ran its action again and again.** The entry point is

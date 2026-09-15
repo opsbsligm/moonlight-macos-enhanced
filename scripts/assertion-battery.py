@@ -81,6 +81,10 @@ LIQUID_GATE = (os.path.join(root, "scripts", "liquid-glass-audit.py"), [])
 # behaviour inside it -- an answer that never reaches the glass -- is visible here and
 # nowhere in a source scan.
 OVERLAY_GATE = (os.path.join(root, "scripts", "liquid-glass-overlay-tests.py"), [])
+# The release preparer's own self-test, reached through the gate that CI already
+# runs: `--self-test` on release-gate.py executes the preparation fixtures too, so a
+# preparer whose release procedure has gone wrong cannot leave the audit green.
+PREP_GATE = (os.path.join(root, "scripts", "release-gate.py"), ["--self-test"])
 SHORTCUT_PROFILE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                                  "SettingsShortcuts.swift")
 MOUSE_CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -408,6 +412,19 @@ def recounted_build(text):
     once(text, BUILD_VIA_SCRIPT, "build number asked of the shared script")
     return text.replace(BUILD_VIA_SCRIPT,
                         'else git("rev-list", "--count", "HEAD").strip()', 1)
+
+
+# A cleared promotion used to end with "the gate accepts the tag". That is true of
+# the working tree and false about the release, because the next thing a person does
+# is commit: BUILD_NUMBER counts that commit, so the section just written names a
+# build one too low, and every further commit moves the target again. The sentence
+# telling them to amend is the only thing preventing the loop, so it is an assertion.
+AMEND_ADVICE = '    print("Do not commit that as a new commit. %s" % AMEND_HOWTO)\n'
+
+
+def forgot_the_amend(text):
+    once(text, AMEND_ADVICE, "the amend advice in the promotion report")
+    return text.replace(AMEND_ADVICE, "", 1)
 
 
 def believe_shallow(text):
@@ -942,6 +959,8 @@ MUTATIONS = [
     ("grep-scanned", L10N, grep_scanned, "the scan shells out to the host grep dialect", AUDIT_GATE),
     ("recounted-build", PREPARER, recounted_build, "the release tool counts commits its own way"),
     ("believed-shallow", BUILD_SH, believe_shallow, "a shallow clone stamps a build number that is too small"),
+    ("promoted-then-committed", PREPARER, forgot_the_amend,
+     "a cleared promotion hides the amend the build count forces", PREP_GATE),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,
      "one workflow uses two versions of the same upload action", WF_GATE),
