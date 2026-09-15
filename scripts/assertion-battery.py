@@ -578,6 +578,26 @@ def release_modifiers_without_clearing_the_tracker(text):
     return text.replace(cleared, "", 1)
 
 
+def hotkey_fires_at_autorepeat_rate(text):
+    """Removes the guard that makes a held hotkey fire once.
+
+    AppKit keeps sending keyDown while a key is held, and the key-equivalent chain
+    delivers those deliveries exactly like the first press, so this version runs the
+    rule once per repeat: a bound panel strobes at the autorepeat rate, and a rule
+    bound to a window rebuild releases the player's held modifiers over and over while
+    one finger never leaves the key. The screen says the hotkey is held; the game says
+    the player keeps letting go of everything else they were holding.
+    """
+    start = text.index("- (BOOL)handleKeyboardTranslationRuleForEvent:(NSEvent *)event {")
+    end = text.index("\n}\n", start) + 3
+    body = text[start:end]
+    guard = re.search(r"    if \(event\.isARepeat\) \{\n(?:.*\n)*?    \}\n", body)
+    if guard is None:
+        raise SystemExit("the translation-rule handler no longer guards key repeats, so "
+                         "this mutation would be proving nothing")
+    return text[:start] + body.replace(guard.group(0), "", 1) + text[end:]
+
+
 def release_ignores_the_modifier_its_press_carried(text):
     """Answers every key release with a modifier byte of zero.
 
@@ -931,6 +951,9 @@ MUTATIONS = [
     ("keyup-forgets-the-modifier-its-press-carried", HID,
      release_ignores_the_modifier_its_press_carried,
      "a key release does not carry the modifier byte its press carried"),
+    ("held-hotkey-fires-at-autorepeat-rate", MOUSE_CAPTURE,
+     hotkey_fires_at_autorepeat_rate,
+     "a held hotkey runs its action again for every repeated keyDown AppKit sends"),
     ("naming-an-sdk-the-build-does-not-have", GLASS_CONTAINER,
      naming_an_api_only_the_newest_sdk_declares,
      "a source file names an API the build's SDK does not declare"),

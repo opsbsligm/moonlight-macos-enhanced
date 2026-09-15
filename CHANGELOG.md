@@ -1418,6 +1418,48 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 31: a hotkey held down fired once per autorepeat
+
+- **Holding a bound key ran its action again and again.** The entry point is
+  `-performKeyEquivalent:` in `StreamViewMac.m`, and AppKit keeps sending
+  keyDown while a key is held. Whether those deliveries reach the handler
+  was assumed rather than known, so it was measured against a live
+  `NSWindow`: the key-equivalent chain hands a view an `isARepeat` event
+  exactly like the first one. Nothing in `Limelight/macOS` asked the flag --
+  `isARepeat` appeared nowhere in the tree -- so every repeat fired the
+  action again. Four of the built-in bindings toggle state, so holding one
+  flips a panel at the autorepeat rate: the performance overlay strobes, the
+  mouse mode alternates under the player, the control ball flickers, the
+  control centre is presented again and again. A translation rule fires the
+  same way, and one of the actions it can name is in the list that
+  legitimately releases the keyboard, so a window-rebuild binding released
+  the player's held modifiers over and over while one finger never left the
+  key.
+
+- **The repeated delivery is consumed, not ignored.** Ignoring it looks like
+  the obvious fix and is a worse bug: the first press was never forwarded,
+  so a repeat allowed to fall through reaches `-keyDown:` and hands the host
+  a key the player only ever bound to the client -- tap the hotkey and
+  nothing happens, hold it and the game starts receiving it. Each affected
+  binding now records the suppression where it pays the debt, which is the
+  convention the pairing gate in the aggregate already enforces: the first
+  version of this fix factored that into one helper, and the gate reported
+  it as six unpaired keyDown paths. The gate was right.
+
+### Audited, and not changed
+
+- **The other half of this report was already fixed.** The pass-through block
+  records that it used to emit DOWN and UP back to back, which turned every
+  key into a tap -- `holding W reached the host as DOWN,UP,DOWN,UP from
+  autorepeat ... and a second key could never overlap the first`, the same
+  sentence that names the W-and- Space symptom. That shape is gone. What
+  this round closes is the second path by which a held key could still reach
+  the client's own handlers over and over.
+
+The battery went from 75 to 76, the aggregate prints 148 lines of `ok` with no
+failures, and this round changed product code, so the delivered image has to
+be rebuilt from the commit that carries it.
+
 ### Round 30: three guesses, all three already guarded in the shipped code
 
 Nothing in the product or a gate changed this round. The round went into

@@ -2781,6 +2781,17 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         return NO;
     }
 
+    if (event.isARepeat) {
+        // AppKit keeps sending keyDown while a key is held and the key-equivalent
+        // chain delivers those repeats exactly like the first press, so the action
+        // below would run once per repeat: a panel would strobe, and a rule bound to
+        // a window rebuild would lift the player's held modifiers over and over.
+        // Consuming it is not optional -- the first press was never forwarded, so a
+        // repeat allowed to fall through hands the host a key the player only ever
+        // bound to the client.
+        return [self consumeKeyDownEvent:event];
+    }
+
     if (rule.outputKind == KeyboardTranslationOutputKindRemoteShortcut) {
         if (rule.outputShortcut != nil) {
             Log(LOG_I, @"[diag] keyboard translation dispatching remote shortcut: event=%@ remoteKey=%ld remoteMods=0x%llx",
@@ -2812,6 +2823,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     [self.hidSupport noteKeyboardKeyDownSuppressedForEvent:event];
     return YES;
 }
+
 
 - (NSEvent *)consumeMonitoredKeyDownEvent:(NSEvent *)event {
     [self.hidSupport noteKeyboardKeyDownSuppressedForEvent:event];
@@ -2944,24 +2956,64 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     }
 
     if ([self event:event matchesShortcut:[self streamShortcutForAction:MLShortcutActionTogglePerformanceOverlay]]) {
+        if (event.isARepeat) {
+            // AppKit keeps sending keyDown while a key is held and the key-equivalent
+            // chain delivers those repeats exactly like the first press, so the action
+            // below would run once per repeat: a panel would strobe, and a rule bound to
+            // a window rebuild would lift the player's held modifiers over and over.
+            // Consuming it is not optional -- the first press was never forwarded, so a
+            // repeat allowed to fall through hands the host a key the player only ever
+            // bound to the client.
+            return [self consumeKeyDownEvent:event];
+        }
         self.pendingOptionUncaptureToken += 1;
         [self toggleOverlay];
         return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:[self streamShortcutForAction:MLShortcutActionToggleMouseMode]]) {
+        if (event.isARepeat) {
+            // AppKit keeps sending keyDown while a key is held and the key-equivalent
+            // chain delivers those repeats exactly like the first press, so the action
+            // below would run once per repeat: a panel would strobe, and a rule bound to
+            // a window rebuild would lift the player's held modifiers over and over.
+            // Consuming it is not optional -- the first press was never forwarded, so a
+            // repeat allowed to fall through hands the host a key the player only ever
+            // bound to the client.
+            return [self consumeKeyDownEvent:event];
+        }
         self.pendingOptionUncaptureToken += 1;
         [self toggleMouseMode];
         return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:[self streamShortcutForAction:MLShortcutActionToggleFullscreenControlBall]]) {
+        if (event.isARepeat) {
+            // AppKit keeps sending keyDown while a key is held and the key-equivalent
+            // chain delivers those repeats exactly like the first press, so the action
+            // below would run once per repeat: a panel would strobe, and a rule bound to
+            // a window rebuild would lift the player's held modifiers over and over.
+            // Consuming it is not optional -- the first press was never forwarded, so a
+            // repeat allowed to fall through hands the host a key the player only ever
+            // bound to the client.
+            return [self consumeKeyDownEvent:event];
+        }
         self.pendingOptionUncaptureToken += 1;
         [self toggleFullscreenControlBallVisibility];
         return [self consumeKeyDownEvent:event];
     }
 
     if ([self event:event matchesShortcut:[self streamShortcutForAction:MLShortcutActionOpenControlCenter]]) {
+        if (event.isARepeat) {
+            // AppKit keeps sending keyDown while a key is held and the key-equivalent
+            // chain delivers those repeats exactly like the first press, so the action
+            // below would run once per repeat: a panel would strobe, and a rule bound to
+            // a window rebuild would lift the player's held modifiers over and over.
+            // Consuming it is not optional -- the first press was never forwarded, so a
+            // repeat allowed to fall through hands the host a key the player only ever
+            // bound to the client.
+            return [self consumeKeyDownEvent:event];
+        }
         [self presentControlCenterFromShortcut];
         return [self consumeKeyDownEvent:event];
     }

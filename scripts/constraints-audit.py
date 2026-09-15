@@ -1607,6 +1607,52 @@ check(not release_problems,
       "the client kept to itself"
       if not release_problems else "; ".join(release_problems))
 
+# --- a key held down must fire its hotkey once, not at autorepeat rate ---------
+# AppKit keeps sending keyDown while a key is held, and measured against a live
+# NSWindow the key-equivalent chain delivers those isARepeat events exactly like the
+# first one. A shortcut that flips a panel therefore flips it once per repeat, and a
+# rule bound to a window rebuild lifts the player's held modifiers once per repeat.
+# Ignoring the repeat is not a fix either: the first press was never forwarded, so a
+# repeat allowed to fall through hands the host a key the player only bound to the
+# client. Every state-changing binding has to consume its own repeats, and consume
+# them by asking AppKit which delivery it is.
+capture_src = open(os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                                "StreamViewController+MouseCapture.m"),
+                   encoding="utf-8").read()
+
+
+def ml_branch(text, marker, limit=900):
+    """The lines from a known expression to the end of the block that holds it."""
+    at = text.index(marker)
+    window = text[at:at + limit]
+    closer = window.index("\n    }\n") if "\n    }\n" in window else len(window)
+    return window[:closer]
+
+
+def ml_method(text, signature):
+    at = text.index(signature)
+    return text[at:text.index("\n}\n", at) + 3]
+
+
+repeat_problems = []
+rule_body = ml_method(capture_src,
+                      "- (BOOL)handleKeyboardTranslationRuleForEvent:(NSEvent *)event {")
+if "event.isARepeat" not in rule_body:
+    repeat_problems.append("a translation rule runs its action again for every repeat "
+                           "of the key that triggered it")
+for hotkey in ("MLShortcutActionTogglePerformanceOverlay",
+               "MLShortcutActionToggleMouseMode",
+               "MLShortcutActionToggleFullscreenControlBall",
+               "MLShortcutActionOpenControlCenter"):
+    branch = ml_branch(capture_src,
+                       "matchesShortcut:[self streamShortcutForAction:%s]" % hotkey)
+    if "event.isARepeat" not in branch:
+        repeat_problems.append("%s runs its action again for every repeat of its key"
+                               % hotkey)
+check(not repeat_problems,
+      "a held hotkey fires once, and every repeated delivery is consumed rather than run"
+      if not repeat_problems else "; ".join(repeat_problems))
+
 # BUILD_NUMBER is `git rev-list --count HEAD`, which two places used to compute
 # independently: the shell script that CI injects, and the release preparer. The
 # preparer counted raw commits, so in a shallow clone it derived v1.3.9-build71
