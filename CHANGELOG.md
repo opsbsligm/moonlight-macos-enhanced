@@ -1061,6 +1061,53 @@ minutes after the commit rather than on release day.
 Constraints went from 134 to 136 on a host with an Apple toolchain (127 to 128
 without one), the battery stays at 63, and workflow rules stay at 24.
 
+### Twenty-first audit pass (the shipped bundle was never signed)
+
+- **The main executable of the shipped app carried no signature at all.** Read
+  back from the build 1450 image, four of its six Mach-O objects failed
+  `codesign --verify --strict` -- `Contents/MacOS/Moonlight: code object is not
+  signed at all`, and both vendored frameworks plus their versioned binaries: `a
+  sealed resource is missing or invalid` -- while the bundle itself reported
+  `Sealed Resources=none`, which is the difference between an app you can prove
+  is the one that was built and one you cannot.
+- **The universal merge is what broke the frameworks.** `lipo -create` replaces a
+  signed binary during the merge, and the framework headers the upstream seal was
+  computed over are not shipped by this repository at all, so the seals were
+  describing a layout that no longer existed. Nothing noticed because nothing
+  looked: no step in the pipeline ever opened a signature.
+- **`scripts/codesign-bundle.sh` signs from the inside out**, frameworks then the
+  launchd helper then the bundle, since the outer signature is what seals the
+  inner ones. Retagging in place turned out to be the wrong move -- keeping the
+  previous designated requirement left the framework answering `file modified`,
+  because a requirement belongs to the bytes it was written for -- so the old
+  signature is removed and a fresh ad-hoc one takes it, carrying any entitlement
+  the object had. The pipeline's own universal log now reads `signed
+  OpenSSL.framework`, `signed SDL2.framework`, `signed
+  std.skyhua.MoonlightMac2.AwdlPrivilegedHelper`, `signed Moonlight.app`, and the
+  audit beside it `ok 6 Mach-O object(s) verified, and the bundle is sealed`,
+  with 37 resources sealed.
+- **The identity is reported, not demanded.** This project has no Developer ID and
+  notarizes nothing, so `spctl` rejects the app and will keep doing so. The gate
+  prints that as a fact rather than asserting it, because a check held red by a
+  certificate nobody here owns is indistinguishable from a check that never
+  passes -- and the same audit that refuses the shipped bundle, naming four
+  objects and `Sealed Resources=none`, accepts the same bundle after signing:
+  `valid on disk`, `satisfies its Designated Requirement`.
+- **The self-test compiles its own apps** with the toolchain module the behavioural
+  harnesses use: a signed bundle is accepted, an unsigned one is refused, and one
+  byte of a file added after signing breaks the seal and is refused. It costs two
+  compiles, so it runs on the full pass and on the macOS jobs that package, and
+  the audits runner says so out loud instead of failing for having no clang.
+- **What this changes for someone installing it.** The signature is ad-hoc, so a
+  rebuilt app presents a new code identity and macOS asks for Accessibility and
+  Input Monitoring again. It asked before as well, for a bundle no loader could
+  check; the difference is that the download can now be verified rather than
+  trusted.
+
+Constraints went from 136 to 137 on a host with an Apple toolchain (128 on one
+without, where both signature self-tests skip by name), the battery stays at 63,
+and workflow rules stay at 24.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
