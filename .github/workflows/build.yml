@@ -367,6 +367,14 @@ jobs:
     runs-on: macos-26
 
     steps:
+    - name: Checkout
+      # The job assembles its app bundle from two downloaded artifacts, so its
+      # workspace would otherwise hold no repository at all -- and the class-table
+      # gate below is a script out of the repository. It failed with "No such file
+      # or directory", which is a red that says nothing about the merge. Rule WF021
+      # now refuses that shape wherever it is written again.
+      uses: actions/checkout@v6
+
     - name: Download arm64 app artifact
       uses: actions/download-artifact@v8
       with:

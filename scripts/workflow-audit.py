@@ -43,6 +43,7 @@ RULES = {
     "WF018": "step name is empty, so a failing step cannot be identified in the log",
     "WF019": "a shell script names an interpreter the audit runner does not have",
     "WF020": "a shell script uses zsh syntax that the interpreter it names cannot run",
+    "WF021": "a job runs a repository script without checking the repository out",
 }
 
 # A script that switched from zsh to bash while keeping a zsh-only construct
@@ -222,6 +223,20 @@ def audit_needs_graph(jobs, name):
     return []
 
 
+def references_repository_script(body):
+    """True when a step's script reaches into the checkout for a file.
+
+    SCRIPT_REF matches any token ending in .py or .sh, `github.sha` among them, so
+    WF014 narrows it to paths that name the repository. The same narrowing has to
+    apply here or the rule fires on expressions, which is how it first behaved.
+    """
+    for match in SCRIPT_REF.finditer(body):
+        ref = match.group(1)
+        if ref.startswith("./") or "scripts/" in ref:
+            return True
+    return False
+
+
 def audit_document(doc, name, root=ROOT):
     """Return [(code, location, detail)] for one parsed workflow document."""
     problems = []
@@ -245,6 +260,15 @@ def audit_document(doc, name, root=ROOT):
         if not isinstance(steps, list) or not steps:
             problems.append(("WF008", loc, "missing or empty `steps`"))
             steps = []
+
+        # A job that runs a script out of the repository has to have the
+        # repository. The universal job assembles its workspace from downloaded app
+        # bundles, reached for scripts/compiled-source-audit.py, and failed with
+        # "No such file or directory": a gate red for a reason no build caused, and
+        # invisible to WF014, which only asks whether the file exists in the tree.
+        has_checkout = any(isinstance(step, dict)
+                           and str(step.get("uses", "")).startswith("actions/checkout")
+                           for step in steps)
 
         seen_ids = set()
         for index, step in enumerate(steps, 1):
@@ -306,6 +330,13 @@ def audit_document(doc, name, root=ROOT):
                 candidate = Path(ref) if ref.startswith("/") else root / relative
                 if not candidate.exists():
                     problems.append(("WF014", where, "%s is referenced but absent" % ref))
+
+        ran_repo_script = "\n".join(
+            step.get("run", "") for step in steps
+            if isinstance(step, dict) and isinstance(step.get("run"), str))
+        if not has_checkout and references_repository_script(ran_repo_script):
+            problems.append(("WF021", loc,
+                             "runs a repository script and has no actions/checkout step"))
 
     problems.extend(audit_needs_graph(jobs, name))
     return problems
@@ -493,6 +524,8 @@ jobs:
   a:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
       - name: run it
         run: python3 scripts/not-committed.py
 """),
@@ -552,6 +585,8 @@ jobs:
   a:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
       - name: Run committed scripts
         run: |
           python3 scripts/committed.py
@@ -575,6 +610,42 @@ def present_script_control():
         (root / "scripts" / "committed.sh").write_text("#!/bin/bash\n", encoding="utf-8")
         (root / ".github" / "scripts" / "also_committed.py").write_text("#\n", encoding="utf-8")
         return audit_document(load_yaml(PRESENT_SCRIPTS), "present.yml", root=root)
+
+
+def checkout_controls():
+    """A job that runs a committed script needs the commit.
+
+    Both directions are checked, because a rule that only ever fires proves as
+    little as one that never does: the failing shape is the universal job that
+    builds its workspace out of downloaded artifacts, and the passing shape is the
+    same workflow with a checkout in front of it.
+    """
+    without = """
+name: nocheckout
+on: push
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the merged bundle
+        run: python3 scripts/committed.py
+"""
+    with_checkout = without.replace(
+        "    steps:\n",
+        "    steps:\n      - name: Checkout\n        uses: actions/checkout@v6\n", 1)
+    findings = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "scripts").mkdir()
+        (root / "scripts" / "committed.py").write_text("#\n", encoding="utf-8")
+        missing = audit_document(load_yaml(without), "nocheckout.yml", root=root)
+        if [code for code, _, _ in missing] != ["WF021"] or "job merge" not in missing[0][1]:
+            findings.append("the missing-checkout control reports %s, expected one WF021 "
+                            "naming the job" % (missing,))
+        clean = audit_document(load_yaml(with_checkout), "checkout.yml", root=root)
+        if clean:
+            findings.append("the checkout control reports %s" % (clean,))
+    return findings
 
 
 def shebang_controls():
@@ -639,6 +710,7 @@ def self_test():
     present = present_script_control()
     if present:
         failures.append("the committed-script control reports %s" % (present,))
+    failures.extend(checkout_controls())
     failures.extend(shebang_controls())
     failures.extend(dialect_controls())
     good = audit_document(load_yaml(GOOD), "good.yml")
