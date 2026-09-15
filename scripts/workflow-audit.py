@@ -44,7 +44,17 @@ RULES = {
     "WF019": "a shell script names an interpreter the audit runner does not have",
     "WF020": "a shell script uses zsh syntax that the interpreter it names cannot run",
     "WF021": "a job runs a repository script without checking the repository out",
+    "WF022": "a job declares no `timeout-minutes`, so a hang costs the six-hour default",
+    "WF023": "a third-party action is floated on a moving tag instead of a pinned commit",
+    "WF024": "`pull_request` names a branch that `push` does not, so pushing there runs no CI",
 }
+
+# GitHub-owned actions are pinned by the platform. Anything else is owned by
+# whoever holds that repository, and a floating tag there is permission to run
+# whatever they push next, inside a job that holds the signing step's secrets.
+FIRST_PARTY_OWNERS = {"actions", "github"}
+PINNED = re.compile(r"@[0-9a-f]{40}$")
+
 
 # A script that switched from zsh to bash while keeping a zsh-only construct
 # parses cleanly and fails at run time, inside a build phase, with a message that
@@ -237,12 +247,39 @@ def references_repository_script(body):
     return False
 
 
+def trigger_branches(doc, event):
+    """The branch list one trigger names; None when the trigger is absent."""
+    raw = (doc or {}).get(True, (doc or {}).get("on"))
+    if not isinstance(raw, dict):
+        return None
+    body = raw.get(event)
+    if body is None:
+        return None
+    if isinstance(body, dict):
+        branches = body.get("branches")
+        return list(branches) if isinstance(branches, list) else []
+    return []
+
+
 def audit_document(doc, name, root=ROOT):
     """Return [(code, location, detail)] for one parsed workflow document."""
     problems = []
     jobs = (doc or {}).get("jobs")
     if not isinstance(jobs, dict) or not jobs:
         return [("WF002", name, "no `jobs:` mapping was found")]
+
+    # CI has to fire on the push, not on somebody remembering to open a pull request
+    # or press Run workflow -- this repository verified one branch by hand six times
+    # in a single morning, because only master and main sat in the push trigger. A
+    # branch named for pull requests is a branch people push to, so the push has to
+    # gate it too.
+    pushed = trigger_branches(doc, "push")
+    requested = trigger_branches(doc, "pull_request")
+    if requested and pushed is not None:
+        unguarded = [branch for branch in requested if branch not in pushed]
+        if unguarded:
+            problems.append(("WF024", name, "pull_request targets %s, which push does "
+                                            "not trigger on" % ", ".join(unguarded)))
 
     for job_name, job in jobs.items():
         loc = "%s job %s" % (name, job_name)
@@ -266,6 +303,23 @@ def audit_document(doc, name, root=ROOT):
         # bundles, reached for scripts/compiled-source-audit.py, and failed with
         # "No such file or directory": a gate red for a reason no build caused, and
         # invisible to WF014, which only asks whether the file exists in the tree.
+        if job.get("runs-on") and job.get("timeout-minutes") is None:
+            # A hung xcodebuild or a stuck `brew install` then sits on the runner
+            # until the six-hour default expires -- on macOS minutes, billed at ten
+            # times the Linux rate -- with no log and no failure. Every job here
+            # knows roughly how long it should take.
+            problems.append(("WF022", loc, "no `timeout-minutes`"))
+
+        for step in steps:
+            if not isinstance(step, dict) or not isinstance(step.get("uses"), str):
+                continue
+            ref = step["uses"].strip()
+            if "/" not in ref.split("@")[0]:
+                continue
+            if ref.split("/")[0] not in FIRST_PARTY_OWNERS and not PINNED.search(ref):
+                problems.append(("WF023", "%s step %r" % (loc, step.get("name") or "?"),
+                                 "%s moves with its tag" % ref))
+
         has_checkout = any(isinstance(step, dict)
                            and str(step.get("uses", "")).startswith("actions/checkout")
                            for step in steps)
@@ -352,6 +406,7 @@ on: push
 jobs:
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       stamp: ${{ steps.stamp.outputs.stamp }}
     steps:
@@ -361,6 +416,7 @@ jobs:
   build:
     needs: audit
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     strategy:
       matrix:
         include:
@@ -378,6 +434,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: one
         run: echo a
@@ -394,6 +451,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Verify something
 """),
@@ -403,6 +461,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: both
         uses: actions/checkout@v6
@@ -414,6 +473,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: one
         id: shared
@@ -428,6 +488,7 @@ on: push
 jobs:
   "a.b":
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: one
         run: echo 1
@@ -447,6 +508,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps: []
 """),
     ("WF009", "needs a job that is not there", """
@@ -456,6 +518,7 @@ jobs:
   a:
     needs: ghost
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: one
         run: echo 1
@@ -467,12 +530,14 @@ jobs:
   a:
     needs: b
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: one
         run: echo 1
   b:
     needs: a
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: one
         run: echo 1
@@ -483,12 +548,14 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: one
         run: echo 1
   b:
     needs: a
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: read
         run: echo "${{ needs.a.outputs.missing }}"
@@ -499,6 +566,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     strategy:
       matrix:
         include:
@@ -513,6 +581,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: read
         run: echo "${{ needs.other.result }}"
@@ -523,6 +592,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -535,6 +605,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Verify something
         continue-on-error: true
@@ -546,6 +617,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: open
         run: echo "value ${{ github.sha
@@ -560,8 +632,45 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: echo 1
+"""),
+    ("WF022", "a job that may run until the six-hour default", """
+name: notimeout
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: build
+        run: echo a
+"""),
+    ("WF023", "a third-party action floated on a moving tag", """
+name: floating
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Toolchain
+        uses: someone-else/setup-tool@v2
+"""),
+    ("WF024", "a branch only a pull request would ever get CI for", """
+name: halftriggered
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, integration]
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: build
+        run: echo a
 """),
 ]
 
@@ -584,6 +693,7 @@ on: push
 jobs:
   a:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -626,6 +736,7 @@ on: push
 jobs:
   merge:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check the merged bundle
         run: python3 scripts/committed.py
@@ -645,6 +756,38 @@ jobs:
         clean = audit_document(load_yaml(with_checkout), "checkout.yml", root=root)
         if clean:
             findings.append("the checkout control reports %s" % (clean,))
+    return findings
+
+
+def action_pin_controls():
+    """Both sides of the pin rule: a rule that only ever fires is a rumour."""
+    pinned = """
+name: pinned
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Toolchain
+        uses: someone-else/setup-tool@0000000000000000000000000000000000000000
+      - name: Checkout
+        uses: actions/checkout@v6
+"""
+    floating = pinned.replace("someone-else/setup-tool@"
+                              "0000000000000000000000000000000000000000",
+                              "someone-else/setup-tool@v2", 1)
+    findings = []
+    clean = audit_document(load_yaml(pinned), "pinned.yml")
+    if clean:
+        findings.append("the pinned-action control reports %s, expected nothing "
+                        "(a pinned third-party and a floating actions/* are both fine)"
+                        % (clean,))
+    found = audit_document(load_yaml(floating), "floating.yml")
+    if [code for code, _, _ in found] != ["WF023"]:
+        findings.append("the floating-action control reports %s, expected one WF023" % (found,))
+    elif "setup-tool@v2" not in found[0][2]:
+        findings.append("the floating-action control names %s" % found[0][2])
     return findings
 
 
@@ -711,6 +854,7 @@ def self_test():
     if present:
         failures.append("the committed-script control reports %s" % (present,))
     failures.extend(checkout_controls())
+    failures.extend(action_pin_controls())
     failures.extend(shebang_controls())
     failures.extend(dialect_controls())
     good = audit_document(load_yaml(GOOD), "good.yml")

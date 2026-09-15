@@ -2,7 +2,11 @@ name: Build and Release
 
 on:
   push:
-    branches: [master, main]
+    # master and main, plus the integration branches this repository actually works
+    # on. Verifying a push to pr-overhaul used to mean remembering to press Run
+    # workflow: six times in one morning, each a full macOS matrix started by hand,
+    # each a red that arrived minutes after the commit instead of at it.
+    branches: [master, main, 'pr-*', 'integration/*']
     tags:
       - 'v*'
   pull_request:
@@ -20,13 +24,18 @@ permissions:
 # cancelled underneath by a later push.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A push to a working branch supersedes the commit before it, so the older run is
+  # worth cancelling: re-verifying a commit nobody will ship costs ten macOS minutes
+  # for no information. Trunk and tags are different animals -- a release in progress
+  # is never cancelled underneath someone.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 
 jobs:
   # Cheap repository audits that do not need Xcode. They gate every build job
   # so a broken tree fails in seconds instead of after a full matrix build.
   audit:
+    timeout-minutes: 15  # seconds of grep plus the mutation battery
     name: Repository audits
     runs-on: ubuntu-latest
     steps:
@@ -82,6 +91,7 @@ jobs:
         done
 
   build_arch:
+    timeout-minutes: 45  # a cross-compile, seven harnesses and a DMG
     name: Build ${{ matrix.variant }}
     needs: audit
     runs-on: ${{ matrix.runner }}
@@ -119,7 +129,10 @@ jobs:
         fetch-depth: 0
 
     - name: Setup Xcode
-      uses: maxim-lobanov/setup-xcode@v1
+      # Pinned to a commit rather than the moving v1 tag: this step runs before the
+      # compiler on every build job and decides which toolchain the build sees.
+      # ed7a3b1 == v1
+      uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
       with:
         xcode-version: latest-stable
 
@@ -353,6 +366,7 @@ jobs:
         name: Moonlight-macOS-app-${{ matrix.variant }}
         path: dist/Moonlight-macOS-${{ matrix.variant }}.app.tar.gz
         if-no-files-found: error
+        retention-days: 14
 
     - name: Upload ${{ matrix.variant }} DMG artifact
       uses: actions/upload-artifact@v7
@@ -360,8 +374,10 @@ jobs:
         name: Moonlight-macOS-dmg-${{ matrix.variant }}
         path: dist/Moonlight-macOS-Enhanced-${{ matrix.variant }}.dmg
         if-no-files-found: error
+        retention-days: 14
 
   build_universal:
+    timeout-minutes: 20  # two downloads, one lipo merge, one DMG
     name: Build universal
     needs: build_arch
     runs-on: macos-26
@@ -529,8 +545,10 @@ jobs:
         name: Moonlight-macOS-dmg-universal
         path: dist/Moonlight-macOS-Enhanced-universal.dmg
         if-no-files-found: error
+        retention-days: 14
 
   analyze:
+    timeout-minutes: 30  # a cold derived-data scan of the whole tree
     name: Static analyzer
     needs: audit
     runs-on: macos-26
@@ -543,7 +561,10 @@ jobs:
         fetch-depth: 0
 
     - name: Setup Xcode
-      uses: maxim-lobanov/setup-xcode@v1
+      # Pinned to a commit rather than the moving v1 tag: this step runs before the
+      # compiler on every build job and decides which toolchain the build sees.
+      # ed7a3b1 == v1
+      uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
       with:
         xcode-version: latest-stable
 
@@ -586,8 +607,10 @@ jobs:
         name: analyzer-transcript
         path: ${{ runner.temp }}/analyze.log
         if-no-files-found: error
+        retention-days: 14
 
   build:
+    timeout-minutes: 10  # it reads three job results and prints them
     name: build
     needs: [build_arch, build_universal, analyze]
     runs-on: ubuntu-latest
@@ -618,6 +641,7 @@ jobs:
         echo "All required build jobs passed."
 
   release:
+    timeout-minutes: 30  # tag, notes, and a 10 MB asset upload
     needs: [build_arch, build_universal, build]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -675,7 +699,10 @@ jobs:
         python3 .github/scripts/build_release_body.py
 
     - name: Create Release
-      uses: softprops/action-gh-release@v3
+      # The one step holding contents: write, so the one step pinned to an immutable
+      # commit instead of a tag its maintainer can repoint.
+      # efb3536 == v3
+      uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
       with:
         name: ${{ steps.version.outputs.VERSION }}
         draft: false
