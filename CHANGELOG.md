@@ -774,6 +774,55 @@ the two new localizability injections, which fail on the row hidden behind a var
 the macro invoked with one argument. The localization audit's own cases went from 32 to
 38, and the audit now reads log rows whole instead of trusting the call sites around them.
 
+### Fourteenth audit pass (a shortcut that dropped a held key, and the panels that never moved to glass)
+
+- **A translation rule could take a modifier away from the player, and the app never
+  noticed it had.** A mouse-driven rule fires its shortcut by hand: it presses its
+  modifiers, fires its key, then lets its modifiers go. When the player was holding one
+  of those modifiers with a real finger -- Shift to sprint while a Shift+Tab rule exists
+  -- that last step released a key nobody had let go of. The tracker of physical modifier
+  state is separate from that hand-written packet sequence, and
+  `syncKeyboardModifierStateForEvent:` decides what to send by diffing the desired mask
+  against it, so the diff came out zero, no corrective press was ever sent, and the game
+  stayed without Sprint while the finger stayed on the key. Nothing is logged on either
+  side. The measured packets, from the new harness running the shipped state machine:
+  `00A0D01 00A0D01 800FD01 800FU01 00A0U00` where `00A0D01 800FD01 800FU01` was asked
+  for, with the app's tracker at `0x01` against a host holding `0x00`. A synthetic
+  sequence may now only press and release modifiers it actually put down.
+  `scripts/keyboard-shortcut-modifier-tests.py` asserts two things for each of its eight
+  scenarios -- the packet list the host would receive, and that the tracker still matches
+  the held set derived from those packets -- and the unconditional-release shape rebuilt
+  from the same source fails six of them.
+- **The stream's panels were the part of the interface that never moved to glass.** Seven
+  overlays built their own `NSVisualEffectView` with `NSVisualEffectMaterialHUDWindow`,
+  the material from before the liquid-glass APIs: the log browser, the stream menu and its
+  pill, the timeout panel, the reconnect panel, the connection warning, the mouse-mode hint
+  and the notification banner. The settings page and the tab bar used the system glass; the
+  surfaces a player looks at for a whole session did not. `GlassOverlayContainer` now owns
+  that answer once -- `NSGlassEffectView` where the system has it, the shipped vibrancy
+  material where it does not -- and the log browser is on it. What the container really
+  built is measured, not asserted: the background class behind the content, the corner
+  radius reaching it, `CABackdropLayer` in the layer tree underneath, and that the content
+  still covers the panel (`inset 0.00/0.00, size delta 0.00`), which matters because the
+  log browser lays out every control by frame and a glass rim inset would have moved the
+  whole toolbar. The other six are named in the gate's debt list rather than converted
+  unseen: a new panel on vibrancy is refused, and so is a conversion that leaves the list
+  lying.
+- **A constraint for the class of bug, not just the bug.** Every body in `HIDSupport.m`
+  that emits a modifier edge -- by literal virtual key or through
+  `HIDRemoteModifierKeyCode` -- now has to answer to the modifier tracker: consult it, ask
+  the ownership helper that consults it, or clear it before releasing everything. This is
+  the second shipped defect of exactly that shape; the first one made a double-click send
+  a Win key.
+
+Constraints went from 116 to 117 and the glass audit now also checks 8 panels against its
+debt list. The planted-regression battery went from 56 to 59: the synthetic shortcut
+releasing a held modifier, a release-all that forgets to clear the tracker, and a panel
+moving back to the pre-glass material -- all three caught, the first by the new harness
+and the third by the glass audit. The new panel gate compiles and runs the container on
+whichever host the workflow lands on and reports which side of the availability branch it
+found, so a host without glass says so instead of passing quietly.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
