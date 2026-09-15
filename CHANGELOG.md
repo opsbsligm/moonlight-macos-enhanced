@@ -1293,6 +1293,62 @@ things)
 Constraints stay at 140 on a host with an Apple toolchain, the battery went from
 67 to 69, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 
+### Twenty-sixth audit pass (the panels above the video were never glass)
+
+- **Which surfaces, and what they were made of.** Eight things sit on top of
+  the picture: the performance HUD, the connection warning, the mouse-mode
+  hint, the notification banner, the connection-timeout dialog, the reconnect
+  panel, the log browser and the control-centre pill in the titlebar. Seven of
+  them built their own `NSVisualEffectView` with
+  `NSVisualEffectMaterialHUDWindow`, the material from before the glass APIs
+  existed, so the settings page and the tab bar sampled the system glass while
+  the panels a player actually reads during a session did not.
+  `NSGlassEffectView` is the AppKit half of liquid glass and has been in the
+  SDK since macOS 26, and `GlassOverlayContainer` had already been built to
+  own that choice -- only the log browser was using it. All eight ask it now.
+- **The ratchet changed shape.** While panels were waiting, the audit's list
+  was a debt list. With none waiting it is a regression list: a panel that
+  builds vibrancy again, that sets a material while claiming the container, or
+  that masks its corners by hand to get the old look, is refused, and
+  `--self-test` plants each of those shapes on the real files to prove the
+  rule fires. Seven panel cases, all refusing.
+- **The reconnect overlay was filtering the whole picture.** A full-window
+  `NSVisualEffectView` is a scrim and a filter at once. The scrim is a plain
+  dimming layer now, with no material of any kind, and the spinner with its
+  sentence sit in a glass card sized to the sentence. The audit insists the
+  scrim stays material-free.
+- **Legibility was measured, not promised.** These panels put white labels on
+  the material, and the stream window pins `NSAppearanceNameVibrantDark`.
+  Captured inside that appearance, the glass panel gives white text 4.73:1;
+  the same panel in a light appearance gives 1.02:1 and is refused, which is
+  what turns the first number from a constant into a measurement. Run against
+  the shape this replaced, the same measurement scores 2.43:1, so the change
+  is not a legibility trade -- the vibrancy was the worse of the two. What the
+  capture cannot see is the window server's backdrop blur, and no claim is
+  made about it.
+- **Frame-based panels did not move.** Every one of these overlays positions
+  its controls by frame, and a content view inset by the glass rim would have
+  shifted all of them. Measured on the compiled container: inset 0.00/0.00,
+  size delta 0.00.
+- **Interactive glass is read back, not trusted.** The control-centre pill is
+  a button, and where the system has it (`effectIsInteractive`, macOS 27) its
+  glass now answers interaction; a setter that stores the request and never
+  hands it to the glass is invisible to any source rule, so the compiled
+  container is run and the glass view is asked. `scripts/assertion-battery.py`
+  plants exactly that mistake as `glass-never-told-it-must-answer`, and the
+  harness refuses it.
+- **Dead by conversion.** The timeout dialog's hand-drawn
+  `NSBezierPath`-to-`CGPath` corner mask and the `NSShadow` beside it are gone
+  -- real glass owns its corners and its rim, and a shadow behind it doubles
+  the depth rather than adding it. That left the bezier helper with no callers
+  at all, so it is deleted rather than shelved.
+- **What still needs an eye.** This is a visual change to eight surfaces. The
+  gates say what they are made of and that text still reads; they do not say
+  the look is agreed, and a real session on a real Mac is the only thing that
+  can.
+
+The battery went from 69 to 70, constraints stay at 140 on a host with an Apple
+toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
