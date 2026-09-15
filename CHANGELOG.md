@@ -860,6 +860,40 @@ Constraints went from 117 to 124 assertions and the planted-regression battery f
 61: a source file dropped from the project file so that no target compiles it, and the
 aggregate quietly losing a step that CI still runs. Both caught.
 
+### Sixteenth audit pass (the header that no build ever read)
+
+- **The glass container was compiled by nobody.** Registering `GlassOverlayContainer.m`
+  made the app compile it for the first time, and the first thing that happened is that
+  the app stopped compiling: `StreamViewController_Internal.h` declared
+  `GlassOverlayContainer *logOverlayContainer` without importing or forward-declaring
+  the class, so every translation unit that reached that header failed. The defect was
+  two commits old and had been through a green audits job twice, because nothing had
+  ever compiled that header -- not the overlay harness, which builds the container on
+  its own, and not the aggregate, which does not build at all. A runner found it, in a
+  probe step, on a build line that had already been reported green.
+- **A first-party class named by a property now has to be reachable from that header**,
+  through its own quoted imports or a `@class` forward declaration, with the prefix
+  header counted because the compiler counts it. Category declarations (`NSNumber (F)`)
+  are not class declarations: reading them as such produced 27 phantom defects in code
+  that compiles, against 1 real one, which is the difference between a gate and noise.
+  Across 77 headers the rule finds exactly what broke the build and nothing else.
+- **The parity rule got the rest of the workflow.** The version written an hour earlier
+  covered the audits job, and the gap it was aimed at immediately reappeared in the build
+  jobs: `render-probe.py` is the only thing that compiles the app, and no local command
+  ran it -- because it cannot, it drives `xcodebuild`, which needs a license this host
+  has not accepted. A rule that quietly cannot be satisfied gets worked around, so the
+  workflow's script list is now the specification and anything that genuinely cannot run
+  here is named with the marker that makes that true; a marker that stops being true
+  fails. The seven behavioural harnesses do run here, in under two seconds each, so the
+  only reason they had been CI-only was habit.
+- **What this machine cannot prove is now written down rather than inferred.** `local
+  green` means the audits, the harnesses, and the shape rules. It does not mean the app
+  links or that a pixel is in the right place: the artifact gate and the render probe run
+  on a runner, and the two reasons are in the aggregate's source.
+
+The constraint count went from 124 to 133 and the battery from 61 to 62: a header that
+names a type it cannot see, caught by the rule that replaced the missing build.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
