@@ -823,6 +823,43 @@ and the third by the glass audit. The new panel gate compiles and runs the conta
 whichever host the workflow lands on and reports which side of the availability branch it
 found, so a host without glass says so instead of passing quietly.
 
+### Fifteenth audit pass (the artifact, not the project file)
+
+- **The glass panel that was never in the product.** The log browser was moved onto
+  `GlassOverlayContainer`, the container was compiled and run by its own harness, the
+  source-membership audit reported the tree clean locally, and CI refused the push:
+  `Limelight/macOS/Views/GlassOverlayContainer.m` was not a member of any target. This
+  project lists its compiled sources in the project file's membership exception list, and
+  a file absent from that list belongs to nothing, so nothing compiled it, nothing linked
+  it, and nothing complained about it. Reading the `__objc_classname` table of the shipped
+  build 1433 confirms it: 153 class names, `GlassOverlayContainer` not among them. The
+  feature worked in the harness and did not exist in the app.
+- **The gate now reads the binary.** `scripts/compiled-source-audit.py` takes the linked
+  Mach-O, thins the slice under test, and compares every first-party `@implementation`
+  against the class table the linker produced. The project file is a claim about the build;
+  this is the build. It runs in both architecture jobs and again after the universal merge,
+  where a half-merged slice would drop a class. Its `--self-test` requires that a class no
+  one declares is reported missing, and that a section read that returns unrelated names is
+  noticed as too little overlap. The first thing it found was the defect above, so the
+  known-bad case is a real artifact rather than a fixture. Swift types are deliberately not
+  covered: their names are mangled, and a half-read of that section would report success on
+  a build that dropped a file.
+- **`local green` and `CI green` were two different things.** The audits job runs five
+  audit scripts; a local run exercised two of them, which is exactly how the uncompiled
+  file reached a runner and failed eight minutes before a release. The audits job is now the
+  specification: every script it runs has to be reachable from `constraints-audit.py`, so
+  one local command gives the same verdict as that job. Writing the rule found another gap
+  on the spot -- `release-gate.py --self-test` was a CI-only check. The five added runs cost
+  under a second in total, so none of them had an excuse.
+- **Correction to the fourteenth pass.** Its glass measurements came from a standalone
+  harness build, which proves the container behaves as described and proves nothing about
+  what shipped. Both are now covered: the harness for the behaviour, the artifact gate for
+  the presence.
+
+Constraints went from 117 to 124 assertions and the planted-regression battery from 59 to
+61: a source file dropped from the project file so that no target compiles it, and the
+aggregate quietly losing a step that CI still runs. Both caught.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
