@@ -891,8 +891,19 @@ aggregate quietly losing a step that CI still runs. Both caught.
   links or that a pixel is in the right place: the artifact gate and the render probe run
   on a runner, and the two reasons are in the aggregate's source.
 
-The constraint count went from 124 to 133 and the battery from 61 to 62: a header that
-names a type it cannot see, caught by the rule that replaced the missing build.
+- **The parity rule then broke the job it was written for, and the fault was its own.**
+  Running the seven behavioural harnesses wherever the aggregate runs meant running them
+  on the audits job's ubuntu runner, where there is no clang and no macOS SDK, so seven
+  gates failed for a reason no source caused. A gate that is red for the wrong reason is
+  the exact pattern this file complains about elsewhere -- it teaches people to expect a
+  failure and then to ignore it. The aggregate now asks `apple_toolchain` for a pair
+  first: a host that has one runs all seven, a host that does not prints which seven it
+  skipped and why, and the ubuntu skip is not a loss of coverage because the build jobs
+  run the same seven on macOS on every change.
+
+The constraint count went from 124 to 133 on a host with an Apple toolchain, and the
+battery from 61 to 62: a header that names a type it cannot see, caught by the rule that
+replaced the missing build.
 
 ## [1.3.9-build19] - 2026-08-03
 
