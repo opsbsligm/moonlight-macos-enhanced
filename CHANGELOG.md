@@ -1342,6 +1342,17 @@ Constraints stay at 140 on a host with an Apple toolchain, the battery went from
   -- real glass owns its corners and its rim, and a shadow behind it doubles
   the depth rather than adding it. That left the bezier helper with no callers
   at all, so it is deleted rather than shelved.
+- **The build host's SDK is older than the systems this ships to, and CI
+  proved it.** `effectIsInteractive` is declared in the macOS 27 SDK; the CI
+  image builds with the 26.5 SDK, where the property is not in the header, so
+  naming it was a compile error on every runner while the local machine --
+  which has the 27 SDK -- was clean. The container now looks up
+  `setEffectIsInteractive:` on the object and invokes it through
+  `NSInvocation`, which compiles against any SDK and does nothing where the
+  property is absent, and the harness reads the answer back by name with
+  `valueForKey:` and says which of the two it got. Re-verified by compiling
+  the container against the 26.5 and 26 SDKs with `-Wall` before this went
+  back.
 - **What still needs an eye.** This is a visual change to eight surfaces. The
   gates say what they are made of and that text still reads; they do not say
   the look is agreed, and a real session on a real Mac is the only thing that
@@ -1349,6 +1360,7 @@ Constraints stay at 140 on a host with an Apple toolchain, the battery went from
 
 The battery went from 69 to 70, constraints stay at 140 on a host with an Apple
 toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
