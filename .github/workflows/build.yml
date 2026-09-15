@@ -400,7 +400,7 @@ jobs:
       # file, so whatever consumes it today keeps consuming it unchanged.
       uses: actions/upload-artifact@v7
       with:
-        name: Moonlight-macOS-dmg-checksum-${{ matrix.variant }}
+        name: Moonlight-macOS-checksum-${{ matrix.variant }}
         path: dist/Moonlight-macOS-Enhanced-${{ matrix.variant }}.dmg.sha256
         if-no-files-found: error
         retention-days: 14
@@ -584,7 +584,7 @@ jobs:
     - name: Upload universal DMG checksum
       uses: actions/upload-artifact@v7
       with:
-        name: Moonlight-macOS-dmg-checksum-universal
+        name: Moonlight-macOS-checksum-universal
         path: dist/Moonlight-macOS-Enhanced-universal.dmg.sha256
         if-no-files-found: error
         retention-days: 14
@@ -690,9 +690,40 @@ jobs:
 
         echo "All required build jobs passed."
 
+  verify_images:
+    timeout-minutes: 15  # three disk images downloaded and hashed, no toolchain
+    name: Verify the published images
+    needs: [build_arch, build_universal, build]
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Download the DMG artifacts
+      uses: actions/download-artifact@v8
+      with:
+        pattern: Moonlight-macOS-dmg-*
+        path: dist
+        merge-multiple: true
+
+    - name: Download the DMG checksum artifacts
+      uses: actions/download-artifact@v8
+      with:
+        pattern: Moonlight-macOS-checksum-*
+        path: checksums
+        merge-multiple: true
+
+    - name: Verify the images against the checksums taken when they were built
+      # This is the release job's check, run on every push, on the artifacts the
+      # release job would publish. It is the only way the release path gets exercised
+      # before a tag exists: the download pattern, the checksum glob, and the audit's
+      # refusal of a missing image all fail here rather than on release day.
+      run: ./scripts/verify-release-images.sh checksums dist
+
   release:
     timeout-minutes: 30  # tag, notes, and a 10 MB asset upload
-    needs: [build_arch, build_universal, build]
+    needs: [build_arch, build_universal, build, verify_images]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
@@ -726,18 +757,15 @@ jobs:
     - name: Download the DMG checksum artifacts
       uses: actions/download-artifact@v8
       with:
-        pattern: Moonlight-macOS-dmg-checksum-*
+        pattern: Moonlight-macOS-checksum-*
         path: checksums
         merge-multiple: true
 
     - name: Verify the bytes being released are the bytes that were built
-      # Three copies of a 10 MB image sit between the runner and the release page, and
-      # nothing used to compare any of them. A truncated upload, a re-downloaded
-      # artifact, and an asset replaced by hand all arrive here as the same red line,
-      # and every release now carries the hash beside the file it hashes.
-      run: |
-        cp checksums/*.sha256 dist/
-        python3 scripts/dmg-audit.py --verify-checksums dist/*.sha256 --search dist
+      # The same line the rehearsal job runs on every push. A release job only runs on
+      # a tag, so a check written only here would be exercised for the first time while
+      # it was publishing something people install.
+      run: ./scripts/verify-release-images.sh checksums dist
 
     - name: Gate the release tag
       # The version in the release title has to be the version inside the DMGs.
