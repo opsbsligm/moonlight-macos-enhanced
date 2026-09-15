@@ -930,6 +930,36 @@ replaced the missing build.
 
 Constraints are 134 on a host with an Apple toolchain; the battery is 63.
 
+### Eighteenth audit pass (a gate that could not read the thing it was built to read)
+
+- **The class-table audit died on both build jobs while passing at home, and the
+  difference was the shape of the file.** A per-architecture build produces a thin
+  Mach-O and a release build a fat one. The audit asked `lipo -info` whether the word
+  `fat` appeared in its answer -- and a single-architecture file answers "Non-fat" --
+  so it asked `lipo -thin` to thin a file with one slice, and `lipo` refused. It now
+  reads the slice list from `lipo -archs`, which distinguishes the two instead of
+  grepping a sentence, and refuses an artifact that does not carry the architecture
+  under test rather than reading the wrong slice (which would report a defect that is
+  not in that build, or hide one that is). Fat, thin, right architecture and wrong are
+  all exercised against the shipped artifact before this was pushed.
+- **The universal job has no repository, and its new gate asked for one.** That job
+  builds its workspace out of two downloaded app bundles, so `scripts/` was not there
+  and the gate failed with "No such file or directory" -- a red about the pipeline, not
+  the merge. A checkout step fixes the job; rule **WF021** refuses the shape wherever it
+  is written again, with both directions asserted (a job that runs a committed script
+  without a checkout, and the same job with one). Narrowing the rule took a pass: the
+  script-reference pattern also matches `github.sha`, so the first version reported an
+  unclosed expression as a missing checkout.
+- **What the four failed runs of this round have in common:** each one was a claim that
+  held on the machine that wrote it. The uncompiled source file, the header that could
+  not see its own property type, the harnesses put on a Linux runner, the thin binary
+  that was not fat, the workspace with no repository. Every one of them was found by a
+  machine that did not agree, which is the argument for running the same gate on two
+  platforms rather than trusting that one of them represents both.
+
+Workflow rules are 20 to 21; constraints stay 134 on a host with an Apple toolchain and
+the battery 63.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
