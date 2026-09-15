@@ -276,6 +276,20 @@ final class StreamShortcutProfile: NSObject {
       return ""
     }
 
+    // The table above exists to tell a person which key they bound, and for most of
+    // them the name is the key. For the rest it is a word: `Space`, `Tab`, `Return`,
+    // `Esc`, `Page Up`, an arrow glyph. Handing that word to AppKit does not make the
+    // first letter a shortcut -- measured against a live NSMenu, a menu item whose key
+    // equivalent is "space" matches neither Control+Option+S nor Control+Option+Space,
+    // so the item shows a hint nobody can press, and the binding works only while the
+    // stream view itself is receiving keys. One scalar inside ASCII is the line between
+    // a character AppKit can compare and a label it cannot.
+    guard key.utf16.count == 1,
+          let scalar = key.unicodeScalars.first,
+          scalar.value >= 0x20, scalar.value < 0x7F else {
+      return ""
+    }
+
     return key.lowercased()
   }
 

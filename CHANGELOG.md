@@ -1418,6 +1418,85 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 28: two ways the keyboard took a key away, and a gate that can see
+### inside a translation unit
+
+### Fixed
+
+- **A keyboard translation rule took away the modifiers the player was
+  holding.** `-handleKeyboardTranslationRuleForEvent:` called
+  `-releaseAllModifierKeys` before it looked at what the rule does, and a
+  Parsec-style rule set fires several times a session. That is the mechanism
+  behind "I bound the Parsec keys and now W and Space fight each other": the
+  release does not only tell the host that Shift came up, it also zeroes the
+  physical tracker in the same breath -- it has to, or the tracker and the
+  host diverge -- and `-keyDown:` answers its modifier byte from that
+  tracker without ever re-reading the keyboard. Only `-flagsChanged:` does,
+  and an edge that already happened will not happen again. So the next
+  gameplay key after the rule goes out with a modifier byte of zero: the
+  sprint becomes a walk, the crouch stands up, and no log calls it a bug.
+  The release now belongs to the actions that actually take the keyboard
+  away -- disconnect, disconnect options, quit, reconnect, control centre,
+  release-capture, and the window rebuild -- and a rule that keeps the
+  stream in the foreground leaves a held key alone.
+  `scripts/keyboard-shortcut-modifier-tests.py` compiles the shipped state
+  machine and reads the packets: Option held, W then Space, both still carry
+  Option;
+  and with the old release put back, Space goes out bare and the host stops
+  believing in a key the player never let go of. Both directions are
+  asserted, and the caller's source is checked so the release cannot creep
+  back to the entry point.
+- **A bound shortcut could show a hint no keyboard can produce.** The
+  settings page names keys for people -- `Space`, `Tab`, `Return`, `Esc`,
+  `Page Up`, an arrow glyph -- and `-menuKeyEquivalentFor:` handed those
+  names straight to `NSMenuItem.keyEquivalent`. Measured against a live
+  `NSMenu`, an item whose key equivalent is `space` matched neither
+  Control+Option+S nor Control+Option+Space: a word matches no key at all.
+  The row advertised a binding that worked only while the stream view itself
+  was receiving keys. One scalar inside ASCII is now the line between a
+  character AppKit can compare and a label it cannot, and the answer is read
+  out of the compiled `SettingsShortcuts.swift` for every key the page
+  offers: 47 letter bindings kept, every word refused, and the shape that
+  predates the guard fails with `Space (Space) produced 5 scalar(s)`.
+
+### Added
+
+- **`scripts/compile-audit.py`: the aggregate can see inside a translation
+  unit.** Grep cannot read a header the way a compiler does, and twice that
+  cost this project a runner round-trip -- a property declared only in a
+  newer SDK, and a class used as a property type its own imports could not
+  reach. The gate type-checks all 41 macOS sources with the same compiler,
+  against **every installed SDK at or above the deployment target**, so the
+  mistake the local machine cannot see is not a matter of luck about which
+  Mac asked it. On this host that is the 26.5 SDK the CI image builds with
+  and the 27 SDK it does not: 41 of 41 both ways in five seconds. Older SDKs
+  are named and left alone -- the macOS 11 SDK has no `NSGlassEffectView`
+  and no `kCMVideoCodecType_AV1`, and reporting those would only teach
+  people that this gate cries. `--self-test` proves both directions on the
+  product's own header: a selector that does not exist is refused, one that
+  does is accepted. It is wired into the aggregate and into the CI analyze
+  job, which points it at the derived data its own scan produced. Reintucing
+  the old `effectIsInteractive` mistake is now a planted mutation
+  (`naming-an-sdk-the-build-does-not-have`), and the gate refuses it.
+
+### Audited, and not changed
+
+- **A guess that turned out to be wrong, recorded so nobody spends it
+  again.** Multi-character key names looked like they would be taken by
+  AppKit's first character, which would have made Control+Option+Space
+  silently steal Control+Option+S. A live `NSMenu` says otherwise -- it
+  matches neither -- so nothing was "fixed" on the strength of that guess,
+  and the real defect is the smaller one above.
+- **The key mapping table is healthy.** All 114 rows parsed: no `mac`
+  key code appears twice (a repeat would silently lose the earlier row),
+  every key on the required list is mapped, and all 81 keys the settings
+  page offers resolve -- none of them reaches the `return 0` that drops a
+  press and its release together.
+
+The battery went from 71 to 74, the behavioural harnesses from ten to
+eleven, the aggregate prints 144 lines of `ok` with no failures, and
+workflow rules stay at 25.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul

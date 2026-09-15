@@ -1453,9 +1453,9 @@ if run_battery:
     if not has_hdiutil:
         print("skip the disk image self-test: this host has no hdiutil to mount an image")
     elif toolchain_missing:
-        print("skip behavioural harnesses (10 of them): %s" % toolchain_missing)
+        print("skip behavioural harnesses: %s" % toolchain_missing)
     else:
-        for behaviour in (os.path.join("scripts", "input-concurrency-tests.py"),
+        behaviours = (os.path.join("scripts", "input-concurrency-tests.py"),
                           os.path.join("scripts", "keyboard-concurrency-tests.py"),
                           os.path.join("scripts", "modifier-only-release-collision-tests.py"),
                           os.path.join("scripts", "controller-key-navigation-tests.py"),
@@ -1464,7 +1464,9 @@ if run_battery:
                           os.path.join("scripts", "keyboard-shortcut-modifier-tests.py"),
                           os.path.join("scripts", "stream-menu-addressing-tests.py"),
                           os.path.join("scripts", "video-enhancement-tests.py"),
-                          os.path.join("scripts", "liquid-glass-overlay-tests.py")):
+                          os.path.join("scripts", "liquid-glass-overlay-tests.py"),
+                          os.path.join("scripts", "shortcut-menu-key-tests.py"))
+        for behaviour in behaviours:
             harness = subprocess.run([sys.executable, os.path.join(root, behaviour)],
                                      capture_output=True, text=True, cwd=root)
             label = os.path.basename(behaviour)
@@ -1473,6 +1475,28 @@ if run_battery:
                   if harness.returncode == 0 else
                   "%s failed:\n" % label
                   + (harness.stdout + harness.stderr)[-1200:])
+
+        # A build once reached a runner with a mistake every local gate had called
+        # clean, because the mistake was only visible inside a translation unit and the
+        # SDK on the machine doing the checking decided which answer was right. So the
+        # aggregate compiles the macOS sources too, against every SDK the host offers:
+        # a host with no toolchain says so in one line above, and a host with no build
+        # yet says so here, rather than passing quietly.
+        for flags, label in ((["--self-test"],
+                              "the compile gate refuses a selector that does not exist "
+                              "and accepts one that does"),
+                             ([],
+                              "every macOS source file type-checks against every installable SDK")):
+            compiled = subprocess.run([sys.executable,
+                                       os.path.join(root, "scripts", "compile-audit.py")] + flags,
+                                      capture_output=True, text=True, cwd=root)
+            outcome = (compiled.stdout + compiled.stderr).strip()
+            if compiled.returncode == 0 and "skipped" in outcome:
+                print("skip %s: %s" % (label, outcome.splitlines()[0]))
+                continue
+            check(compiled.returncode == 0, label
+                  if compiled.returncode == 0 else
+                  "%s:" % label + "\n" + outcome[-1500:])
 
         image_rules = subprocess.run([sys.executable,
                                       os.path.join(root, "scripts", "dmg-audit.py"),

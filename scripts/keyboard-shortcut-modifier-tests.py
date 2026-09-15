@@ -35,6 +35,10 @@ import apple_toolchain
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE = os.path.join(ROOT, "Limelight", "Input", "HIDSupport.m")
+# The caller. A rule's handler is where the release used to happen, so the rule that
+# keeps it out has to be checked against that file and nowhere else.
+STREAM_VIEW = os.path.join(ROOT, "Limelight", "macOS", "ViewControllers",
+                           "StreamViewController+MouseCapture.m")
 RESOLVER_M = os.path.join(ROOT, "Limelight", "Input", "KeyboardMapResolver.m")
 RESOLVER_H = os.path.join(ROOT, "Limelight", "Input", "KeyboardMapResolver.h")
 LIMELIGHT_H = os.path.join(ROOT, "moonlight-common", "moonlight-common-c", "src", "Limelight.h")
@@ -49,6 +53,8 @@ STATICS = [
     "static char HIDRemoteModifierFlagsToGenericFlags",
     "static NSUInteger HIDSyntheticOwnedModifierMask",
     "static void HIDDispatchSyntheticRemoteModifierTap",
+    "static BOOL HIDIsModifierKeyCode",
+    "static unsigned short HIDRemappedKeyCodeForModifierKey",
 ]
 
 METHODS = [
@@ -57,6 +63,11 @@ METHODS = [
     "- (void)syncKeyboardModifierStateForEvent:(NSEvent *)event",
     "- (void)sendSyntheticRemoteModifierTapForFlags:(NSEventModifierFlags)modifierFlags",
     "- (void)sendSyntheticRemoteShortcut:(StreamShortcut *)shortcut",
+    "- (short)translateKeyCodeWithEvent:(NSEvent *)event",
+    "- (char)translatedModifierFlagsForEvent:(NSEvent *)event",
+    "- (char)translateKeyModifierWithEvent:(NSEvent *)event",
+    "- (void)keyDown:(NSEvent *)event",
+    "- (void)releaseAllModifierKeys",
 ]
 
 
@@ -173,20 +184,30 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 @property (nonatomic) BOOL shouldSendInputEvents;
 @property (nonatomic) NSUInteger keyboardPhysicalModifierSourceMask;
 @property (nonatomic) NSUInteger keyboardRemoteModifierMask;
+@property (nonatomic) BOOL keyboardModifierReleaseInProgress;
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
+@property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
+@property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardForwardedKeyDownKeyCodes;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event;
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event;
 - (void)sendSyntheticRemoteModifierTapForFlags:(NSEventModifierFlags)modifierFlags;
 - (void)sendSyntheticRemoteShortcut:(StreamShortcut *)shortcut;
+- (short)translateKeyCodeWithEvent:(NSEvent *)event;
+- (char)translateKeyModifierWithEvent:(NSEvent *)event;
+- (void)keyDown:(NSEvent *)event;
+- (void)releaseAllModifierKeys;
 @end
 
 @implementation MLModifiersUnderProbe
 - (instancetype)init {
     if ((self = [super init])) {
         _shouldSendInputEvents = YES;
-        // Tab and W, as the shipping table maps them.
-        _mappings = @{ @48: @(0x0F), @13: @(0x57) };
+        // Tab, W and Space, as the shipping table maps them (HIDSupport.m's own
+        // KeyMapping table: 13 -> 'W', 48 -> 0x0F, 49 -> 0x20).
+        _mappings = @{ @48: @(0x0F), @13: @(0x57), @49: @(0x20) };
+        _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
+        _keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];
     }
     return self;
 }
@@ -225,6 +246,21 @@ static NSEvent *FlagsEvent(unsigned short keyCode, NSEventModifierFlags held) {
 static void FlagsChanged(MLModifiersUnderProbe *k, unsigned short keyCode, NSEventModifierFlags held) {
     [k updateKeyboardPhysicalModifierStateFromEvent:FlagsEvent(keyCode, held)];
     [k syncKeyboardModifierStateForEvent:FlagsEvent(keyCode, held)];
+}
+
+static NSEvent *KeyDownEvent(unsigned short keyCode, NSEventModifierFlags held) {
+    return [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                        modifierFlags:held timestamp:0 windowNumber:0 context:nil
+                         characters:@"" charactersIgnoringModifiers:@""
+                           isARepeat:NO keyCode:keyCode];
+}
+
+// Mirrors -keyDown: in HIDSupport.m, which syncs the modifier state and then sends the
+// key with the modifier byte that same tracker produced. It does not re-read the
+// physical state: only -flagsChanged: does, and an edge that has already happened does
+// not happen again. That is the whole reason a release issued mid-hold survives.
+static void PressKey(MLModifiersUnderProbe *k, unsigned short keyCode, NSEventModifierFlags held) {
+    [k keyDown:KeyDownEvent(keyCode, held)];
 }
 
 static StreamShortcut *Rule(NSInteger keyCode, NSEventModifierFlags modifiers) {
@@ -381,6 +417,49 @@ int main(void) {
         Expect("a rule keeps the held Shift and releases only its own Control", want, Seq());
         ExpectAgreement("the mixed hold", k);
 
+        // 9. Two gameplay keys while a modifier is held, and a translation rule that
+        //    no longer clears the keyboard between them. The player holds Option, runs
+        //    on W, and jumps on Space: both presses have to carry Option, because the
+        //    finger never left it.
+        Reset(k);
+        FlagsChanged(k, kVK_Option, NSEventModifierFlagOption);
+        PressKey(k, kVK_ANSI_W, NSEventModifierFlagOption);
+        PressKey(k, kVK_Space, NSEventModifierFlagOption);
+        want = Exp();
+        Add(want, Ev(0xA4, YES, MODIFIER_ALT));
+        Add(want, Ev(0x8000 | 0x57, YES, MODIFIER_ALT));
+        Add(want, Ev(0x8000 | 0x20, YES, MODIFIER_ALT));
+        Expect("W then Space while Option is held both carry Option", want, Seq());
+        ExpectAgreement("two gameplay keys under a held Option", k);
+
+        // 10. The shape this repository used to have: a translation rule released all
+        //     eight modifiers on the way through. The player is still holding Option,
+        //     so nothing re-presses it -- -keyDown: only syncs against the tracker, and
+        //     only -flagsChanged: re-reads the physical state, which an edge that has
+        //     already happened will not do again. The next gameplay key therefore goes
+        //     out with a modifier byte of zero: the sprint stops, the crouch stands up,
+        //     and no log calls it a bug. This scenario asserts the damage, so the fix
+        //     cannot be undone without one turning red.
+        Reset(k);
+        FlagsChanged(k, kVK_Option, NSEventModifierFlagOption);
+        PressKey(k, kVK_ANSI_W, NSEventModifierFlagOption);
+        [k releaseAllModifierKeys];
+        PressKey(k, kVK_Space, NSEventModifierFlagOption);
+        want = Exp();
+        Add(want, Ev(0xA4, YES, MODIFIER_ALT));
+        Add(want, Ev(0x8000 | 0x57, YES, MODIFIER_ALT));
+        {
+            unsigned short up[] = {0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5};
+            for (size_t i = 0; i < sizeof(up) / sizeof(up[0]); i++) {
+                Add(want, Ev(up[i], NO, 0));
+            }
+        }
+        Add(want, Ev(0x8000 | 0x20, YES, 0));
+        Expect("releasing every modifier mid-hold strips Option off the next key", want, Seq());
+        BOOL optionStillDown = (HostHeldMask() & KMR_Remote_LeftAlt) != 0;
+        Expect("the host stopped believing in an Option the player still holds", @"stopped",
+               optionStillDown ? @"held" : @"stopped");
+
         printf("%d scenario failure(s)\n", gFailures);
     }
     return gFailures ? 1 : 0;
@@ -402,6 +481,72 @@ def unconditional_release(extracted):
         .replace("HIDSyntheticOwnedModifierMask(support, remoteModifierMask)", "remoteModifierMask") \
         .replace("HIDSyntheticOwnedModifierMask(self, remoteModifierMask)", "remoteModifierMask")
     return broken
+
+
+# The player-facing half of the rule: what a translation rule may do to the modifiers
+# the player is holding. Expressed as a function over the shipping source so the same
+# function can be run against the file and against a mutated copy of it.
+KEYBOARD_LEAVING_ACTIONS = (
+    "localActionDisconnectStream",
+    "localActionShowDisconnectOptions",
+    "localActionCloseAndQuitApp",
+    "localActionReconnectStream",
+    "localActionOpenControlCenter",
+    "localActionReleaseMouseCapture",
+    "localActionToggleBorderlessWindowed",
+)
+STREAM_KEeps_ACTIONS = (
+    "localActionTogglePerformanceOverlay",
+    "localActionToggleMouseMode",
+    "localActionToggleFullscreenControlBall",
+)
+
+
+def translation_rule_release_problems(text):
+    """Why a translation rule must not clear the keyboard it stays inside of."""
+    problems = []
+    handler = block_from(text, "- (BOOL)handleKeyboardTranslationRuleForEvent:(NSEvent *)event",
+                         "the translation-rule handler")
+    if "releaseAllModifierKeys" in handler:
+        problems.append("a translation rule releases every modifier again, which takes "
+                        "away a modifier the player is still holding")
+
+    predicate = "+ (BOOL)keyboardTranslationLocalActionReleasesHeldModifiers:(NSString *)action"
+    if predicate not in text:
+        problems.append("nothing names which local actions may release held modifiers")
+    else:
+        body = block_from(text, predicate, "the release predicate")
+        named = set(re.findall(r"KeyboardTranslationProfile\.(localAction\w+)", body))
+        missing = [name for name in KEYBOARD_LEAVING_ACTIONS if name not in named]
+        if missing:
+            problems.append("the predicate no longer releases for: %s" % ", ".join(missing))
+        inside = [name for name in STREAM_KEeps_ACTIONS if name in named]
+        if inside:
+            problems.append("the predicate releases for actions that keep the stream in "
+                            "the foreground: %s" % ", ".join(inside))
+
+    performer = block_from(text, "- (BOOL)performKeyboardTranslationLocalAction:(NSString *)action",
+                          "the local-action runner")
+    if "releaseAllModifierKeys" in performer:
+        guarded = re.search(r"if\s*\(\s*\[\[self class\]\s+"
+                            r"keyboardTranslationLocalActionReleasesHeldModifiers:", performer)
+        if guarded is None:
+            problems.append("the local-action runner releases modifiers without asking "
+                            "whether the action takes the keyboard away")
+    return problems
+
+
+def blanket_release_returned(text):
+    """The known-bad shape: the release, back at the entry point, unguarded."""
+    anchor = """    KeyboardTranslationRule *rule = [self keyboardTranslationRuleMatchingEvent:event];
+    if (rule == nil) {
+        return NO;
+    }
+"""
+    if text.count(anchor) != 1:
+        raise SystemExit("the translation-rule handler no longer has the shape this "
+                         "mutation expects, so it would prove nothing")
+    return text.replace(anchor, anchor + "\n    [self.hidSupport releaseAllModifierKeys];\n", 1)
 
 
 def check(ok, message):
@@ -445,6 +590,24 @@ def main():
               if "HIDSyntheticOwnedModifierMask" in source else
               "no modifier-ownership rule in the shipped source: a synthetic shortcut "
               "releases modifiers the player is holding")
+
+        stream_source = open(STREAM_VIEW, encoding="utf-8").read()
+        found = translation_rule_release_problems(stream_source)
+        check(not found,
+              "a translation rule leaves a held modifier alone, and only the actions that "
+              "take the keyboard away release one"
+              if not found else
+              "; ".join(found))
+
+        restored = blanket_release_returned(stream_source)
+        if restored == stream_source:
+            print("FAIL the blanket-release shape is identical to the shipped file (no teeth)")
+            return 1
+        found = translation_rule_release_problems(restored)
+        check(found,
+              "the shape where a translation rule releases every modifier is refused (%s)"
+              % found[0] if found else
+              "putting the release back at the entry point changes nothing the harness sees")
 
         broken = unconditional_release(extracted)
         if broken == extracted:

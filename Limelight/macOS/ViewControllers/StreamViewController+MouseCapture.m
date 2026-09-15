@@ -2662,6 +2662,13 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         return NO;
     }
 
+    // The name is the whole rule: a translation that keeps the stream in the
+    // foreground leaves the player's modifiers alone. This runs before the dispatch
+    // below so the ordering against the rule firing matches what it replaced.
+    if ([[self class] keyboardTranslationLocalActionReleasesHeldModifiers:action]) {
+        [self.hidSupport releaseAllModifierKeys];
+    }
+
     __weak typeof(self) weakSelf = self;
     void (^performAction)(void) = ^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
@@ -2737,13 +2744,42 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     return YES;
 }
 
+// The translation rules a player writes are read as one key becoming another, not
+// as a licence to let go of everything else they are holding. This used to call
+// -releaseAllModifierKeys here, unconditionally, before looking at what the rule
+// actually does. That is the shape the reports describe as a key conflict: a
+// Parsec-style rule set fires several times a session, and every firing told the
+// host that Shift, Control, Option and Command had all come up, while four fingers
+// stayed where they were. -releaseAllModifierKeys zeroes the physical tracker in the
+// same breath (it has to, or the tracker and the host diverge), so the very next
+// gameplay key -- W while the player is still sprinting on Shift, Space on the jump
+// that follows it -- is forwarded with a modifier byte of zero. The player never
+// released anything; the game stopped sprinting.
+//
+// What is left is the release owned by whoever actually takes the keyboard away, and
+// a synthetic shortcut that already tracks and returns only the modifiers it pressed
+// for itself. Nothing else touches the player's held state.
++ (BOOL)keyboardTranslationLocalActionReleasesHeldModifiers:(NSString *)action {
+    if (action.length == 0) {
+        return NO;
+    }
+    // Releasing is correct exactly where the stream stops owning the keyboard after
+    // this action: the session ends, the pointer is handed back, the control centre
+    // takes the key, or the window is rebuilt at a different style.
+    return [action isEqualToString:KeyboardTranslationProfile.localActionDisconnectStream]
+        || [action isEqualToString:KeyboardTranslationProfile.localActionShowDisconnectOptions]
+        || [action isEqualToString:KeyboardTranslationProfile.localActionCloseAndQuitApp]
+        || [action isEqualToString:KeyboardTranslationProfile.localActionReconnectStream]
+        || [action isEqualToString:KeyboardTranslationProfile.localActionOpenControlCenter]
+        || [action isEqualToString:KeyboardTranslationProfile.localActionReleaseMouseCapture]
+        || [action isEqualToString:KeyboardTranslationProfile.localActionToggleBorderlessWindowed];
+}
+
 - (BOOL)handleKeyboardTranslationRuleForEvent:(NSEvent *)event {
     KeyboardTranslationRule *rule = [self keyboardTranslationRuleMatchingEvent:event];
     if (rule == nil) {
         return NO;
     }
-
-    [self.hidSupport releaseAllModifierKeys];
 
     if (rule.outputKind == KeyboardTranslationOutputKindRemoteShortcut) {
         if (rule.outputShortcut != nil) {

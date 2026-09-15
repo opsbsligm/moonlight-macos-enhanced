@@ -70,12 +70,21 @@ VIDEO_GATE = (os.path.join(root, "scripts", "video-enhancement-tests.py"), [])
 # The workflow audit reads the pipeline that runs every other gate, so a mutation of
 # the pipeline itself is judged by it and by nothing else.
 WF_GATE = (os.path.join(root, "scripts", "workflow-audit.py"), [])
+# The compile gate is the only one that can see a translation unit, so a mutation that
+# names an API the build's own SDK does not declare belongs to it.
+COMPILE_GATE = (os.path.join(root, "scripts", "compile-audit.py"), [])
+# The menu-hint rule lives in a Swift answer, so it is asked of the compiled profile.
+MENU_KEY_GATE = (os.path.join(root, "scripts", "shortcut-menu-key-tests.py"), [])
 # The glass ratchet is a source rule, so a reverted panel is visible to it.
 LIQUID_GATE = (os.path.join(root, "scripts", "liquid-glass-audit.py"), [])
 # And this is the runtime half of the same rule: the container is compiled and run, so a
 # behaviour inside it -- an answer that never reaches the glass -- is visible here and
 # nowhere in a source scan.
 OVERLAY_GATE = (os.path.join(root, "scripts", "liquid-glass-overlay-tests.py"), [])
+SHORTCUT_PROFILE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                                 "SettingsShortcuts.swift")
+MOUSE_CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                             "StreamViewController+MouseCapture.m")
 GLASS_CONTAINER = os.path.join(root, "Limelight", "macOS", "Views",
                                "GlassOverlayContainer.m")
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -569,6 +578,56 @@ def release_modifiers_without_clearing_the_tracker(text):
     return text.replace(cleared, "", 1)
 
 
+def blanket_release_at_the_translation_rules(text):
+    """Puts the release back at the translation-rule entry point, unguarded.
+
+    This is the shape the project shipped until now: every rule the player wrote
+    released all eight modifiers as it fired, so a rule invoked while Shift was held for
+    a sprint took the sprint away on the next key press. The harness that owns this
+    reads the caller's source, so the mutation has to be in the caller's source.
+    """
+    anchor = """    KeyboardTranslationRule *rule = [self keyboardTranslationRuleMatchingEvent:event];
+    if (rule == nil) {
+        return NO;
+    }
+"""
+    if text.count(anchor) != 1:
+        raise SystemExit("the translation-rule handler no longer has the shape this "
+                         "mutation expects, so it would prove nothing")
+    return text.replace(anchor, anchor + "\n    [self.hidSupport releaseAllModifierKeys];\n", 1)
+
+
+def naming_an_api_only_the_newest_sdk_declares(text):
+    """Names `effectIsInteractive` instead of asking the object for it.
+
+    The property is declared in a newer SDK than the one the build jobs compile with,
+    so every local grep and every behavioural harness stayed silent while three CI jobs
+    failed to build. Only a compiler pointed at the build's own SDK can see this, which
+    is why the compile gate exists and why this mutation belongs to it.
+    """
+    needle = "MLSetGlassInteractivity(self.backgroundView, glassIsInteractive);"
+    if text.count(needle) != 1:
+        raise SystemExit("the glass container no longer asks for interactivity through the "
+                         "lookup this mutation replaces, so it would prove nothing")
+    return text.replace(needle, "self.backgroundView.effectIsInteractive = glassIsInteractive;", 1)
+
+
+def menu_hint_offers_a_word(text):
+    """Hands `Space` to AppKit instead of declining to register a hint.
+
+    A word is not a key equivalent: a live NSMenu matches neither the key the word names
+    nor the key its first letter names, so the row advertises something nobody can press
+    and the binding survives only while the stream view is taking keys. The gate reads
+    the answer out of the compiled profile, so the mutation has to live in that file.
+    """
+    mutated, hits = re.subn(
+        r"\n    guard key\.utf16\.count[\s\S]*?\n    \}\n", "\n", text, count=1)
+    if hits != 1:
+        raise SystemExit("the menu-equivalent guard is not where this mutation expects it, "
+                         "so it would prove nothing")
+    return mutated
+
+
 def drift_one_upload_action(text):
     """Moves one upload step to a different major of the same action.
 
@@ -848,6 +907,15 @@ MUTATIONS = [
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,
      "one workflow uses two versions of the same upload action", WF_GATE),
+    ("translation-rule-clears-a-held-modifier", MOUSE_CAPTURE,
+     blanket_release_at_the_translation_rules,
+     "a keyboard translation rule releases a modifier the player is holding", SHORTCUT_GATE),
+    ("naming-an-sdk-the-build-does-not-have", GLASS_CONTAINER,
+     naming_an_api_only_the_newest_sdk_declares,
+     "a source file names an API the build's SDK does not declare", COMPILE_GATE),
+    ("menu-hint-offers-a-word-instead-of-a-key", SHORTCUT_PROFILE,
+     menu_hint_offers_a_word,
+     "a bound shortcut shows a hint no keyboard can produce", MENU_KEY_GATE),
     ("stop-without-release", WINDOW_MODES, stop_without_release, "the stream stops while the host still holds a key"),
     ("swift-debug-condition-gone", PBXPROJ, drop_swift_debug_condition,
      "Debug-only Swift code stops compiling while the Objective-C half keeps calling it"),
