@@ -162,19 +162,16 @@
     container.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     container.autoresizesSubviews = YES;
 
-    NSVisualEffectView *pill = [[NSVisualEffectView alloc] initWithFrame:container.bounds];
+    // The control-centre pill is a button, so where the system has it its glass is
+    // the interactive kind. The glass view owns its content host, and the glass
+    // content covers the panel, so the panel-relative frames below do not move.
+    GlassOverlayContainer *pill = [GlassOverlayContainer containerWithCornerRadius:containerHeight * 0.5];
+    pill.frame = container.bounds;
     pill.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    pill.material = NSVisualEffectMaterialHUDWindow;
-    pill.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-    pill.state = NSVisualEffectStateActive;
-    pill.wantsLayer = YES;
-    pill.layer.cornerRadius = containerHeight * 0.5;
-    pill.layer.masksToBounds = YES;
+    pill.glassIsInteractive = YES;
     [container addSubview:pill];
 
-    NSView *content = [[NSView alloc] initWithFrame:pill.bounds];
-    content.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    [pill addSubview:content];
+    NSView *content = pill.contentView;
 
     NSImageView *signalImageView = [[NSImageView alloc] initWithFrame:NSMakeRect(10.0, 6.0, 16.0, 16.0)];
     signalImageView.imageScaling = NSImageScaleProportionallyUpOrDown;
@@ -215,7 +212,10 @@
         button.refusesFirstResponder = YES;
     }
 
-    [container addSubview:button];
+    // The button lives inside the glass rather than on top of it: interactive
+    // glass answers controls it contains, and a control floating over the panel
+    // would leave the glass motionless while the pill was the thing being pressed.
+    [content addSubview:button];
 
     NSTitlebarAccessoryViewController *accessory = [[NSTitlebarAccessoryViewController alloc] init];
     accessory.layoutAttribute = NSLayoutAttributeRight;

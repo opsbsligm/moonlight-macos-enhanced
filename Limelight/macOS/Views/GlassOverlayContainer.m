@@ -11,6 +11,7 @@
 @property (nonatomic, strong) NSView *contentView;
 @property (nonatomic, readwrite, strong) NSView *backgroundView;
 @property (nonatomic, readwrite) BOOL usesSystemGlass;
+@property (nonatomic) BOOL requestedInteractivity;
 @end
 
 @implementation GlassOverlayContainer
@@ -76,6 +77,20 @@
     }
     self.backgroundView = background;
     self.contentView = content;
+}
+
+- (void)setGlassIsInteractive:(BOOL)glassIsInteractive {
+    _requestedInteractivity = glassIsInteractive;
+    if (!self.usesSystemGlass) {
+        return;
+    }
+    if (@available(macOS 27.0, *)) {
+        ((NSGlassEffectView *)self.backgroundView).effectIsInteractive = glassIsInteractive;
+    }
+}
+
+- (BOOL)glassIsInteractive {
+    return _requestedInteractivity;
 }
 
 - (void)setCornerRadius:(CGFloat)cornerRadius {

@@ -132,27 +132,11 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
     [self uncaptureMouseWithCode:@"MUC401" reason:@"show-error-overlay"];
 
     if (!self.timeoutOverlayContainer) {
-        NSVisualEffectView *container = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
-        container.material = NSVisualEffectMaterialHUDWindow;
-        container.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-        container.state = NSVisualEffectStateActive;
-        container.wantsLayer = YES;
+        GlassOverlayContainer *container = [GlassOverlayContainer containerWithCornerRadius:24.0];
         container.alphaValue = 0.0;
-        
-        // 为 NSVisualEffectView 设置圆角需要使用 maskedCorners
-        container.layer.cornerRadius = 24.0;
-        if (@available(macOS 10.13, *)) {
-            container.layer.cornerCurve = kCACornerCurveContinuous;
-            container.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner | kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner;
-        }
-        container.layer.masksToBounds = YES;
-        
-        // Shadow for better visibility
-        NSShadow *shadow = [[NSShadow alloc] init];
-        shadow.shadowBlurRadius = 20.0;
-        shadow.shadowColor = [NSColor colorWithWhite:0.0 alpha:0.3];
-        shadow.shadowOffset = NSMakeSize(0, -5);
-        container.shadow = shadow;
+        // The radius belongs to the container now, and the depth this panel used to
+        // buy with an NSShadow is the glass rim's own job. Masking the corners by hand
+        // and hanging a shadow behind real glass would fight both of them.
 
         // Icon
         NSTextField *iconLabel = [[NSTextField alloc] initWithFrame:NSZeroRect];
@@ -304,19 +288,19 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
         self.timeoutViewLogsButton = viewLogBtn;
         self.timeoutCopyLogsButton = copyLogBtn;
 
-        [container addSubview:iconLabel];
-        [container addSubview:titleLabel];
-        [container addSubview:label];
-        [container addSubview:reconnectBtn];
-        [container addSubview:waitBtn];
-        [container addSubview:exitBtn];
-        [container addSubview:resBtn];
-        [container addSubview:bitrateBtn];
-        [container addSubview:displayModeBtn];
-        [container addSubview:connBtn];
-        [container addSubview:recommendedBtn];
-        [container addSubview:viewLogBtn];
-        [container addSubview:copyLogBtn];
+        [container.contentView addSubview:iconLabel];
+        [container.contentView addSubview:titleLabel];
+        [container.contentView addSubview:label];
+        [container.contentView addSubview:reconnectBtn];
+        [container.contentView addSubview:waitBtn];
+        [container.contentView addSubview:exitBtn];
+        [container.contentView addSubview:resBtn];
+        [container.contentView addSubview:bitrateBtn];
+        [container.contentView addSubview:displayModeBtn];
+        [container.contentView addSubview:connBtn];
+        [container.contentView addSubview:recommendedBtn];
+        [container.contentView addSubview:viewLogBtn];
+        [container.contentView addSubview:copyLogBtn];
 
         [self.view addSubview:container positioned:NSWindowAbove relativeTo:nil];
         
@@ -344,7 +328,7 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
         return;
     }
 
-    NSVisualEffectView *container = self.timeoutOverlayContainer;
+    GlassOverlayContainer *container = self.timeoutOverlayContainer;
     self.timeoutOverlayContainer = nil;
     self.timeoutIconLabel = nil;
     self.timeoutTitleLabel = nil;
@@ -2332,12 +2316,16 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
 
 - (void)showReconnectOverlayWithMessage:(NSString *)message {
     if (!self.reconnectOverlayContainer) {
-        self.reconnectOverlayContainer = [[NSVisualEffectView alloc] initWithFrame:self.view.bounds];
-        self.reconnectOverlayContainer.material = NSVisualEffectMaterialHUDWindow;
-        self.reconnectOverlayContainer.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-        self.reconnectOverlayContainer.state = NSVisualEffectStateActive;
+        // The scrim is not a panel. It dims the picture, so it carries no material at
+        // all: what used to be a full-window vibrancy view is a plain dimming layer,
+        // and the spinner with its sentence sit in a glass card in the middle of it,
+        // which is where the system's glass belongs.
+        self.reconnectOverlayContainer = [[NSView alloc] initWithFrame:self.view.bounds];
         self.reconnectOverlayContainer.wantsLayer = YES;
         self.reconnectOverlayContainer.layer.backgroundColor = [[NSColor colorWithWhite:0 alpha:0.55] CGColor];
+
+        self.reconnectGlassCard = [GlassOverlayContainer containerWithCornerRadius:14.0];
+        [self.reconnectOverlayContainer addSubview:self.reconnectGlassCard];
 
         self.reconnectSpinner = [[NSProgressIndicator alloc] initWithFrame:NSZeroRect];
         self.reconnectSpinner.style = NSProgressIndicatorStyleSpinning;
@@ -2353,8 +2341,8 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         self.reconnectLabel.textColor = [NSColor whiteColor];
         self.reconnectLabel.alignment = NSTextAlignmentCenter;
 
-        [self.reconnectOverlayContainer addSubview:self.reconnectSpinner];
-        [self.reconnectOverlayContainer addSubview:self.reconnectLabel];
+        [self.reconnectGlassCard.contentView addSubview:self.reconnectSpinner];
+        [self.reconnectGlassCard.contentView addSubview:self.reconnectLabel];
         [self.view addSubview:self.reconnectOverlayContainer positioned:NSWindowAbove relativeTo:nil];
 
         self.reconnectOverlayContainer.alphaValue = 0.0;
@@ -2373,8 +2361,9 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         return;
     }
 
-    NSVisualEffectView *container = self.reconnectOverlayContainer;
+    NSView *container = self.reconnectOverlayContainer;
     self.reconnectOverlayContainer = nil;
+    self.reconnectGlassCard = nil;
     self.reconnectSpinner = nil;
     self.reconnectLabel = nil;
 
@@ -2476,13 +2465,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         [self.overlayContainer removeFromSuperview];
     }
     
-    self.overlayContainer = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
-    self.overlayContainer.material = NSVisualEffectMaterialHUDWindow;
-    self.overlayContainer.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-    self.overlayContainer.state = NSVisualEffectStateActive;
-    self.overlayContainer.wantsLayer = YES;
-    self.overlayContainer.layer.cornerRadius = 10.0;
-    self.overlayContainer.layer.masksToBounds = YES;
+    self.overlayContainer = [GlassOverlayContainer containerWithCornerRadius:10.0];
     
     self.overlayLabel = [[NSTextField alloc] initWithFrame:NSZeroRect];
     self.overlayLabel.bezeled = NO;
@@ -2491,7 +2474,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.overlayLabel.selectable = NO;
     self.overlayLabel.font = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightRegular];
     
-    [self.overlayContainer addSubview:self.overlayLabel];
+    [self.overlayContainer.contentView addSubview:self.overlayLabel];
 
     // Ensure overlay is always above the video render view.
     [self.view addSubview:self.overlayContainer positioned:NSWindowAbove relativeTo:nil];
@@ -2722,13 +2705,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         return;
     }
 
-    self.connectionWarningContainer = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
-    self.connectionWarningContainer.material = NSVisualEffectMaterialHUDWindow;
-    self.connectionWarningContainer.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-    self.connectionWarningContainer.state = NSVisualEffectStateActive;
-    self.connectionWarningContainer.wantsLayer = YES;
-    self.connectionWarningContainer.layer.cornerRadius = 10.0;
-    self.connectionWarningContainer.layer.masksToBounds = YES;
+    self.connectionWarningContainer = [GlassOverlayContainer containerWithCornerRadius:10.0];
 
     self.connectionWarningLabel = [[NSTextField alloc] initWithFrame:NSZeroRect];
     self.connectionWarningLabel.bezeled = NO;
@@ -2743,7 +2720,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.connectionWarningLabel.stringValue = warningText;
     [self.connectionWarningLabel sizeToFit];
 
-    [self.connectionWarningContainer addSubview:self.connectionWarningLabel];
+    [self.connectionWarningContainer.contentView addSubview:self.connectionWarningLabel];
     [self.view addSubview:self.connectionWarningContainer positioned:NSWindowAbove relativeTo:nil];
 
     [self layoutConnectionWarning];
@@ -2862,14 +2839,25 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     if (self.reconnectOverlayContainer) {
         self.reconnectOverlayContainer.frame = self.view.bounds;
 
-        CGFloat centerX = NSMidX(self.view.bounds);
-        CGFloat centerY = NSMidY(self.view.bounds);
-        self.reconnectSpinner.frame = NSMakeRect(centerX - 10, centerY + 6, 20, 20);
+        // The card sizes itself to its sentence the way the HUD pills do, so the glass
+        // has something to hug instead of covering the whole picture.
         [self.reconnectLabel sizeToFit];
-        self.reconnectLabel.frame = NSMakeRect(centerX - self.reconnectLabel.frame.size.width / 2.0,
-                                               centerY - 24,
-                                               self.reconnectLabel.frame.size.width,
-                                               self.reconnectLabel.frame.size.height);
+        const CGFloat cardPadding = 16.0;
+        const CGFloat spinnerSide = 20.0;
+        const CGFloat spinnerGap = 10.0;
+        CGFloat labelSizeWidth = self.reconnectLabel.frame.size.width;
+        CGFloat labelSizeHeight = self.reconnectLabel.frame.size.height;
+        CGFloat cardWidth = cardPadding + spinnerSide + spinnerGap + labelSizeWidth + cardPadding;
+        CGFloat cardHeight = MAX(44.0, labelSizeHeight + cardPadding);
+        self.reconnectGlassCard.frame = NSMakeRect((NSWidth(self.view.bounds) - cardWidth) / 2.0,
+                                                   (NSHeight(self.view.bounds) - cardHeight) / 2.0,
+                                                   cardWidth, cardHeight);
+        self.reconnectSpinner.frame = NSMakeRect(cardPadding,
+                                                 (cardHeight - spinnerSide) / 2.0,
+                                                 spinnerSide, spinnerSide);
+        self.reconnectLabel.frame = NSMakeRect(cardPadding + spinnerSide + spinnerGap,
+                                               (cardHeight - labelSizeHeight) / 2.0,
+                                               labelSizeWidth, labelSizeHeight);
     }
 
     if (self.timeoutOverlayContainer) {
@@ -2956,16 +2944,6 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
                                                        (NSHeight(bounds) - height) / 2.0,
                                                        width,
                                                        height);
-        
-        // 为 NSVisualEffectView 应用圆角遮罩
-        CAShapeLayer *maskLayer = [CAShapeLayer layer];
-        NSBezierPath *roundedPath = [NSBezierPath bezierPathWithRoundedRect:self.timeoutOverlayContainer.bounds 
-                                                                    xRadius:24.0 
-                                                                    yRadius:24.0];
-        CGPathRef cgPath = [self CGPathFromNSBezierPath:roundedPath];
-        maskLayer.path = cgPath;
-        CGPathRelease(cgPath);
-        self.timeoutOverlayContainer.layer.mask = maskLayer;
 
         CGFloat centerX = width / 2.0;
         CGFloat currentY = height - paddingTop;
@@ -3092,13 +3070,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         return;
     }
 
-    self.mouseModeContainer = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
-    self.mouseModeContainer.material = NSVisualEffectMaterialHUDWindow;
-    self.mouseModeContainer.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-    self.mouseModeContainer.state = NSVisualEffectStateActive;
-    self.mouseModeContainer.wantsLayer = YES;
-    self.mouseModeContainer.layer.cornerRadius = 10.0;
-    self.mouseModeContainer.layer.masksToBounds = YES;
+    self.mouseModeContainer = [GlassOverlayContainer containerWithCornerRadius:10.0];
 
     self.mouseModeLabel = [[NSTextField alloc] initWithFrame:NSZeroRect];
     self.mouseModeLabel.bezeled = NO;
@@ -3110,7 +3082,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.mouseModeLabel.stringValue = @"🖱️";
     [self.mouseModeLabel sizeToFit];
 
-    [self.mouseModeContainer addSubview:self.mouseModeLabel];
+    [self.mouseModeContainer.contentView addSubview:self.mouseModeLabel];
     [self.view addSubview:self.mouseModeContainer positioned:NSWindowAbove relativeTo:nil];
 
     [self layoutMouseModeIndicator];
@@ -3173,13 +3145,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         [self.notificationContainer removeFromSuperview];
     }
 
-    self.notificationContainer = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
-    self.notificationContainer.material = NSVisualEffectMaterialHUDWindow;
-    self.notificationContainer.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-    self.notificationContainer.state = NSVisualEffectStateActive;
-    self.notificationContainer.wantsLayer = YES;
-    self.notificationContainer.layer.cornerRadius = 10.0;
-    self.notificationContainer.layer.masksToBounds = YES;
+    self.notificationContainer = [GlassOverlayContainer containerWithCornerRadius:10.0];
 
     self.notificationLabel = [[NSTextField alloc] initWithFrame:NSZeroRect];
     self.notificationLabel.bezeled = NO;
@@ -3191,7 +3157,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.notificationLabel.stringValue = message;
     [self.notificationLabel sizeToFit];
 
-    [self.notificationContainer addSubview:self.notificationLabel];
+    [self.notificationContainer.contentView addSubview:self.notificationLabel];
     [self.view addSubview:self.notificationContainer positioned:NSWindowAbove relativeTo:nil];
 
     CGFloat padding = 15.0;
@@ -3233,39 +3199,6 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
             self.notificationContainer = nil;
         }];
     }];
-}
-
-// 辅助方法：将 NSBezierPath 转换为 CGPath
-- (CGPathRef)CGPathFromNSBezierPath:(NSBezierPath *)bezierPath CF_RETURNS_RETAINED {
-    CGMutablePathRef path = CGPathCreateMutable();
-    NSInteger count = [bezierPath elementCount];
-    
-    for (NSInteger i = 0; i < count; i++) {
-        NSPoint points[3];
-        NSBezierPathElement element = [bezierPath elementAtIndex:i associatedPoints:points];
-        
-        switch (element) {
-            case NSBezierPathElementMoveTo:
-                CGPathMoveToPoint(path, NULL, points[0].x, points[0].y);
-                break;
-            case NSBezierPathElementLineTo:
-                CGPathAddLineToPoint(path, NULL, points[0].x, points[0].y);
-                break;
-            case NSBezierPathElementCubicCurveTo:
-                CGPathAddCurveToPoint(path, NULL, points[0].x, points[0].y,
-                                    points[1].x, points[1].y,
-                                    points[2].x, points[2].y);
-                break;
-            case NSBezierPathElementQuadraticCurveTo:
-                CGPathAddQuadCurveToPoint(path, NULL, points[0].x, points[0].y, points[1].x, points[1].y);
-                break;
-            case NSBezierPathElementClosePath:
-                CGPathCloseSubpath(path);
-                break;
-        }
-    }
-    
-    return path;
 }
 
 @end

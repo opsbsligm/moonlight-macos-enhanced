@@ -288,7 +288,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 
 @property (nonatomic) IOPMAssertionID powerAssertionID;
 
-@property (nonatomic, strong) NSVisualEffectView *overlayContainer;
+@property (nonatomic, strong) GlassOverlayContainer *overlayContainer;
 @property (nonatomic, strong) NSTextField *overlayLabel;
 @property (nonatomic, strong) NSTimer *statsTimer;
 @property (nonatomic, strong) NSTimer *streamHealthTimer;
@@ -342,14 +342,14 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) NSUInteger runtimeAutoBitrateStableStreak;
 @property (nonatomic) uint64_t runtimeAutoBitrateLastRaiseMs;
 
-@property (nonatomic, strong) NSVisualEffectView *connectionWarningContainer;
+@property (nonatomic, strong) GlassOverlayContainer *connectionWarningContainer;
 @property (nonatomic, strong) NSTextField *connectionWarningLabel;
 
-@property (nonatomic, strong) NSVisualEffectView *notificationContainer;
+@property (nonatomic, strong) GlassOverlayContainer *notificationContainer;
 @property (nonatomic, strong) NSTextField *notificationLabel;
 @property (nonatomic, strong) NSTimer *notificationTimer;
 
-@property (nonatomic, strong) NSVisualEffectView *mouseModeContainer;
+@property (nonatomic, strong) GlassOverlayContainer *mouseModeContainer;
 @property (nonatomic, strong) NSTextField *mouseModeLabel;
 
 @property (nonatomic) BOOL disconnectWasUserInitiated;
@@ -393,7 +393,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 
 @property (nonatomic, strong) NSMenu *streamMenu;
 
-@property (nonatomic, strong) NSVisualEffectView *controlCenterPill;
+@property (nonatomic, strong) GlassOverlayContainer *controlCenterPill;
 @property (nonatomic, strong) NSImageView *controlCenterSignalImageView;
 @property (nonatomic, strong) NSTextField *controlCenterTimeLabel;
 @property (nonatomic, strong) NSTextField *controlCenterTitleLabel;
@@ -433,11 +433,12 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) NSUInteger logOverlaySoftMaxLines;
 @property (nonatomic) NSUInteger logOverlayTrimToLines;
 
-@property (nonatomic, strong) NSVisualEffectView *reconnectOverlayContainer;
+@property (nonatomic, strong) NSView *reconnectOverlayContainer;
+@property (nonatomic, strong) GlassOverlayContainer *reconnectGlassCard;
 @property (nonatomic, strong) NSProgressIndicator *reconnectSpinner;
 @property (nonatomic, strong) NSTextField *reconnectLabel;
 
-@property (nonatomic, strong) NSVisualEffectView *timeoutOverlayContainer;
+@property (nonatomic, strong) GlassOverlayContainer *timeoutOverlayContainer;
 @property (nonatomic, strong) NSTextField *timeoutIconLabel;
 @property (nonatomic, strong) NSTextField *timeoutTitleLabel;
 @property (nonatomic, strong) NSTextField *timeoutLabel;
@@ -849,7 +850,6 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)handleGamepadQuitNotification:(NSNotification *)note;
 - (void)showNotification:(NSString *)message;
 - (void)showNotification:(NSString *)message forSeconds:(NSTimeInterval)seconds;
-- (CGPathRef)CGPathFromNSBezierPath:(NSBezierPath *)bezierPath CF_RETURNS_RETAINED;
 @end
 
 @interface StreamViewController (InternalTeardown)

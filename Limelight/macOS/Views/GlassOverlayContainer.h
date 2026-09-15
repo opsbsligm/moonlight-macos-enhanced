@@ -5,12 +5,14 @@
 //  One background for every panel the stream puts on top of the video: the system's
 //  own glass where the system has it, HUD-window vibrancy where it does not.
 //
-//  Seven overlays built their own NSVisualEffectView with NSVisualEffectMaterialHUDWindow
-//  -- the timeout panel, the log browser, the reconnect panel, the stream menu, the
-//  connection warning, the mouse-mode hint and the notification banner. That is the
-//  material from before the liquid-glass APIs, so the streaming interface was the one
-//  part of this app that never moved to it: the settings page and the tab bar sample
-//  the system glass, and the panels a player actually looks at during a session did not.
+//  Seven overlays used to build their own NSVisualEffectView with
+//  NSVisualEffectMaterialHUDWindow -- the timeout panel, the log browser, the reconnect
+//  panel, the stream menu, the connection warning, the mouse-mode hint and the
+//  notification banner. That is the material from before the liquid-glass APIs, so the
+//  streaming interface was the one part of this app that never moved to it: the settings
+//  page and the tab bar sampled the system glass, and the panels a player actually looks
+//  at during a session did not. Every one of them now asks this container for its
+//  background, and scripts/liquid-glass-audit.py refuses a panel that goes back.
 //
 //  One container owns the answer, because the choice has to be made the same way seven
 //  times or the panels will disagree with each other on screen. NSGlassEffectView is a
@@ -44,6 +46,12 @@ NS_ASSUME_NONNULL_BEGIN
 /// YES when the system drew real glass behind the content. Read-only, and reported by
 /// the interface diagnostics so a panel never claims a material it is not using.
 @property (nonatomic, readonly) BOOL usesSystemGlass;
+
+/// Whether the glass should answer interaction. Apple's guidance is that glass behind a
+/// control, or holding controls, should be interactive; a panel that shows a sentence is
+/// not a control, so this stays off unless the panel really is one. Ignored off the
+/// glass path and on systems that have no interactive glass.
+@property (nonatomic) BOOL glassIsInteractive;
 
 /// The material the vibrancy path uses, exposed so the gate can assert the fallback is
 /// still the one the panels shipped with before glass existed.

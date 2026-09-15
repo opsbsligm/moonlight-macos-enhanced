@@ -69,6 +69,12 @@ NAVIGATION_GATE = (os.path.join(root, "scripts", "controller-key-navigation-test
 VIDEO_GATE = (os.path.join(root, "scripts", "video-enhancement-tests.py"), [])
 # The glass ratchet is a source rule, so a reverted panel is visible to it.
 LIQUID_GATE = (os.path.join(root, "scripts", "liquid-glass-audit.py"), [])
+# And this is the runtime half of the same rule: the container is compiled and run, so a
+# behaviour inside it -- an answer that never reaches the glass -- is visible here and
+# nowhere in a source scan.
+OVERLAY_GATE = (os.path.join(root, "scripts", "liquid-glass-overlay-tests.py"), [])
+GLASS_CONTAINER = os.path.join(root, "Limelight", "macOS", "Views",
+                               "GlassOverlayContainer.m")
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                           "SettingsVideoPane.swift")
 
@@ -563,6 +569,20 @@ def release_modifiers_without_clearing_the_tracker(text):
 GLASS_PANEL_CALL = "    self.logOverlayContainer = [GlassOverlayContainer containerWithCornerRadius:12.0];"
 
 
+def glass_is_never_told_it_must_answer(text):
+    """The container keeps the request and never hands it to the glass.
+
+    The control-centre pill is a button, and its glass is asked to respond to being
+    pressed. A setter that stores the answer without passing it on is invisible to every
+    source rule -- only the glass view knows, so the compiled container is run and asked.
+    """
+    needle = (".effectIsInteractive = glassIsInteractive;")
+    if text.count(needle) != 1:
+        raise SystemExit("the container no longer hands interactivity to the glass in one "
+                         "place, so this mutation would be proving nothing")
+    return text.replace(needle, ";(void)0;", 1)
+
+
 def give_the_log_panel_its_own_vibrancy(text):
     """A panel goes back to the pre-glass material it shipped with.
 
@@ -847,6 +867,9 @@ MUTATIONS = [
      "all modifiers are released on the host while the tracker still claims they are held"),
     ("panel-reverts-to-its-own-vibrancy", DIAGNOSTICS, give_the_log_panel_its_own_vibrancy,
      "a stream panel goes back to drawing the pre-glass vibrancy material", LIQUID_GATE),
+    ("glass-never-told-it-must-answer", GLASS_CONTAINER, glass_is_never_told_it_must_answer,
+     "a control asks its glass to answer interaction and the glass is never told",
+     OVERLAY_GATE),
     ("shortcut-releases-held-modifier", HID, release_a_modifier_the_player_is_holding,
      "a synthetic shortcut releases a modifier the player is still holding", SHORTCUT_GATE),
     ("unlisted-source-file", PBXPROJ, unlisted_source,

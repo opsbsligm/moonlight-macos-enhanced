@@ -14,13 +14,25 @@ behaviour. So this harness compiles the container as shipped and runs it in a wi
 then reads back what the view actually built -- the class behind the content, whether
 the radius reached it, and what the Core Animation tree underneath is made of.
 
-The known-bad shape is the same file with the glass branch switched off, which is what
-a missing availability check or a reverted container looks like. On a system with real
-glass it has to fail the assertion that the panel is glass, and the harness says which
-side of the branch it is on rather than assuming the host running it is representative.
+Two things a source scan cannot answer are measured rather than argued:
+
+  * legibility. The panels put white labels on the material, so the panel is captured
+    inside the dark HUD appearance the stream window really pins (VibrantDark) and the
+    contrast of white text against the panel's own background is computed. A panel that
+    loses that appearance -- a light-appearance window, or a material that no longer
+    follows it -- is refused, which also proves the measurement is not a constant.
+  * interactive glass. The control-centre pill asks for `glassIsInteractive`, and a
+    property a view ignores looks identical to one it honours until something reads it
+    back off the glass view.
+
+The known-bad shapes are the same file with the glass branch switched off and with the
+interactivity never reaching the glass -- what a missing availability check or a
+half-finished conversion looks like. On a system with real glass they have to fail, and
+the harness says which side of each branch it is on rather than assuming the host
+running it is representative.
 
 Exit 0 only when the shipped container is what this host should be drawing, and the
-glass-less shape is refused wherever that is distinguishable.
+glass-less and interactivity-less shapes are refused wherever they are distinguishable.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -141,6 +153,77 @@ int main(void) {
             layers, glass ? @" -- a glass backing is required here" : @""];
         failures += !Append(layerLine, glass ? backdrop : YES);
 
+        // Legibility. These panels put white labels on the material, and the stream
+        // window pins a dark HUD appearance for them (StreamViewController.m sets
+        // NSAppearanceNameVibrantDark). Measured inside that appearance, and the same
+        // panel measured in a light window, so the number cannot be a constant.
+        for (int appearanceCase = 0; appearanceCase < 2; appearanceCase++) {
+            BOOL hudDark = appearanceCase == 0;
+            NSWindow *legible = [[NSWindow alloc]
+                initWithContentRect:NSMakeRect(0, 0, 400, 200)
+                          styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered
+                            defer:NO];
+            if (hudDark) {
+                legible.appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantDark];
+            } else {
+                legible.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+            }
+            legible.contentView.wantsLayer = YES;
+            legible.contentView.layer.backgroundColor = [NSColor whiteColor].CGColor;
+
+            GlassOverlayContainer *contrastPanel =
+                [GlassOverlayContainer containerWithCornerRadius:10.0];
+            contrastPanel.frame = NSMakeRect(60, 60, 280, 44);
+            NSTextField *whiteLabel = [NSTextField labelWithString:@"Poor Connection"];
+            whiteLabel.textColor = [NSColor whiteColor];
+            whiteLabel.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+            whiteLabel.frame = NSMakeRect(10, 13, 200, 18);
+            [contrastPanel.contentView addSubview:whiteLabel];
+            [legible.contentView addSubview:contrastPanel];
+            [legible layoutIfNeeded];
+            [legible displayIfNeeded];
+
+            NSBitmapImageRep *bitmap =
+                [contrastPanel bitmapImageRepForCachingDisplayInRect:contrastPanel.bounds];
+            [contrastPanel cacheDisplayInRect:contrastPanel.bounds toBitmapImageRep:bitmap];
+            double total = 0, samples = 0;
+            for (NSInteger y = 10; y < bitmap.pixelsHigh - 10; y += 2) {
+                for (NSInteger x = 10; x < bitmap.pixelsWide - 10; x += 2) {
+                    total += [[bitmap colorAtX:x y:y] brightnessComponent];
+                    samples += 1;
+                }
+            }
+            double background = samples ? total / samples : 1.0;
+            double contrast = (1.0 + 0.05) / (fmax(background, 0.0) + 0.05);
+            NSString *ratio = [NSString stringWithFormat:
+                @"white labels read at %.2f:1 against the panel in the %@ appearance",
+                contrast, hudDark ? @"dark HUD" : @"light"];
+            if (hudDark) {
+                failures += !Append(ratio, contrast >= 4.5);
+            } else {
+                // The measurement has to move with the appearance, or it measures nothing.
+                failures += !Append([ratio stringByAppendingString:
+                                     @" -- this one must fail, it is the shape that is refused"],
+                                    contrast < 4.5);
+            }
+        }
+
+        // The pill asks for interactive glass; a view that ignores the property looks
+        // exactly like one that honours it until the glass itself is asked.
+        GlassOverlayContainer *control = [GlassOverlayContainer containerWithCornerRadius:14.0];
+        control.glassIsInteractive = YES;
+        BOOL interactivityHonoured = control.glassIsInteractive;
+        if (control.usesSystemGlass && system >= 27) {
+            if (@available(macOS 27.0, *)) {
+                interactivityHonoured = ((NSGlassEffectView *)control.backgroundView)
+                    .effectIsInteractive;
+            }
+        }
+        failures += !Append([NSString stringWithFormat:
+                             @"a panel that asks for interactive glass gets it (host %@)",
+                             system >= 27 ? @"can answer" : @"has no interactive glass"],
+                            interactivityHonoured == YES);
+
         // The fallback keeps the material the panels shipped with, whichever way the
         // host's version falls out.
         failures += !Append(@"the vibrancy fallback is the material the panels shipped with",
@@ -164,6 +247,15 @@ def source_for(variant=None):
         if mutated == body:
             raise SystemExit("the container no longer has an availability branch, so this "
                              "harness would be proving nothing")
+        body = mutated
+    elif variant == "no-interactive":
+        # The setter that keeps the answer but never hands it to the glass: the pill is a
+        # button whose glass would sit there motionless, and nothing above this method
+        # could tell.
+        mutated = body.replace(".effectIsInteractive = glassIsInteractive;", ";")
+        if mutated == body:
+            raise SystemExit("the container no longer hands interactivity to the glass, so "
+                             "this harness would be proving nothing")
         body = mutated
     elif variant is not None:
         raise SystemExit("unknown variant %r" % variant)
@@ -213,9 +305,9 @@ def main():
         if broken is None:
             return 1
         print(broken.stdout.rstrip())
-        distinguishable = int(re.search(r"on macOS (\d+)", broken.stdout or "").group(1)) >= 26 \
-            if re.search(r"on macOS (\d+)", broken.stdout or "") else False
-        if distinguishable:
+        host = re.search(r"on macOS (\d+)", broken.stdout or "")
+        major = int(host.group(1)) if host else 0
+        if major >= 26:
             check(broken.returncode != 0,
                   "the glass-less shape is refused on a host that has glass"
                   if broken.returncode != 0 else
@@ -223,6 +315,19 @@ def main():
                   "cannot tell glass from vibrancy")
         else:
             print("skip  teeth check (this host has no system glass to withhold)")
+
+        quiet = run_variant(tmp, "no-interactive", variant="no-interactive")
+        if quiet is None:
+            return 1
+        print(quiet.stdout.rstrip())
+        if major >= 27:
+            check(quiet.returncode != 0,
+                  "glass that never got its interactivity is refused"
+                  if quiet.returncode != 0 else
+                  "a container that never hands interactivity to the glass still passes: "
+                  "the read-back is not reading the glass")
+        else:
+            print("skip  interactivity teeth (this host has no interactive glass)")
 
     print("%d harness failure(s)" % len(check.failures))
     return 1 if check.failures else 0
