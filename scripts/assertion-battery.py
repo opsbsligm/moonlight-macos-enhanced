@@ -52,6 +52,8 @@ ANALYZER_GATE = (ANALYZER, ["--self-test"])
 # The synthetic-shortcut gate is its own harness: it compiles the state machine, so
 # only it can see a packet sequence that strands the modifier tracker.
 SHORTCUT_GATE = (os.path.join(root, "scripts", "keyboard-shortcut-modifier-tests.py"), [])
+# The glass ratchet is a source rule, so a reverted panel is visible to it.
+LIQUID_GATE = (os.path.join(root, "scripts", "liquid-glass-audit.py"), [])
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                           "SettingsVideoPane.swift")
 
@@ -543,6 +545,23 @@ def release_modifiers_without_clearing_the_tracker(text):
     return text.replace(cleared, "", 1)
 
 
+GLASS_PANEL_CALL = "    self.logOverlayContainer = [GlassOverlayContainer containerWithCornerRadius:12.0];"
+
+
+def give_the_log_panel_its_own_vibrancy(text):
+    """A panel goes back to the pre-glass material it shipped with.
+
+    The look a reviewer signed off is a claim about a specific view, so a silent move
+    back to the old material has to be refused by the list that says which panels are
+    converted.
+    """
+    if text.count(GLASS_PANEL_CALL) != 1:
+        raise SystemExit("the log panel no longer asks the glass container for its "
+                         "background, so this mutation would be proving nothing")
+    return text.replace(GLASS_PANEL_CALL, """    self.logOverlayContainer = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
+    self.logOverlayContainer.material = NSVisualEffectMaterialHUDWindow;""", 1)
+
+
 HOSTS_VC = os.path.join(root, "Limelight", "macOS", "ViewControllers", "HostsViewController.m")
 
 RETRY_SHAPE = """    BOOL retryableElsewhere = reason == PairFailureReasonNetwork ||
@@ -663,6 +682,8 @@ MUTATIONS = [
      "preprocessor refuses", L10N_GATE),
     ("modifier-release-forgets-the-tracker", HID, release_modifiers_without_clearing_the_tracker,
      "all modifiers are released on the host while the tracker still claims they are held"),
+    ("panel-reverts-to-its-own-vibrancy", DIAGNOSTICS, give_the_log_panel_its_own_vibrancy,
+     "a stream panel goes back to drawing the pre-glass vibrancy material", LIQUID_GATE),
     ("shortcut-releases-held-modifier", HID, release_a_modifier_the_player_is_holding,
      "a synthetic shortcut releases a modifier the player is still holding", SHORTCUT_GATE),
 ]

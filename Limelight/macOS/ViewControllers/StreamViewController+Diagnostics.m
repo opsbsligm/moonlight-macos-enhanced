@@ -4,6 +4,7 @@
 //
 
 #import "StreamViewController_Internal.h"
+#import "GlassOverlayContainer.h"
 #import <objc/runtime.h>
 
 // Which click still owns a button's temporary title. The button carries the
@@ -1854,16 +1855,16 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     if (!self.logOverlayContainer) {
         return;
     }
-    NSButton *pauseBtn = [self.logOverlayContainer viewWithTag:1001];
-    NSButton *autoScrollBtn = [self.logOverlayContainer viewWithTag:1002];
-    NSButton *jumpBtn = [self.logOverlayContainer viewWithTag:1003];
-    NSButton *copyBtn = [self.logOverlayContainer viewWithTag:1004];
-    NSButton *clearBtn = [self.logOverlayContainer viewWithTag:1006];
-    NSSearchField *searchField = [self.logOverlayContainer viewWithTag:1007];
-    NSTextField *statusLabel = [self.logOverlayContainer viewWithTag:1005];
-    NSPopUpButton *categoryPopup = [self.logOverlayContainer viewWithTag:1008];
-    NSPopUpButton *modePopup = [self.logOverlayContainer viewWithTag:1009];
-    NSPopUpButton *levelPopup = [self.logOverlayContainer viewWithTag:1010];
+    NSButton *pauseBtn = [self.logOverlayContainer.contentView viewWithTag:1001];
+    NSButton *autoScrollBtn = [self.logOverlayContainer.contentView viewWithTag:1002];
+    NSButton *jumpBtn = [self.logOverlayContainer.contentView viewWithTag:1003];
+    NSButton *copyBtn = [self.logOverlayContainer.contentView viewWithTag:1004];
+    NSButton *clearBtn = [self.logOverlayContainer.contentView viewWithTag:1006];
+    NSSearchField *searchField = [self.logOverlayContainer.contentView viewWithTag:1007];
+    NSTextField *statusLabel = [self.logOverlayContainer.contentView viewWithTag:1005];
+    NSPopUpButton *categoryPopup = [self.logOverlayContainer.contentView viewWithTag:1008];
+    NSPopUpButton *modePopup = [self.logOverlayContainer.contentView viewWithTag:1009];
+    NSPopUpButton *levelPopup = [self.logOverlayContainer.contentView viewWithTag:1010];
 
     if (pauseBtn) {
         pauseBtn.title = self.logOverlayPauseUpdates ? MLString(@"Resume updates", nil) : MLString(@"Pause updates", nil);
@@ -2055,50 +2056,44 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
 
     [self resetLogOverlayState];
 
-    self.logOverlayContainer = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
-    self.logOverlayContainer.material = NSVisualEffectMaterialHUDWindow;
-    self.logOverlayContainer.blendingMode = NSVisualEffectBlendingModeWithinWindow;
-    self.logOverlayContainer.state = NSVisualEffectStateActive;
-    self.logOverlayContainer.wantsLayer = YES;
-    self.logOverlayContainer.layer.cornerRadius = 12.0;
-    self.logOverlayContainer.layer.masksToBounds = YES;
+    self.logOverlayContainer = [GlassOverlayContainer containerWithCornerRadius:12.0];
     
     // Close Button
     NSButton *closeBtn = [NSButton buttonWithTitle:MLString(@"Close", nil) target:self action:@selector(handleLogOverlayClose:)];
     closeBtn.bezelStyle = NSBezelStyleRounded;
     closeBtn.controlSize = NSControlSizeRegular;
     closeBtn.tag = 999;
-    [self.logOverlayContainer addSubview:closeBtn];
+    [self.logOverlayContainer.contentView addSubview:closeBtn];
 
     NSButton *pauseBtn = [NSButton buttonWithTitle:MLString(@"Pause updates", nil) target:self action:@selector(handleLogOverlayPauseToggle:)];
     pauseBtn.bezelStyle = NSBezelStyleRounded;
     pauseBtn.controlSize = NSControlSizeSmall;
     pauseBtn.tag = 1001;
-    [self.logOverlayContainer addSubview:pauseBtn];
+    [self.logOverlayContainer.contentView addSubview:pauseBtn];
 
     NSButton *autoScrollBtn = [NSButton buttonWithTitle:MLString(@"Pause scrolling", nil) target:self action:@selector(handleLogOverlayAutoScrollToggle:)];
     autoScrollBtn.bezelStyle = NSBezelStyleRounded;
     autoScrollBtn.controlSize = NSControlSizeSmall;
     autoScrollBtn.tag = 1002;
-    [self.logOverlayContainer addSubview:autoScrollBtn];
+    [self.logOverlayContainer.contentView addSubview:autoScrollBtn];
 
     NSButton *jumpLatestBtn = [NSButton buttonWithTitle:MLString(@"Latest", nil) target:self action:@selector(handleLogOverlayJumpLatest:)];
     jumpLatestBtn.bezelStyle = NSBezelStyleRounded;
     jumpLatestBtn.controlSize = NSControlSizeSmall;
     jumpLatestBtn.tag = 1003;
-    [self.logOverlayContainer addSubview:jumpLatestBtn];
+    [self.logOverlayContainer.contentView addSubview:jumpLatestBtn];
 
     NSButton *copyBtn = [NSButton buttonWithTitle:MLString(@"Copy default log", nil) target:self action:@selector(handleLogOverlayCopyCompact:)];
     copyBtn.bezelStyle = NSBezelStyleRounded;
     copyBtn.controlSize = NSControlSizeSmall;
     copyBtn.tag = 1004;
-    [self.logOverlayContainer addSubview:copyBtn];
+    [self.logOverlayContainer.contentView addSubview:copyBtn];
 
     NSButton *clearBtn = [NSButton buttonWithTitle:MLString(@"From now on", nil) target:self action:@selector(handleLogOverlayClearFromNow:)];
     clearBtn.bezelStyle = NSBezelStyleRounded;
     clearBtn.controlSize = NSControlSizeSmall;
     clearBtn.tag = 1006;
-    [self.logOverlayContainer addSubview:clearBtn];
+    [self.logOverlayContainer.contentView addSubview:clearBtn];
 
     self.logOverlayModePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     self.logOverlayModePopup.font = [NSFont systemFontOfSize:12 weight:NSFontWeightRegular];
@@ -2106,7 +2101,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.logOverlayModePopup.action = @selector(handleLogOverlayModeChanged:);
     self.logOverlayModePopup.tag = 1009;
     [self populateLogOverlayModePopup:self.logOverlayModePopup];
-    [self.logOverlayContainer addSubview:self.logOverlayModePopup];
+    [self.logOverlayContainer.contentView addSubview:self.logOverlayModePopup];
 
     self.logOverlayLevelPopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     self.logOverlayLevelPopup.font = [NSFont systemFontOfSize:12 weight:NSFontWeightRegular];
@@ -2114,7 +2109,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.logOverlayLevelPopup.action = @selector(handleLogOverlayLevelChanged:);
     self.logOverlayLevelPopup.tag = 1010;
     [self populateLogOverlayLevelPopup:self.logOverlayLevelPopup];
-    [self.logOverlayContainer addSubview:self.logOverlayLevelPopup];
+    [self.logOverlayContainer.contentView addSubview:self.logOverlayLevelPopup];
 
     self.logOverlaySearchField = [[NSSearchField alloc] initWithFrame:NSZeroRect];
     self.logOverlaySearchField.placeholderString = MLString(@"Search keyword / host / error code / category", nil);
@@ -2124,7 +2119,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.logOverlaySearchField.target = self;
     self.logOverlaySearchField.action = @selector(handleLogOverlaySearchChanged:);
     self.logOverlaySearchField.tag = 1007;
-    [self.logOverlayContainer addSubview:self.logOverlaySearchField];
+    [self.logOverlayContainer.contentView addSubview:self.logOverlaySearchField];
 
     self.logOverlayCategoryPopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     self.logOverlayCategoryPopup.font = [NSFont systemFontOfSize:12 weight:NSFontWeightRegular];
@@ -2132,7 +2127,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.logOverlayCategoryPopup.action = @selector(handleLogOverlayCategoryChanged:);
     self.logOverlayCategoryPopup.tag = 1008;
     [self populateLogOverlayCategoryPopup:self.logOverlayCategoryPopup];
-    [self.logOverlayContainer addSubview:self.logOverlayCategoryPopup];
+    [self.logOverlayContainer.contentView addSubview:self.logOverlayCategoryPopup];
 
     NSTextField *statusLabel = [[NSTextField alloc] initWithFrame:NSZeroRect];
     statusLabel.bezeled = NO;
@@ -2143,7 +2138,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     statusLabel.textColor = [NSColor colorWithWhite:0.85 alpha:1.0];
     statusLabel.tag = 1005;
     statusLabel.stringValue = MLString(@"Showing 0 lines", nil);
-    [self.logOverlayContainer addSubview:statusLabel];
+    [self.logOverlayContainer.contentView addSubview:statusLabel];
 
     self.logOverlayScrollView = [[NSScrollView alloc] initWithFrame:NSZeroRect];
     self.logOverlayScrollView.hasVerticalScroller = YES;
@@ -2164,7 +2159,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.logOverlayTextView.textContainer.containerSize = NSMakeSize(FLT_MAX, FLT_MAX);
 
     self.logOverlayScrollView.documentView = self.logOverlayTextView;
-    [self.logOverlayContainer addSubview:self.logOverlayScrollView];
+    [self.logOverlayContainer.contentView addSubview:self.logOverlayScrollView];
 
     [self.view addSubview:self.logOverlayContainer positioned:NSWindowAbove relativeTo:nil];
     [self viewDidLayout];
@@ -2191,7 +2186,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     // If opened from timeout menu (not stream menu), we allow closing it
     // without closing the underlying timeout menu.
     
-    NSVisualEffectView *container = self.logOverlayContainer;
+    GlassOverlayContainer *container = self.logOverlayContainer;
     self.logOverlayContainer = nil;
     self.logOverlayScrollView = nil;
     self.logOverlayTextView = nil;
@@ -2776,47 +2771,47 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
                                                    width,
                                                    height);
 
-        NSButton *closeBtn = [self.logOverlayContainer viewWithTag:999];
-        NSButton *pauseBtn = [self.logOverlayContainer viewWithTag:1001];
-        NSButton *autoScrollBtn = [self.logOverlayContainer viewWithTag:1002];
-        NSButton *jumpBtn = [self.logOverlayContainer viewWithTag:1003];
-        NSButton *copyBtn = [self.logOverlayContainer viewWithTag:1004];
-        NSButton *clearBtn = [self.logOverlayContainer viewWithTag:1006];
-        NSSearchField *searchField = [self.logOverlayContainer viewWithTag:1007];
-        NSPopUpButton *categoryPopup = [self.logOverlayContainer viewWithTag:1008];
-        NSPopUpButton *modePopup = [self.logOverlayContainer viewWithTag:1009];
-        NSPopUpButton *levelPopup = [self.logOverlayContainer viewWithTag:1010];
-        NSTextField *statusLabel = [self.logOverlayContainer viewWithTag:1005];
+        NSButton *closeBtn = [self.logOverlayContainer.contentView viewWithTag:999];
+        NSButton *pauseBtn = [self.logOverlayContainer.contentView viewWithTag:1001];
+        NSButton *autoScrollBtn = [self.logOverlayContainer.contentView viewWithTag:1002];
+        NSButton *jumpBtn = [self.logOverlayContainer.contentView viewWithTag:1003];
+        NSButton *copyBtn = [self.logOverlayContainer.contentView viewWithTag:1004];
+        NSButton *clearBtn = [self.logOverlayContainer.contentView viewWithTag:1006];
+        NSSearchField *searchField = [self.logOverlayContainer.contentView viewWithTag:1007];
+        NSPopUpButton *categoryPopup = [self.logOverlayContainer.contentView viewWithTag:1008];
+        NSPopUpButton *modePopup = [self.logOverlayContainer.contentView viewWithTag:1009];
+        NSPopUpButton *levelPopup = [self.logOverlayContainer.contentView viewWithTag:1010];
+        NSTextField *statusLabel = [self.logOverlayContainer.contentView viewWithTag:1005];
 
         CGFloat topY = height - 38.0;
         CGFloat filterY = height - 70.0;
         CGFloat statusY = height - 96.0;
         CGFloat x = 12.0;
-        if (pauseBtn && pauseBtn.superview == self.logOverlayContainer) {
+        if (pauseBtn && pauseBtn.superview == self.logOverlayContainer.contentView) {
             [pauseBtn sizeToFit];
             CGFloat btnW = MAX(74.0, pauseBtn.frame.size.width + 16.0);
             pauseBtn.frame = NSMakeRect(x, topY, btnW, 24.0);
             x += btnW + 8.0;
         }
-        if (autoScrollBtn && autoScrollBtn.superview == self.logOverlayContainer) {
+        if (autoScrollBtn && autoScrollBtn.superview == self.logOverlayContainer.contentView) {
             [autoScrollBtn sizeToFit];
             CGFloat btnW = MAX(74.0, autoScrollBtn.frame.size.width + 16.0);
             autoScrollBtn.frame = NSMakeRect(x, topY, btnW, 24.0);
             x += btnW + 8.0;
         }
-        if (jumpBtn && jumpBtn.superview == self.logOverlayContainer) {
+        if (jumpBtn && jumpBtn.superview == self.logOverlayContainer.contentView) {
             [jumpBtn sizeToFit];
             CGFloat btnW = MAX(74.0, jumpBtn.frame.size.width + 16.0);
             jumpBtn.frame = NSMakeRect(x, topY, btnW, 24.0);
             x += btnW + 8.0;
         }
-        if (copyBtn && copyBtn.superview == self.logOverlayContainer) {
+        if (copyBtn && copyBtn.superview == self.logOverlayContainer.contentView) {
             [copyBtn sizeToFit];
             CGFloat btnW = MAX(74.0, copyBtn.frame.size.width + 16.0);
             copyBtn.frame = NSMakeRect(x, topY, btnW, 24.0);
             x += btnW + 8.0;
         }
-        if (clearBtn && clearBtn.superview == self.logOverlayContainer) {
+        if (clearBtn && clearBtn.superview == self.logOverlayContainer.contentView) {
             [clearBtn sizeToFit];
             CGFloat btnW = MAX(74.0, clearBtn.frame.size.width + 16.0);
             clearBtn.frame = NSMakeRect(x, topY, btnW, 24.0);
@@ -2824,13 +2819,13 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         }
 
         CGFloat closeW = 64.0;
-        if (closeBtn && closeBtn.superview == self.logOverlayContainer) {
+        if (closeBtn && closeBtn.superview == self.logOverlayContainer.contentView) {
             [closeBtn sizeToFit];
             closeW = MAX(60.0, closeBtn.frame.size.width + 16.0);
             closeBtn.frame = NSMakeRect(width - closeW - 12.0, topY, closeW, 24.0);
         }
 
-        if (statusLabel && statusLabel.superview == self.logOverlayContainer) {
+        if (statusLabel && statusLabel.superview == self.logOverlayContainer.contentView) {
             CGFloat statusX = 12.0;
             CGFloat statusW = MAX(120.0, width - statusX - 24.0);
             statusLabel.frame = NSMakeRect(statusX, statusY, statusW, 16.0);
@@ -2842,19 +2837,19 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         CGFloat levelW = 98.0;
         CGFloat categoryW = MIN(220.0, MAX(150.0, width * 0.24));
 
-        if (modePopup && modePopup.superview == self.logOverlayContainer) {
+        if (modePopup && modePopup.superview == self.logOverlayContainer.contentView) {
             modePopup.frame = NSMakeRect(filterX, filterY, modeW, 26.0);
             filterX += modeW + filterGap;
         }
-        if (levelPopup && levelPopup.superview == self.logOverlayContainer) {
+        if (levelPopup && levelPopup.superview == self.logOverlayContainer.contentView) {
             levelPopup.frame = NSMakeRect(filterX, filterY, levelW, 26.0);
             filterX += levelW + filterGap;
         }
-        if (categoryPopup && categoryPopup.superview == self.logOverlayContainer) {
+        if (categoryPopup && categoryPopup.superview == self.logOverlayContainer.contentView) {
             categoryPopup.frame = NSMakeRect(filterX, filterY, categoryW, 26.0);
             filterX += categoryW + filterGap;
         }
-        if (searchField && searchField.superview == self.logOverlayContainer) {
+        if (searchField && searchField.superview == self.logOverlayContainer.contentView) {
             CGFloat searchW = MAX(160.0, width - filterX - 12.0);
             searchField.frame = NSMakeRect(filterX, filterY, searchW, 26.0);
         }

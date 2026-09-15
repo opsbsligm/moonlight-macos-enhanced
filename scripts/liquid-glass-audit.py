@@ -162,6 +162,63 @@ def self_test():
     return 1 if failures else 0
 
 
+# --- the panels that sit on top of the stream ------------------------------
+# Seven stream overlays each built their own NSVisualEffectView with
+# NSVisualEffectMaterialHUDWindow, the material from before the liquid-glass APIs: the
+# log browser, the stream menu, the timeout panel, the reconnect panel, the connection
+# warning, the mouse-mode hint and the notification banner, plus the menu pill. The
+# settings page and the tab bar were glass; the surfaces a player looks at for a whole
+# session were not. The seventh is the stream menu's pill, in +MenuUI.m.
+#
+# Converting a panel is a visual change and a reviewer with a live stream has to see it,
+# so the switch is a ratchet rather than a promise. Panels already on the container are
+# named, the panels still waiting are named, and the two lists plus the file have to
+# agree: a new panel built on vibrancy is refused, and so is a conversion that leaves the
+# debt list lying.
+GLASS_PANELS = ("logOverlayContainer",)
+PANELS_STILL_ON_VIBRANCY = ("overlayContainer", "timeoutOverlayContainer",
+                            "reconnectOverlayContainer", "connectionWarningContainer",
+                            "mouseModeContainer", "notificationContainer",
+                            "menuPill")
+PANEL_FILES = ("ViewControllers/StreamViewController+Diagnostics.m",
+               "ViewControllers/StreamViewController+MenuUI.m")
+
+
+def panel_problems(root):
+    problems = []
+    texts = {}
+    for name in PANEL_FILES:
+        path = os.path.join(root, "Limelight", "macOS", name)
+        if not os.path.isfile(path):
+            problems.append("%s is gone, so the panel ratchet is watching nothing" % name)
+            continue
+        texts[name] = open(path, encoding="utf-8").read()
+    if problems:
+        return problems
+
+    joined = "\n".join(texts.values())
+    diagnostics = texts.get("ViewControllers/StreamViewController+Diagnostics.m", "")
+
+    raw = joined.count("[[NSVisualEffectView alloc] init")
+    if raw != len(PANELS_STILL_ON_VIBRANCY):
+        problems.append("%d panels build their own vibrancy view, expected %d: the list "
+                        "below has to say which ones and why"
+                        % (raw, len(PANELS_STILL_ON_VIBRANCY)))
+
+    for panel in GLASS_PANELS:
+        if "%s = [GlassOverlayContainer containerWithCornerRadius:" % panel not in diagnostics:
+            problems.append("the %s panel is listed as converted but does not ask the "
+                            "container for its background" % panel)
+        if "%s.material" % panel in joined:
+            problems.append("the %s panel is on the container and still sets a vibrancy "
+                            "material" % panel)
+
+    container = os.path.join(root, "Limelight", "macOS", "Views", "GlassOverlayContainer.m")
+    if not os.path.isfile(container):
+        problems.append("GlassOverlayContainer.m is gone, so every panel is on its own again")
+    return problems
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=".")
@@ -179,9 +236,12 @@ def main():
         if name.endswith(".swift"):
             files[name] = open(os.path.join(root, name), encoding="utf-8").read()
     problems = check(files)
+    problems += panel_problems(args.repo)
     for problem in problems:
         print("violation: %s" % problem)
-    print("%d liquid glass violations across %d files" % (len(problems), len(files)))
+    print("%d liquid glass violations across %d files, %d panels checked"
+          % (len(problems), len(files) + len(PANEL_FILES), len(GLASS_PANELS)
+             + len(PANELS_STILL_ON_VIBRANCY)))
     return 1 if problems else 0
 
 

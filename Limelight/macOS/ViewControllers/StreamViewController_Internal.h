@@ -404,7 +404,10 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic, strong) NSSlider *menuBitrateSlider;
 @property (nonatomic, strong) NSTextField *menuBitrateValueLabel;
 
-@property (nonatomic, strong) NSVisualEffectView *logOverlayContainer;
+// The log browser sits on the system glass where the system has it; see
+// Limelight/macOS/Views/GlassOverlayContainer.h for why one container owns
+// that choice.
+@property (nonatomic, strong) GlassOverlayContainer *logOverlayContainer;
 @property (nonatomic, strong) NSScrollView *logOverlayScrollView;
 @property (nonatomic, strong) NSTextView *logOverlayTextView;
 @property (nonatomic, strong) NSSearchField *logOverlaySearchField;
