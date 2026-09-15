@@ -1108,6 +1108,53 @@ Constraints went from 136 to 137 on a host with an Apple toolchain (128 on one
 without, where both signature self-tests skip by name), the battery stays at 63,
 and workflow rules stay at 24.
 
+### Twenty-second audit pass (the shortcut prefix that let the held keys go)
+
+- **`Ctrl+Option` held alone is the mouse-capture escape hatch**, and it was
+  firing underneath the shortcuts that share it. The schedule test in
+  `flagsChanged:` and the expiry test 150 ms later are the same question -- "are
+  the relevant modifiers exactly Ctrl+Option" -- and nothing in between asks
+  whether a key was pressed, which is invisible to that question: a letter key
+  does not move the modifier flags at all. The shipped default table puts six
+  keyed actions behind that exact pair (`⌃⌥S` performance overlay, `⌃⌥M` mouse
+  mode, `⌃⌥G` control ball, `⌃⌥W` disconnect, `⌃⌥R` reconnect, `⌃⌥C` control
+  centre), so pressing `⌃⌥S` to read the frame rate toggled the overlay *and*,
+  150 ms later, released every modifier on the host, walked the mouse out of the
+  game and muted connection warnings for two seconds. That is the "I pressed a
+  shortcut and my held keys let go" report, and it is why a Ctrl+Option prefix
+  reads as a collision on top of any mapping.
+- **One line fixes it, in `-keyDown:`**: a key press says the player is not
+  holding modifiers alone, so the pending release is invalidated. The escape
+  hatch keeps its meaning -- modifiers without a key still uncapture -- and the
+  new harness asserts that half as well, because a "fix" that only silences the
+  release would quietly delete the feature.
+- **The eighth behavioural harness reads the shipping source rather than
+  paraphrasing it**: the schedule condition, the expiry condition, and which
+  message bumps the token are lifted out of `flagsChanged:` and `-keyDown:`,
+  compiled into one timeline, and run in two orders of the same physical gesture
+  -- modifiers-then-key must release nothing, modifiers-alone must still
+  uncapture. Removing the guard from the model has to bring the collision back,
+  which it does, naming the release and the uncapture.
+- **The battery grew a sixty-fourth mutation, and it initially slipped past.**
+  `no-key-cancel` deletes that one line and was reported MISSED, because the
+  battery's default gate is the aggregate run with `--no-battery`, which is
+  exactly where behavioural harnesses do not run. A mutation owned by a harness
+  now names that harness -- `COLLISION_GATE` -- and the reason the default cannot
+  cover it is written above the default rather than rediscovered by the next
+  person. 64/64 after that.
+- **The verification package moved into the pipeline.** Build 1457 was pulled
+  back from CI rather than built by hand: its published checksum matched the
+  downloaded bytes, `hdiutil verify` answered VALID, the drop target and
+  `CFBundleVersion 1457` read back off the mounted image, the signature audit
+  verified 6 Mach-O objects with 37 sealed resources, both language tables held
+  892 keys, and the class table read 154 names with zero missing. The older
+  unsigned build 1450 image was deleted so two plausible packages cannot sit in
+  one directory.
+
+Constraints went from 137 to 138 on a host with an Apple toolchain, the battery
+from 63 to 64, the behavioural harnesses from seven to eight, and workflow rules
+stay at 24.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
