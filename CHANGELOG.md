@@ -998,6 +998,69 @@ merge, no tag.
 Workflow rules went from 21 to 24. Constraints stay at 134 on a host with an Apple
 toolchain and the battery at 63.
 
+### Twentieth audit pass (nobody had ever opened the disk image)
+
+- **The packaging step could quietly build an uninstallable image.** It ends in
+  `|| hdiutil create`, so when `create-dmg` is unavailable the fallback runs,
+  succeeds, and writes an image whose root holds the app and nothing else -- no
+  `Applications` link, which is the drop target the whole macOS install gesture
+  depends on -- while the job that built it reports success, because it only
+  asked for an exit code. Mounting the build 1450 image shows what a correct one
+  looks like: `Applications -> /Applications` at the root, and
+  `hdiutil verify` answering VALID. `scripts/dmg-audit.py` now builds nothing and
+  asserts all of it from the mounted image, and refuses the fallback shape by
+  name rather than letting it reach a release page.
+- **Three copies of the same 10 MB image were never compared.** The artifact
+  service, the release job's download, and the asset on the release page are
+  three separate copies of a file, and nothing hashed any of them in CI: the
+  checksum in front of you had been computed on a laptop by hand. Each build job
+  now mounts, verifies and hashes its own image, publishes
+  `Moonlight-macOS-checksum-<variant>` beside `Moonlight-macOS-dmg-<variant>`,
+  and the release job refuses any image that no longer hashes to what the build
+  job recorded -- then publishes the hashes next to the files they describe, so a
+  download can be checked by whoever uses it.
+- **The build number was only ever asserted on the source side.** The image now
+  answers for itself: the architecture jobs compare the `CFBundleVersion` inside
+  the image with the number the same job resolved, and the universal job expects
+  the arm64 slice's number rather than the merged bundle's own, so an image made
+  from a stale copy of the app -- or from the wrong side's `Info.plist` after the
+  merge -- is refused on the machine that built it.
+- **A gate that only runs on a tag is a gate nobody has run.** The checksum check
+  belonged to the release job, which runs only on `refs/tags/v*`, so its download
+  pattern, its `*.sha256` glob and its refusal of a missing image would all have
+  been exercised for the first time while publishing something people install.
+  `scripts/verify-release-images.sh` owns that answer now, and a `verify_images`
+  job runs the identical line on every push against the artifacts a release would
+  publish, with the release job depending on it.
+- **The rehearsal found two things before it ever reached a runner.** The
+  `Moonlight-macOS-dmg-*` download pattern also matched the new checksum
+  artifacts, so the checksums live under `Moonlight-macOS-checksum-*` instead;
+  and the script resolved its two directory arguments after moving to its own
+  project root, which is correct only when the caller happens to stand in the
+  repository. Both were run locally against the build 1450 image, good path and
+  tampered path, and the good path hashes to
+  `eceebe05f3b910168db886d6bef91dfb4b2fd490df184d235c977a837f19a349` -- the
+  checksum already recorded for that build, now reproduced by the pipeline rather
+  than by a person.
+- **The self-test makes its own images.** A throwaway bundle is packed twice,
+  once with a drop target and once the way the fallback packs it: the good image
+  passes, the bare one is refused, a build number that disagrees is refused, and
+  one appended byte is caught twice over, by the image's own checksum and by the
+  sidecar. The half that needs no toolchain runs on every host, including the
+  ubuntu audits runner and the battery's nested runs; the half that mounts costs
+  about as much as the seven behavioural harnesses, so it belongs to the full pass
+  and says so out loud on a host that cannot mount HFS+.
+
+
+What the pipeline now answers without being told: run `34940804782`, pushed to
+this branch, built both images, mounted and hashed each, then downloaded all
+three images and all three checksums on a Linux runner and compared them in five
+seconds -- the release job's own check, on the release job's own artifacts,
+minutes after the commit rather than on release day.
+
+Constraints went from 134 to 136 on a host with an Apple toolchain (127 to 128
+without one), the battery stays at 63, and workflow rules stay at 24.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
