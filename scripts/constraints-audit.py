@@ -1521,6 +1521,67 @@ if run_battery:
               "the launch code self-test failed:\n"
               + (signature_rules.stdout + signature_rules.stderr)[-900:])
 
+# --- an API newer than the build's SDK may only be reached by name ----------
+# `effectIsInteractive` is declared in the macOS 27 SDK. The CI image compiles with
+# the 26.5 one, where the name is not a deprecation warning but a compile error, and
+# the machine whose SDK has it cannot see that at all: three jobs went red while every
+# local gate said clean. A source scan cannot derive "newer than the build SDK", so it
+# is a list, and the rule is that a listed name may only exist inside a string --
+# looked up on the object, which compiles against any SDK and does nothing where the
+# answer is absent. scripts/compile-audit.py is the second half: it compiles the
+# sources against every SDK the host actually has.
+RUNTIME_ONLY_APIS = {
+    "effectIsInteractive": "declared in a newer SDK than the CI image builds with",
+}
+
+
+def without_literals_and_comments(text):
+    """The source with string literals collapsed and comments removed.
+
+    A name written in a comment, or inside the string a runtime lookup is made with,
+    is not the identifier the compiler has to resolve -- and the comment beside this
+    very rule explains why the API is on the list, so a rule that read it as a use
+    would fail the file for documenting the rule.
+    """
+    stripped = re.sub(r'@?"(?:[^"\\]|\\.)*"', '""', text)
+    stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.S)
+    return re.sub(r"//[^\n]*", "", stripped)
+
+
+offenders = []
+for base, _, files in os.walk(os.path.join(root, "Limelight")):
+    for name in sorted(files):
+        if not name.endswith(".m"):
+            continue
+        path = os.path.join(base, name)
+        bare = without_literals_and_comments(open(path, encoding="utf-8",
+                                           errors="replace").read())
+        for api, why in RUNTIME_ONLY_APIS.items():
+            if re.search(r"\b%s\b" % re.escape(api), bare) is not None:
+                offenders.append("%s names %s directly (%s)"
+                                 % (os.path.relpath(path, root), api, why))
+check(not offenders,
+      "an API newer than the build\'s SDK is reached by lookup, never by name"
+      if not offenders else "; ".join(offenders))
+
+# --- a menu hint has to be something AppKit can compare to a key ------------
+# The settings page names keys for people (`Space`, `Return`, an arrow), and those
+# names went straight into NSMenuItem.keyEquivalent, where a word matches no key at
+# all: measured against a live NSMenu the item took neither the key the word names nor
+# the key its first letter names. The compiled answer is what scripts/
+# shortcut-menu-key-tests.py checks; here the guard that produces it is what has to
+# stay, because a hint nobody can press is invisible to every test that only asks the
+# stream view.
+menu_profile = open(os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                                 "SettingsShortcuts.swift"), encoding="utf-8").read()
+menu_guard = re.search(r"guard\s+key\.utf16\.count\s*==\s*1[\s\S]{0,240}?"
+                       r"scalar\.value\s*>=\s*0x20", menu_profile)
+check(menu_guard is not None,
+      "a menu key equivalent is limited to one printable scalar, so a key name is never "
+      "handed to AppKit as if it were a key"
+      if menu_guard else "menuKeyEquivalent no longer limits its answer to one printable "
+      "scalar, so Space and Return are handed to AppKit as words")
+
 # BUILD_NUMBER is `git rev-list --count HEAD`, which two places used to compute
 # independently: the shell script that CI injects, and the release preparer. The
 # preparer counted raw commits, so in a shallow clone it derived v1.3.9-build71

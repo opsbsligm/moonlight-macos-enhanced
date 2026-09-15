@@ -70,11 +70,11 @@ VIDEO_GATE = (os.path.join(root, "scripts", "video-enhancement-tests.py"), [])
 # The workflow audit reads the pipeline that runs every other gate, so a mutation of
 # the pipeline itself is judged by it and by nothing else.
 WF_GATE = (os.path.join(root, "scripts", "workflow-audit.py"), [])
-# The compile gate is the only one that can see a translation unit, so a mutation that
-# names an API the build's own SDK does not declare belongs to it.
-COMPILE_GATE = (os.path.join(root, "scripts", "compile-audit.py"), [])
-# The menu-hint rule lives in a Swift answer, so it is asked of the compiled profile.
-MENU_KEY_GATE = (os.path.join(root, "scripts", "shortcut-menu-key-tests.py"), [])
+# Both SDK-shaped mutations are judged by the aggregate rather than by
+# scripts/compile-audit.py itself: the audit runner has no Apple toolchain, a gate that
+# has to skip answers "I cannot tell", and the battery would read that as a mutation
+# that slipped through. compile-audit is still run for real -- by the aggregate and by
+# the CI analyze job -- and it proves its own two directions with --self-test.
 # The glass ratchet is a source rule, so a reverted panel is visible to it.
 LIQUID_GATE = (os.path.join(root, "scripts", "liquid-glass-audit.py"), [])
 # And this is the runtime half of the same rule: the container is compiled and run, so a
@@ -912,10 +912,10 @@ MUTATIONS = [
      "a keyboard translation rule releases a modifier the player is holding", SHORTCUT_GATE),
     ("naming-an-sdk-the-build-does-not-have", GLASS_CONTAINER,
      naming_an_api_only_the_newest_sdk_declares,
-     "a source file names an API the build's SDK does not declare", COMPILE_GATE),
+     "a source file names an API the build's SDK does not declare"),
     ("menu-hint-offers-a-word-instead-of-a-key", SHORTCUT_PROFILE,
      menu_hint_offers_a_word,
-     "a bound shortcut shows a hint no keyboard can produce", MENU_KEY_GATE),
+     "a bound shortcut shows a hint no keyboard can produce"),
     ("stop-without-release", WINDOW_MODES, stop_without_release, "the stream stops while the host still holds a key"),
     ("swift-debug-condition-gone", PBXPROJ, drop_swift_debug_condition,
      "Debug-only Swift code stops compiling while the Objective-C half keeps calling it"),

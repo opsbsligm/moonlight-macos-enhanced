@@ -1477,7 +1477,22 @@ stay at 140, and the behavioural harnesses stay at ten.
   does is accepted. It is wired into the aggregate and into the CI analyze
   job, which points it at the derived data its own scan produced. Reintucing
   the old `effectIsInteractive` mistake is now a planted mutation
-  (`naming-an-sdk-the-build-does-not-have`), and the gate refuses it.
+  (`naming-an-sdk-the-build-does-not-have`).
+- **Two aggregate rules, because a gate that cannot answer must not own a
+  mutation.** The first run of this round went red on the Ubuntu audit job, and
+  the reason was not the product: the mutation above was assigned to
+  `compile-audit.py`, which has no Apple toolchain on that runner. It skipped,
+  answered "I cannot tell", and the battery read the skip as a mutation that had
+  got through. The Swift menu harness exits for the same reason, so the
+  menu-hint mutation was owned by a pass that meant nothing there. Both now
+  belong to the aggregate, which can answer on every image: a short list of
+  names newer than the build's SDK may only appear inside a string literal,
+  reached by a runtime lookup that compiles anywhere and does nothing where the
+  answer is absent -- comments and literals are stripped first, or the comment
+  explaining the list would fail the file that documents it -- and the menu
+  guard has to still be in the source that produces the hint. Each compile gate
+  stays wired in for real, as the second look for a name nobody thought to
+  list, and proves its own two directions with `--self-test`.
 
 ### Audited, and not changed
 
@@ -1494,7 +1509,7 @@ stay at 140, and the behavioural harnesses stay at ten.
   press and its release together.
 
 The battery went from 71 to 74, the behavioural harnesses from ten to
-eleven, the aggregate prints 144 lines of `ok` with no failures, and
+eleven, the aggregate prints 146 lines of `ok` with no failures, and
 workflow rules stay at 25.
 
 ## [1.3.9-build19] - 2026-08-03
