@@ -9,6 +9,7 @@
 #import "StreamingSessionManager.h"
 #import <QuartzCore/QuartzCore.h>
 #import "StreamViewMac.h"
+#import "GlassOverlayContainer.h"
 #import "AppsViewController.h"
 #import "NSWindow+Moonlight.h"
 #import "AlertPresenter.h"
