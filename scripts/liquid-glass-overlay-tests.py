@@ -155,19 +155,27 @@ int main(void) {
 
         // Legibility. These panels put white labels on the material, and the stream
         // window pins a dark HUD appearance for them (StreamViewController.m sets
-        // NSAppearanceNameVibrantDark). Measured inside that appearance, and the same
-        // panel measured in a light window, so the number cannot be a constant.
+        // NSAppearanceNameVibrantDark). Two claims, one portable and one not.
+        //
+        // The portable one is the contract the labels depend on: inside the appearance
+        // the stream window pins, the panel resolves to dark, and inside a light window
+        // it does not. If those two agree, white-on-HUD has nothing to lean on.
+        //
+        // The rest is the material itself, and only where the host will render an
+        // offscreen glass panel at all: a GitHub runner composites nothing and hands
+        // back a flat capture, which is a fact about the runner, not about the design.
+        // The harness says which case it is in instead of failing or pretending.
+        NSString *darkMatch = nil, *lightMatch = nil;
+        double darkContrast = -1, lightContrast = -1;
+        BOOL rendered = NO;   // decided once, from the dark capture only
         for (int appearanceCase = 0; appearanceCase < 2; appearanceCase++) {
             BOOL hudDark = appearanceCase == 0;
             NSWindow *legible = [[NSWindow alloc]
                 initWithContentRect:NSMakeRect(0, 0, 400, 200)
                           styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered
                             defer:NO];
-            if (hudDark) {
-                legible.appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantDark];
-            } else {
-                legible.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
-            }
+            legible.appearance = [NSAppearance appearanceNamed:
+                hudDark ? NSAppearanceNameVibrantDark : NSAppearanceNameAqua];
             legible.contentView.wantsLayer = YES;
             legible.contentView.layer.backgroundColor = [NSColor whiteColor].CGColor;
 
@@ -183,29 +191,62 @@ int main(void) {
             [legible layoutIfNeeded];
             [legible displayIfNeeded];
 
+            NSString *matched = [contrastPanel.effectiveAppearance
+                bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,
+                                                    NSAppearanceNameDarkAqua]];
+            if (hudDark) {
+                darkMatch = matched;
+            } else {
+                lightMatch = matched;
+            }
+
             NSBitmapImageRep *bitmap =
                 [contrastPanel bitmapImageRepForCachingDisplayInRect:contrastPanel.bounds];
             [contrastPanel cacheDisplayInRect:contrastPanel.bounds toBitmapImageRep:bitmap];
-            double total = 0, samples = 0;
+            double total = 0, lowest = 1, highest = 0, samples = 0;
             for (NSInteger y = 10; y < bitmap.pixelsHigh - 10; y += 2) {
                 for (NSInteger x = 10; x < bitmap.pixelsWide - 10; x += 2) {
-                    total += [[bitmap colorAtX:x y:y] brightnessComponent];
-                    samples += 1;
+                    double luma = [[bitmap colorAtX:x y:y] brightnessComponent];
+                    total += luma; samples += 1;
+                    lowest = fmin(lowest, luma); highest = fmax(highest, luma);
                 }
             }
             double background = samples ? total / samples : 1.0;
             double contrast = (1.0 + 0.05) / (fmax(background, 0.0) + 0.05);
-            NSString *ratio = [NSString stringWithFormat:
-                @"white labels read at %.2f:1 against the panel in the %@ appearance",
-                contrast, hudDark ? @"dark HUD" : @"light"];
-            if (hudDark) {
-                failures += !Append(ratio, contrast >= 4.5);
-            } else {
-                // The measurement has to move with the appearance, or it measures nothing.
-                failures += !Append([ratio stringByAppendingString:
-                                     @" -- this one must fail, it is the shape that is refused"],
-                                    contrast < 4.5);
+            // The light panel is legitimately flat -- white glass under white text has
+            // nothing to vary -- so "can this host render glass offscreen" is decided
+            // from the dark capture alone, and both numbers are then taken at face value.
+            if (hudDark && highest - lowest > 0.02) {
+                rendered = YES;
             }
+            if (hudDark) {
+                darkContrast = contrast;
+            } else {
+                lightContrast = contrast;
+            }
+        }
+
+        failures += !Append([NSString stringWithFormat:
+                             @"the panel resolves %@ under the stream window's HUD "
+                             @"appearance and %@ under a light one",
+                             darkMatch ?: @"nothing", lightMatch ?: @"nothing"],
+                            [darkMatch isEqualToString:NSAppearanceNameDarkAqua]
+                            && [lightMatch isEqualToString:NSAppearanceNameAqua]);
+
+        if (rendered) {
+            failures += !Append([NSString stringWithFormat:
+                                 @"white labels read at %.2f:1 against the glass in the "
+                                 @"dark HUD appearance", darkContrast],
+                                darkContrast >= 4.5);
+            // The same measurement in a light appearance has to be the worse one, or the
+            // number above is a constant wearing a measurement's clothes.
+            failures += !Append([NSString stringWithFormat:
+                                 @"the same panel in a light appearance reads %.2f:1, which "
+                                 @"is the shape this refuses", lightContrast],
+                                lightContrast < darkContrast);
+        } else {
+            printf("skip  the contrast measurement: this host renders no offscreen glass, "
+                   "so the capture is flat\n");
         }
 
         // The pill asks for interactive glass; a view that ignores the property looks
