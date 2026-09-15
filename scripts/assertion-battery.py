@@ -49,6 +49,9 @@ RENDER_PROBE = os.path.join(root, "scripts", "render-probe.py")
 # A mutation is judged by the gate that is supposed to notice it. Both gates run an
 # extra proof of their own when invoked normally, so the battery has to tell the
 # gate it is asking not to ask back.
+# The default gate is the aggregate without the battery, so a mutation owned by a
+# behavioural harness has to name that harness: the aggregate's full pass is where
+# harnesses run, and asking for it here would run the battery inside the battery.
 AUDIT_GATE = (os.path.join(root, "scripts", "constraints-audit.py"), ["--no-battery"])
 # The localization gate has no opt-out: its self-test is part of the gate.
 L10N_GATE = (L10N, [])
@@ -56,6 +59,7 @@ ANALYZER_GATE = (ANALYZER, ["--self-test"])
 # The synthetic-shortcut gate is its own harness: it compiles the state machine, so
 # only it can see a packet sequence that strands the modifier tracker.
 SHORTCUT_GATE = (os.path.join(root, "scripts", "keyboard-shortcut-modifier-tests.py"), [])
+COLLISION_GATE = (os.path.join(root, "scripts", "modifier-only-release-collision-tests.py"), [])
 # The glass ratchet is a source rule, so a reverted panel is visible to it.
 LIQUID_GATE = (os.path.join(root, "scripts", "liquid-glass-audit.py"), [])
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -653,8 +657,26 @@ def aggregate_stops_running_an_audit(text):
         MEMBERSHIP_STEP, 'os.path.join(root, "scripts", "l10n-audit.py")', 1)
 
 
+# The mouse-capture escape hatch is Ctrl+Option held alone, and the shipped default
+# shortcut table puts six keyed actions behind that same pair. The guard is one line
+# at the top of -keyDown:, and its absence is invisible in every other gate: the
+# shortcut still fires, the overlay still toggles, and the only thing that happens
+# is that the player's held modifiers let go on the host 150 ms later.
+KEY_DOWN_PENDING_CANCEL = """- (void)keyDown:(NSEvent *)event {
+    // A pending modifier-only release means"""
+
+
+def drop_pending_cancel(text):
+    once(text, KEY_DOWN_PENDING_CANCEL, "keyDown's cancellation of a pending release")
+    start = text.index(KEY_DOWN_PENDING_CANCEL)
+    marker = "    self.pendingOptionUncaptureToken += 1;\n"
+    return text[:start] + text[start:].replace(marker, "", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
+    ("no-key-cancel", CAPTURE, drop_pending_cancel,
+     "a key press no longer cancels a pending modifier-only release", COLLISION_GATE),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
     ("drop-release", HID, drop_release, "keyUp guard no longer clears the record"),
     ("late-guard", HID, late_guard, "keyUp guard runs after the release is sent"),

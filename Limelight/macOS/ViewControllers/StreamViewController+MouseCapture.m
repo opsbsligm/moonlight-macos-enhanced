@@ -2299,6 +2299,15 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)keyDown:(NSEvent *)event {
+    // A pending modifier-only release means "the player is holding Ctrl+Option and
+    // nothing else", and a key press says otherwise. The window is 150 ms and a
+    // letter key does not move the modifier flags at all, so the expiry test still
+    // reads Ctrl+Option after Ctrl+Option+S -- and six shipped shortcuts sit behind
+    // that exact modifier set. Without this line the release fires on top of the
+    // shortcut the player just pressed: every modifier let go on the host, the mouse
+    // out of the game, and connection warnings muted for two seconds.
+    self.pendingOptionUncaptureToken += 1;
+
     // The settings page is a child of this content region, so a key the page does
     // not use still walks the responder chain back to this view. While the page
     // owns the region that key belongs to the page: forwarding it would make

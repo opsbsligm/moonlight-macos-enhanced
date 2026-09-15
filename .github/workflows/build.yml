@@ -191,6 +191,14 @@ jobs:
       # rebuilds the pre-fix shape to prove the scenarios can fail.
       run: python3 scripts/keyboard-concurrency-tests.py
 
+    - name: Verify a shortcut cannot fire a pending modifier-only release
+      # Ctrl+Option held alone is the mouse-capture escape hatch: 150 ms later the
+      # app lets every modifier go on the host and uncaptures. Six shipped shortcuts
+      # sit behind that same modifier pair, and a letter key does not move the
+      # modifier flags, so the timer used to fire on top of the shortcut -- modelled
+      # here as a timeline and shown to collide again when the guard is removed.
+      run: python3 scripts/modifier-only-release-collision-tests.py
+
     - name: Verify the modifier mapping sends the key that was pressed
       # This module is the single source of truth for Command-to-Win, Control-to-Ctrl,
       # Option-to-Alt and Shift-to-Shift, each side to its own side, and it was the one
