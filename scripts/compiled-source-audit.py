@@ -55,14 +55,37 @@ def declared_classes(source_root, exclusions):
     return found, skipped
 
 
+def arch_slices(binary):
+    """The architectures a Mach-O carries, as `lipo` sees them."""
+    info = subprocess.run([LIPO, "-archs", binary], capture_output=True, text=True)
+    if info.returncode != 0:
+        raise SystemExit("error: %s could not be read (%s), so this audit cannot tell "
+                         "what was compiled" % (binary, info.stderr.strip() or "no reason"))
+    return info.stdout.split()
+
+
 def class_names_in(binary, arch, tmpdir=None):
-    """Return the exact __objc_classname table of one architecture slice."""
+    """Return the exact __objc_classname table of one architecture slice.
+
+    The slice matters, and so does the shape of the file it arrives in. A
+    per-architecture build hands over a thin binary and the release job a fat one:
+    asking `lipo -info` whether the word fat appears in its answer is not a way to
+    tell them apart, because a single-architecture file answers "Non-fat", and the
+    first version of this audit then tried to thin a file that had one slice and
+    died on both build jobs while passing at home on a universal artifact.
+    """
+    slices = arch_slices(binary)
     target = binary
-    thin = None
     if arch:
-        info = subprocess.run([LIPO, "-info", binary], capture_output=True, text=True)
-        if "fat" in (info.stdout + info.stderr):
-            thin = os.path.join(tmpdir or "/tmp", "compiled-source-audit-thin")
+        if arch not in slices:
+            raise SystemExit("error: %s carries %s and not the %s slice this job was "
+                             "asked to check, so nothing compiled here can be read "
+                             "from it" % (binary, " ".join(slices) or "no slice at all",
+                                          arch))
+        if len(slices) > 1:
+            import tempfile
+            handle, thin = tempfile.mkstemp(prefix="compiled-source-audit-")
+            os.close(handle)
             subprocess.run([LIPO, "-thin", arch, "-output", thin, binary], check=True,
                            capture_output=True)
             target = thin
@@ -128,6 +151,16 @@ def self_test(binary, arch, root):
     if overlap < len(declared) * 0.5:
         failures.append("only %d of %d declared classes appear in the binary; the "
                         "section was probably read wrongly" % (overlap, len(declared)))
+    # An artifact that does not carry the slice under test is a different question,
+    # and answering it with the other slice's class list would report a defect that
+    # is not in this build -- or hide one that is.
+    try:
+        class_names_in(binary, "ppc64-never-built")
+        failures.append("an architecture the binary does not carry was accepted")
+    except SystemExit as refused:
+        if "slice" not in str(refused):
+            failures.append("the missing slice was refused for the wrong reason: %s"
+                            % refused)
     # Padding bytes at the end of the table must not count as classes.
     if any(not IDENTIFIER.match(name) for name in present):
         failures.append("a non-identifier was counted as a class name")
