@@ -936,4 +936,31 @@
 "Enter the frame rate you want, in FPS." = "请输入期望的帧率（FPS）。";
 
 /* Application name, shown as the window title */
+
+/* Compact rows the log browser shows: a category, then one sentence */
+"System" = "系统";
+"Discovery" = "发现";
+"Log" = "日志";
+"Network stack" = "网络栈";
+"Identity" = "身份";
+"Streaming" = "串流";
+"AppKit menu consistency problem" = "AppKit 菜单一致性异常";
+"%@: %@" = "%@: %@";
+"Resolved address %@" = "地址解析 %@";
+"Repeated log lines suppressed" = "重复日志抑制摘要";
+"Request failed %@, falling back automatically" = "请求失败 %@，正在自动回退";
+"NSURLError %@" = "NSURLError %@";
+"Connection layer error %@" = "连接层异常 %@";
+"FEC shards recovered" = "FEC 分片已恢复";
+"Scanning for hosts" = "开始扫描主机";
+"Starting mDNS discovery" = "开始 mDNS 发现";
+"Stopped scanning for hosts" = "停止扫描主机";
+"Stopping mDNS discovery" = "停止 mDNS 发现";
+"New host %@" = "新主机 %@";
+"Server certificate does not match the saved identity" = "服务器证书与已保存身份不匹配";
+"Received a response from the wrong host" = "收到错误主机的响应";
+"App list retrieved" = "应用列表获取成功";
+"Stream target selected" = "已选择串流目标";
+"Stream path classification complete" = "已完成路径判定";
+"Input statistics summary" = "输入统计摘要";
 "Moonlight" = "Moonlight";

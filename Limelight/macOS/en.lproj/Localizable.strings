@@ -936,4 +936,31 @@
 "Enter the frame rate you want, in FPS." = "Enter the frame rate you want, in FPS.";
 
 /* Application name, shown as the window title */
+
+/* Compact rows the log browser shows: a category, then one sentence */
+"System" = "System";
+"Discovery" = "Discovery";
+"Log" = "Log";
+"Network stack" = "Network stack";
+"Identity" = "Identity";
+"Streaming" = "Streaming";
+"AppKit menu consistency problem" = "AppKit menu consistency problem";
+"%@: %@" = "%@: %@";
+"Resolved address %@" = "Resolved address %@";
+"Repeated log lines suppressed" = "Repeated log lines suppressed";
+"Request failed %@, falling back automatically" = "Request failed %@, falling back automatically";
+"NSURLError %@" = "NSURLError %@";
+"Connection layer error %@" = "Connection layer error %@";
+"FEC shards recovered" = "FEC shards recovered";
+"Scanning for hosts" = "Scanning for hosts";
+"Starting mDNS discovery" = "Starting mDNS discovery";
+"Stopped scanning for hosts" = "Stopped scanning for hosts";
+"Stopping mDNS discovery" = "Stopping mDNS discovery";
+"New host %@" = "New host %@";
+"Server certificate does not match the saved identity" = "Server certificate does not match the saved identity";
+"Received a response from the wrong host" = "Received a response from the wrong host";
+"App list retrieved" = "App list retrieved";
+"Stream target selected" = "Stream target selected";
+"Stream path classification complete" = "Stream path classification complete";
+"Input statistics summary" = "Input statistics summary";
 "Moonlight" = "Moonlight";

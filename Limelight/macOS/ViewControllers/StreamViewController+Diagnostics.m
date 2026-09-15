@@ -1396,6 +1396,16 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
     return NSIntegerMin;
 }
 
+// A log row is three things: a level, a category, and one sentence. The level stays
+// ASCII because the browser's own filters read it. The category and the sentence are
+// prose, and are translated where the row is made for a person to read. They used to
+// be written into this file as Chinese, so the English interface showed Chinese log
+// rows, and no table was ever consulted about it.
+static NSString *MLLogRow(NSString *level, NSString *category, NSString *message) {
+    return [NSString stringWithFormat:@"<%@> [%@] %@",
+                                      level, MLString(category, nil), MLString(message, nil)];
+}
+
 - (NSDictionary<NSString *, NSString *> *)compactPresentationForLogLine:(NSString *)rawLine {
     NSString *line = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (line.length == 0) {
@@ -1407,7 +1417,7 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
     if ([line localizedCaseInsensitiveContainsString:@"Internal inconsistency in menus"]) {
         return @{
             @"key": @"noise.appkit.menu",
-            @"line": @"<WARN> [系统] AppKit 菜单一致性异常"
+            @"line": MLLogRow(@"WARN", @"System", @"AppKit menu consistency problem")
         };
     }
 
@@ -1432,7 +1442,8 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
         }
         return @{
             @"key": [NSString stringWithFormat:@"noise.discovery.summary.%@.%@", host, state],
-            @"line": [NSString stringWithFormat:@"<INFO> [发现] %@：%@", host, state]
+            @"line": MLLogRow(@"INFO", @"Discovery",
+                      [NSString stringWithFormat:MLString(@"%@: %@", nil), host, state])
         };
     }
 
@@ -1448,7 +1459,8 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
         }
         return @{
             @"key": [NSString stringWithFormat:@"noise.discovery.resolved.%@", host],
-            @"line": [NSString stringWithFormat:@"<INFO> [发现] 地址解析 %@", host]
+            @"line": MLLogRow(@"INFO", @"Discovery",
+                      [NSString stringWithFormat:MLString(@"Resolved address %@", nil), host])
         };
     }
 
@@ -1459,7 +1471,7 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
     if ([line containsString:@"[curated] repeated "]) {
         return @{
             @"key": @"noise.curated.repeat",
-            @"line": @"<WARN> [日志] 重复日志抑制摘要"
+            @"line": MLLogRow(@"WARN", @"Log", @"Repeated log lines suppressed")
         };
     }
 
@@ -1467,7 +1479,8 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
         NSString *code = errorCode ?: @"unknown";
         return @{
             @"key": [NSString stringWithFormat:@"noise.net.%@", code],
-            @"line": [NSString stringWithFormat:@"<WARN> [网络] 请求失败 %@，正在自动回退", code]
+            @"line": MLLogRow(@"WARN", @"Network",
+                      [NSString stringWithFormat:MLString(@"Request failed %@, falling back automatically", nil), code])
         };
     }
 
@@ -1475,7 +1488,8 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
         NSString *code = errorCode ?: @"unknown";
         return @{
             @"key": [NSString stringWithFormat:@"noise.net.%@", code],
-            @"line": [NSString stringWithFormat:@"<WARN> [网络] NSURLError %@", code]
+            @"line": MLLogRow(@"WARN", @"Network",
+                      [NSString stringWithFormat:MLString(@"NSURLError %@", nil), code])
         };
     }
 
@@ -1489,38 +1503,39 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
         NSString *code = errorCode ?: @"unknown";
         return @{
             @"key": [NSString stringWithFormat:@"noise.net.%@", code],
-            @"line": [NSString stringWithFormat:@"<WARN> [网络栈] 连接层异常 %@", code]
+            @"line": MLLogRow(@"WARN", @"Network stack",
+                      [NSString stringWithFormat:MLString(@"Connection layer error %@", nil), code])
         };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Recovered 1 audio data shards from block"]) {
         return @{
             @"key": @"stream.audio.fec.recovered",
-            @"line": @"<INFO> [音频] FEC 分片已恢复"
+            @"line": MLLogRow(@"INFO", @"Audio", @"FEC shards recovered")
         };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Recovered 1 video data shards from frame"]) {
         return @{
             @"key": @"stream.video.fec.recovered",
-            @"line": @"<INFO> [视频] FEC 分片已恢复"
+            @"line": MLLogRow(@"INFO", @"Video", @"FEC shards recovered")
         };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Starting discovery"]) {
-        return @{ @"key": @"default.discovery.start", @"line": @"<INFO> [发现] 开始扫描主机" };
+        return @{ @"key": @"default.discovery.start", @"line": MLLogRow(@"INFO", @"Discovery", @"Scanning for hosts") };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Starting mDNS discovery"]) {
-        return @{ @"key": @"default.discovery.mdns.start", @"line": @"<INFO> [发现] 开始 mDNS 发现" };
+        return @{ @"key": @"default.discovery.mdns.start", @"line": MLLogRow(@"INFO", @"Discovery", @"Starting mDNS discovery") };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Stopping discovery"]) {
-        return @{ @"key": @"default.discovery.stop", @"line": @"<INFO> [发现] 停止扫描主机" };
+        return @{ @"key": @"default.discovery.stop", @"line": MLLogRow(@"INFO", @"Discovery", @"Stopped scanning for hosts") };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Stopping mDNS discovery"]) {
-        return @{ @"key": @"default.discovery.mdns.stop", @"line": @"<INFO> [发现] 停止 mDNS 发现" };
+        return @{ @"key": @"default.discovery.mdns.stop", @"line": MLLogRow(@"INFO", @"Discovery", @"Stopping mDNS discovery") };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Found new host:"]) {
@@ -1528,33 +1543,35 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
         host = [host stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         return @{
             @"key": [NSString stringWithFormat:@"default.discovery.host.%@", host ?: @"unknown"],
-            @"line": [NSString stringWithFormat:@"<INFO> [发现] 新主机 %@", host.length > 0 ? host : @"unknown"]
+            @"line": MLLogRow(@"INFO", @"Discovery",
+                      [NSString stringWithFormat:MLString(@"New host %@", nil),
+                                                       host.length > 0 ? host : @"unknown"])
         };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Server certificate mismatch"]) {
-        return @{ @"key": @"default.identity.cert", @"line": @"<WARN> [身份] 服务器证书与已保存身份不匹配" };
+        return @{ @"key": @"default.identity.cert", @"line": MLLogRow(@"WARN", @"Identity", @"Server certificate does not match the saved identity") };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Received response from incorrect host:"]) {
-        return @{ @"key": @"default.identity.host", @"line": @"<WARN> [身份] 收到错误主机的响应" };
+        return @{ @"key": @"default.identity.host", @"line": MLLogRow(@"WARN", @"Identity", @"Received a response from the wrong host") };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"App list successfully retreived"]
         || [line localizedCaseInsensitiveContainsString:@"App list successfully retrieved"]) {
-        return @{ @"key": @"default.applist.success", @"line": @"<INFO> [主机] 应用列表获取成功" };
+        return @{ @"key": @"default.applist.success", @"line": MLLogRow(@"INFO", @"Host", @"App list retrieved") };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Stream target selection:"]) {
-        return @{ @"key": @"default.stream.target", @"line": @"<INFO> [串流] 已选择串流目标" };
+        return @{ @"key": @"default.stream.target", @"line": MLLogRow(@"INFO", @"Streaming", @"Stream target selected") };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Stream target classification:"]) {
-        return @{ @"key": @"default.stream.classification", @"line": @"<INFO> [串流] 已完成路径判定" };
+        return @{ @"key": @"default.stream.classification", @"line": MLLogRow(@"INFO", @"Streaming", @"Stream path classification complete") };
     }
 
     if ([line localizedCaseInsensitiveContainsString:@"Input summary ("]) {
-        return @{ @"key": @"default.input.summary", @"line": @"<INFO> [输入] 输入统计摘要" };
+        return @{ @"key": @"default.input.summary", @"line": MLLogRow(@"INFO", @"Input", @"Input statistics summary") };
     }
 
     return @{

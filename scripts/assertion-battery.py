@@ -489,6 +489,24 @@ def the_flags_path_asks_for_the_right_hand(text):
         FLAGS_COMMAND, "        out |= KMR_RemoteMaskForPhysical(KMR_Phys_RightCommand);", 1)
 
 
+HIDDEN_LOG_ROW = 'MLLogRow(@"WARN", @"Log", @"Repeated log lines suppressed")'
+
+
+def hide_a_row_behind_a_variable(text):
+    """Correct code, and a key no scan can ask a table about."""
+    return once(text, HIDDEN_LOG_ROW, "the suppression row").replace(
+        HIDDEN_LOG_ROW, 'MLLogRow(@"WARN", logCategory, @"Repeated log lines suppressed")', 1)
+
+
+ONE_ARGUMENT_CALL = 'MLString(@"NSURLError %@", nil)'
+
+
+def call_the_localizer_with_one_argument(text):
+    """The tree does not build: MLString takes two arguments, this hands it one."""
+    return once(text, ONE_ARGUMENT_CALL, "the NSURLError row").replace(
+        ONE_ARGUMENT_CALL, 'MLString(@"NSURLError %@")', 1)
+
+
 HOSTS_VC = os.path.join(root, "Limelight", "macOS", "ViewControllers", "HostsViewController.m")
 
 RETRY_SHAPE = """    BOOL retryableElsewhere = reason == PairFailureReasonNetwork ||
@@ -602,6 +620,11 @@ MUTATIONS = [
      "a modifier is sent as the virtual key of a different key"),
     ("flags-invent-a-side", RESOLVER_M, the_flags_path_asks_for_the_right_hand,
      "the flags path answers a modifier with a side it cannot know"),
+    ("log-row-hidden-from-scan", DIAGNOSTICS, hide_a_row_behind_a_variable,
+     "a log row hides its category behind a value no scan can read", L10N_GATE),
+    ("localizer-called-with-one-argument", DIAGNOSTICS, call_the_localizer_with_one_argument,
+     "a two-argument localizer macro is invoked with one argument, which the "
+     "preprocessor refuses", L10N_GATE),
 ]
 
 
