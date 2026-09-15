@@ -1481,6 +1481,19 @@ if run_battery:
               "the disk image self-test failed:\n"
               + (image_rules.stdout + image_rules.stderr)[-900:])
 
+        # Same reasoning as the image self-test beside it: this one compiles two
+        # throwaway bundles to test the signature gate, so it belongs to the full pass
+        # and to the macOS build jobs, not to the battery's nested runs.
+        signature_rules = subprocess.run([sys.executable,
+                                          os.path.join(root, "scripts", "launch-code-audit.py"),
+                                          "--self-test"],
+                                         capture_output=True, text=True, cwd=root)
+        check(signature_rules.returncode == 0,
+              "the signature gate accepts a sealed bundle and refuses an unsigned one"
+              if signature_rules.returncode == 0 else
+              "the launch code self-test failed:\n"
+              + (signature_rules.stdout + signature_rules.stderr)[-900:])
+
 # BUILD_NUMBER is `git rev-list --count HEAD`, which two places used to compute
 # independently: the shell script that CI injects, and the release preparer. The
 # preparer counted raw commits, so in a shallow clone it derived v1.3.9-build71

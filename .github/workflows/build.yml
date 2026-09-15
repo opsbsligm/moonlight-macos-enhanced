@@ -348,7 +348,16 @@ jobs:
       run: |
         mkdir -p dist/app
         cp -R "build/Build/Products/Release/Moonlight.app" "dist/app/Moonlight.app"
+        ./scripts/codesign-bundle.sh "dist/app/Moonlight.app"
         tar -czf "dist/Moonlight-macOS-${{ matrix.variant }}.app.tar.gz" -C dist/app Moonlight.app
+
+    - name: Verify every binary the ${{ matrix.variant }} bundle embeds
+      # The release shipped a main executable with no signature at all and two
+      # frameworks whose old seals listed headers this build does not ship, so all
+      # three failed `codesign --verify` -- and the bundle was not sealed either, so
+      # nobody could tell a shipped app from a modified one. This reads the bundle the
+      # tarball and the DMG are both made from.
+      run: python3 scripts/launch-code-audit.py dist/app/Moonlight.app --report-identity
 
     - name: Create ${{ matrix.variant }} DMG
       run: |
@@ -550,6 +559,16 @@ jobs:
         for arch in arm64 x86_64; do
           python3 scripts/compiled-source-audit.py "$main_binary" --arch "$arch"
         done
+
+    - name: Sign the merged bundle
+      # A universal merge is `lipo -create` over two signed binaries, which produces a
+      # fat file whose slices carry the wrong hashes -- this is where the shipped
+      # frameworks got the seals that failed verification. The merged bundle is signed
+      # after the merge and before anything is made from it.
+      run: ./scripts/codesign-bundle.sh dist/universal/Moonlight.app
+
+    - name: Verify every binary the universal bundle embeds
+      run: python3 scripts/launch-code-audit.py dist/universal/Moonlight.app --report-identity
 
     - name: Create universal DMG
       run: |
