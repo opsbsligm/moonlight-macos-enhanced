@@ -34,8 +34,9 @@ APP_CELL = os.path.join(root, "Limelight", "macOS", "ViewControllers", "AppCell.
 PREPARER = os.path.join(root, "scripts", "prepare-release.py")
 BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
 WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
-PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
 AUDIT = os.path.join(root, "scripts", "constraints-audit.py")
+INTERNAL = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                        "StreamViewController_Internal.h")
 WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                              "StreamViewController+WindowModes.m")
 VIDEO_RULES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -612,6 +613,18 @@ def fold_on_prose_again(text):
 # binary: the feature simply is not in the product. The membership audit reads
 # that file, so the entry has to be loadable.
 GLASS_MEMBER_ENTRY = "\t\t\t\tmacOS/Views/GlassOverlayContainer.m,\n"
+# The internal header declared a property whose class it could not see, so every
+# translation unit that reached it failed to compile and the feature lived in no
+# binary. Only a build of the app itself notices, and this host cannot run one, so
+# the rule that does notice is shape: the class has to be reachable from the header.
+BLIND_IMPORT = '#import "GlassOverlayContainer.h"\n'
+
+
+def header_blind_to_its_type(text):
+    return once(text, BLIND_IMPORT, "the internal header's import").replace(
+        BLIND_IMPORT, "", 1)
+
+
 MEMBERSHIP_STEP = 'os.path.join(root, "scripts", "source-membership-audit.py")'
 
 
@@ -712,6 +725,8 @@ MUTATIONS = [
      "a source file belongs to no target, so nothing ever compiles it"),
     ("aggregate-drops-a-ci-audit", AUDIT, aggregate_stops_running_an_audit,
      "the local aggregate stops running an audit that CI still runs"),
+    ("header-names-a-type-it-cannot-see", INTERNAL, header_blind_to_its_type,
+     "a property names a first-party class that its own imports cannot see"),
 ]
 
 

@@ -915,25 +915,127 @@ orphaned = sorted(set(gate_names) - reachable)
 check(not orphaned, "every gate in scripts is reachable from the workflow"
       if not orphaned else "written but never run by CI: " + ", ".join(orphaned))
 
-# Running a gate is only worth something if the people who can run it do run it.
-# The audits job runs five scripts and a local run exercised two of them, so a
-# source file that no target compiled read as green here, reached CI, and failed
-# there eight minutes before a release. The job list is now the specification:
-# every audit it runs has to be reachable from this file, so one command here
-# gives the same verdict as that job and a dropped step is a finding.
-audit_job = workflow.split("\n  audit:")[-1] if "\n  audit:" in workflow else ""
-audit_job = audit_job.split("\n  build_arch:")[0]
-audits_in_job = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", audit_job)))
+# A local verdict that means less than CI's is not a verdict. The audits job runs
+# five audit scripts and the local habit exercised two of them, so a source file
+# that belonged to no target read as green here, reached a runner, and failed eight
+# minutes before a release; the same shape then cost a second round, because the
+# build jobs ran a probe harness that no local command ran either. The workflow is
+# now the specification: every gate script it names has to be run here, or be named
+# below with the thing that makes it impossible to run here. A reason that stops
+# being true fails the same way an expired library card does.
+CI_ONLY = {
+    # script: a marker that has to stay true in that script for the excuse to hold
+    "compiled-source-audit.py": "Mach-O",
+    "render-probe.py": "xcodebuild",
+}
+gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
+                           - {"constraints-audit.py"})
 here = open(os.path.join(root, "scripts", "constraints-audit.py"),
             encoding="utf-8").read().splitlines()
-not_run_here = [name for name in audits_in_job
-                if name != "constraints-audit.py"
+not_run_here = [name for name in gates_in_workflow
+                if name not in CI_ONLY
                 and not any(name in line and INVOKES.search(line) for line in here)]
-check(bool(audits_in_job) and not not_run_here,
-      "the local aggregate runs every audit the CI audits job runs"
-      if audits_in_job and not not_run_here else
-      "CI runs an audit that no local command runs: "
-      + (", ".join(not_run_here) if audits_in_job else "the audits job names no script"))
+stale_excuses = [name for name, marker in sorted(CI_ONLY.items())
+                 if name in gates_in_workflow
+                 and marker not in open(os.path.join(scripts_dir, name),
+                                        encoding="utf-8").read()]
+parity_problems = []
+if not gates_in_workflow:
+    parity_problems.append("the workflow names no gate script at all")
+if not_run_here:
+    parity_problems.append("CI runs a gate no local command runs: " + ", ".join(not_run_here))
+if stale_excuses:
+    parity_problems.append("the reason for running it only on CI has stopped being true: "
+                           + ", ".join(stale_excuses))
+check(not parity_problems,
+      "the local aggregate runs every gate the workflow runs"
+      if not parity_problems else "; ".join(parity_problems))
+
+# --- a header has to be able to name the type it declares -----------------
+# GlassOverlayContainer.m compiled in its own harness while the app that owns it
+# did not build at all: StreamViewController_Internal.h declared
+# `GlassOverlayContainer *logOverlayContainer` without importing or
+# forward-declaring the class, so every translation unit that reached that header
+# failed to compile it. Nothing local could see that -- the harness builds the
+# container, not the app's internal header, and a grep finds every word of that
+# line present. It took a runner to notice, and the runner found it in a probe step
+# rather than in a build that had already been reported green twice. A first-party
+# class used as a property type now has to be reachable from that header's own
+# imports, or forward-declared in it.
+header_texts = {}
+for base, _, files in os.walk(os.path.join(root, "Limelight")):
+    for name in files:
+        if name.endswith(".h"):
+            path = os.path.join(base, name)
+            header_texts[path] = open(path, encoding="utf-8", errors="replace").read()
+headers_by_basename = {}
+for path in header_texts:
+    headers_by_basename.setdefault(os.path.basename(path), []).append(path)
+
+declared_in = {}
+for path, text in header_texts.items():
+    for line in text.splitlines():
+        # A category (`@interface NSNumber (F)`) reopens a class owned by somebody
+        # else, so counting it as a declaration made 27 system types look
+        # first-party and reported a header full of defects that compile fine.
+        found = re.match(r"\s*@interface\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::|\{|$)", line)
+        if found:
+            declared_in.setdefault(found.group(1), set()).add(path)
+
+
+def first_party_imports(text):
+    seen = []
+    for match in re.finditer(r'#\s*(?:import|include)\s+"([^"]+)"', text):
+        written = match.group(1)
+        if written in header_texts:
+            seen.append(written)
+        else:
+            unique = headers_by_basename.get(os.path.basename(written), [])
+            if len(unique) == 1:
+                seen.append(unique[0])
+    return seen
+
+
+def imports_reachable(path, seen=None):
+    seen = set() if seen is None else seen
+    reachable = set()
+    for imported in first_party_imports(header_texts[path]):
+        if imported in seen:
+            continue
+        seen.add(imported)
+        reachable.add(imported)
+        reachable |= imports_reachable(imported, seen)
+    return reachable
+
+
+# Every source file gets the prefix header, so its imports are visible everywhere.
+prefix_header = re.search(r'GCC_PREFIX_HEADER = "?([^;"\n]+)"?;', project_text or "")
+prefix_first_party = set()
+if prefix_header and os.path.exists(os.path.join(root, prefix_header.group(1))):
+    prefix_text = open(os.path.join(root, prefix_header.group(1)),
+                       encoding="utf-8", errors="replace").read()
+    prefix_first_party = {path for path in first_party_imports(prefix_text)
+                          if path in header_texts}
+
+blind_properties = []
+for path, text in header_texts.items():
+    visible = imports_reachable(path) | prefix_first_party
+    forward = {entry.strip()
+               for group in re.findall(r"@class\s+([^;]+);", text)
+               for entry in group.split(",") if entry.strip()}
+    own = set(re.findall(r"@interface\s+([A-Za-z_$][A-Za-z0-9_$]*)", text))
+    for match in re.finditer(r"@property\s*(?:\([^)]*\)\s*)?([A-Z][A-Za-z0-9_$]*)\s*\*", text):
+        declared = match.group(1)
+        if (declared in declared_in and declared not in own and declared not in forward
+                and not declared_in[declared] & visible):
+            blind_properties.append("%s declares a %s property that its imports cannot see "
+                                    "(%s owns that class)"
+                                    % (os.path.relpath(path, root), declared,
+                                       ", ".join(sorted(os.path.basename(owner)
+                                                        for owner in declared_in[declared]))))
+check(not blind_properties,
+      "a header can only name a type it can actually see"
+      if not blind_properties else "; ".join(sorted(set(blind_properties))))
 
 # --- addressing and localization reach -------------------------------------
 # The connection-timeout overlay has three buttons that pop up the stream menu's
@@ -1279,6 +1381,37 @@ check(tag_rules.returncode == 0,
       if tag_rules.returncode == 0 else
       "the release gate self-test failed:\n"
       + (tag_rules.stdout + tag_rules.stderr)[-900:])
+
+analyzer_rules = subprocess.run([sys.executable, os.path.join(root, "scripts", "analyzer-audit.py"),
+                                 "--self-test"], capture_output=True, text=True, cwd=root)
+check(analyzer_rules.returncode == 0,
+      "the analyzer gate notices a scan that did not run"
+      if analyzer_rules.returncode == 0 else
+      "the analyzer self-test failed:\n"
+      + (analyzer_rules.stdout + analyzer_rules.stderr)[-900:])
+
+if run_battery:
+    # The build jobs run these seven on every change, and until now nothing ran
+    # them here, which is the same gap that hid an uncompilable header for a whole
+    # round. Each one compiles the shipping source with the compiler from
+    # apple_toolchain and finishes in under two seconds, so the only reason they
+    # lived on a runner was habit. The battery's nested runs skip them: a mutation
+    # is judged by the harness that owns it, and sixty-one nested runs of all seven
+    # would only teach everyone to stop running this file.
+    for behaviour in (os.path.join("scripts", "input-concurrency-tests.py"),
+                      os.path.join("scripts", "keyboard-concurrency-tests.py"),
+                      os.path.join("scripts", "keyboard-modifier-mapping-tests.py"),
+                      os.path.join("scripts", "keyboard-shortcut-modifier-tests.py"),
+                      os.path.join("scripts", "stream-menu-addressing-tests.py"),
+                      os.path.join("scripts", "video-enhancement-tests.py"),
+                      os.path.join("scripts", "liquid-glass-overlay-tests.py")):
+        harness = subprocess.run([sys.executable, os.path.join(root, behaviour)],
+                                 capture_output=True, text=True, cwd=root)
+        label = os.path.basename(behaviour)
+        check(harness.returncode == 0,
+              "%s passes" % label
+              if harness.returncode == 0 else
+              "%s failed:\n" % label + (harness.stdout + harness.stderr)[-1200:])
 
 # BUILD_NUMBER is `git rev-list --count HEAD`, which two places used to compute
 # independently: the shell script that CI injects, and the release preparer. The
