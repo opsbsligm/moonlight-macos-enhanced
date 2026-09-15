@@ -1155,6 +1155,40 @@ Constraints went from 137 to 138 on a host with an Apple toolchain, the battery
 from 63 to 64, the behavioural harnesses from seven to eight, and workflow rules
 stay at 24.
 
+### Twenty-third audit pass (the Space change that released the wrong half of the keyboard)
+
+- **Two release methods exist and they release different things.**
+  `-releaseAllModifierKeys` sends eight fixed `KEY_ACTION_UP` packets -- `0x5B`,
+  `0x5C` and `0xA0` through `0xA5` -- which clears Shift, Ctrl, Alt and Win and
+  cannot clear anything else. `-releaseAllHeldKeys` walks the forwarded key
+  records and releases the keys that move a character. Session teardown calls
+  both, in that order; mouse uncapture calls the held-key one, with a comment
+  saying why: forwarding switches off after it, so a key held at that point never
+  reaches the host as a release.
+- **The active-Space observer had the reasoning applied to only one half.** When
+  the window is off the current Space during a fullscreen transition it skips the
+  uncapture -- correctly, the window is coming back -- and then released *only the
+  modifiers*, hid the edge menu, and left every ordinary key pressed on the host.
+  Holding W while the Space changes is the ordinary way to enter and leave the
+  fullscreen Space, and nothing can undo it afterwards: no `keyUp:` arrives,
+  because the window is not on the Space receiving events. The character walks
+  until the player notices, goes back, and lets go.
+- **The ninth behavioural harness reads four facts out of the shipping source** --
+  the exact VK set the modifier release sends, that the held-key release walks the
+  records, that uncapture still releases held keys, and whether the
+  not-in-current-Space branch does -- models one host that remembers what is
+  pressed, and runs three shapes: the reported gesture, the uncapture guarantee
+  that must not regress, and an idle Space change that must press nothing. Take
+  the release out of the model and the stuck key comes back, which is the point.
+- **A guard on the guard:** the harness refuses to run its own opinion if
+  `releaseAllModifierKeys` ever starts sending an ordinary key, because at that
+  point the split this whole test rests on has changed shape and the model, not
+  the assertion, is what needs editing.
+
+Constraints went from 138 to 139 on a host with an Apple toolchain, the battery
+from 64 to 65, the behavioural harnesses from eight to nine, and workflow rules
+stay at 24.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
