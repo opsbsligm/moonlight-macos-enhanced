@@ -960,6 +960,44 @@ Constraints are 134 on a host with an Apple toolchain; the battery is 63.
 Workflow rules are 20 to 21; constraints stay 134 on a host with an Apple toolchain and
 the battery 63.
 
+### Nineteenth audit pass (the pipeline gate that only ran when someone remembered)
+
+Scope note: from here on this work lands on the maintainer's own repository and this
+working tree. The upstream pull request is left alone -- no body edits, no comments, no
+merge, no tag.
+
+- **Pushing a branch ran no CI at all.** The push trigger named only `master` and `main`,
+  so every verification of `pr-overhaul` meant pressing *Run workflow* by hand -- six
+  times this morning, each a full macOS matrix, each a red arriving minutes after the
+  commit rather than at it. `push` now also names `pr-*` and `integration/*`, and
+  **WF024** refuses the shape: any branch listed for `pull_request` has to be gated by
+  `push` as well, because a branch you can push to is a branch you can break.
+- **No job declared `timeout-minutes`, anywhere.** A hung `xcodebuild` or a stalled
+  `brew install` would sit on a macOS runner -- billed at ten times the Linux rate --
+  until the six-hour default expired, producing neither log nor failure. Every job now
+  states a bound next to a note about what it is bound by, and **WF022** refuses a job
+  without one.
+- **The two third-party actions floated on moving tags.** `maxim-lobanov/setup-xcode`
+  runs before the compiler on every build job and decides which toolchain the build
+  sees; `softprops/action-gh-release` is the one step holding `contents: write`. Both are
+  pinned to commits now (`ed7a3b1` = v1, `efb3536` = v3) with the version named beside
+  them, and **WF023** requires a 40-character ref from any owner outside `actions/` and
+  `github/`. The control asserts both directions -- a pinned third-party plus a floating
+  `actions/checkout` is clean, the same action on `@v2` is not -- because a rule that
+  only ever fires is a rumour.
+- **Artifacts expire.** Four uploads now carry `retention-days: 14`; a fork has no use
+  for ninety days of 10 MB disk images, and storage that nobody asked for is still
+  storage.
+- **What a green run now proves.** Build 1450 was downloaded, mounted and read: dual
+  slice, `CFBundleVersion` 1450, both language tables at 892 keys, and the class table
+  holding 154 names with **zero** first-party classes missing -- the 154th being
+  `GlassOverlayContainer`, which was in no artifact at all yesterday. Checksums verified
+  against the published `.sha256`, and the stale build 1433 image was deleted rather
+  than left beside it as a plausible-looking lie.
+
+Workflow rules went from 21 to 24. Constraints stay at 134 on a host with an Apple
+toolchain and the battery at 63.
+
 ## [1.3.9-build19] - 2026-08-03
 
 ### Phase 2 Milestone — CI/CD & Input Pipeline Overhaul
