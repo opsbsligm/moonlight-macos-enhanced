@@ -979,6 +979,52 @@ check(bool(harnesses) and not asking_again,
       "harnesses that ask xcrun for themselves: " + (", ".join(asking_again)
                                                      or "none; no harness found at all"))
 
+# --- every modifier edge answers to the tracker ---------------------------
+# Two shipped defects shared one shape: a hand-written packet sequence pressed or
+# released a modifier while the physical modifier tracker said something else.
+# -syncKeyboardModifierStateForEvent: decides what to send by diffing the desired
+# mask against that tracker, so an untracked edge is not a cosmetic surplus -- the
+# diff comes out zero and the corrective press is never sent. The first of these made
+# a double-click send a Win key; the second let a mouse-driven translation rule drop a
+# held Shift mid-game, because the rule released a modifier the player never released
+# (scripts/keyboard-shortcut-modifier-tests.py measures that one as packets).
+# So any body that emits a modifier edge -- by literal virtual key or through
+# HIDRemoteModifierKeyCode -- has to answer to the tracker: consult it, ask the
+# ownership helper that consults it, or clear it before releasing everything.
+def static_function_bodies(source, name):
+    match = re.search(r"^static\s+[^\n;]*\b%s\s*\(" % re.escape(name), source, re.M)
+    if match is None:
+        return
+    brace = source.index("{", match.start())
+    depth, index = 0, brace
+    while index < len(source):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        index += 1
+    yield source[match.start():index + 1]
+
+
+MODIFIER_EDGE = re.compile(r"LiSendKeyboardEventCtx\s*\([^,]+,\s*"
+                           r"(?:modifierKeyCode|HIDRemoteModifierKeyCode\(|0x(?:5B|5C|A[0-5]))")
+ANSWERS_TO_TRACKER = ("keyboardRemoteModifierMask", "HIDSyntheticOwnedModifierMask",
+                      "syncKeyboardModifierStateForEvent")
+hid_source = open(os.path.join(root, "Limelight", "Input", "HIDSupport.m"),
+                  encoding="utf-8").read()
+bodies = list(method_bodies(hid_source)) + list(static_function_bodies(
+    hid_source, "HIDDispatchSyntheticRemoteModifierTap"))
+senders = [body for body in bodies if MODIFIER_EDGE.search(body)]
+untracked = sorted({body.split("{", 1)[0].strip()
+                    for body in senders if not any(marker in body for marker in ANSWERS_TO_TRACKER)})
+check(bool(senders) and not untracked,
+      "every body that sends a modifier edge answers to the modifier tracker (%d of them)"
+      % len(senders) if senders and not untracked else
+      "modifier edges the tracker cannot see: " + (", ".join(untracked)
+                                                   or "no modifier edge found at all"))
+
 # --- the modifier mapping, from both ends ----------------------------------
 # KeyboardMapResolver is described in its own header as the only place modifier
 # mapping is defined, and the mapping it defines is the thing people buy this

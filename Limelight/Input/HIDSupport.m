@@ -301,6 +301,24 @@ static char HIDRemoteModifierFlagsToGenericFlags(NSUInteger remoteMask) {
     return modifiers;
 }
 
+// A synthetic sequence may only press and release modifiers it actually put down.
+//
+// The physical modifier state is tracked separately from these hand-written packets,
+// and -syncKeyboardModifierStateForEvent: decides what to send by diffing the desired
+// mask against that tracker. Releasing a modifier the player is holding with a real
+// finger is therefore not a cosmetic surplus: the tracker still says the key is down,
+// the diff comes out zero, and no corrective press is ever sent. The player keeps
+// Shift held and the game has stopped sprinting, with nothing logged on either side.
+// Pressing it a second time is the other half of the same mistake -- it is what makes
+// the release below ambiguous about which press it answers.
+//
+// Reachable during gameplay: StreamViewController+MouseCapture.m fires these for
+// mouse-driven translation rules, so "hold Shift to sprint, trigger a Shift+Tab rule"
+// is a normal sequence and not an edge case.
+static NSUInteger HIDSyntheticOwnedModifierMask(HIDSupport *support, NSUInteger requested) {
+    return requested & ~support.keyboardRemoteModifierMask;
+}
+
 static NSUInteger HIDSyntheticRemoteModifierMaskForKeyCode(HIDSupport *support,
                                                            unsigned short keyCode,
                                                            BOOL preferShortcutTranslationCommandMapping) {
@@ -325,6 +343,13 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         return;
     }
 
+    // A modifier the player is already holding belongs to the player, not to this tap:
+    // pressing it again and letting it go would take it away mid-gameplay.
+    NSUInteger owned = HIDSyntheticOwnedModifierMask(support, remoteModifierMask);
+    if (owned == 0) {
+        return;
+    }
+
     static const HIDKeyboardRemoteModifierMask remoteOrder[] = {
         HIDKeyboardRemoteModifierMaskLeftShift,
         HIDKeyboardRemoteModifierMaskRightShift,
@@ -336,11 +361,13 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         HIDKeyboardRemoteModifierMaskRightMeta,
     };
 
+    // The legacy flag byte still describes the whole combination the host is being
+    // asked about; which keys this sequence is allowed to touch is the owned mask.
     char translatedModifiers = HIDRemoteModifierFlagsToGenericFlags(remoteModifierMask);
     HIDDispatchInput(support, inputCtx, ^{
         for (NSUInteger i = 0; i < sizeof(remoteOrder) / sizeof(remoteOrder[0]); i++) {
             HIDKeyboardRemoteModifierMask mask = remoteOrder[i];
-            if ((remoteModifierMask & mask) == 0) {
+            if ((owned & mask) == 0) {
                 continue;
             }
 
@@ -1209,6 +1236,10 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     char translatedModifiers = HIDRemoteModifierFlagsToGenericFlags(remoteModifierMask);
     short translatedKeyCode = (short)(0x8000 | [mappedKey shortValue]);
 
+    // Only the modifiers this rule is adding belong to it. A modifier the player holds
+    // is already down on the host, and letting it go here would strand the tracker.
+    NSUInteger owned = HIDSyntheticOwnedModifierMask(self, remoteModifierMask);
+
     PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
     if (!HIDValidateInputContext(inputCtx, "sendSyntheticRemoteShortcut")) {
         return;
@@ -1228,7 +1259,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     HIDDispatchInput(self, inputCtx, ^{
         for (NSUInteger i = 0; i < sizeof(remoteOrder) / sizeof(remoteOrder[0]); i++) {
             HIDKeyboardRemoteModifierMask mask = remoteOrder[i];
-            if ((remoteModifierMask & mask) == 0) {
+            if ((owned & mask) == 0) {
                 continue;
             }
 
@@ -1241,9 +1272,11 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         LiSendKeyboardEventCtx(inputCtx, translatedKeyCode, KEY_ACTION_DOWN, translatedModifiers);
         LiSendKeyboardEventCtx(inputCtx, translatedKeyCode, KEY_ACTION_UP, translatedModifiers);
 
+        // Release in reverse, and only what was pressed above: the player's own hold has
+        // to stay down until the real keyUp or flagsChanged says otherwise.
         for (NSInteger i = (NSInteger)(sizeof(remoteOrder) / sizeof(remoteOrder[0])) - 1; i >= 0; i--) {
             HIDKeyboardRemoteModifierMask mask = remoteOrder[(NSUInteger)i];
-            if ((remoteModifierMask & mask) == 0) {
+            if ((owned & mask) == 0) {
                 continue;
             }
 

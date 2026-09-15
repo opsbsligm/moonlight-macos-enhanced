@@ -49,6 +49,9 @@ AUDIT_GATE = (os.path.join(root, "scripts", "constraints-audit.py"), ["--no-batt
 # The localization gate has no opt-out: its self-test is part of the gate.
 L10N_GATE = (L10N, [])
 ANALYZER_GATE = (ANALYZER, ["--self-test"])
+# The synthetic-shortcut gate is its own harness: it compiles the state machine, so
+# only it can see a packet sequence that strands the modifier tracker.
+SHORTCUT_GATE = (os.path.join(root, "scripts", "keyboard-shortcut-modifier-tests.py"), [])
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                           "SettingsVideoPane.swift")
 
@@ -507,6 +510,39 @@ def call_the_localizer_with_one_argument(text):
         ONE_ARGUMENT_CALL, 'MLString(@"NSURLError %@")', 1)
 
 
+def release_a_modifier_the_player_is_holding(text):
+    """The rule lets go of a modifier the player never released.
+
+    Correct-looking code, and the packet sequence strands the physical modifier
+    tracker: the sync diffs desired against the tracker, the tracker still says the key
+    is down, so no corrective press is ever sent and the host stays without Shift until
+    the player releases and presses it again.
+    """
+    mutated = text \
+        .replace("HIDSyntheticOwnedModifierMask(support, remoteModifierMask)", "remoteModifierMask") \
+        .replace("HIDSyntheticOwnedModifierMask(self, remoteModifierMask)", "remoteModifierMask")
+    if mutated == text:
+        raise SystemExit("the modifier-ownership rule is not in HIDSupport.m any more, so "
+                         "this mutation would be proving nothing")
+    return mutated
+
+
+def release_modifiers_without_clearing_the_tracker(text):
+    """Releases all eight keys on the host and leaves the tracker saying they are down.
+
+    The sync diffs desired against that tracker, so the next real event computes a
+    diff of zero and sends nothing: the tracker and the host never meet again until
+    each key is pressed and released separately.
+    """
+    cleared = """    self.keyboardPhysicalModifierSourceMask = 0;
+    self.keyboardRemoteModifierMask = 0;
+"""
+    if text.count(cleared) != 1:
+        raise SystemExit("the tracker-clearing pair in releaseAllModifierKeys is not "
+                         "where this mutation expects it, so it would prove nothing")
+    return text.replace(cleared, "", 1)
+
+
 HOSTS_VC = os.path.join(root, "Limelight", "macOS", "ViewControllers", "HostsViewController.m")
 
 RETRY_SHAPE = """    BOOL retryableElsewhere = reason == PairFailureReasonNetwork ||
@@ -625,6 +661,10 @@ MUTATIONS = [
     ("localizer-called-with-one-argument", DIAGNOSTICS, call_the_localizer_with_one_argument,
      "a two-argument localizer macro is invoked with one argument, which the "
      "preprocessor refuses", L10N_GATE),
+    ("modifier-release-forgets-the-tracker", HID, release_modifiers_without_clearing_the_tracker,
+     "all modifiers are released on the host while the tracker still claims they are held"),
+    ("shortcut-releases-held-modifier", HID, release_a_modifier_the_player_is_holding,
+     "a synthetic shortcut releases a modifier the player is still holding", SHORTCUT_GATE),
 ]
 
 
