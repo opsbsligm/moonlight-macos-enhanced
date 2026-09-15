@@ -641,6 +641,7 @@
 "Video Enhancement Runtime Detail Fallback" = "The requested enhancement engine is not active right now. Moonlight is using a fallback scaler.";
 "Video Frame Interpolation Runtime Detail Idle" = "This area will show the actual frame interpolation state once a stream is running.";
 "Video Frame Interpolation Runtime Detail No Interpolation Slots" = "This Mac reported no interpolation slots, so no extra frames are produced.";
+"Video Frame Interpolation Runtime Detail Above Interpolation Ceiling" = "This Mac can interpolate frames, but not at this stream resolution. Lower the stream resolution to within the interpolation engine's limit to use it.";
 "Video Frame Interpolation Runtime Detail Off" = "Frame interpolation is not active for the current stream.";
 "Video Frame Interpolation Runtime Detail Active" = "Shows the actual frame interpolation engine currently in use.";
 "Video Frame Interpolation Runtime Detail Warmup" = "Low-latency frame interpolation is warming up and will engage automatically when ready.";

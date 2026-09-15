@@ -45,6 +45,7 @@ WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
 VIDEO_RULES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                       "SettingsModel+VideoPageRules.swift")
 PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
+VIDEO_RENDERER = os.path.join(root, "Limelight", "Stream", "VideoDecoderRenderer.m")
 NAVIGATION = os.path.join(root, "Limelight", "macOS", "Views", "NavigatableAlertView.m")
 RENDER_PROBE = os.path.join(root, "scripts", "render-probe.py")
 
@@ -65,6 +66,7 @@ SHORTCUT_GATE = (os.path.join(root, "scripts", "keyboard-shortcut-modifier-tests
 COLLISION_GATE = (os.path.join(root, "scripts", "modifier-only-release-collision-tests.py"), [])
 SPACE_HELD_GATE = (os.path.join(root, "scripts", "space-transition-held-key-tests.py"), [])
 NAVIGATION_GATE = (os.path.join(root, "scripts", "controller-key-navigation-tests.py"), [])
+VIDEO_GATE = (os.path.join(root, "scripts", "video-enhancement-tests.py"), [])
 # The glass ratchet is a source rule, so a reverted panel is visible to it.
 LIQUID_GATE = (os.path.join(root, "scripts", "liquid-glass-audit.py"), [])
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -720,6 +722,35 @@ def swallow_controller_release(text):
     return text.replace(EDGE_DELIVERY, "    [self.responder keyDown:event];", 1)
 
 
+# Zero interpolation slots is two answers, and only the re-asked question tells them
+# apart: a GPU with no interpolation engine and a GPU that has one but is being asked
+# about a stream above its ceiling both report zero at the stream size. Either half of
+# that can be lost without touching a line of the interpolation code itself.
+INTERPOLATION_CEILING_PROBE = """                    VTLowLatencyFrameInterpolationConfiguration *probe =
+                        [[VTLowLatencyFrameInterpolationConfiguration alloc]
+                            initWithFrameWidth:ML_INTERPOLATION_PROBE_WIDTH
+                                   frameHeight:ML_INTERPOLATION_PROBE_HEIGHT
+                       numberOfInterpolatedFrames:1];
+                    slotsAtProbeSize = probe ? probe.numberOfInterpolatedFrames : 0;"""
+
+
+def ask_the_engine_the_same_question_again(text):
+    once(text, INTERPOLATION_CEILING_PROBE, "the re-ask at a size the engine can answer")
+    return text.replace(INTERPOLATION_CEILING_PROBE,
+                        "                    slotsAtProbeSize = configuration.numberOfInterpolatedFrames;",
+                        1)
+
+
+TWO_ZERO_SLOT_ANSWERS = """    return slotsAtProbeSize >= 1 ? MLInterpolationSlotVerdictStreamAboveCeiling
+                                 : MLInterpolationSlotVerdictNoHardware;"""
+
+
+def merge_the_two_zero_slot_answers(text):
+    once(text, TWO_ZERO_SLOT_ANSWERS, "the two zero-slot verdicts")
+    return text.replace(TWO_ZERO_SLOT_ANSWERS,
+                        "    return MLInterpolationSlotVerdictNoHardware;", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-key-cancel", CAPTURE, drop_pending_cancel,
@@ -733,6 +764,12 @@ MUTATIONS = [
     ("release-as-a-press", NAVIGATION, swallow_controller_release,
      "the release half of a gamepad stroke is delivered as a second press",
      NAVIGATION_GATE),
+    ("oversized-stream-blames-the-gpu", VIDEO_RENDERER, merge_the_two_zero_slot_answers,
+     "a stream above the interpolation ceiling is reported as a Mac without the engine",
+     VIDEO_GATE),
+    ("interpolation-never-reasked", VIDEO_RENDERER, ask_the_engine_the_same_question_again,
+     "a refused stream size is re-asked at the same refused size",
+     VIDEO_GATE),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
     ("drop-release", HID, drop_release, "keyUp guard no longer clears the record"),
     ("late-guard", HID, late_guard, "keyUp guard runs after the release is sent"),

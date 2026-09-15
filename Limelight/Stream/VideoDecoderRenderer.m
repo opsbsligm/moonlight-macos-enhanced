@@ -333,6 +333,71 @@ static BOOL MLMetalFXIsSupported(id<MTLDevice> device)
     return NO;
 }
 
+// ---------------------------------------------------------------------------
+//  What "zero interpolation slots" actually means
+// ---------------------------------------------------------------------------
+//
+// `VTLowLatencyFrameInterpolationConfiguration` is created on every Mac, asks any
+// size, and starts a session successfully; the only honest answer it gives is the
+// slot count. That count is zero for two unrelated reasons, and shipping them
+// under one sentence is what made an available feature look broken:
+//
+//   * the GPU has no interpolation engine at all. Measured on Apple M2: 720p,
+//     1080p and 4K, both initialisers, one, two and three requested frames, every
+//     one reported zero slots while `isSupported` said yes.
+//   * the requested size is above what the engine accepts. Measured on that same
+//     machine, the published ceiling for temporal interpolation is 1920 per side
+//     and 2073600 pixels -- a 1440p or 4K stream is outside it -- and an engine
+//     that does exist refuses an oversized request the same way it refuses a
+//     size, by reporting zero.
+//
+// So zero at the stream size is only evidence about the hardware once the stream
+// size was itself a question the engine could answer. Ask the same question at a
+// size the engine can be asked -- the size the settings matrix already probes --
+// and let that answer decide whether to blame the GPU or the resolution.
+#define ML_INTERPOLATION_PROBE_WIDTH 1280
+#define ML_INTERPOLATION_PROBE_HEIGHT 720
+
+typedef NS_ENUM(NSInteger, MLInterpolationSlotVerdict) {
+    MLInterpolationSlotVerdictRuns = 0,
+    MLInterpolationSlotVerdictNoHardware,
+    MLInterpolationSlotVerdictStreamAboveCeiling,
+};
+
+static const char *MLInterpolationSlotReason(MLInterpolationSlotVerdict verdict) {
+    switch (verdict) {
+        case MLInterpolationSlotVerdictRuns:
+            return "the interpolation engine offered slots for this stream size";
+        case MLInterpolationSlotVerdictNoHardware:
+            return "the system offered no interpolation slots";
+        case MLInterpolationSlotVerdictStreamAboveCeiling:
+            return "the stream resolution is above the interpolation ceiling";
+    }
+    return "the interpolation engine gave no answer";
+}
+
+// slotsAtStreamSize is what the engine said about the stream; slotsAtProbeSize is
+// what it said about ML_INTERPOLATION_PROBE_* (pass the stream answer again when
+// the stream already is that size). Negative means no configuration was made.
+static MLInterpolationSlotVerdict MLClassifyInterpolationSlots(NSInteger streamWidth,
+                                                              NSInteger streamHeight,
+                                                              NSInteger slotsAtStreamSize,
+                                                              NSInteger slotsAtProbeSize) {
+    if (slotsAtStreamSize >= 1) {
+        return MLInterpolationSlotVerdictRuns;
+    }
+
+    // Asking again at the same size proves nothing new, and a stream already at or
+    // below the probe size was never refused for being too large.
+    if (streamWidth <= ML_INTERPOLATION_PROBE_WIDTH &&
+        streamHeight <= ML_INTERPOLATION_PROBE_HEIGHT) {
+        return MLInterpolationSlotVerdictNoHardware;
+    }
+
+    return slotsAtProbeSize >= 1 ? MLInterpolationSlotVerdictStreamAboveCeiling
+                                 : MLInterpolationSlotVerdictNoHardware;
+}
+
 static MLHDRTransferMode MLResolveHDRTransferMode(BOOL hdrEnabled, NSInteger hdrTransferFunction)
 {
     if (!hdrEnabled) {
@@ -2166,6 +2231,13 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     if ([normalizedReason containsString:@"refresh rate unavailable"]) {
         return @"Video Frame Interpolation Runtime Detail Refresh Rate Unknown";
     }
+    // The resolution answer is tested first because it is the narrower claim: a
+    // machine with no engine at all reports "no interpolation slots", which is what
+    // the branch below is for, and only a machine that does have one can say the
+    // stream is simply too big for it.
+    if ([normalizedReason containsString:@"above the interpolation ceiling"]) {
+        return @"Video Frame Interpolation Runtime Detail Above Interpolation Ceiling";
+    }
     if ([normalizedReason containsString:@"no interpolation slots"]) {
         return @"Video Frame Interpolation Runtime Detail No Interpolation Slots";
     }
@@ -3444,15 +3516,38 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             // interpolation while no additional frame was ever produced, so the
             // slot count, not the session result, decides whether the feature runs.
             if (configuration.numberOfInterpolatedFrames < 1) {
-                Log(LOG_W, @"[video] VT frame interpolation offered 0 slots for %ldx%ld; staying off",
-                    (long)streamWidth, (long)streamHeight);
+                // Zero at this size is not yet an answer about the hardware: an
+                // oversized request is refused in exactly the same way. Ask the engine
+                // the question the settings matrix asks, at a size it can answer.
+                NSInteger slotsAtProbeSize = configuration.numberOfInterpolatedFrames;
+                if (streamWidth > ML_INTERPOLATION_PROBE_WIDTH ||
+                    streamHeight > ML_INTERPOLATION_PROBE_HEIGHT) {
+                    VTLowLatencyFrameInterpolationConfiguration *probe =
+                        [[VTLowLatencyFrameInterpolationConfiguration alloc]
+                            initWithFrameWidth:ML_INTERPOLATION_PROBE_WIDTH
+                                   frameHeight:ML_INTERPOLATION_PROBE_HEIGHT
+                       numberOfInterpolatedFrames:1];
+                    slotsAtProbeSize = probe ? probe.numberOfInterpolatedFrames : 0;
+                }
+                MLInterpolationSlotVerdict verdict =
+                    MLClassifyInterpolationSlots(streamWidth, streamHeight,
+                                                 configuration.numberOfInterpolatedFrames,
+                                                 slotsAtProbeSize);
+                Log(LOG_W, @"[video] VT frame interpolation offered %ld slots for %ldx%ld and "
+                           @"%ld for %dx%d (%@); staying off",
+                    (long)configuration.numberOfInterpolatedFrames,
+                    (long)streamWidth, (long)streamHeight,
+                    (long)slotsAtProbeSize,
+                    ML_INTERPOLATION_PROBE_WIDTH, ML_INTERPOLATION_PROBE_HEIGHT,
+                    @(MLInterpolationSlotReason(verdict)));
+                NSString *slotReason = @(MLInterpolationSlotReason(verdict));
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if (warmupGeneration != self->_frameInterpolationWarmupGeneration) {
                         return;
                     }
                     self->_frameInterpolationWarmupInFlight = NO;
                     [self logActiveFrameInterpolationEngine:MLActiveVideoFrameInterpolationEngineNone
-                                                     reason:@"the system offered no interpolation slots"];
+                                                     reason:slotReason];
                 });
                 return;
             }

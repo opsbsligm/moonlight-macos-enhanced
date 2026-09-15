@@ -19,6 +19,16 @@ counts interpolated edge pixels on the output, and it reads the slot count back
 from the configuration instead of trusting the session. Source checks pin the
 renderer to the same evidence, and the inverted copy of those checks proves the
 assertions fire on the defect they describe.
+
+Zero slots is also not one answer but two, and the same machine gives both.
+`VTLowLatencyFrameInterpolationConfiguration` refuses an oversized request the
+same way it refuses a GPU with no interpolation engine -- by reporting zero --
+while publishing a ceiling of 1920 per side and 2073600 pixels for temporal
+interpolation, measured on Apple M2. Reported as one sentence, a 1440p or 4K
+stream on a Mac that *can* interpolate reads as a Mac that cannot, which is the
+opposite of what the capability matrix on the settings page says about the same
+machine. The classifier below is extracted from the renderer and compiled, so the
+two answers are separated by a test and not by a guess.
 """
 import os, re, subprocess, sys, tempfile, textwrap
 
@@ -66,6 +76,38 @@ def definition_brace(src, signature):
 
 def warmup_body(text):
     return method_body(text, "- (void)requestFrameInterpolationWarmupForStreamWidth:")
+
+
+INTERPOLATION_REGION_START = "typedef NS_ENUM(NSInteger, MLInterpolationSlotVerdict)"
+INTERPOLATION_REGION_END = "static MLHDRTransferMode MLResolveHDRTransferMode"
+DETAIL_MAPPER = ("- (NSString *)runtimeDetailKeyForFrameInterpolationEngine:"
+                 "(MLActiveVideoFrameInterpolationEngine)engine")
+DERIVED = "Limelight/macOS/ViewControllers/SettingsModel+DerivedValues.swift"
+
+
+def interpolation_region(text):
+    start = text.index(INTERPOLATION_REGION_START)
+    end = text.index(INTERPOLATION_REGION_END, start)
+    return text[start:end]
+
+
+def probe_size(text):
+    """The size the renderer re-asks the engine about, read from its own defines."""
+    width = int(re.search(r"#define\s+ML_INTERPOLATION_PROBE_WIDTH\s+(\d+)", text).group(1))
+    height = int(re.search(r"#define\s+ML_INTERPOLATION_PROBE_HEIGHT\s+(\d+)", text).group(1))
+    return width, height
+
+
+def matrix_sizes(text):
+    """The sizes the settings matrix asks, straight out of the Swift source."""
+    block = text[text.index("capabilityProbeSizes"):][:600]
+    return [(int(w), int(h)) for w, h in re.findall(r"\(width:\s*(\d+),\s*height:\s*(\d+)\)", block)]
+
+
+def defines(size):
+    width, height = size
+    return ("#define ML_INTERPOLATION_PROBE_WIDTH %d\n"
+            "#define ML_INTERPOLATION_PROBE_HEIGHT %d\n" % (width, height))
 
 
 def toolchain():
@@ -200,6 +242,75 @@ int main(void) {
 """
 
 
+# extracted from Limelight/Stream/VideoDecoderRenderer.m by this harness, compiled
+# against the scenarios the renderer actually meets. @@DEFINES@@ is the two probe
+# defines and @@REGION@@ the verdict region, both taken from the shipping file.
+VERDICT_MODEL = r"""
+#import <Foundation/Foundation.h>
+
+@@DEFINES@@
+@@REGION@@
+
+static int gFailed = 0;
+
+static void expect(const char *what, MLInterpolationSlotVerdict got,
+                   MLInterpolationSlotVerdict want) {
+    if (got != want) {
+        gFailed += 1;
+        printf("FAIL %s: got \"%s\", want \"%s\"\n", what,
+               MLInterpolationSlotReason(got), MLInterpolationSlotReason(want));
+    } else {
+        printf("ok   %s -> %s\n", what, MLInterpolationSlotReason(got));
+    }
+}
+
+int main(void) {
+    /* Apple M2, measured: 1080p is inside the ceiling and still gets zero. */
+    expect("1920x1080 stream, no slots at that size and none at the probe size",
+           MLClassifyInterpolationSlots(1920, 1080, 0, 0),
+           MLInterpolationSlotVerdictNoHardware);
+    /* The same M2 at 4K: oversized, but the engine has no slots either way. */
+    expect("3840x2160 stream, no slots at any size",
+           MLClassifyInterpolationSlots(3840, 2160, 0, 0),
+           MLInterpolationSlotVerdictNoHardware);
+    /* A GPU with the engine, asked above its ceiling: the resolution is the story. */
+    expect("3840x2160 stream, no slots there but slots at the probe size",
+           MLClassifyInterpolationSlots(3840, 2160, 0, 1),
+           MLInterpolationSlotVerdictStreamAboveCeiling);
+    expect("2560x1440 stream, no slots there but slots at the probe size",
+           MLClassifyInterpolationSlots(2560, 1440, 0, 1),
+           MLInterpolationSlotVerdictStreamAboveCeiling);
+    /* Slots at the stream size is the only answer that runs. */
+    expect("1920x1080 stream with one slot",
+           MLClassifyInterpolationSlots(1920, 1080, 1, 1),
+           MLInterpolationSlotVerdictRuns);
+    /* A stream at the probe size was never refused for size: re-asking proves nothing. */
+    expect("probe-sized stream with no slots",
+           MLClassifyInterpolationSlots(ML_INTERPOLATION_PROBE_WIDTH,
+                                        ML_INTERPOLATION_PROBE_HEIGHT, 0, 0),
+           MLInterpolationSlotVerdictNoHardware);
+    expect("smaller-than-probe stream with no slots",
+           MLClassifyInterpolationSlots(1024, 640, 0, 1),
+           MLInterpolationSlotVerdictNoHardware);
+
+    /* The two reasons have to stay tellable apart by the settings page. */
+    NSString *hardware = @(MLInterpolationSlotReason(MLInterpolationSlotVerdictNoHardware));
+    NSString *ceiling = @(MLInterpolationSlotReason(MLInterpolationSlotVerdictStreamAboveCeiling));
+    if ([hardware containsString:@"above the interpolation ceiling"]) {
+        gFailed += 1;
+        printf("FAIL the hardware reason reads as a resolution problem\n");
+    }
+    if (![ceiling containsString:@"resolution"] || ![hardware containsString:@"no interpolation slots"]) {
+        gFailed += 1;
+        printf("FAIL a reason string lost the words the settings page routes on\n");
+    }
+
+    printf("%s\n", gFailed ? "verdict scenarios failed" : "all verdict scenarios passed");
+    return gFailed;
+}
+"""
+
+
 def main():
     cc, sdk = toolchain()
 
@@ -214,7 +325,7 @@ def main():
     warmup = warmup_body(src)
     check("configuration.numberOfInterpolatedFrames < 1" in warmup,
           "interpolation is only adopted when the configuration offers slots")
-    check("no interpolation slots" in warmup,
+    check("MLInterpolationSlotReason" in warmup,
           "a slot-less machine reports its own reason instead of appearing active")
 
     # The inverted renderer text must trip the two assertions above, otherwise
@@ -227,6 +338,74 @@ def main():
     inverted_warmup = warmup_body(inverted)
     check("configuration.numberOfInterpolatedFrames < 1" not in inverted_warmup,
           "the slot assertion fails on a renderer that never reads the slot count")
+
+    # --- zero slots is two answers, and they must not be merged -------------
+    verdict = interpolation_region(src)
+    check("slotsAtProbeSize >= 1" in verdict,
+          "the classifier distinguishes a GPU with no engine from a stream above its ceiling")
+    check("no interpolation slots" in verdict and "above the interpolation ceiling" in verdict,
+          "each verdict carries its own reason string")
+    check("ML_INTERPOLATION_PROBE_WIDTH" in warmup and
+          "initWithFrameWidth:ML_INTERPOLATION_PROBE_WIDTH" in warmup,
+          "a refusal at the stream size is asked again at a size the engine can answer")
+    check("MLClassifyInterpolationSlots" in warmup and "reason:slotReason" in warmup,
+          "the warmup reports the verdict it classified rather than one fixed sentence")
+
+    mapper = method_body(src, DETAIL_MAPPER)
+    check("above the interpolation ceiling" in mapper
+          and "Video Frame Interpolation Runtime Detail Above Interpolation Ceiling" in mapper,
+          "the resolution verdict has its own line on the settings page")
+    ceiling_branch = 'containsString:@"above the interpolation ceiling"'
+    hardware_branch = 'containsString:@"no interpolation slots"'
+    check(ceiling_branch in mapper and hardware_branch in mapper
+          and mapper.index(ceiling_branch) < mapper.index(hardware_branch),
+          "the narrower resolution verdict is tested before the hardware verdict")
+
+    asked = probe_size(src)
+    matrix = matrix_sizes(open(os.path.join(ROOT, DERIVED), encoding="utf-8").read())
+    check(matrix and asked == min(matrix, key=lambda size: size[0] * size[1]),
+          "the renderer asks the engine the same size the settings matrix asks (%s vs %s)"
+          % (asked, min(matrix, key=lambda size: size[0] * size[1]) if matrix else "none"))
+
+    old_shape = verdict.replace(
+        "    return slotsAtProbeSize >= 1 ? MLInterpolationSlotVerdictStreamAboveCeiling\n"
+        "                                 : MLInterpolationSlotVerdictNoHardware;",
+        "    return MLInterpolationSlotVerdictNoHardware; /* inverted: one answer for two */")
+    check(old_shape != verdict,
+          "the inverted classifier has to be a real edit, or the test below proves nothing")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        model = os.path.join(tmp, "verdicts.m")
+        open(model, "w", encoding="utf-8").write(
+            VERDICT_MODEL.replace("@@DEFINES@@", defines(asked)).replace("@@REGION@@", verdict))
+        built = subprocess.run([cc, "-x", "objective-c", "-isysroot", sdk, "-Wall", "-Werror",
+                                "-framework", "Foundation",
+                                model, "-o", os.path.join(tmp, "verdicts")],
+                               capture_output=True, text=True)
+        if built.returncode != 0:
+            check(False, "the slot verdict model must compile:\n" + built.stderr.strip()[-700:])
+        else:
+            ran = subprocess.run([os.path.join(tmp, "verdicts")], capture_output=True, text=True)
+            print(textwrap.indent(ran.stdout.strip() or "(no output)", "     "))
+            check(ran.returncode == 0,
+                  "the shipping classifier separates the two zero-slot answers:\n"
+                  + ran.stdout.strip())
+
+        inverted_model = os.path.join(tmp, "inverted.m")
+        open(inverted_model, "w", encoding="utf-8").write(
+            VERDICT_MODEL.replace("@@DEFINES@@", defines(asked)).replace("@@REGION@@", old_shape))
+        built = subprocess.run([cc, "-x", "objective-c", "-isysroot", sdk, "-Wall", "-Werror",
+                                "-framework", "Foundation",
+                                inverted_model, "-o", os.path.join(tmp, "inverted")],
+                               capture_output=True, text=True)
+        if built.returncode != 0:
+            check(False, "the inverted verdict model must still compile:\n" + built.stderr.strip()[-700:])
+        else:
+            ran = subprocess.run([os.path.join(tmp, "inverted")], capture_output=True, text=True)
+            check(ran.returncode != 0,
+                  "one answer for two zero-slot cases must fail the model:\n" + ran.stdout.strip())
+            print("     merged verdict refused as expected: %s"
+                  % (ran.stdout.strip().splitlines()[-1] if ran.stdout.strip() else "no output"))
 
     with tempfile.TemporaryDirectory() as tmp:
         probe_path = os.path.join(tmp, "probe.m")
