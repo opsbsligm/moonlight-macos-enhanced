@@ -1418,6 +1418,49 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 30: three guesses, all three already guarded in the shipped code
+
+Nothing in the product or a gate changed this round. The round went into
+trying to find the defect behind "I mapped a Parsec keyboard scheme and W and
+Space fight each other", and every candidate turned out to be already guarded
+-- worth writing down, because each one cost an audit round to rule out.
+
+### Audited, and not changed
+
+- **A bare key cannot delete a gameplay key, and the code already says so.** A
+  shortcut bound to a bare key takes that key away from the game, and every
+  consumer does it: the responder gate returns YES, a translation rule
+  swallows the press, an `NSMenuItem` key equivalent claims the event before
+  the stream view sees it. All four consumers ask
+  `shortcutCanMatchKeyboardEvent`, which needs at least one relevant
+  modifier -- `event:matchesShortcut:`, the translation-rule matcher,
+  `menuKeyEquivalent(for:)`, and through it `applyShortcut:toMenuItem:` --
+  and the comment on that predicate names this exact report. The aggregate
+  checks each call site and the battery plants three separate removals of
+  it.
+
+- **Every glass panel sits on the container.** Eight
+  `containerWithCornerRadius:` call sites -- timeout, log, reconnect card,
+  performance overlay, connection warning, mouse mode, notification, and the
+  control-centre pill -- for the eight overlays, and all eight reach
+  `NSGlassEffectView` through the one container class. The shipped binary
+  names `NSGlassEffectView`, `MTLFXSpatialScalerDescriptor`,
+  `VTLowLatencyFrameInterpolationConfiguration`,
+  `VTLowLatencySuperResolutionScalerConfiguration` and
+  `VTSuperResolutionScalerConfiguration`.
+
+- **Measured on this machine by the enhancement harness, not by
+  `isSupported`.** MetalFX really rescales: the checkerboard comes back with
+  3192 interpolated edge pixels. VT reports `isSupported=1` for frame
+  interpolation while offering **zero** slots at every probed size, which
+  the harness prints as `trust-isSupported would claim interpolation the
+  hardware cannot do`; the low-latency scaler offers only 1.5x at 720p, an
+  empty factor list at 1080p, and refuses to build a 2x configuration. The
+  settings matrix says unavailable where the hardware says unavailable,
+  which is the reason to probe sizes instead of asking the class.
+
+Battery still 75/75, still 147 `ok` lines, no failures.
+
 ### Round 29: the edge of a key press that no probe had ever looked at
 
 ### Audited, and not changed
