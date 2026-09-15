@@ -1317,15 +1317,27 @@ Constraints stay at 140 on a host with an Apple toolchain, the battery went from
   dimming layer now, with no material of any kind, and the spinner with its
   sentence sit in a glass card sized to the sentence. The audit insists the
   scrim stays material-free.
-- **Legibility was measured, not promised.** These panels put white labels on
-  the material, and the stream window pins `NSAppearanceNameVibrantDark`.
-  Captured inside that appearance, the glass panel gives white text 4.73:1;
-  the same panel in a light appearance gives 1.02:1 and is refused, which is
-  what turns the first number from a constant into a measurement. Run against
-  the shape this replaced, the same measurement scores 2.43:1, so the change
-  is not a legibility trade -- the vibrancy was the worse of the two. What the
-  capture cannot see is the window server's backdrop blur, and no claim is
-  made about it.
+- **Legibility was measured, not promised, and the measurement is portable.**
+  These panels put white labels on the material, and the stream window pins
+  `NSAppearanceNameVibrantDark`. The gate asserts the contract that legibility
+  leans on wherever it runs: inside that appearance the panel resolves to
+  DarkAqua, and inside a light window it does not. Where the host will render
+  glass into an offscreen capture it also measures the material: white text
+  reads 4.73:1 on dark glass, the same panel in a light appearance reads
+  1.02:1, and the two have to keep that relationship or the first number is a
+  constant wearing a measurement's clothes. Run against the shape this
+  replaced, the dark capture scores 2.43:1 -- the vibrancy was the worse of
+  the two, so this is not a legibility trade.
+- **CI caught two gates that would have lied.** The first named
+  `effectIsInteractive`, which only exists in a newer SDK than the CI image
+  builds with, and broke the analyzer and both build jobs while the local
+  machine was clean. The second asked a runner that composites no glass into
+  an offscreen capture for a contrast ratio and got 1.00:1; an earlier draft
+  of the same check compared against a light-appearance capture that is
+  legitimately flat, which would have printed a cheerful 0.00:1. Both are
+  gone: what every host can answer is asserted everywhere, what only a GPU
+  host can answer is asserted there, and a host with nothing to measure is
+  told it was skipped instead of handed a free pass.
 - **Frame-based panels did not move.** Every one of these overlays positions
   its controls by frame, and a content view inset by the glass rim would have
   shifted all of them. Measured on the compiled container: inset 0.00/0.00,
