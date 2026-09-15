@@ -948,7 +948,7 @@ if stale_excuses:
     parity_problems.append("the reason for running it only on CI has stopped being true: "
                            + ", ".join(stale_excuses))
 check(not parity_problems,
-      "the local aggregate runs every gate the workflow runs"
+      "every gate the workflow runs is wired into the local aggregate"
       if not parity_problems else "; ".join(parity_problems))
 
 # --- a header has to be able to name the type it declares -----------------
@@ -1390,28 +1390,44 @@ check(analyzer_rules.returncode == 0,
       "the analyzer self-test failed:\n"
       + (analyzer_rules.stdout + analyzer_rules.stderr)[-900:])
 
+toolchain_missing = None
+try:
+    sys.path.insert(0, os.path.join(root, "scripts"))
+    import apple_toolchain
+    apple_toolchain.clang_and_sdk("the behavioural harnesses")
+except SystemExit as absent:
+    toolchain_missing = str(absent)
+
 if run_battery:
     # The build jobs run these seven on every change, and until now nothing ran
     # them here, which is the same gap that hid an uncompilable header for a whole
     # round. Each one compiles the shipping source with the compiler from
     # apple_toolchain and finishes in under two seconds, so the only reason they
-    # lived on a runner was habit. The battery's nested runs skip them: a mutation
-    # is judged by the harness that owns it, and sixty-one nested runs of all seven
-    # would only teach everyone to stop running this file.
-    for behaviour in (os.path.join("scripts", "input-concurrency-tests.py"),
-                      os.path.join("scripts", "keyboard-concurrency-tests.py"),
-                      os.path.join("scripts", "keyboard-modifier-mapping-tests.py"),
-                      os.path.join("scripts", "keyboard-shortcut-modifier-tests.py"),
-                      os.path.join("scripts", "stream-menu-addressing-tests.py"),
-                      os.path.join("scripts", "video-enhancement-tests.py"),
-                      os.path.join("scripts", "liquid-glass-overlay-tests.py")):
-        harness = subprocess.run([sys.executable, os.path.join(root, behaviour)],
-                                 capture_output=True, text=True, cwd=root)
-        label = os.path.basename(behaviour)
-        check(harness.returncode == 0,
-              "%s passes" % label
-              if harness.returncode == 0 else
-              "%s failed:\n" % label + (harness.stdout + harness.stderr)[-1200:])
+    # lived on a runner was habit. They need an Apple toolchain, and the audits job
+    # runs on ubuntu, where there is none: that is what broke a run twenty minutes
+    # ago, and it was this file's fault, not the tree's. So the host is asked, and a
+    # host that cannot run them says so in one line rather than passing quietly or
+    # failing for a reason no source caused. The battery's nested runs skip them
+    # either way: a mutation is judged by the harness that owns it, and sixty-two
+    # nested runs of all seven would only teach everyone to stop running this file.
+    if toolchain_missing:
+        print("skip behavioural harnesses (7 of them): %s" % toolchain_missing)
+    else:
+        for behaviour in (os.path.join("scripts", "input-concurrency-tests.py"),
+                          os.path.join("scripts", "keyboard-concurrency-tests.py"),
+                          os.path.join("scripts", "keyboard-modifier-mapping-tests.py"),
+                          os.path.join("scripts", "keyboard-shortcut-modifier-tests.py"),
+                          os.path.join("scripts", "stream-menu-addressing-tests.py"),
+                          os.path.join("scripts", "video-enhancement-tests.py"),
+                          os.path.join("scripts", "liquid-glass-overlay-tests.py")):
+            harness = subprocess.run([sys.executable, os.path.join(root, behaviour)],
+                                     capture_output=True, text=True, cwd=root)
+            label = os.path.basename(behaviour)
+            check(harness.returncode == 0,
+                  "%s passes" % label
+                  if harness.returncode == 0 else
+                  "%s failed:\n" % label
+                  + (harness.stdout + harness.stderr)[-1200:])
 
 # BUILD_NUMBER is `git rev-list --count HEAD`, which two places used to compute
 # independently: the shell script that CI injects, and the release preparer. The
