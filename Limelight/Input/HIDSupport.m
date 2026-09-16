@@ -988,11 +988,28 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     if (event == nil || event.type != NSEventTypeFlagsChanged) {
         return;
     }
+
+    // What the player is physically holding is recorded whether or not this
+    // particular event can be forwarded. A modifier that came down while the
+    // embedded settings page had the keyboard is still down when the player
+    // comes back, and the record made here is the only thing that will ever
+    // tell the host about it: skip the record along with the send and sprinting
+    // becomes walking for as long as the finger stays down. The release that
+    // follows is gated the same way, so the whole press is silent -- which is
+    // why no log ever mentioned it.
+    //
+    // Recording early cannot press anything the host never saw. -sync: only
+    // fires on the difference between what was sent and what is wanted, and
+    // while forwarding is off nothing is sent, so a modifier that arrived and
+    // left behind the door nets to zero. -releaseAllModifierKeys zeroes the
+    // physical and remote records together, so no path inherits a modifier
+    // that was only ever recorded locally.
+    [self updateKeyboardPhysicalModifierStateFromEvent:event];
+
     if (!self.shouldSendInputEvents) {
         return;
     }
 
-    [self updateKeyboardPhysicalModifierStateFromEvent:event];
     [self syncKeyboardModifierStateForEvent:event];
 }
 

@@ -1418,6 +1418,43 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 38: a modifier held through the settings page was never learned about
+
+- **One gate, two jobs, the wrong scope.** `-flagsChanged:` returned the moment
+  it saw `shouldSendInputEvents` was off. That gate is right about the send and
+  wrong about the record: while the embedded settings page owned the keyboard, a
+  player pressing Shift left nothing in
+  `keyboardPhysicalModifierSourceMask`. Coming back still holding it, the
+  desired remote mask is computed from that record, so it says no Shift and the
+  host is told to walk where the player is running. The release that follows is
+  gated the same way, so the press and its release both vanish without a line in
+  the log, which is what makes this one of the reports that reads as a lost key.
+
+- **Recording is not sending.** The record happens first now, and the gate still
+  decides what reaches the host. Nothing can be pressed that the host never saw
+  go down: `-syncKeyboardModifierStateForEvent:` acts only on the difference
+  between what was sent and what is wanted, and while forwarding is off nothing
+  is sent, so a modifier that arrived and left behind the door nets to zero.
+  `releaseAllModifierKeys` zeroes the physical and remote records together, so
+  no path inherits a modifier that was only ever recorded locally.
+
+- **The harness had been restating the method it claimed to cover.**
+  `keyboard-shortcut-modifier-tests.py` called the two helpers in the order it
+  expected instead of calling `-flagsChanged:`, so it stayed green while the
+  shipping method returned early and recorded nothing at all. It extracts and
+  calls the shipped method now, gate included, and adds the two shapes a real
+  pair of hands produces: a Shift that came down behind the page has to be
+  sprinting when the keyboard comes back, and a Shift that both arrived and left
+  behind it has to send nothing at all.
+
+- **Teeth in two places.** That file now also refuses a rebuild of the shape
+  that shipped, with one gate standing in front of both calls, and the battery
+  carries `record-no-modifier-behind-the-door` against the harness that owns
+  it.
+
+The battery went from 87 to 88, workflow rules stay at 25, constraints stay at
+140, and the behavioural harnesses stay at ten.
+
 ### Round 37: the stick moved the cursor at two different speeds
 
 - **Two paths, one feature, two answers.** The right stick drives the

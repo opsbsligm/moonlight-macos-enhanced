@@ -726,6 +726,33 @@ def call_the_localizer_with_one_argument(text):
         ONE_ARGUMENT_CALL, 'MLString(@"NSURLError %@")', 1)
 
 
+def record_no_modifier_behind_the_door(text):
+    """A modifier pressed while input forwarding is off is never learned about.
+
+    The gate reads as one more input guard, and it is the shape that shipped: it
+    stands in front of the physical record as well as the send, so when the player
+    comes back from the embedded settings page still holding Shift, the tracker has
+    never heard of it. The host is told to walk where the player is running, and the
+    release that follows is gated the same way, so nothing is ever logged.
+    """
+    shipped = """    [self updateKeyboardPhysicalModifierStateFromEvent:event];
+
+    if (!self.shouldSendInputEvents) {
+        return;
+    }
+"""
+    gated = """    if (!self.shouldSendInputEvents) {
+        return;
+    }
+
+    [self updateKeyboardPhysicalModifierStateFromEvent:event];
+"""
+    if text.count(shipped) != 1:
+        raise SystemExit("the record-before-gate pair in -flagsChanged: is not where "
+                         "this mutation expects it, so it would prove nothing")
+    return text.replace(shipped, gated, 1)
+
+
 def release_a_modifier_the_player_is_holding(text):
     """The rule lets go of a modifier the player never released.
 
@@ -1218,6 +1245,9 @@ MUTATIONS = [
      OVERLAY_GATE),
     ("shortcut-releases-held-modifier", HID, release_a_modifier_the_player_is_holding,
      "a synthetic shortcut releases a modifier the player is still holding", SHORTCUT_GATE),
+    ("record-no-modifier-behind-the-door", HID, record_no_modifier_behind_the_door,
+     "a modifier pressed while input forwarding is off is never recorded",
+     SHORTCUT_GATE),
     ("unlisted-source-file", PBXPROJ, unlisted_source,
      "a source file belongs to no target, so nothing ever compiles it"),
     ("aggregate-drops-a-ci-audit", AUDIT, aggregate_stops_running_an_audit,

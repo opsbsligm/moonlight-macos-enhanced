@@ -58,6 +58,7 @@ STATICS = [
 ]
 
 METHODS = [
+    "- (void)flagsChanged:(NSEvent *)event",
     "- (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event",
     "- (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event",
     "- (void)syncKeyboardModifierStateForEvent:(NSEvent *)event",
@@ -190,6 +191,7 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+- (void)flagsChanged:(NSEvent *)event;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event;
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event;
@@ -230,6 +232,7 @@ static void Reset(MLModifiersUnderProbe *k) {
     [gHostEvents removeAllObjects];
     k.keyboardPhysicalModifierSourceMask = 0;
     k.keyboardRemoteModifierMask = 0;
+    k.shouldSendInputEvents = YES;
 }
 static NSString *Seq(void) { return [gHostEvents componentsJoinedByString:@" "]; }
 
@@ -246,10 +249,12 @@ static NSEvent *FlagsEvent(unsigned short keyCode, NSEventModifierFlags held) {
                            isARepeat:NO keyCode:keyCode];
 }
 
-// Mirrors -flagsChanged: in HIDSupport.m: physical state first, then the sync.
+// The shipped -flagsChanged:, gate included. This harness used to restate
+// its two calls by hand, which meant it kept passing while the shipping
+// method returned early and recorded nothing at all. Nothing here decides
+// the order any more.
 static void FlagsChanged(MLModifiersUnderProbe *k, unsigned short keyCode, NSEventModifierFlags held) {
-    [k updateKeyboardPhysicalModifierStateFromEvent:FlagsEvent(keyCode, held)];
-    [k syncKeyboardModifierStateForEvent:FlagsEvent(keyCode, held)];
+    [k flagsChanged:FlagsEvent(keyCode, held)];
 }
 
 static NSEvent *KeyDownEvent(unsigned short keyCode, NSEventModifierFlags held) {
@@ -558,6 +563,45 @@ int main(void) {
         Expect("the sprint and the run agree with the host", @"", HeldKeys(k));
         ExpectAgreement("sprint, jump, and let go of the run first", k);
 
+        // 14. Shift comes down while the embedded settings page owns the
+        //     keyboard, so input forwarding is off, and the player comes back
+        //     still sprinting. The edge happened while nothing was forwarded,
+        //     so the record made at that moment is the only way the host can
+        //     ever learn about Shift: skip the record along with the send and
+        //     sprinting becomes walking for as long as the finger stays down,
+        //     with nothing in the log to say so.
+        Reset(k);
+        k.shouldSendInputEvents = NO;
+        FlagsChanged(k, kVK_Shift, NSEventModifierFlagShift);
+        k.shouldSendInputEvents = YES;
+        [gHostEvents removeAllObjects];
+        PressKey(k, kVK_ANSI_W, NSEventModifierFlagShift);
+        want = Exp();
+        Add(want, Ev(0xA0, YES, MODIFIER_SHIFT));
+        Add(want, Ev(0x8000 | 0x57, YES, MODIFIER_SHIFT));
+        Expect("a Shift pressed while forwarding was off still sprints",
+               want, Seq());
+        ExpectAgreement("the sprint that began behind the settings page", k);
+        ReleaseKey(k, kVK_ANSI_W, NSEventModifierFlagShift);
+        FlagsChanged(k, kVK_Shift, 0);
+        Expect("its release reaches the host that holds it", @"", HeldKeys(k));
+        ExpectAgreement("the sprint ends the way it began", k);
+
+        // 15. Recording behind the door must not invent a press either. A
+        //     Shift that both arrived and left while forwarding was off was
+        //     not held when the keyboard came back, so the host must hear
+        //     nothing about it.
+        Reset(k);
+        k.shouldSendInputEvents = NO;
+        FlagsChanged(k, kVK_Shift, NSEventModifierFlagShift);
+        FlagsChanged(k, kVK_Shift, 0);
+        k.shouldSendInputEvents = YES;
+        [gHostEvents removeAllObjects];
+        PressKey(k, kVK_ANSI_W, 0);
+        Expect("a modifier pressed and released with forwarding off "
+               "sends nothing", Ev(0x8000 | 0x57, YES, 0), Seq());
+        ExpectAgreement("nothing was held through the settings page", k);
+
         printf("%d scenario failure(s)\n", gFailures);
     }
     return gFailures ? 1 : 0;
@@ -669,6 +713,32 @@ def mutate_key_up(text, find, replace, what):
         raise SystemExit("-keyUp: no longer contains the shape this mutation expects "
                          "(%s), so it would prove nothing" % what)
     return text[:start] + body.replace(find, replace, 1) + text[end:]
+
+
+def record_gated_behind_the_door(text):
+    """The known-bad shape: -flagsChanged: will not record what it
+    cannot send.
+
+    This is the shape that shipped: one gate in front of both the record
+    and the sync, so a modifier that came down while the embedded settings
+    page owned the keyboard was never learned about at all, and the release
+    that followed was swallowed the same way.
+    """
+    shipped = """    [self updateKeyboardPhysicalModifierStateFromEvent:event];
+
+    if (!self.shouldSendInputEvents) {
+        return;
+    }
+"""
+    blind = """    if (!self.shouldSendInputEvents) {
+        return;
+    }
+
+    [self updateKeyboardPhysicalModifierStateFromEvent:event];
+"""
+    if text.count(shipped) != 1:
+        return text
+    return text.replace(shipped, blind, 1)
 
 
 def release_forgets_its_modifier(text):
@@ -868,8 +938,15 @@ def main():
               "the unconditional-release shape is refused (%d scenario failure(s))"
               % bad.returncode if bad.returncode != 0 else
               "the known-bad shape passes: the scenarios have no teeth")
-        for label, shape in (("release-modifier", release_forgets_its_modifier),
-                            ("release-consumed", release_forgets_what_was_consumed_locally)):
+        damages = (
+            ("release-modifier", release_forgets_its_modifier,
+             "a release loses the modifier its press carried"),
+            ("release-consumed", release_forgets_what_was_consumed_locally,
+             "a release answers a press the host never received"),
+            ("record-gated", record_gated_behind_the_door,
+             "a modifier pressed while forwarding was off is never recorded"),
+        )
+        for label, shape, words in damages:
             damaged = shape(source)
             if damaged == source:
                 print("FAIL the %s shape is identical to the shipped file (no teeth)" % label)
@@ -879,10 +956,7 @@ def main():
                 return 1
             check(weak.returncode != 0,
                   "the shape where %s is refused (%d scenario failure(s))"
-                  % ("a release loses the modifier its press carried"
-                     if label == "release-modifier"
-                     else "a release answers a press the host never received",
-                     weak.returncode)
+                  % (words, weak.returncode)
                   if weak.returncode != 0 else
                   "the %s shape passes: the scenarios have no teeth" % label)
 
