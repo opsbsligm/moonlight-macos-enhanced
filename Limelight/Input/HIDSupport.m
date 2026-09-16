@@ -1136,6 +1136,37 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     self.keyboardModifierReleaseInProgress = NO;
 }
 
+- (void)releaseRemoteModifierKeysForUncapture {
+    // Input forwarding is about to switch off, and flagsChanged: stops
+    // reaching the sync once it has. A modifier the host was told about and
+    // the player later lets go of therefore never comes up on the host: it
+    // waits there until the next keyboard event, and every pointer click in
+    // between carries a modifier nobody is holding. The pointer was handed
+    // back, so the modifiers go back with it, for the same reason
+    // -releaseAllHeldKeys is called there.
+    if (self.keyboardRemoteModifierMask == 0 ||
+        self.keyboardModifierReleaseInProgress) {
+        return;
+    }
+
+    // What must not go back is the physical tracker, because it records the
+    // player's fingers and not the host's state. A player who triggers this
+    // while sprinting on Shift has to be sprinting again after recapture:
+    // the remote record is empty and the desired mask is not, so the first
+    // keyboard event re-presses the modifier before it sends that key. A
+    // modifier let go of behind the door stays released, because
+    // flagsChanged: updates the physical tracker whether or not the event
+    // can be forwarded.
+    // The eight packets, the reentry guard and the send-before-record order
+    // belong to -releaseAllModifierKeys. Only what it also does to the
+    // physical tracker is unwanted here, so that one value is put back
+    // afterwards.
+    HIDKeyboardPhysicalModifierMask heldPhysical =
+        self.keyboardPhysicalModifierSourceMask;
+    [self releaseAllModifierKeys];
+    self.keyboardPhysicalModifierSourceMask = heldPhysical;
+}
+
 - (void)releaseAllHeldKeys {
     if (self.keyboardHeldKeyReleaseInProgress) {
         return;

@@ -519,6 +519,15 @@ for problem, message in [
     (ordered_once(hid_capture_off, "[self.hidSupport releaseAllHeldKeys];",
                   "self.hidSupport.shouldSendInputEvents = NO;", "releasing held keys"),
      "capture release lets go of held keys before input forwarding is off"),
+    # The same argument covers the modifier tracker. flagsChanged: stops reaching
+    # the sync once input is off, so a modifier the host was told about and the
+    # player later lets go of stays down on the host until the next keyboard
+    # event -- every pointer click in between carries a modifier nobody holds.
+    (ordered_once(hid_capture_off,
+                  "[self.hidSupport releaseRemoteModifierKeysForUncapture];",
+                  "self.hidSupport.shouldSendInputEvents = NO;", "returning modifiers"),
+     "capture release returns the modifiers the host was told about before "
+     "input forwarding is off"),
 ]:
     check(problem is None, message if problem is None else "%s is not effective: %s" % (message, problem))
 

@@ -726,6 +726,44 @@ def call_the_localizer_with_one_argument(text):
         ONE_ARGUMENT_CALL, 'MLString(@"NSURLError %@")', 1)
 
 
+def uncapture_leaves_the_host_holding_modifiers(text):
+    """Capture release hands back the pointer but keeps the host holding keys.
+
+    The commit point already lets go of held keys and pressed buttons, so the
+    modifier tracker looks like the third item of a tidy three. It is not:
+    flagsChanged: stops reaching the sync the moment input is off, so a modifier
+    the player lets go of on the Mac desktop never comes up on the host until some
+    later keyboard event happens to correct it, and every pointer click in between
+    carries a modifier nobody is holding.
+    """
+    line = "    [self.hidSupport releaseRemoteModifierKeysForUncapture];\n"
+    if text.count(line) != 1:
+        raise SystemExit("the capture-release modifier return is not where this "
+                         "mutation expects it, so it would prove nothing")
+    return text.replace(line, "", 1)
+
+
+def recapture_loses_a_modifier_still_held(text):
+    """The capture-release return clears the physical hold as well.
+
+    The player triggers capture release with a finger still on Shift and comes back
+    to a tracker that says nothing is held, so the first gameplay key after
+    recapture goes out with a modifier byte of zero: the sprint they never stopped
+    became a walk, and it reads as another keyboard mapping conflict.
+    """
+    kept = """    HIDKeyboardPhysicalModifierMask heldPhysical =
+        self.keyboardPhysicalModifierSourceMask;
+    [self releaseAllModifierKeys];
+    self.keyboardPhysicalModifierSourceMask = heldPhysical;
+"""
+    plain = "    [self releaseAllModifierKeys];\n"
+    if text.count(kept) != 1:
+        raise SystemExit("the physical-tracking guard in the capture-release return "
+                         "is not where this mutation expects it, so it would "
+                         "prove nothing")
+    return text.replace(kept, plain, 1)
+
+
 def record_no_modifier_behind_the_door(text):
     """A modifier pressed while input forwarding is off is never learned about.
 
@@ -1247,6 +1285,13 @@ MUTATIONS = [
      "a synthetic shortcut releases a modifier the player is still holding", SHORTCUT_GATE),
     ("record-no-modifier-behind-the-door", HID, record_no_modifier_behind_the_door,
      "a modifier pressed while input forwarding is off is never recorded",
+     SHORTCUT_GATE),
+    ("uncapture-leaves-host-modifiers", CAPTURE,
+     uncapture_leaves_the_host_holding_modifiers,
+     "capture release returns keys and buttons but leaves the host holding "
+     "modifiers", AUDIT_GATE),
+    ("recapture-loses-a-held-modifier", HID, recapture_loses_a_modifier_still_held,
+     "capture release clears a hold the player's finger never left",
      SHORTCUT_GATE),
     ("unlisted-source-file", PBXPROJ, unlisted_source,
      "a source file belongs to no target, so nothing ever compiles it"),

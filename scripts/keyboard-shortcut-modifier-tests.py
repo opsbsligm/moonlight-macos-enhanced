@@ -71,6 +71,7 @@ METHODS = [
     "- (void)keyUp:(NSEvent *)event",
     "- (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event",
     "- (void)releaseAllModifierKeys",
+    "- (void)releaseRemoteModifierKeysForUncapture",
 ]
 
 
@@ -203,6 +204,7 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 - (void)keyUp:(NSEvent *)event;
 - (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event;
 - (void)releaseAllModifierKeys;
+- (void)releaseRemoteModifierKeysForUncapture;
 @end
 
 @implementation MLModifiersUnderProbe
@@ -240,6 +242,17 @@ static NSMutableString *Exp(void) { return [NSMutableString string]; }
 static void Add(NSMutableString *expectation, NSString *packet) {
     if (expectation.length) [expectation appendString:@" "];
     [expectation appendString:packet];
+}
+
+// The project's convention for handing modifiers back: eight fixed releases, in
+// the order -releaseAllModifierKeys sends them. It is wider than the tracker
+// alone would ask for, and deliberately so -- it also corrects a host whose
+// state drifted away from the tracker for any other reason.
+static void AddAllModifierReleases(NSMutableString *expectation) {
+    unsigned short order[] = { 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 };
+    for (size_t i = 0; i < sizeof(order) / sizeof(order[0]); i++) {
+        Add(expectation, Ev(order[i], NO, 0));
+    }
 }
 
 static NSEvent *FlagsEvent(unsigned short keyCode, NSEventModifierFlags held) {
@@ -602,6 +615,55 @@ int main(void) {
                "sends nothing", Ev(0x8000 | 0x57, YES, 0), Seq());
         ExpectAgreement("nothing was held through the settings page", k);
 
+        // 16. The pointer goes back to the Mac while the host still believes Shift
+        //     is down. Input forwarding stops, so flagsChanged: never reaches the
+        //     sync again: the player lets go of Shift on the Mac desktop, comes
+        //     back, and clicks -- and every one of those clicks carries a modifier
+        //     nobody is holding until the next keyboard event happens to fix it.
+        //     The modifier has to be returned at the moment input is taken away.
+        Reset(k);
+        FlagsChanged(k, kVK_Shift, NSEventModifierFlagShift);
+        [k releaseRemoteModifierKeysForUncapture];
+        k.shouldSendInputEvents = NO;
+        want = Exp();
+        Add(want, Ev(0xA0, YES, MODIFIER_SHIFT));
+        AddAllModifierReleases(want);
+        Expect("capture release returns a modifier the host was told about",
+               want, Seq());
+        ExpectAgreement("the modifiers capture release handed back", k);
+        FlagsChanged(k, kVK_Shift, 0);
+        k.shouldSendInputEvents = YES;
+        [gHostEvents removeAllObjects];
+        PressKey(k, kVK_ANSI_W, 0);
+        Expect("a modifier let go of behind the door stays released",
+               Ev(0x8000 | 0x57, YES, 0), Seq());
+        ExpectAgreement("the walk that stayed a walk", k);
+
+        // 17. The finger never left Shift. The host still has to be told it came
+        //     up, because the pointer is loose on the Mac and a phantom Shift
+        //     poisons the clicks there, but the physical record of the hold has to
+        //     survive: clear it as well and the first gameplay key after recapture
+        //     goes out with a modifier byte of zero, and a player who never stopped
+        //     sprinting is suddenly walking.
+        Reset(k);
+        FlagsChanged(k, kVK_Shift, NSEventModifierFlagShift);
+        [k releaseRemoteModifierKeysForUncapture];
+        k.shouldSendInputEvents = NO;
+        want = Exp();
+        Add(want, Ev(0xA0, YES, MODIFIER_SHIFT));
+        AddAllModifierReleases(want);
+        Expect("capture release tells the host to let go of a held Shift",
+               want, Seq());
+        k.shouldSendInputEvents = YES;
+        [gHostEvents removeAllObjects];
+        PressKey(k, kVK_ANSI_W, NSEventModifierFlagShift);
+        want = Exp();
+        Add(want, Ev(0xA0, YES, MODIFIER_SHIFT));
+        Add(want, Ev(0x8000 | 0x57, YES, MODIFIER_SHIFT));
+        Expect("a Shift the finger never left is re-pressed before the key",
+               want, Seq());
+        ExpectAgreement("the sprint the player kept through recapture", k);
+
         printf("%d scenario failure(s)\n", gFailures);
     }
     return gFailures ? 1 : 0;
@@ -739,6 +801,25 @@ def record_gated_behind_the_door(text):
     if text.count(shipped) != 1:
         return text
     return text.replace(shipped, blind, 1)
+
+
+def release_clears_the_physical_hold(text):
+    """The known-bad shape: the capture-release return clears the hold as well.
+
+    One line shorter, and it is the old bug wearing a new uniform. The player who
+    triggers capture release with a finger still on Shift comes back to a tracker
+    that says nothing is held, so the first gameplay key after recapture goes out
+    with a modifier byte of zero: the sprint they never stopped became a walk.
+    """
+    kept = """    HIDKeyboardPhysicalModifierMask heldPhysical =
+        self.keyboardPhysicalModifierSourceMask;
+    [self releaseAllModifierKeys];
+    self.keyboardPhysicalModifierSourceMask = heldPhysical;
+"""
+    plain = "    [self releaseAllModifierKeys];\n"
+    if text.count(kept) != 1:
+        return text
+    return text.replace(kept, plain, 1)
 
 
 def release_forgets_its_modifier(text):
@@ -945,6 +1026,8 @@ def main():
              "a release answers a press the host never received"),
             ("record-gated", record_gated_behind_the_door,
              "a modifier pressed while forwarding was off is never recorded"),
+            ("release-clears-the-hold", release_clears_the_physical_hold,
+             "capture release clears a hold the player's finger never left"),
         )
         for label, shape, words in damages:
             damaged = shape(source)

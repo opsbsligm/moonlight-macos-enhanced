@@ -1418,6 +1418,53 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 39: capture release handed the pointer back and kept the modifiers
+
+- **A third flush was missing.** `uncaptureMouseWithCode: reason:` says why it
+  flushes: input forwarding is about to switch off, `keyUp:` stops
+  forwarding once it has, and a movement key held while the mouse is
+  released would never reach the host as a release. So it releases the held
+  keys and the pressed mouse buttons, and only then sets
+  `shouldSendInputEvents` to `NO`. The modifier tracker sits in that same
+  position and was not flushed. From that moment `flagsChanged:` stops
+  reaching the sync, so a modifier the host had been told about and the
+  player let go of on the Mac desktop stayed down on the host until some
+  later keyboard event happened to correct it, and every pointer click in
+  between carried a modifier nobody was holding.
+
+- **The rule already covered this, and one commit point missed it.** The
+  translation gate keeps the list of local actions where releasing is
+  correct, and handing the pointer back is on it. The built-in uncaptures --
+  the pointer leaving the view, a mouse-mode change made from the embedded
+  settings page, a fullscreen exit edge -- reach that same commit point by
+  another road and released nothing.
+
+- **The release must not take the hold with it.** `-releaseAllModifierKeys` is
+  the obvious call and it is the wrong one here: it zeroes the physical
+  tracker in the same breath, which is right at teardown and wrong for an
+  uncapture. A player who hands the pointer back with a finger still on
+  Shift comes back to find the first gameplay key forwarded with a modifier
+  byte of zero -- the sprint they never stopped became a walk, at a site
+  that runs once per uncapture and so never showed up in a held-key test.
+
+- **What ships.** `releaseRemoteModifierKeysForUncapture` delegates to
+  `-releaseAllModifierKeys`, so the eight packets, the reentry guard and the
+  send-before-record order stay in one place, then puts the physical tracker
+  back. The remote record is what the host was told and goes to zero; the
+  physical record is what the fingers are doing and stays. After recapture
+  the sync finds an empty remote mask against a desired mask that is not
+  empty and re-presses a modifier that is genuinely held, before the key
+  that needs it goes out. `HIDSupport.h` states the difference, because no
+  caller can infer it.
+
+- **Both halves pinned, and the wiring too.** The behavioural harness covers
+  the uncapture edge in both directions -- the modifier the player let go of
+  stays released, the one the finger never left is re-pressed before the
+  next key -- and refuses a build that clears the physical hold as well. The
+  call itself is a constraint now, written in the shape of the one that
+  already makes capture release let go of held keys before forwarding stops,
+  and the battery carries a mutation for each half: 88 became 90, one caught
+  at the call site and one in the tracker.
 ### Round 38: a modifier held through the settings page was never learned about
 
 - **One gate, two jobs, the wrong scope.** `-flagsChanged:` returned the moment

@@ -3189,6 +3189,10 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     // forwarding once it has, so a movement key held while the mouse is released
     // would never reach the host as a release.
     [self.hidSupport releaseAllHeldKeys];
+    // The same reason, one tracker over: flagsChanged: stops reaching the sync
+    // the moment input is off, so a modifier the host was told about has to be
+    // returned here or it stays down over every pointer click that follows.
+    [self.hidSupport releaseRemoteModifierKeysForUncapture];
     [self.hidSupport releaseAllPressedMouseButtons];
     self.pendingMouseUncaptureAfterButtonsReleased = NO;
     self.pendingMouseUncaptureRecheckScheduled = NO;

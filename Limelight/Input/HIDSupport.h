@@ -56,6 +56,13 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 
 - (void)releaseAllModifierKeys;
 
+/// Hands the modifiers the host was told about back to it, without touching the
+/// physical tracker: for the moment input forwarding stops (mouse capture
+/// released) and the session continues afterwards. A modifier the player is
+/// genuinely still holding is re-pressed on the first keyboard event after
+/// recapture; one they let go of while input was off stays up.
+- (void)releaseRemoteModifierKeysForUncapture;
+
 /// Records that a key's keyDown was consumed locally and never forwarded, so the
 /// matching keyUp must not be forwarded either.
 ///
