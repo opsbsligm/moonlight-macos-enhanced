@@ -9,6 +9,7 @@
 #import "KeyboardMapResolver.h"
 
 #import <IOKit/hid/IOHIDElement.h>
+#import <IOKit/hidsystem/IOLLEvent.h>
 
 // ---------------------------------------------------------------------------
 // CI/CD Pipeline Refactor (2026-08-02): KeyboardMapResolver bridge
@@ -226,6 +227,47 @@ static NSEventModifierFlags HIDModifierFlagForKeyCode(unsigned short keyCode) {
         default:
             return 0;
     }
+}
+
+// AppKit's family bit answers "is some shift down". That is not the question
+// this file asks: a flagsChanged names the key that just moved, and the record
+// has to say whether that one key is held. The two answers disagree the moment
+// a player holds one shift and lets go of the other -- the family bit stays set
+// because its twin still holds it -- and reading the family bit there keeps
+// the released key in the physical mask for good. The host goes on holding a
+// modifier nobody is touching, and every key pressed after it carries that
+// modifier: a walk that will not slow down, and a jump that arrives as whatever
+// Shift+Space is bound to. This is the same complaint as "W and Space collide",
+// one layer underneath the pair the player happened to notice.
+//
+// The per-key answer is in the same field, in its device-dependent half. It is
+// used whenever the source supplies any of those bits, and the family
+// bit stays the fallback for a source that supplies none, so an event that only
+// ever carried a family bit keeps behaving exactly as it did before.
+static NSEventModifierFlags HIDDeviceModifierMaskForKeyCode(
+        unsigned short keyCode) {
+    switch (keyCode) {
+        case kVK_Shift:        return NX_DEVICELSHIFTKEYMASK;
+        case kVK_RightShift:   return NX_DEVICERSHIFTKEYMASK;
+        case kVK_Control:      return NX_DEVICELCTLKEYMASK;
+        case kVK_RightControl: return NX_DEVICERCTLKEYMASK;
+        case kVK_Option:       return NX_DEVICELALTKEYMASK;
+        case kVK_RightOption:  return NX_DEVICERALTKEYMASK;
+        case kVK_Command:      return NX_DEVICELCMDKEYMASK;
+        case kVK_RightCommand: return NX_DEVICERCMDKEYMASK;
+        default:               return 0;
+    }
+}
+
+// True when the snapshot says which key moved at all. A set carrying none of
+// these bits is only answering "some member of the family is down", and the
+// family bit is the honest reading of that.
+static BOOL HIDEventCarriesDeviceModifierState(NSEventModifierFlags flags) {
+    static const NSEventModifierFlags every =
+        NX_DEVICELCTLKEYMASK | NX_DEVICELSHIFTKEYMASK | NX_DEVICERSHIFTKEYMASK |
+        NX_DEVICELCMDKEYMASK | NX_DEVICERCMDKEYMASK | NX_DEVICELALTKEYMASK |
+        NX_DEVICERALTKEYMASK | NX_DEVICERCTLKEYMASK;
+    return (flags & every) != 0;
 }
 
 static HIDKeyboardPhysicalModifierMask HIDEffectivePhysicalModifierMaskForEvent(HIDKeyboardPhysicalModifierMask physicalMask,
@@ -878,7 +920,16 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         return;
     }
 
-    BOOL pressed = (event.modifierFlags & modifierFlag) != 0;
+    BOOL pressed;
+    NSEventModifierFlags deviceMask =
+        HIDDeviceModifierMaskForKeyCode(event.keyCode);
+    if (deviceMask != 0 &&
+        HIDEventCarriesDeviceModifierState(event.modifierFlags)) {
+        // Ask about the key the event names, not about its family.
+        pressed = (event.modifierFlags & deviceMask) != 0;
+    } else {
+        pressed = (event.modifierFlags & modifierFlag) != 0;
+    }
     if (pressed) {
         self.keyboardPhysicalModifierSourceMask |= mask;
     } else {

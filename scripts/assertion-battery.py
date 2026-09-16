@@ -43,6 +43,8 @@ CHANGELOG = os.path.join(root, "CHANGELOG.md")
 FETCHER = os.path.join(root, "scripts", "download-frameworks.sh")
 AUDIT = os.path.join(root, "scripts", "constraints-audit.py")
 CRED_SCAN = os.path.join(root, "scripts", "credential-scan-audit.py")
+HELD_PAIR = os.path.join(root, "scripts",
+                          "held-modifier-keyboard-pair-tests.py")
 TOOLCHAIN = os.path.join(root, "scripts", "apple_toolchain.py")
 INTERNAL = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                         "StreamViewController_Internal.h")
@@ -80,6 +82,10 @@ WF_GATE = (os.path.join(root, "scripts", "workflow-audit.py"), [])
 # has stopped matching is visible to its own self test and nowhere else: the tree
 # it scans is clean, and a clean tree is what a dead rule also reports.
 CRED_GATE = (CRED_SCAN, ["--self-test"])
+# The held-modifier pair harness replays hand shapes against the compiled
+# state machine, so a modifier that is recorded wrongly is visible to it and
+# to nothing else: the source still reads a flag AppKit really does set.
+PAIR_GATE = (HELD_PAIR, [])
 # Both SDK-shaped mutations are judged by the aggregate rather than by
 # scripts/compile-audit.py itself: the audit runner has no Apple toolchain, a gate that
 # has to skip answers "I cannot tell", and the battery would read that as a mutation
@@ -1190,6 +1196,44 @@ PRESCREEN_GITHUB = 'rb"(?i)github_pat_|gh[pousr]_|AKIA[0-9A-Z]|xox[baprs]-|AIza|
 REDACT_TAIL = '    return "%s%s%s" % (value[:6]'
 
 
+# The read this file made before the shift-pair fix: the family bit alone, which
+# stays set while a twin holds it, so releasing one shift keeps it held forever.
+PER_KEY_READ = """    BOOL pressed;
+    NSEventModifierFlags deviceMask =
+        HIDDeviceModifierMaskForKeyCode(event.keyCode);
+    if (deviceMask != 0 &&
+        HIDEventCarriesDeviceModifierState(event.modifierFlags)) {
+        // Ask about the key the event names, not about its family.
+        pressed = (event.modifierFlags & deviceMask) != 0;
+    } else {
+        pressed = (event.modifierFlags & modifierFlag) != 0;
+    }"""
+FAMILY_READ = "    BOOL pressed = (event.modifierFlags & modifierFlag) != 0;"
+LEFT_SHIFT_ROW = "        case kVK_Shift:        return NX_DEVICELSHIFTKEYMASK;"
+
+
+def shift_pair_falls_back_to_the_family_bit(text):
+    return once(text, PER_KEY_READ, "the per-key modifier read").replace(
+        PER_KEY_READ, FAMILY_READ, 1)
+
+
+def the_shift_halves_are_swapped(text):
+    # A plausible way to fill the table in: the two shifts differ by one letter
+    # in the constant name, and every single-key case still behaves, because the
+    # family bit is what the fallback reads.
+    return once(text, LEFT_SHIFT_ROW, "the left shift row").replace(
+        LEFT_SHIFT_ROW,
+        "        case kVK_Shift:        return NX_DEVICERSHIFTKEYMASK;", 1)
+
+
+def pair_step_dropped_from_ci(text):
+    start = text.index(
+        "    - name: Verify a held modifier survives the key pressed beside it")
+    end = text.index(
+        "    - name: Verify the timeout overlay can reach its submenus")
+    return text[:start] + text[end:]
+
+
 def pat_rule_stops_matching(text):
     # The summary line counts rules, not matches, so a rule whose literal no
     # longer describes the thing it names still reports itself as armed. Only a
@@ -1519,6 +1563,17 @@ MUTATIONS = [
      "the scan copies a whole credential into its own report", CRED_GATE),
     ("credential-scan-dropped-from-ci", WORKFLOW, credential_step_dropped_from_ci,
      "CI stops running the credential scan while the aggregate still does",
+     AUDIT_GATE),
+    ("shift-release-reads-the-family-bit", HID,
+     shift_pair_falls_back_to_the_family_bit,
+     "a released shift stays held because its twin still holds the family bit",
+     PAIR_GATE),
+    ("shift-halves-swapped-in-the-table", HID, the_shift_halves_are_swapped,
+     "left shift is recorded as right shift, so its release never lands",
+     PAIR_GATE),
+    ("held-modifier-pair-step-dropped-from-ci", WORKFLOW,
+     pair_step_dropped_from_ci,
+     "CI stops running the held-modifier pair harness while the aggregate does",
      AUDIT_GATE),
 ]
 

@@ -321,6 +321,20 @@ jobs:
       # prove the property can still fail.
       run: python3 scripts/scroll-notch-consumption-tests.py
 
+    - name: Verify a held modifier survives the key pressed beside it
+      # A flagsChanged names the key that just moved, but AppKit's Shift bit is a
+      # snapshot of the whole family: hold one shift, release the other, and the
+      # family bit stays set because the first one is still holding it. Reading
+      # that bit recorded the released shift as held for good, so the host kept a
+      # modifier nobody is touching and every key after it carried Shift -- a walk
+      # that would not slow down, and a Space that arrived as Shift+Space. That is
+      # the "W and Space collide" report one layer underneath the pair that was
+      # noticed, and no source grep can see it: the code reads the flag AppKit
+      # really does set. The harness compiles the shipping state machine and its
+      # mapping table, replays hand shapes, and records the modifier byte beside
+      # each key code, then rebuilds two wrong shapes to prove it can fail.
+      run: python3 scripts/held-modifier-keyboard-pair-tests.py
+
     - name: Verify the timeout overlay can reach its submenus
       # The overlay's three buttons used to find the stream menu's Window, Monitor
       # and Quality submenus by comparing each item's title against a Chinese

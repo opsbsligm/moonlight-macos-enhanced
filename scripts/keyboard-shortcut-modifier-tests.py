@@ -48,6 +48,8 @@ STATICS = [
     "typedef NS_OPTIONS(NSUInteger, HIDKeyboardRemoteModifierMask)",
     "static HIDKeyboardPhysicalModifierMask HIDPhysicalModifierMaskForKeyCode",
     "static NSEventModifierFlags HIDModifierFlagForKeyCode",
+    "static NSEventModifierFlags HIDDeviceModifierMaskForKeyCode",
+    "static BOOL HIDEventCarriesDeviceModifierState",
     "static HIDKeyboardPhysicalModifierMask HIDEffectivePhysicalModifierMaskForEvent",
     "static unsigned short HIDRemoteModifierKeyCode",
     "static char HIDRemoteModifierFlagsToGenericFlags",
@@ -127,6 +129,9 @@ def modifier_defines():
 PROLOGUE = r"""
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
+// The per-key halves of the modifier snapshot, read by the shipping
+// record this harness drives.
+#import <IOKit/hidsystem/IOLLEvent.h>
 #include <stdlib.h>
 
 #define HIDSupport MLModifiersUnderProbe

@@ -1418,6 +1418,70 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 44: a released shift stayed held, and every key after it carried it
+
+- **The walk would not slow down, and the jump arrived as something else.** The
+  report was still W and Space, the two most basic inputs in a game, and this
+  is the layer underneath the pair that was noticed. AppKit's Shift bit is a
+  snapshot of a family: left and right shift share it, and nothing else in
+  that half of the field says which one moved. Hold one shift and release the
+  other and the family bit stays set -- the first one is still holding it --
+  so the record built from that bit says the released key is still down. The
+  player let go of sprint; the host kept sprinting. Worse, the stranded bit
+  is not inert: every key pressed afterwards carries Shift in its modifier
+  byte, which is a Space that arrives as Shift+Space and a W that will not
+  stop sprinting. To a player that is indistinguishable from two keys
+  colliding.
+
+- The shipped read was `event.modifierFlags & NSEventModifierFlagShift`, which
+  is a flag AppKit really does set, so no source-level check could call it
+  wrong -- the code reads something true and answers a different question.
+  The keyboard-concurrency harness does drive W and Space, and it passes,
+  because it empties the modifier sync on purpose: it was built to ask
+  whether two ordinary keys stay two keys, and nothing has ever run the
+  modifier state machine.
+
+- The per-key answer is already in the same field, in its device-dependent
+  half, and the record now reads the moved key's own bit. The family bit
+  stays the fallback whenever an event supplies none of the per-key bits, so
+  a source that only ever reports a family bit keeps behaving exactly as it
+  did.
+
+- **A harness that had never run this machine.**
+  `scripts/held-modifier-keyboard-pair-tests.py` lifts the shipping state
+  machine -- the physical mask, the desired remote mask, the sync that diffs
+  them, the flags-changed entry, and the ordinary keyDown:/keyUp: a game key
+  travels through -- together with the resolver's mapping table and the
+  modifier byte values, so the probe cannot disagree with the build about
+  which bit is left shift. The host sender records the byte beside the key
+  code, because half the failures here are in that byte and not in the key.
+  Scenarios are hand shapes: sprint-walk-jump released in order, sprint let
+  go mid-stride, the two shifts as the two keys the host must see them as,
+  and a walk key under the right shift alone.
+
+- Two mistakes in the harness itself are worth recording, because both would
+  have hidden the defect. Its first version replayed every scenario on the
+  same controller, so a modifier stranded by one shape poisoned the next and
+  no failure could be attributed; that is exactly how the bug feels to a
+  player, but it is not how a test must read. And its first events carried
+  only the family bit, which is the one shape under which the old code is
+  correct -- a harness that models an incomplete event finds an incomplete
+  truth.
+
+- Three regressions are planted on every battery pass (101 to 104): the
+  family-bit read restored, the two shift rows of the table swapped, and the
+  workflow step removed while the aggregate still runs the harness. All three
+  are caught. Two known-bad shapes are rebuilt inside the harness itself --
+  answering a modifier change only for the bits that went down, and answering
+  a key with the modifier byte of the event before it.
+
+- What is still on the player's side, stated plainly: these per-key bits are a
+  field Apple documents as device-dependent rather than as a promise, and the
+  fallback exists precisely because a source could stop filling them.
+  Alternating the two shift keys while moving and jumping is the one thing
+  here that only a real keyboard can confirm.
+
+
 ### Round 43: a token reached a working session, and no gate could see it
 
 - **A personal access token reached a working session.** It never reached a
