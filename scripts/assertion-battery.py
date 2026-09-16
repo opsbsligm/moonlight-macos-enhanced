@@ -39,6 +39,7 @@ PREPARER = os.path.join(root, "scripts", "prepare-release.py")
 BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
 WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
 CHANGELOG = os.path.join(root, "CHANGELOG.md")
+FETCHER = os.path.join(root, "scripts", "download-frameworks.sh")
 AUDIT = os.path.join(root, "scripts", "constraints-audit.py")
 TOOLCHAIN = os.path.join(root, "scripts", "apple_toolchain.py")
 INTERNAL = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -468,6 +469,21 @@ def answer_one_notch(text):
 
 LOST_ROUND_HEADER = ("### Round 33: a fast flick lost most of its scroll before "
                      "the host saw it\n")
+
+
+RETRY_FLAGS = "         --retry 5 --retry-all-errors --retry-connrefused \\\n"
+
+
+def give_up_on_one_connection(text):
+    """Take the retry out of the only download path the build has.
+
+    The failure was real: a runner could not open a connection to github.com for
+    nine seconds, curl made one attempt, and both macOS builds ended. Keeping the
+    same flags written by hand across a growing list of dependencies is not a rule,
+    so the battery has to notice the moment the rule stops being true in the file.
+    """
+    once(text, RETRY_FLAGS, "the retry flags on the only download path")
+    return text.replace(RETRY_FLAGS, "", 1)
 
 
 def lose_a_round_header(text):
@@ -1065,6 +1081,9 @@ MUTATIONS = [
      AUDIT_GATE),
     ("changelog-loses-a-whole-round", CHANGELOG, lose_a_round_header,
      "a rewrite takes a round of history out of the changelog and nothing notices",
+     AUDIT_GATE),
+    ("download-gives-up-on-one-connection", FETCHER, give_up_on_one_connection,
+     "one refused connection ends both macOS builds, as it did on the runner",
      AUDIT_GATE),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,

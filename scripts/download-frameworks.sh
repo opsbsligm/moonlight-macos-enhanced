@@ -33,6 +33,38 @@ fail() {
   exit 1
 }
 
+# A completed download and an archive that arrived whole are two different claims,
+# and the pipeline used to make only the first one. unzip -o on a zip whose tail is
+# missing can still leave a directory tree behind, and the layout checks downstream
+# then blamed the archive for a truncated transfer. Testing the archive is the cheap
+# way to keep those two messages apart.
+verify_archive() {
+  local path="$1"
+  [[ -s "$path" ]] || return 1
+  unzip -t -qq "$path" >/dev/null 2>&1
+}
+
+# One runner that could not connect to github.com for nine seconds turned both macOS
+# builds red, and nothing about the failure was reproducible: curl had no retry and no
+# stall limit, so the whole build ended on a single connect attempt and a human had to
+# push again. Downloads retry connection failures, give up on a connection that never
+# opens rather than one that merely paused, abandon a transfer that has stalled, and
+# re-fetch an archive that arrives incomplete.
+fetch_archive() {
+  local url="$1" out="$2" attempt
+  for attempt in 1 2 3; do
+    if curl -L --fail --connect-timeout 15 --max-time 900 \
+         --speed-limit 1024 --speed-time 60 \
+         --retry 5 --retry-all-errors --retry-connrefused \
+         -o "$out" "$url" && verify_archive "$out"; then
+      return 0
+    fi
+    echo "warning: ${url} did not arrive whole (attempt ${attempt})" >&2
+    rm -f "$out"
+  done
+  return 1
+}
+
 # An .xcframework is only valid when its own directory holds Info.plist.
 # Unzipping with the wrong -d target leaves one extra level
 # (OpenSSL.xcframework/OpenSSL.xcframework), which Xcode can still stumble
@@ -172,6 +204,24 @@ if [[ "${1:-}" == "--self-test" ]]; then
     echo "self-test: the header search reported success with nothing to find" >&2; exit 1;
   fi
 
+  # A truncated transfer has to be refused by the fetch, not by the layout check
+  # three steps later, so the accept/reject pair is exercised on real archives.
+  mkdir -p "$case_dir/payload/inner"
+  head -c 4096 /dev/urandom > "$case_dir/payload/inner/blob"
+  (cd "$case_dir/payload" && zip -qr "$case_dir/good.zip" inner) || {
+    echo "self-test: could not build an archive to test" >&2; exit 1; }
+  verify_archive "$case_dir/good.zip" || {
+    echo "self-test: rejected a complete archive" >&2; exit 1; }
+  local_size=$(wc -c < "$case_dir/good.zip" | tr -d ' ')
+  head -c "$(( local_size - 200 ))" "$case_dir/good.zip" > "$case_dir/short.zip"
+  if verify_archive "$case_dir/short.zip" 2>/dev/null; then
+    echo "self-test: accepted an archive with its tail missing" >&2; exit 1;
+  fi
+  : > "$case_dir/empty.zip"
+  if verify_archive "$case_dir/empty.zip" 2>/dev/null; then
+    echo "self-test: accepted an empty file as a download" >&2; exit 1;
+  fi
+
   echo "dependency layout self-test passed"
   exit 0
 fi
@@ -181,7 +231,8 @@ xcframeworks_missing=$(missing_bundles "$XCFRAMEWORKS_DIR")
 if [[ -z "$xcframeworks_missing" ]]; then
   echo "xcframeworks/ holds ${REQUIRED_BUNDLES}, skipping download"
 else
-  curl -L --fail -o "$TMP_DIR/xcframeworks.zip" "$XCFRAMEWORKS_URL"
+  fetch_archive "$XCFRAMEWORKS_URL" "$TMP_DIR/xcframeworks.zip" || \
+    fail "could not download ${XCFRAMEWORKS_URL}: the host refused or the transfer never completed"
   mkdir -p "$XCFRAMEWORKS_DIR"
   unzip -o "$TMP_DIR/xcframeworks.zip" -d "$XCFRAMEWORKS_DIR"
   echo "xcframeworks downloaded to $XCFRAMEWORKS_DIR"
@@ -194,7 +245,8 @@ echo "=== Downloading OpenSSL.xcframework ==="
 if [[ -f "$OPENSSL_DIR/Info.plist" ]]; then
   echo "OpenSSL.xcframework already holds a manifest, skipping download"
 else
-  curl -L --fail -o "$TMP_DIR/openssl.zip" "$OPENSSL_URL"
+  fetch_archive "$OPENSSL_URL" "$TMP_DIR/openssl.zip" || \
+    fail "could not download ${OPENSSL_URL}: the host refused or the transfer never completed"
   mkdir -p "${PROJECT_DIR}/Packages"
   unzip -o "$TMP_DIR/openssl.zip" -d "${PROJECT_DIR}/Packages/"
   echo "OpenSSL.xcframework downloaded to $OPENSSL_DIR"

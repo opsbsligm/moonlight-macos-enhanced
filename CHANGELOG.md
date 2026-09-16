@@ -1418,6 +1418,33 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 36: a moment of network ended both macOS builds
+
+- **What the failing run actually said.** The x86_64 job died in dependency
+  preparation with `curl: (28) Failed to connect to github.com port 443
+  after 9354 ms`, on the commit whose arm64 job passed. Nothing in the diff
+  caused it: one connect attempt was the entire retry policy, so a runner
+  with a bad route to GitHub cost a build, a red pipeline, and a human
+  pushing again.
+
+- **Fixed in the one place a third dependency cannot forget it.** Every
+  download goes through `fetch_archive` now, which retries refused and reset
+  connections, bounds a connection that never opens, abandons a transfer
+  that has stalled, and re-fetches an archive that is not whole.
+  `verify_archive` is the other half of the claim: a zip missing its tail
+  used to leave a directory tree behind through `unzip -o`, and the layout
+  check three steps later blamed the archive for a truncated transfer. The
+  self-test builds an archive, truncates it, and refuses both the short file
+  and an empty one, so the accept and the reject are both proven.
+
+- **The rule matters more than the flags.**
+  `download-gives-up-on-one-connection` takes the retry flags out of the
+  helper and the aggregate goes red, because a dependency added next month
+  will not know to copy them. CI is the evidence for this round in both
+  directions: the previous run is the defect, and the next one is the test.
+
+The battery went from 82 to 83. No product code moved, so the delivered image from round 35 is unchanged until a run goes green end to end.
+
 ### Round 35: a three-notch wheel event was answered with one notch
 
 - **The count the driver reports, thrown away.**

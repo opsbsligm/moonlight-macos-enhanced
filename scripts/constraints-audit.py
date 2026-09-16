@@ -213,6 +213,27 @@ check(layout.returncode == 0,
       % ((layout.stdout + layout.stderr).strip()[-700:])
       )
 
+# A runner that could not open a connection to github.com for nine seconds turned
+# both macOS builds red, and the download had no retry and no check that what arrived
+# was whole. The retry is worth less than the rule: a third dependency added next
+# month will not remember to copy it unless the file is checked for it.
+fetch_start = fetch.find("fetch_archive() {")
+check(fetch_start >= 0,
+      "dependency downloads share one fetch helper instead of one curl per dependency")
+fetch_body = fetch[fetch_start:fetch.index("\n}", fetch_start)] if fetch_start >= 0 else ""
+unheld = [flag for flag in ("--retry", "--connect-timeout", "--speed-limit", "verify_archive")
+          if flag not in fetch_body]
+check(not unheld,
+      "the fetch helper retries a stalled connection and verifies the archive before unzipping"
+      if not unheld else
+      "the fetch helper no longer does these: " + ", ".join(unheld))
+bypassed = [name for name in ("XCFRAMEWORKS_URL", "OPENSSL_URL")
+            if 'fetch_archive "$%s"' % name not in fetch]
+check(not bypassed,
+      "every dependency download goes through the fetch helper"
+      if not bypassed else
+      "these downloads bypass the fetch helper: " + ", ".join(bypassed))
+
 delegate = open(os.path.join(root, "Limelight/macOS/AppDelegateForAppKit.m"),
                 encoding="utf-8").read()
 
