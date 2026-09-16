@@ -1451,6 +1451,36 @@ stay at 140, and the behavioural harnesses stay at ten.
   file that saves after taking focus, or closes without restoring, fails
   exactly the rule that covers it.
 
+- **The first version of that fix was refused, and not by a reviewer.** It
+  asked the saved responder which window it belonged to. `NSResponder` has no
+  `window` member -- only a view, or the window itself, can answer that -- so
+  the line was wrong on the day it was written. The syntax parse accepted it,
+  because parsing never resolves a member lookup, and the audit accepted it,
+  because the audit reads shape rather than types. Three jobs then refused it
+  on the same line: the two slice builds, the analyzer, and the Debug build
+  of the probe that the embedded-render check compiles. The ownership test
+  now asks a view for its window and compares the responder against the
+  window itself, both by identity, and each shape was checked on its own
+  before the file was touched: a small file that repeats the wrong lookup
+  reproduces the refusal, and the file that repeats the two-shape test
+  type-checks clean.
+
+- **A host without `xcodebuild` can still type-check Swift.** That refusal
+  took twelve minutes to arrive, which is the price of believing the local
+  toolchain is blind to Swift types. It is not: the Command Line Tools
+  compiler runs without the licence gate that stops `xcodebuild` and `xcrun`,
+  and against the Command Line Tools' own SDKs it will type-check all
+  thirty-two Swift files of this project -- the bridging header and the
+  vendored include paths included -- in about a minute on the 26.5 SDK, which
+  is the SDK the build jobs use. Two things keep it from being a gate today.
+  The `#Preview` macro at the end of one file and the `@State` macros on the
+  27 SDK both need a macro plugin that ships with Xcode and not with the
+  Command Line Tools, so those regions have to come out of the copy that gets
+  checked, and a check that silently drops code is worse than no check. And
+  the check is not wired into anything yet. What this round established is
+  only that it runs, and what it says about this tree: clean on the SDK CI
+  builds with.
+
 ### Audited, and not changed
 
 - **The glass does not need a transparency-off branch.** The audit looked for

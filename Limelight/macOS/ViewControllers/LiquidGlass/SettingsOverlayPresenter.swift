@@ -182,7 +182,14 @@ private final class DismissBox {
     // closes by taking the keys with it is the same fault as a title that came
     // back blank -- this class already returns the title and the toolbar, so the
     // focus is the third borrowed thing, and the only one it let go of.
-    if let savedFirstResponder, savedFirstResponder.window == window {
+    //
+    // The first responder is any NSResponder, and only a view or the window
+    // itself can say which window it belongs to, so the ownership test has two
+    // shapes. A responder that belongs to some other window is not somebody to
+    // hand the keyboard back to, and the content view is the fallback.
+    if let savedFirstResponder,
+       (savedFirstResponder as? NSView)?.window === window
+         || savedFirstResponder === window {
       window.makeFirstResponder(savedFirstResponder)
     } else {
       window.makeFirstResponder(window.contentView)
