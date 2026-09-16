@@ -51,6 +51,46 @@ TEST_BODY = r"""
 
 __DRAIN__
 
+__FACTS__
+
+// One tick of the stick cursor in ControllerSupport.m, in the order the shipping
+// source runs it: ask whether motion may reach the host, apply the deadzone,
+// accumulate, ship whole pixels, keep the remainder. Where that ask sits is part
+// of the shape, so it is baked in too. Every define comes from the shipping
+// source rather than from wishful thinking, so this model says what the timer
+// does and not what this file would like it to do.
+#ifndef STICK_TIMER_IS_GATED
+#define STICK_TIMER_IS_GATED 0
+#endif
+#ifndef STICK_GATE_REFUSES_BEFORE_ACCUMULATING
+#define STICK_GATE_REFUSES_BEFORE_ACCUMULATING 0
+#endif
+#ifndef STICK_TIMER_DROPS_MOTION
+#define STICK_TIMER_DROPS_MOTION 0
+#endif
+
+static short stick_tick(double *accumulated, double delta, int forwarding,
+                        int *sent) {
+    int refused = STICK_TIMER_IS_GATED && !forwarding;
+    if (refused && STICK_GATE_REFUSES_BEFORE_ACCUMULATING) {
+        if (STICK_TIMER_DROPS_MOTION) *accumulated = 0.0;
+        return 0;
+    }
+    if (fabs(delta) > HIDMouseEmulationDeadzone) {
+        *accumulated += delta * HIDMouseEmulationSpeed;
+    }
+    if (refused) {
+        if (STICK_TIMER_DROPS_MOTION) *accumulated = 0.0;
+        return 0;
+    }
+    short whole = (short)*accumulated;
+    if (whole != 0) {
+        *sent += whole;
+        *accumulated -= whole;
+    }
+    return whole;
+}
+
 static int failures = 0;
 
 static void check(int ok, const char *message) {
@@ -138,10 +178,45 @@ int main(void) {
     check(move == SHRT_MIN || move <= -SHRT_MAX,
           "and the same is true going the other way");
 
+    // Handing the pointer back to the Mac turns forwarding off without stopping
+    // the stick timer, so a stick parked past its deadzone has to send nothing
+    // for as long as the player owns the cursor -- and it must not save the
+    // motion up, because recapture would spend a whole uncapture in one packet.
+    {
+        double accumulator = 0.0;
+        int sent = 0;
+        for (int tick = 0; tick < 60; tick++) stick_tick(&accumulator, 0.5, 0, &sent);
+        check(sent == 0, "a right stick past the deadzone moves nothing while the "
+                         "pointer belongs to the Mac");
+        short resumed = stick_tick(&accumulator, 0.5, 1, &sent);
+        check(resumed <= (short)(0.5 * HIDMouseEmulationSpeed) + 1,
+              "and recapture answers the current frame, not the whole uncapture");
+    }
+
     printf("%d mouse-emulation failures\n", failures);
     return failures ? 1 : 0;
 }
 """
+
+
+def method_body(text, signature):
+    """The method body that starts at `signature`, braces included."""
+    start = text.find(signature)
+    if start < 0:
+        raise SystemExit("the shipping source no longer contains %s" % signature)
+    brace = text.find("{", start)
+    depth, index = 0, brace
+    while index < len(text):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        index += 1
+    else:
+        raise SystemExit("unbalanced braces in %s" % signature)
+    return text[start:index + 1]
 
 
 def drain_block(text):
@@ -171,6 +246,36 @@ def throw_the_residue_away(drainer):
         raise SystemExit("HIDDrainRelativeDelta no longer keeps a residue, so this fixture "
                          "has nothing left to throw away")
     return broken
+
+
+def stick_timer_facts(text):
+    """What the shipping stick timer does about a pointer it no longer owns.
+
+    Read from the method body so a planted defect changes the answer here, and
+    the probe below is built from that answer rather than from a separate guess.
+    """
+    timer = method_body(text, "-(void) mouseTimerCallback:(NSTimer*)timer {")
+    send = timer.find("LiSendMouseMoveEventCtx")
+    accumulate = timer.find("_accumulatedMouseX +=")
+    gate = re.search(r"_shouldSendInputEvents", timer)
+    return {
+        "has_send": send >= 0,
+        "asked": gate is not None,
+        "gated": send >= 0 and gate is not None and gate.start() < send,
+        "refuses_before_accumulating": (gate is not None and accumulate >= 0
+                                       and gate.start() < accumulate),
+        "drops": bool(re.search(r"_accumulatedMouseX\s*=\s*0", timer))
+                 and bool(re.search(r"_accumulatedMouseY\s*=\s*0", timer)),
+    }
+
+
+def probe_source(drainer, gated, refuses_first, drops):
+    """The probe source with the drainer and the timer's real shape baked in."""
+    facts = ("#define STICK_TIMER_IS_GATED %d\n"
+             "#define STICK_GATE_REFUSES_BEFORE_ACCUMULATING %d\n"
+             "#define STICK_TIMER_DROPS_MOTION %d\n"
+             % (1 if gated else 0, 1 if refuses_first else 0, 1 if drops else 0))
+    return TEST_BODY.replace("__FACTS__", facts).replace("__DRAIN__", drainer)
 
 
 def source_checks():
@@ -223,7 +328,59 @@ def source_checks():
         problems.append("HIDSupport+Pointer.m no longer has the stick pointer block")
     if not os.path.exists(EMULATION_HEADER):
         problems.append("the shared mouse-emulation header is gone")
+
+    # The third consumer of one decision. Whether motion may reach the host right
+    # now is asked by the button path in ControllerSupport.m and by the display-link
+    # consumer in HIDSupport+Pointer.m. The stick cursor runs on its own NSTimer,
+    # which is never stopped when the pointer is handed back to the Mac -- only when
+    # the session is torn down -- so a timer that never asks keeps dragging the
+    # remote cursor with the right stick while the player is using their own mouse.
+    facts = stick_timer_facts(controller)
+    if not facts["has_send"]:
+        problems.append("the stick timer no longer has the send this check can guard")
+    elif not facts["asked"]:
+        problems.append("the stick timer moves the remote cursor without asking "
+                        "whether input is being forwarded")
+    elif not facts["gated"]:
+        problems.append("the stick timer asks whether input is forwarded only after "
+                        "it has already moved the remote cursor")
+    elif not facts["refuses_before_accumulating"] and not facts["drops"]:
+        # Asking before the send is not enough on its own. Refusing after the
+        # accumulation leaves the owed pixels standing through the whole uncapture,
+        # and they land on the host as one throw the moment capture returns -- the
+        # same ghost motion the display-link consumer takes care not to keep.
+        # Refusing before the deadzone satisfies it; emptying the accumulator does
+        # too, which is why only their combination is a defect.
+        problems.append("the stick timer accumulates the motion it will not send, so "
+                        "the host takes one throw at recapture")
     return problems
+
+
+def compile_args(clang, sdk, path, exe):
+    """One place that decides what a probe needs to build."""
+    return [clang, "-isysroot", sdk, "-Wno-deprecated-declarations",
+            "-framework", "Foundation", "-I", os.path.dirname(EMULATION_HEADER),
+            "-o", exe, path]
+
+
+def expect_red(clang, sdk, tmp, source, label):
+    """Build and run a broken probe, and require it to report the breakage."""
+    path = os.path.join(tmp, "broken.m")
+    exe = os.path.join(tmp, "broken")
+    open(path, "w", encoding="utf-8").write(source)
+    build = subprocess.run(compile_args(clang, sdk, path, exe),
+                           capture_output=True, text=True)
+    if build.returncode != 0:
+        print("FAIL %s would not build, which is not a caught defect" % label)
+        print((build.stdout + build.stderr)[-2000:])
+        return 1
+    broken = subprocess.run([exe], capture_output=True, text=True)
+    caught = [l for l in broken.stdout.splitlines() if l.startswith("FAIL")]
+    ok = broken.returncode != 0 and caught
+    print("%-4s %s (%d verdicts red)" % ("ok" if ok else "FAIL", label, len(caught)))
+    if not ok:
+        print(broken.stdout)
+    return 0 if ok else 1
 
 
 def main():
@@ -232,15 +389,16 @@ def main():
         print("FAIL %s" % line)
     clang, sdk = clang_and_sdk("controller mouse emulation probe")
     drainer = drain_block(open(INTERNAL_HEADER, encoding="utf-8").read())
+    facts = stick_timer_facts(open(CONTROLLER_SOURCE, encoding="utf-8").read())
 
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "probe.m")
         exe = os.path.join(tmp, "probe")
-        open(path, "w", encoding="utf-8").write(TEST_BODY.replace("__DRAIN__", drainer))
-        compile_run = subprocess.run(
-            [clang, "-isysroot", sdk, "-Wno-deprecated-declarations",
-             "-framework", "Foundation", "-I", os.path.dirname(EMULATION_HEADER),
-             "-o", exe, path], capture_output=True, text=True)
+        open(path, "w", encoding="utf-8").write(
+            probe_source(drainer, facts["gated"],
+                         facts["refuses_before_accumulating"], facts["drops"]))
+        compile_run = subprocess.run(compile_args(clang, sdk, path, exe),
+                                     capture_output=True, text=True)
         if compile_run.returncode != 0:
             raise SystemExit("the probe did not compile:\n%s"
                              % (compile_run.stdout[-2000:] + compile_run.stderr[-2000:]))
@@ -249,19 +407,19 @@ def main():
         rc = run.returncode or (1 if problems else 0)
 
         if "--self-test" in sys.argv:
-            open(path, "w", encoding="utf-8").write(
-                TEST_BODY.replace("__DRAIN__", throw_the_residue_away(drainer)))
-            subprocess.run([clang, "-isysroot", sdk, "-Wno-deprecated-declarations",
-                            "-framework", "Foundation",
-                            "-I", os.path.dirname(EMULATION_HEADER), "-o", exe, path],
-                           capture_output=True, text=True, check=True)
-            broken = subprocess.run([exe], capture_output=True, text=True)
-            caught = [l for l in broken.stdout.splitlines() if l.startswith("FAIL")]
-            print("%-4s throwing the residue away is refused (%d verdicts red)"
-                  % ("ok" if broken.returncode != 0 and caught else "FAIL", len(caught)))
-            if broken.returncode == 0 or not caught:
-                print(broken.stdout)
-                return 1
+            variants = [
+                ("throwing the residue away is refused",
+                 throw_the_residue_away(drainer), facts["gated"],
+                 facts["refuses_before_accumulating"], facts["drops"]),
+                ("a stick timer with no forwarding gate is refused", drainer,
+                 False, True, False),
+                ("a stick timer that refuses after it has banked the motion is "
+                 "refused", drainer, True, False, False),
+            ]
+            for label, broken_drainer, gated, first, drops in variants:
+                rc |= expect_red(clang, sdk, tmp,
+                                 probe_source(broken_drainer, gated, first, drops),
+                                 label)
         return rc
 
 

@@ -1067,6 +1067,22 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
         
         // 2. Mouse Movement Logic
         if (controller.isMouseMode) {
+            // Handing the pointer back to the Mac turns input forwarding off,
+            // and this timer keeps running until the session ends: uncapture
+            // clears shouldSendInputEvents and nothing invalidates the timer.
+            // The button path in this file asks that flag before it sends, and
+            // so does the display-link consumer in HIDSupport+Pointer.m. This
+            // path asked nothing, so a right stick parked past its deadzone
+            // kept dragging the remote cursor with it while the player was
+            // moving their own mouse across the Mac.
+            // It asks before the deadzone rather than before the send, which
+            // is what keeps refused motion from adding up. A gate sitting
+            // between the accumulation and the send would owe the host the
+            // whole uncapture as one throw when capture came back.
+            if (!_shouldSendInputEvents) {
+                continue;
+            }
+
             float deltaX = 0;
             float deltaY = 0;
             

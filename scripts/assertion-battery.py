@@ -18,6 +18,7 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HID = os.path.join(root, "Limelight", "Input", "HIDSupport.m")
 HID_INTERNAL = os.path.join(root, "Limelight", "Input", "HIDSupport_Internal.h")
 POINTER_FILE = os.path.join(root, "Limelight", "Input", "HIDSupport+Pointer.m")
+CONTROLLER_FILE = os.path.join(root, "Limelight", "Input", "ControllerSupport.m")
 STREAM_SVC = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                           "StreamViewController.m")
 CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -131,6 +132,16 @@ DOWN_DISPATCH = """        HIDDispatchInput(self, inputCtx, ^{
             LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
         });
 """
+
+
+# What the stick cursor asks before it moves the remote cursor, and the send it
+# asks about. Handing the pointer back to the Mac clears this flag and leaves the
+# timer running, so these two anchors are what a session depends on.
+STICK_FORWARDING_GATE = """            if (!_shouldSendInputEvents) {
+                continue;
+            }
+"""
+STICK_SEND = "                if (truncX != 0 || truncY != 0) {\n"
 
 
 def once(text, needle, where):
@@ -530,6 +541,31 @@ def count_the_stick_in_raw_units(text):
     return text.replace(NORMALISE_Y_HERE,
                         "        CGFloat emulationDeltaY = (fabs(ry) > 4000) ? ry / 32767.0 : 0.0;\n",
                         1)
+
+
+def drag_the_uncaptured_pointer(text):
+    """Stop the stick cursor from asking, which is how it shipped.
+
+    Handing the pointer back to the Mac turns forwarding off and leaves this timer
+    running until the session ends, so a right stick parked past its deadzone kept
+    dragging the remote cursor while the player moved their own mouse.
+    """
+    once(text, STICK_FORWARDING_GATE, "the stick timer forwarding gate")
+    return text.replace(STICK_FORWARDING_GATE, "", 1)
+
+
+def bank_the_refused_stick_motion(text):
+    """Ask after the accumulation, so refused motion is owed rather than dropped.
+
+    The gate still stands before the send, so nothing goes out while the player owns
+    the pointer -- the pixels pile up instead, and recapture spends the whole
+    uncapture on the host as one throw.
+    """
+    once(text, STICK_FORWARDING_GATE, "the stick timer forwarding gate")
+    once(text, STICK_SEND, "the stick timer send")
+    rest = text.replace(STICK_FORWARDING_GATE, "", 1)
+    return rest.replace(STICK_SEND, STICK_FORWARDING_GATE + STICK_SEND, 1)
+
 
 
 def give_up_on_one_connection(text):
@@ -1217,6 +1253,14 @@ MUTATIONS = [
     ("stick-counted-in-raw-units", POINTER_FILE, count_the_stick_in_raw_units,
      "the two pointer paths disagree about where stick movement begins",
      EMULATION_GATE),
+    ("stick-cursor-drags-a-pointer-it-no-longer-owns", CONTROLLER_FILE,
+     drag_the_uncaptured_pointer,
+     "the right stick keeps moving the remote cursor after the pointer went back "
+     "to the Mac, because the timer never asks", EMULATION_GATE),
+    ("stick-timer-owes-the-whole-uncapture", CONTROLLER_FILE,
+     bank_the_refused_stick_motion,
+     "the gate sits behind the accumulation, so recapture spends every refused "
+     "frame as one throw", EMULATION_GATE),
     ("baseline-refresh-forgets-why", ANALYZER, forget_the_written_reasons,
      "regenerating the analyzer baseline deletes the reasons a person wrote for it",
      ANALYZER_GATE),

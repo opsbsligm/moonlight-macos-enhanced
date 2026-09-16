@@ -1418,6 +1418,51 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 40: the stick cursor moved a pointer it had handed back
+
+- **One decision, three consumers, and one of them deaf.** Whether motion may
+  reach the host right now is one flag, `shouldSendInputEvents`. The button
+  path in `ControllerSupport.m` asks it before it sends, and the display-link
+  consumer in `HIDSupport+Pointer.m` asks it before it applies accumulated
+  motion. The right-stick cursor in `mouseTimerCallback:` asked nothing at
+  all. Its timer is made when the pointer is captured and invalidated only in
+  `cleanup`, so handing the pointer back to the Mac switched the sends it
+  shares a flag with off and left this one reading the stick. A right stick
+  resting past its deadzone shipped a packet every sixteen milliseconds to a
+  machine whose cursor the player had just stopped controlling -- their own
+  mouse moving on the Mac, the remote cursor dragged by the gamepad at the
+  same time.
+- **Where the ask sits is the fix, not merely the ask.** Asking before the
+  send would also stop the packets and would owe the host everything it
+  refused: the same method adds a fraction of a pixel a frame to
+  `_accumulatedMouseX` and spends it on the next frame, so a gate behind the
+  accumulation lets an entire uncapture pile up and recapture throws the
+  cursor once. Asking before the deadzone drops refused motion instead, which
+  is the choice the display-link consumer already makes for the same reason.
+  `MouseEmulation.h` stays the single source for the deadzone and the rate,
+  and the gate introduces no number of its own.
+- **The probe reads the shape rather than being told it.**
+  `scripts/controller-mouse-emulation-tests.py` now reads the method body --
+  where it sends, where it asks, where it accumulates, whether it zeroes --
+  and bakes those facts into a C model of one timer tick, so the model repeats
+  what the shipping source does instead of what this file would like it to do.
+  Two verdicts run against it: sixty ticks with forwarding off send nothing,
+  and the first tick after recapture answers the current frame rather than the
+  whole uncapture. `--self-test` builds three shapes and requires each to be
+  red -- the sub-pixel residue thrown away, no gate at all, and a gate sitting
+  behind the accumulation -- so the green cannot be bought by deleting the
+  ask.
+- **Two plantings, one of them already in the tree.** The battery carries
+  `stick-cursor-drags-a-pointer-it-no-longer-owns`, which takes the gate out
+  because that is the shape that shipped, and `stick-timer-owes-the-whole-
+  uncapture`, which leaves the gate in place and moves it behind the
+  accumulation. Both judge the same harness the build jobs run, and both were
+  confirmed red before this landed: the battery went from 90 assertions to 92.
+- **Where it is enforced.** The harness was already a step in both macOS build
+  jobs, so it runs twice per push against the tree it compiles, and the ubuntu
+  audit job keeps it on the CI-only list because its probe needs a clang and
+  SDK pair that image does not have.
+
 ### Round 39: capture release handed the pointer back and kept the modifiers
 
 - **A third flush was missing.** `uncaptureMouseWithCode: reason:` says why it
