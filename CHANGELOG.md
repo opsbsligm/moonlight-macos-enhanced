@@ -1418,6 +1418,66 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 43: a token reached a working session, and no gate could see it
+
+- **A personal access token reached a working session.** It never reached a
+  commit -- a walk over every blob of every reachable object returned nothing
+  -- and the reason that answer had to be asked by hand is the defect this
+  round closes. Every audit in the pipeline asks what the source *does*. None
+  of them asks what a file happens to *contain*, so a credential written into
+  a helper, a debug script, or a workflow step would have been built, tested,
+  artefacted, and pushed without a word of comment. A push is the unforgiving
+  half: the value is then in the object store, in every fork made afterwards,
+  and in any log that echoes the file, and a revert removes it from none of
+  those. The only cheap moment to refuse is the commit that adds it.
+
+- `scripts/credential-scan-audit.py` refuses that commit. Eight shape rules
+  (the fine-grained and classic GitHub token families, cloud keys,
+  private-key blocks, and a deliberately narrow quoted-assignment form) run
+  over every tracked file, with `--history` covering the object store as
+  well. It reports a rule name and a redacted fragment, because a gate that
+  prints what it found is a second copy of the secret -- and this copy would
+  be written into the log of every future run. A byte-level prescreen keeps a
+  whole-history pass down to twenty-four seconds, and the self test proves
+  the prescreen is a superset of the rules: a value that a rule would catch
+  but the prescreen skips is the one mistake a security gate is not allowed
+  to make quietly.
+
+- **A scan that could not be trusted to finish.** The first version fed five
+  thousand object names to `git cat-file --batch` through a pipe while its
+  stdout was unread, which deadlocks the writer against git. The second
+  emitted history findings with three fields into a printer expecting four,
+  and the `--history` pass that looked green before it was fixed meant only
+  that nothing had been found: a clean tree and a dead scan are the same
+  colour. The tree scan, the self test, and the report path are separate
+  assertions now, and the scan stops itself on a clock rather than holding a
+  job open until a runner reaps it an hour later.
+
+- **The blind spot behind it was worse.** Deleting a step from the workflow
+  used to be invisible. The reachability rule walks from the scripts a step
+  names through every script they invoke, and the aggregate invokes nearly
+  all of them -- so a gate whose step had been deleted stayed reachable
+  through the aggregate that still called it, while CI stopped running it on
+  the commits it exists to protect. Reachability that bottoms out at the
+  aggregate is only honest while the driver is itself named by a step, so the
+  pipeline now has to run every gate in `scripts/` apart from the six that
+  need a Mac toolchain and the three that name the gate driving them: the
+  assertion battery and the shortcut-menu harness behind the aggregate, and
+  the release preparer behind the release gate.
+
+- Four regressions are planted against this on every battery pass (97 to 101):
+  a rule whose literal no longer matches the credential it is named for; a
+  prescreen that drops a family before any rule can see it; a report that
+  quotes the whole value; and the trimmed workflow that stops running the
+  scan while the aggregate still does. All four are caught.
+
+- Two things this gate does not do, stated rather than implied. It cannot
+  revoke the token that was already exposed, which only its owner can do. And
+  a runner checkout is shallow, so the whole-history pass belongs to the
+  local aggregate and not to the CI step -- the step claims the tree and
+  nothing more.
+
+
 ### Round 42: a translation rule took the key and left the release behind
 
 - **The rule helper consumed a key without saying so.** The pairing rule is

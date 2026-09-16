@@ -1072,6 +1072,40 @@ check(not parity_problems,
       "every gate the workflow runs is wired into the local aggregate"
       if not parity_problems else "; ".join(parity_problems))
 
+# The parity above points one way only. Its mirror is the failure this repository
+# has not yet been able to see: a gate sits in scripts/, the aggregate still
+# invokes it, and the reachability rule is satisfied by that invocation -- so the
+# day somebody deletes the workflow step that ran it, every check stays green
+# while CI has stopped running a guard on exactly the commits it exists to
+# protect. Reachability that bottoms out at the aggregate is only honest while the
+# driver is itself named by a step, so the gates that lean on that are written out
+# with their driver instead of absorbed into a rule that would prove nothing.
+DRIVEN_BY = {
+    "assertion-battery.py": "constraints-audit.py",
+    "prepare-release.py": "release-gate.py",
+    "shortcut-menu-key-tests.py": "constraints-audit.py",
+}
+named_by_a_step = {name for name in gate_names
+                   if re.search(r"scripts/" + re.escape(name), pipeline) is not None}
+unrun_gates = sorted(set(gate_names) - named_by_a_step - set(CI_ONLY) - set(DRIVEN_BY))
+check(not unrun_gates,
+      "a CI step runs every gate in scripts"
+      if not unrun_gates else "no CI step runs these gates any more: "
+      + ", ".join(unrun_gates))
+
+for driven, driver in sorted(DRIVEN_BY.items()):
+    driver_lines = open(os.path.join(scripts_dir, driver),
+                        encoding="utf-8").read().splitlines()
+    driver_is_a_step = re.search(r"scripts/" + re.escape(driver),
+                                 pipeline) is not None
+    driver_invokes_it = any(driven in line and INVOKES.search(line)
+                            for line in driver_lines)
+    check(driver_is_a_step and driver_invokes_it,
+          "%s is driven by %s, and that driver is a CI step" % (driven, driver)
+          if driver_is_a_step and driver_invokes_it else
+          "%s claims %s as its driver, but that gate is not a CI step or no "
+          "longer invokes it" % (driven, driver))
+
 # --- a header has to be able to name the type it declares -----------------
 # GlassOverlayContainer.m compiled in its own harness while the app that owns it
 # did not build at all: StreamViewController_Internal.h declared
@@ -1430,6 +1464,40 @@ analyzer = subprocess.run([sys.executable,
 check(analyzer.returncode == 0, "the analyzer gate can tell a clean tree from a blind sweep"
       if analyzer.returncode == 0 else "the analyzer gate self test failed:\n"
       + analyzer.stdout[-700:])
+
+# Every audit above asks what the source does. None of them asks what the source
+# happens to contain, so a personal access token pasted into a helper, a debug
+# script, or a workflow step would have been built, tested, artefacted, and
+# pushed without a single word of comment -- and a pushed secret is in the object
+# database, in every fork made afterwards, and in any log that echoes the file.
+# The one cheap moment to refuse is the commit that adds it.
+#
+# The whole history is walked once per full pass, not once per gate: the battery
+# runs this file ninety-seven times, and twenty-four seconds times ninety-seven
+# is a battery nobody waits for. Under --no-battery the tree scan still runs, so
+# the mutation battery still sees a secret-shaped file in the tree.
+credential = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "credential-scan-audit.py")]
+    + (["--history"] if run_battery else []),
+    capture_output=True, text=True, cwd=root)
+check(credential.returncode == 0,
+      "no credential shape is in the tree"
+      + (" or anywhere in the history" if run_battery else "")
+      if credential.returncode == 0 else
+      "the credential scan refused the tree:\n" + credential.stdout[-700:])
+
+# Rules that never fire and a tree that never had a secret look identical from
+# green, so the shapes are planted and hunted on every pass.
+credential_self = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "credential-scan-audit.py"),
+     "--self-test"],
+    capture_output=True, text=True, cwd=root)
+check(credential_self.returncode == 0,
+      "every credential rule catches its own shape, the prescreen stays a "
+      "superset, and the report never prints a whole value"
+      if credential_self.returncode == 0 else
+      "the credential scan cannot prove its own rules:\n"
+      + credential_self.stdout[-700:])
 
 # The localization scan used to be a `grep -rhoE` whose pattern contained a (?:
 # group. BSD grep on macOS accepted it and reported 162 keys, while the ubuntu

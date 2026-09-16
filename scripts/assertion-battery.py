@@ -42,6 +42,7 @@ WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
 CHANGELOG = os.path.join(root, "CHANGELOG.md")
 FETCHER = os.path.join(root, "scripts", "download-frameworks.sh")
 AUDIT = os.path.join(root, "scripts", "constraints-audit.py")
+CRED_SCAN = os.path.join(root, "scripts", "credential-scan-audit.py")
 TOOLCHAIN = os.path.join(root, "scripts", "apple_toolchain.py")
 INTERNAL = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                         "StreamViewController_Internal.h")
@@ -75,6 +76,10 @@ VIDEO_GATE = (os.path.join(root, "scripts", "video-enhancement-tests.py"), [])
 # The workflow audit reads the pipeline that runs every other gate, so a mutation of
 # the pipeline itself is judged by it and by nothing else.
 WF_GATE = (os.path.join(root, "scripts", "workflow-audit.py"), [])
+# The credential scan judges planted shapes rather than the tree, so a rule that
+# has stopped matching is visible to its own self test and nowhere else: the tree
+# it scans is clean, and a clean tree is what a dead rule also reports.
+CRED_GATE = (CRED_SCAN, ["--self-test"])
 # Both SDK-shaped mutations are judged by the aggregate rather than by
 # scripts/compile-audit.py itself: the audit runner has no Apple toolchain, a gate that
 # has to skip answers "I cannot tell", and the battery would read that as a mutation
@@ -1180,6 +1185,46 @@ def aggregate_stops_running_an_audit(text):
         MEMBERSHIP_STEP, 'os.path.join(root, "scripts", "l10n-audit.py")', 1)
 
 
+PAT_RULE = 'r"github_[p]at_[0-9A-Za-z]{6,}_[0-9A-Za-z]{20,}"'
+PRESCREEN_GITHUB = 'rb"(?i)github_pat_|gh[pousr]_|AKIA[0-9A-Z]|xox[baprs]-|AIza|"'
+REDACT_TAIL = '    return "%s%s%s" % (value[:6]'
+
+
+def pat_rule_stops_matching(text):
+    # The summary line counts rules, not matches, so a rule whose literal no
+    # longer describes the thing it names still reports itself as armed. Only a
+    # planted value can tell a working matcher from a decoration.
+    return once(text, PAT_RULE, "the fine-grained token rule").replace(
+        PAT_RULE, 'r"github_[p]at_NOSTART_[0-9A-Za-z]{20,}"', 1)
+
+
+def prescreen_drops_a_family(text):
+    # The prescreen decides which bytes never reach a rule. Drop one family from
+    # it and detection for that family switches off while every count still says
+    # the rules are armed, so a tree containing that credential reports clean.
+    return once(text, PRESCREEN_GITHUB, "the byte prescreen").replace(
+        PRESCREEN_GITHUB,
+        'rb"(?i)gh[pousr]_|AKIA[0-9A-Z]|xox[baprs]-|AIza|"', 1)
+
+
+def report_prints_the_whole_value(text):
+    # A gate that quotes what it found is a second copy of the secret, and this
+    # copy is written into the log of every future run, by a job nobody reads
+    # until it goes red.
+    return once(text, REDACT_TAIL, "the redaction").replace(
+        REDACT_TAIL, '    return value\n' + REDACT_TAIL, 1)
+
+
+def credential_step_dropped_from_ci(text):
+    # The trim that nobody notices: a workflow is tidied and one step goes with
+    # it. The aggregate still invokes the scan, so reachability stays satisfied,
+    # every other parity check still holds, and CI has stopped running the only
+    # guard that looks at what a file contains.
+    start = text.index("    - name: Verify no credential is carried by this tree")
+    end = text.index("    - name: Verify localization coverage")
+    return text[:start] + text[end:]
+
+
 # The mouse-capture escape hatch is Ctrl+Option held alone, and the shipped default
 # shortcut table puts six keyed actions behind that same pair. The guard is one line
 # at the top of -keyDown:, and its absence is invisible in every other gate: the
@@ -1463,6 +1508,18 @@ MUTATIONS = [
      "a property names a first-party class that its own imports cannot see"),
     ("xcrun-assumed-present", TOOLCHAIN, xcrun_assumed_present,
      "a host with no xcrun gets a traceback instead of an answer"),
+    ("pat-rule-stops-matching-its-token", CRED_SCAN, pat_rule_stops_matching,
+     "a credential rule no longer matches the credential it is named for",
+     CRED_GATE),
+    ("prescreen-drops-a-credential-family", CRED_SCAN,
+     prescreen_drops_a_family,
+     "the byte prescreen skips a family before any rule can see it", CRED_GATE),
+    ("credential-report-quotes-the-secret", CRED_SCAN,
+     report_prints_the_whole_value,
+     "the scan copies a whole credential into its own report", CRED_GATE),
+    ("credential-scan-dropped-from-ci", WORKFLOW, credential_step_dropped_from_ci,
+     "CI stops running the credential scan while the aggregate still does",
+     AUDIT_GATE),
 ]
 
 

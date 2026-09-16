@@ -54,6 +54,18 @@ jobs:
     - name: Install the parser used by the workflow audit
       run: python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
 
+    - name: Verify no credential is carried by this tree
+      # Every audit here reads source to ask what the code does. None of them asks
+      # what a file happens to contain, so a token pasted into a helper during a
+      # debugging session would be built, tested, artefacted, and pushed without
+      # comment. A push is the unforgiving half: the value is then in the object
+      # store, in every fork made afterwards, and in any log that echoes the file,
+      # and a revert removes it from none of those. The runner checkout is shallow,
+      # so the whole-history pass is the local aggregate's job, not claimed here.
+      run: |
+        python3 scripts/credential-scan-audit.py --self-test
+        python3 scripts/credential-scan-audit.py
+
     - name: Verify localization coverage
       run: python3 scripts/l10n-audit.py
 
