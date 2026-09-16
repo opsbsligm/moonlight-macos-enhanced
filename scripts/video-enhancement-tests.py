@@ -78,6 +78,14 @@ def warmup_body(text):
     return method_body(text, "- (void)requestFrameInterpolationWarmupForStreamWidth:")
 
 
+def refusal_turn(text):
+    """The refusal branch: from reading the slot count to building a processor."""
+    body = warmup_body(text)
+    start = body.index("if (configuration.numberOfInterpolatedFrames < 1)")
+    end = body.index("VTFrameProcessor *processor", start)
+    return body[start:end]
+
+
 INTERPOLATION_REGION_START = "typedef NS_ENUM(NSInteger, MLInterpolationSlotVerdict)"
 INTERPOLATION_REGION_END = "static MLHDRTransferMode MLResolveHDRTransferMode"
 DETAIL_MAPPER = ("- (NSString *)runtimeDetailKeyForFrameInterpolationEngine:"
@@ -338,6 +346,47 @@ def main():
     inverted_warmup = warmup_body(inverted)
     check("configuration.numberOfInterpolatedFrames < 1" not in inverted_warmup,
           "the slot assertion fails on a renderer that never reads the slot count")
+
+    # --- a refusal must outlive the frame that received it ------------------
+    # prepareFrameInterpolation asks for a processor on every decoded frame, so
+    # a refusal that is not remembered turns into a new capability probe every
+    # frame: two configurations and a queue hop per 16ms, plus a runtime reason
+    # that alternates as the in-flight flag flips, which slips past the settings
+    # page de-duplication and posts at display rate. Measured as reachable on
+    # every Mac without the interpolation engine - Apple M2 included, where the
+    # slot count is zero at all sizes.
+    check("_frameInterpolationNoSlotWidth" in warmup and
+          "streamWidth == _frameInterpolationNoSlotWidth" in warmup,
+          "a size the engine refused is refused without asking the hardware again")
+    refusal = refusal_turn(src)
+    check("_frameInterpolationNoSlotWidth = streamWidth" in refusal,
+          "the refusal is recorded where the slot count was read")
+    check(refusal.index("_frameInterpolationWarmupInFlight = NO") <
+          refusal.index("_frameInterpolationNoSlotWidth = streamWidth"),
+          "the refusal is stored in the same turn that retires the request, so no "
+          "reader can see a finished request it has not yet learned to refuse")
+
+    # setupWithVideoFormat is where a new stream, size or setting arrives.
+    setup = method_body(src, "- (void)setupWithVideoFormat:")
+    check("_frameInterpolationNoSlotWidth = 0" in setup,
+          "a new stream config re-opens the interpolation question")
+
+    # The runtime failure path tears the processor down every frame it fails.
+    # Forgetting the refusal there would put the per-frame probe back.
+    teardown = method_body(src, "- (void)teardownFrameInterpolationProcessor")
+    check("_frameInterpolationNoSlotWidth" not in teardown,
+          "tearing down the processor keeps the refusal, because the runtime "
+          "failure path tears down on every failing frame")
+
+    forgotten = src.replace(
+        "        if (streamWidth == _frameInterpolationNoSlotWidth &&\n"
+        "            streamHeight == _frameInterpolationNoSlotHeight) {\n"
+        "            return;\n"
+        "        }", "        /* inverted: the refusal is forgotten */")
+    inverted_refusal = warmup_body(forgotten)
+    check("streamWidth == _frameInterpolationNoSlotWidth"
+          not in inverted_refusal,
+          "the remembering assertion fails on a renderer that re-asks every frame")
 
     # --- zero slots is two answers, and they must not be merged -------------
     verdict = interpolation_region(src)

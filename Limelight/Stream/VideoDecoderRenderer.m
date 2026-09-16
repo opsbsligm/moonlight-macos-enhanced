@@ -1175,6 +1175,8 @@ static BOOL MLGetSharedMetalPipelines(MTLPixelFormat pixelFormat,
     NSUInteger _frameInterpolationWarmupGeneration;
     NSInteger _frameInterpolationWarmupWidth;
     NSInteger _frameInterpolationWarmupHeight;
+    NSInteger _frameInterpolationNoSlotWidth;
+    NSInteger _frameInterpolationNoSlotHeight;
     CVImageBufferRef _previousInterpolationSourceFrame;
     CVImageBufferRef _pendingInterpolatedFrame;
     uint64_t _pendingInterpolatedEnqueueTimeMs;
@@ -2486,6 +2488,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastDisplayRefreshRate = 0.0;
+    _frameInterpolationNoSlotWidth = 0;
+    _frameInterpolationNoSlotHeight = 0;
     [self teardownFrameInterpolationProcessor];
 
     // MetalFX is macOS 13+. If user selected it on a newer OS but runs on an older
@@ -3487,6 +3491,23 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             return;
         }
 
+        // A GPU with no interpolation engine answers "zero slots" for every
+        // size, and an oversized request is refused the same way. That answer
+        // does not change between frames, so it is remembered here per size.
+        // Without it every source frame re-asked: prepareFrameInterpolation
+        // called into this method on each decoded frame, the refusal branch
+        // cleared the in-flight flag, and the next frame built another pair of
+        // VTLowLatencyFrameInterpolationConfigurations at frame rate - two
+        // hardware capability queries and a queue hop per 16ms of video on
+        // every Mac without the engine. It also flipped the runtime reason
+        // between two sentences as the flag alternated, and the settings page
+        // status only de-duplicates on an unchanged pair, so that alternation
+        // posted a main-queue notification at display rate.
+        if (streamWidth == _frameInterpolationNoSlotWidth &&
+            streamHeight == _frameInterpolationNoSlotHeight) {
+            return;
+        }
+
         _frameInterpolationWarmupInFlight = YES;
         _frameInterpolationWarmupWidth = streamWidth;
         _frameInterpolationWarmupHeight = streamHeight;
@@ -3546,6 +3567,10 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                         return;
                     }
                     self->_frameInterpolationWarmupInFlight = NO;
+                    // Same turn as the flag: a reader that sees the request as
+                    // finished must already see the refusal, or it re-asks.
+                    self->_frameInterpolationNoSlotWidth = streamWidth;
+                    self->_frameInterpolationNoSlotHeight = streamHeight;
                     [self logActiveFrameInterpolationEngine:MLActiveVideoFrameInterpolationEngineNone
                                                      reason:slotReason];
                 });

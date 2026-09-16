@@ -28,7 +28,8 @@ import apple_toolchain
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PREFIX_HEADER = os.path.join(ROOT, "Limelight", "macOS", "Supporting Files",
                              "Limelight-Prefix.pch")
-TARGETS = (os.path.join("Limelight", "macOS"),)
+TARGETS = (os.path.join("Limelight", "macOS"),
+           os.path.join("Limelight", "Stream"))
 
 
 def deployment_target():
@@ -143,9 +144,37 @@ PACKAGE_ROOTS = (
 )
 
 
+def framework_header_dirs():
+    """The macOS slices of the vendored xcframeworks.
+
+    The streaming sources name their codecs by package -- <libavcodec/avcodec.h>,
+    "opus_multistream.h" -- and those headers exist only inside the bundles, which
+    scripts/download-frameworks.sh fetches. Only slices starting with "macos" are
+    added: the iOS and tvOS FFmpeg were configured for another platform, and
+    type-checking against it would answer a question this build never asks.
+    """
+    root = os.path.join(ROOT, "xcframeworks")
+    found = []
+    if not os.path.isdir(root):
+        return found
+    for name in sorted(os.listdir(root)):
+        bundle = os.path.join(root, name)
+        if not name.endswith(".xcframework") or not os.path.isdir(bundle):
+            continue
+        for slice_name in sorted(os.listdir(bundle)):
+            if not slice_name.startswith("macos"):
+                continue
+            headers = os.path.join(bundle, slice_name, "Headers")
+            if os.path.isdir(headers):
+                found.append(headers)
+    return found
+
+
 def include_dirs(sdk):
     """Every repository directory that holds a header, plus the generated ones."""
     includes = {os.path.join(ROOT, relative) for relative in PACKAGE_ROOTS}
+    for headers in framework_header_dirs():
+        includes.add(headers)
     for base in ("Limelight", "moonlight-common"):
         for current, _, files in os.walk(os.path.join(ROOT, base)):
             if any(name.endswith(".h") for name in files):
@@ -266,27 +295,51 @@ def main(argv):
         only = os.path.realpath(argv[argv.index("--sdk") + 1])
     sdks = [only] if only else usable_sdks(sdk)[0]
     problems = 0
+    questions = 0
     for target in sdks:
         flags = compile_flags(target, includes)
         failed = []
+        # A missing vendored header is a host that cannot answer, not a source that
+        # is wrong. The streaming sources import the codecs that
+        # scripts/download-frameworks.sh fetches, so on a checkout that never ran it
+        # the compiler stops at the import and knows nothing about the file. Calling
+        # that a failure would be the gate inventing one; staying silent about it
+        # would be the gate claiming coverage it did not get.
+        silent = []
         for path in files:
             code, output = compile_one(clang, flags, path)
-            if code != 0:
-                failed.append((os.path.relpath(path, ROOT), output))
+            if code == 0:
+                continue
+            item = (os.path.relpath(path, ROOT), output)
+            if "file not found" in output:
+                silent.append(item)
+            else:
+                failed.append(item)
         for path, output in failed:
             print("FAIL %s does not type-check against %s" % (path, os.path.basename(target)))
             for line in output.splitlines()[:12]:
                 print("    %s" % line)
+        for path, output in silent:
+            print("SKIP %s was not answered against %s: it imports a header this checkout "
+                  "does not have, and the streaming sources need the vendored frameworks"
+                  % (path, os.path.basename(target)))
+            for line in output.splitlines()[:3]:
+                print("    %s" % line)
         problems += len(failed)
+        questions += len(silent)
+        asked = len(files) - len(silent)
         print("compile-audit: %d of %d macOS source file(s) type-check against %s"
-              % (len(files) - len(failed), len(files), os.path.basename(target)))
+              % (asked - len(failed), asked, os.path.basename(target)))
     if problems:
         print("compile-audit: %d file/SDK failure(s)" % problems)
         return 1
-    if len(sdks) > 1:
+    if len(sdks) > 1 and not questions:
         print("compile-audit: every file type-checks against all %d SDKs at or above the "
               "deployment target, so an API that only the newest of them declares has "
               "nowhere to hide" % len(sdks))
+    if questions:
+        print("compile-audit: %d file/SDK answer(s) missing, so those files are not "
+              "covered by this run and the result below does not include them" % questions)
     skipped = usable_sdks(sdk)[1] if not only else []
     if skipped:
         print("compile-audit: %d older SDK(s) not tried, the target runs on %s at minimum"

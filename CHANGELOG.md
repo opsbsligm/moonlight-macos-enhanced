@@ -1418,6 +1418,83 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 45: a refusal was forgotten, so the hardware was asked again
+
+### Fixed
+
+- **The interpolation question was asked again on every frame.** The renderer
+  asks for an interpolation processor as each decoded frame arrives. On a Mac
+  with no interpolation engine the answer never changes: the configuration
+  offers zero slots, and the probe-size question the settings matrix asks
+  says the same. Nothing recorded that answer, so the next frame asked again,
+  at frame rate. A refusal cost one or two
+  `VTLowLatencyFrameInterpolationConfiguration` constructions -- a capability
+  query into the video engine, not a struct fill -- a hop onto the warmup
+  queue, and a verdict to classify, sixty times a second, for the whole
+  session, on every machine without the engine. The M2 the slots were
+  measured on is one of those machines.
+
+  The refusal had a second cost. The runtime reason is chosen by whether a
+  warmup is in flight, and with the request restarting every frame that flag
+  alternated, so the reason alternated with it. The settings page status only
+  de-duplicates when the summary and detail pair is unchanged, so a machine
+  that cannot interpolate delivered its refusal as a stream of main-queue
+  notifications instead of one line.
+
+  A refusal is now remembered per size, in the same main-queue turn that
+  retires the request: a reader that sees the request as finished has to hold
+  the answer already, or it asks again. `setupWithVideoFormat:` clears the
+  pair, because a new stream, size or setting re-opens the question -- a
+  stream above the ceiling and a machine with no engine are different
+  answers, and only the second one is permanent.
+  `teardownFrameInterpolationProcessor` deliberately does not clear it,
+  because the runtime failure path calls it on every failing frame, and
+  forgetting the answer there would put the per-frame probe straight back.
+  That asymmetry is the shape an assertion now holds.
+
+  Stated plainly, because it is the boundary of this change: it decides what
+  happens after a refusal, not whether the machine can interpolate. On a Mac
+  that has the engine the processor exists and the first branch of the
+  prepare call already returned, so nothing moves there. Whether a session on
+  an M1 or M2 feels different is a measurement on hardware, and sixty
+  capability queries a second that never reached the screen is not a claim
+  about frame delivery.
+
+### The gate that type-checks the sources had never read the streaming sources
+
+- **41 of 41, and this file was not one of them.** `compile-audit.py` exists
+  because a build once reached a runner carrying a mistake every local gate
+  had called clean, and it does the right thing: `-fsyntax-only` against real
+  SDKs and the generated Swift interface, so a translation unit is answered
+  by a compiler rather than by a grep. Its file list was `Limelight/macOS`.
+  `Limelight/Stream` -- the connection, the stream manager, and
+  `VideoDecoderRenderer.m`, the file this round edited -- was compiled by no
+  local gate at all.
+
+  Both directions were checked before any of it was believed. An undeclared
+  identifier planted in the renderer was met with 41/41 passing and no
+  comment. After the list was widened and the macOS slices of the vendored
+  frameworks were added to the search path, the same edit is refused on both
+  SDKs and 46 of 46 files pass. Only the macOS slices went on the path: the
+  iOS and tvOS FFmpeg were configured for another platform, and a type-check
+  against them answers a question this build never asks.
+
+  A checkout that never ran `scripts/download-frameworks.sh` genuinely cannot
+  answer for those two files, so a header that is absent is reported as
+  skipped and dropped from the denominator rather than called a failure --
+  the same judgement this script already makes for a missing toolchain and
+  for SDKs below the deployment target. What separates it from silence is
+  that it names the files it did not read.
+
+- **What this host could not do.** `xcodebuild` is refused here: the Xcode
+  license has not been agreed, and agreeing to it is not this round's
+  decision to make. That is why the widened gate is worth having rather than
+  merely convenient -- it is the first thing on this machine that can say
+  anything at all about `VideoDecoderRenderer.m`. It type-checks; it does not
+  link, and the pipeline still builds the app for real.
+
+The battery stays at 104 mutations, workflow rules stay at 25, and the
+behavioural harnesses stay at twelve.
 ### Round 44: a released shift stayed held, and every key after it carried it
 
 - **The walk would not slow down, and the jump arrived as something else.** The
