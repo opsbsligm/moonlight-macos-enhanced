@@ -335,6 +335,20 @@ jobs:
       # each key code, then rebuilds two wrong shapes to prove it can fail.
       run: python3 scripts/held-modifier-keyboard-pair-tests.py
 
+    - name: Verify every order of four keys keeps its meaning
+      # The two harnesses above each replay one timeline somebody wrote down, so the
+      # orders they cover are the orders a person thought of. A stranded key lives in
+      # an order nobody pictured -- let go of the right Shift between the jump's press
+      # and its release, while the left one is still sprinting. This harness therefore
+      # enumerates: four keys (both Shifts, W, Space), every interleaving that keeps
+      # each key's own order, 2520 of them, each on a fresh state machine. It asserts
+      # the host is told about each key once down and once up, that both modifier
+      # masks are empty when the hands leave, and that every modifier byte agrees with
+      # the shift keys the host itself was told about -- not with the byte from the
+      # press, which would be wrong for the ordinary case of releasing Shift mid-jump.
+      # Three planted shapes prove it can fail, and each one breaks 1816 of the orders.
+      run: python3 scripts/key-order-exhaustive-tests.py
+
     - name: Verify the timeout overlay can reach its submenus
       # The overlay's three buttons used to find the stream menu's Window, Monitor
       # and Quality submenus by comparing each item's title against a Chinese

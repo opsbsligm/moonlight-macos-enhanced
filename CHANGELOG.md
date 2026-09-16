@@ -1418,6 +1418,65 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 49: the orders nobody wrote down
+
+### Added
+
+- **The pair harnesses each replay one timeline; this one plays every order
+  the four fingers can make.** The report is W and Space -- walk and jump,
+  arriving as one gesture. Two harnesses already drive that pair and both
+  pass, so what was left to ask was not which keys but which order. Each of
+  them replays a sequence somebody wrote down, which means the orders they
+  cover are the orders a person thought of, and a stranded key is exactly the
+  kind of defect that lives in an order nobody pictured: the right Shift let
+  go between the jump's press and its release, while the left one is still
+  holding the sprint. `scripts/key-order-exhaustive-tests.py` enumerates
+  instead of imagining. Four keys, each a press and a release, every
+  interleaving that keeps each key's own order -- 2520 of them, each against
+  a fresh state machine lifted from the shipping file, with a host recorder
+  that keeps the modifier byte beside the key code. It borrows its facts
+  about the keyboard -- which bit is the left shift, which byte the host
+  calls Shift, which Windows key a Mac key becomes -- from the harness that
+  already lifts that machine, because a second reader of those facts would
+  drift and then check a build the app does not run.
+
+- **Four rules for 2520 orders, and the one that looked right and was not.**
+  The host must be told about each key once down and once up; both modifier
+  masks must be empty when the hands leave; nothing may arrive that is not
+  one of those four keys, so a Shift that goes out as Control reports itself
+  instead of slipping through a range check; and every modifier byte must
+  agree with the shift keys the host was itself told about. That last rule
+  nearly became 'a release repeats the byte its press carried', which reads
+  like the right thing and fails most of the sweep for the rightest reason:
+  letting go of Shift mid-jump is ordinary play, and then the jump comes up
+  without the sprint bit because the host was already told that shift was
+  coming up. Agreement, not equality, is the rule. Three planted shapes show
+  the sweep can fail -- a press that drops a sprint the other finger holds, a
+  release that lifts one, and a release that answers with the raw AppKit flag
+  bits -- and each breaks 1816 of the 2520 orders, which is the whole
+  argument for enumerating: no single hand-written timeline is obliged to
+  come near a third of them. The sweep is its own step in the architecture
+  job and is driven by the aggregate, which rose to thirteen behavioural
+  harnesses.
+
+### Audited, and not changed
+
+- **The tree is not what was wrong this time, so nothing in it moved.** All
+  2520 orders pass against unmodified `Limelight/Input/HIDSupport.m`, and the
+  full audit ends at zero failures with the battery at 104 of 104. Before
+  that answer could be trusted, the harness had to be wrong three times, each
+  in the direction of accusing a correct tree. Its first version cleared the
+  left Shift's device bit when the right Shift came up, so the state machine
+  -- reading the flag it is supposed to read -- never saw that shift
+  released, and the sweep came back red on every order, the planted shapes
+  included. Its log drew a shift press and a shift release with the same
+  character, so the failure it printed could not name an edge. And it looked
+  a host-side virtual key code up in the table keyed by Mac key code, which
+  called both W and Space 'Space'. Each of the three could have been 'fixed'
+  by bending the shipping file until the probe agreed, which would have been
+  a fabricated defect rather than a found one; the file is unchanged this
+  round.
+
 ### Round 48: the Swift half waited for a runner to notice its types
 
 ### Fixed
