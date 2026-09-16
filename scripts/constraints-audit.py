@@ -375,6 +375,32 @@ check("NSEvent.removeMonitor(commandWMonitor)" in dismiss_body
       and "hosting.removeFromParent()" in dismiss_body,
       "leaving the settings page removes its key monitor, observer and view")
 
+# The page takes the key focus on the way in. Two things follow, and both are
+# about order rather than presence: the record has to be read before the focus
+# is taken, because reading the first responder afterwards records the page
+# itself, and the hand-back has to happen while the page is still in the view
+# tree, because AppKit chooses the successor of a first responder that simply
+# disappears. The successor is where every key the page's gate declines to
+# consume then lands -- on the window, where Space and Return activate the
+# default button and the arrows move the key view loop.
+check("savedFirstResponder = window.firstResponder" in show_body
+      and show_body.index("savedFirstResponder = window.firstResponder")
+          < show_body.index("window.makeFirstResponder(hosting.view)"),
+      "the page records who held the key focus before it takes the focus")
+check("window.makeFirstResponder(savedFirstResponder)" in dismiss_body
+      and "window.makeFirstResponder(window.contentView)" in dismiss_body,
+      "leaving the settings page hands the key focus back instead of leaving AppKit to choose")
+
+took_without_asking = show_body.replace(
+    "    savedFirstResponder = window.firstResponder" + chr(10), "", 1)
+check("window.makeFirstResponder(hosting.view)" in took_without_asking
+      and "savedFirstResponder = window.firstResponder" not in took_without_asking,
+      "a page that takes the focus without recording it trips the order assertion")
+kept_the_keys = dismiss_body.replace(
+    "window.makeFirstResponder(savedFirstResponder)", "// inverted", 1)
+check("window.makeFirstResponder(savedFirstResponder)" not in kept_the_keys,
+      "a page that closes and keeps the keys trips the hand-back assertion")
+
 # Two entry points would mean two lifetimes. The Objective-C side may only reach
 # the page through the bridge, and the bridge may only forward to the presenter.
 sends = subprocess.run(

@@ -1418,6 +1418,72 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 47: the page took the keyboard and never gave it back
+
+### Fixed
+
+- **The settings page took the key focus and never gave it back.** The page
+  borrows the window it is opened in. It saves the title, it saves whether
+  the toolbar is visible, and it puts both back when it closes, because a
+  page that reopens the title blank is a visible bug. It did not save one
+  thing: showing the page calls `makeFirstResponder` on the page's own view,
+  so the page takes the keyboard, and closing the page never says who should
+  have it instead. AppKit chooses the successor itself, and the successor is
+  where the keys go. The page's key gate is deliberately open-handed -- a key
+  the page does not use is handed back to AppKit -- so every unconsumed key
+  landed on whichever responder AppKit had picked. When that responder is the
+  window, Space and Return belong to the default button and the arrow keys
+  drive the key view loop, which is what a user reported as the space bar
+  having stopped working after the settings page had been opened and closed.
+  A borrowed thing that is thrown away instead of returned is the same fault
+  as the blank title, made by the same class, on the third of its three
+  loans.
+
+- **The fix is ordered, and the order is the meaning.** The save has to
+  happen before the page asks for focus, and the restore before the page
+  leaves the view tree; either one late leaves nothing to restore. Four
+  constraints say that in the audit rather than describing it: the save must
+  appear before the call that takes focus, and the close must name both the
+  restored responder and the fallback for when that responder no longer
+  belongs to the window -- a responder whose window changed while the page
+  was up is not somebody to hand the keyboard back to, and the content view
+  is. Both directions were exercised: the rules pass on the fixed file, and a
+  file that saves after taking focus, or closes without restoring, fails
+  exactly the rule that covers it.
+
+### Audited, and not changed
+
+- **The glass does not need a transparency-off branch.** The audit looked for
+  places that draw the liquid-glass surfaces without respecting Reduce
+  Transparency or Increase Contrast. There is nothing to respect: the
+  surfaces use the system `NSGlassEffectView`, and the system owns what that
+  view looks like when those settings are on. Grepping the three glass files
+  for hard-coded colors to compensate returned no hits -- they draw with
+  semantic colors. A hand-written degradation path here would have been a
+  second opinion about the appearance, which is the class of bug this
+  repository keeps paying for.
+
+- **`glassIsInteractive` reports what was asked for, not what happened.** The
+  setter takes a request and the getter returns the request, which reads like
+  a property that lies. The header says the flag is ignored off the glass
+  path and on systems with no interactive glass, and the true answer is
+  carried separately by `usesSystemGlass`. Nothing in the tree reads the
+  request back -- one call site writes it and none reads it -- so there is no
+  caller being misled today, and the property that matters already tells the
+  truth.
+
+- **A corner-radius branch that cannot run.** `-setCornerRadius:` has a
+  vibrancy path that sets the radius without clipping `masksToBounds`, which
+  would be a wrong-looking corner on any system that took it. The deployment
+  target is 26.0 and that path is guarded by `@available(macOS 26.0, *)`, so
+  on every system this build runs on the guard is true and the other branch
+  is the one that executes. Dead code with no user-visible consequence, left
+  alone rather than "fixed" without evidence.
+
+The battery stays at 104 mutations, workflow rules stay at 25, the
+behavioural harnesses stay at twelve, and the settings-page constraints go
+from sixteen to twenty.
+
 ### Round 46: an interrupted audit could leave its own defect in the tree
 
 ### Fixed

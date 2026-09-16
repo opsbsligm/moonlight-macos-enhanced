@@ -42,6 +42,9 @@ private final class DismissBox {
   private let settingsModel: SettingsModel
   private var savedTitle: String?
   private var savedToolbarVisible: Bool?
+  /// Who held the key focus before the page asked for it. The page borrows it the
+  /// way it borrows the title and the toolbar, so it gives it back as well.
+  private var savedFirstResponder: NSResponder?
   private var commandWMonitor: Any?
   private var closeObserver: Any?
   private var isClosing = false
@@ -133,6 +136,7 @@ private final class DismissBox {
     ])
 
     savedTitle = window.title
+    savedFirstResponder = window.firstResponder
     window.title = LanguageManager.shared.localize("Settings")
 
     savedToolbarVisible = window.toolbar?.isVisible
@@ -169,6 +173,20 @@ private final class DismissBox {
 
     window.toolbar?.isVisible = savedToolbarVisible ?? true
     if let savedTitle { window.title = savedTitle }
+
+    // Give the key focus back while the page is still in the view tree. If the
+    // page is the first responder when it disappears, AppKit chooses the
+    // successor, and the successor is where every key the page's gate hands back
+    // to AppKit then lands: on the window, where Space and Return belong to the
+    // default button and the arrow keys move the key view loop. A page that
+    // closes by taking the keys with it is the same fault as a title that came
+    // back blank -- this class already returns the title and the toolbar, so the
+    // focus is the third borrowed thing, and the only one it let go of.
+    if let savedFirstResponder, savedFirstResponder.window == window {
+      window.makeFirstResponder(savedFirstResponder)
+    } else {
+      window.makeFirstResponder(window.contentView)
+    }
 
     hosting.view.removeFromSuperview()
     hosting.removeFromParent()
