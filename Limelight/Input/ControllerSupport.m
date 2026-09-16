@@ -13,6 +13,7 @@
 
 #import "DataManager.h"
 #import "HIDSupport.h"
+#import "MouseEmulation.h"
 #include "Limelight.h"
 #include "Limelight-internal.h"
 
@@ -1074,13 +1075,13 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
                 deltaY = gamepad.rightThumbstick.yAxis.value;
             }
             
-            // Apply deadzone and sensitivity
-            if (fabs(deltaX) > 0.1 || fabs(deltaY) > 0.1) {
-                // Sensitivity 15.0 per frame (approx 900px/sec at 60Hz)
-                float sensitivity = 15.0;
-                
-                self->_accumulatedMouseX += deltaX * sensitivity;
-                self->_accumulatedMouseY += -deltaY * sensitivity;
+            // The same deadzone and the same rate the HID consumer applies, from
+            // one shared header: these were two literals here and a count threshold
+            // there, so the same stick position meant two different cursor speeds.
+            if (fabs(deltaX) > HIDMouseEmulationDeadzone ||
+                fabs(deltaY) > HIDMouseEmulationDeadzone) {
+                self->_accumulatedMouseX += deltaX * HIDMouseEmulationSpeed;
+                self->_accumulatedMouseY += -deltaY * HIDMouseEmulationSpeed;
                 
                 short truncX = (short)self->_accumulatedMouseX;
                 short truncY = (short)self->_accumulatedMouseY;

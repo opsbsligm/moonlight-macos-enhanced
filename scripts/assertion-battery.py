@@ -98,6 +98,11 @@ GAIN_GATE = (os.path.join(root, "scripts", "relative-pointer-gain-tests.py"), []
 # harness that judges it compiles the function out and runs it, because no
 # test path in the app reaches the quantized branch.
 CLICK_GATE = (os.path.join(root, "scripts", "discrete-scroll-click-tests.py"), [])
+# The stick-driven pointer is judged by the harness that runs the shared
+# normaliser and the drain the shipping sequence uses, and that also reads the
+# call site, because the defect was in how the frame was answered.
+EMULATION_GATE = (os.path.join(root, "scripts",
+                            "controller-mouse-emulation-tests.py"), [])
 SHORTCUT_PROFILE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                                  "SettingsShortcuts.swift")
 MOUSE_CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -472,6 +477,43 @@ LOST_ROUND_HEADER = ("### Round 33: a fast flick lost most of its scroll before 
 
 
 RETRY_FLAGS = "         --retry 5 --retry-all-errors --retry-connrefused \\\n"
+
+
+TRUNCATE_A_FRAME = """        short moveX = HIDDrainRelativeDelta(&emulationResidualX,
+                                            emulationDeltaX,
+                                            HIDMouseEmulationSpeed);\n"""
+DRAFT_THE_RATE = """                                            -emulationDeltaY,
+                                            HIDMouseEmulationSpeed);\n"""
+NORMALISE_Y_HERE = "        CGFloat emulationDeltaY = HIDControllerMouseDeltaForAxis(ry);\n"
+
+
+def truncate_a_stick_frame(text):
+    """Answer one stick frame on its own, which is what shipped.
+
+    The lost fraction is largest exactly where a careful player holds the stick, and
+    the display-link path was already exact, so the two paths disagreed about how far
+    the same stick position moved the cursor.
+    """
+    once(text, TRUNCATE_A_FRAME, "the drained X frame of the emulated pointer")
+    return text.replace(TRUNCATE_A_FRAME,
+                        "        short moveX = (short)(emulationDeltaX * HIDMouseEmulationSpeed);\n",
+                        1)
+
+
+def draft_the_emulation_rate(text):
+    """Give one axis its own number for the pointer rate."""
+    once(text, DRAFT_THE_RATE, "the drained Y frame of the emulated pointer")
+    return text.replace(DRAFT_THE_RATE,
+                        "                                            -emulationDeltaY,\n"
+                        "                                            8.0);\n", 1)
+
+
+def count_the_stick_in_raw_units(text):
+    """Compare the deadzone against raw stick counts on one path again."""
+    once(text, NORMALISE_Y_HERE, "the normalised Y axis of the emulated pointer")
+    return text.replace(NORMALISE_Y_HERE,
+                        "        CGFloat emulationDeltaY = (fabs(ry) > 4000) ? ry / 32767.0 : 0.0;\n",
+                        1)
 
 
 def give_up_on_one_connection(text):
@@ -1085,6 +1127,15 @@ MUTATIONS = [
     ("download-gives-up-on-one-connection", FETCHER, give_up_on_one_connection,
      "one refused connection ends both macOS builds, as it did on the runner",
      AUDIT_GATE),
+    ("stick-keeps-only-whole-pixels", POINTER_FILE, truncate_a_stick_frame,
+     "a stick held just past the deadzone ships a little over half the travel it asked for",
+     EMULATION_GATE),
+    ("stick-rate-drafted-into-a-literal", POINTER_FILE, draft_the_emulation_rate,
+     "one axis of the emulated pointer stops agreeing with the other about the rate",
+     EMULATION_GATE),
+    ("stick-counted-in-raw-units", POINTER_FILE, count_the_stick_in_raw_units,
+     "the two pointer paths disagree about where stick movement begins",
+     EMULATION_GATE),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,
      "one workflow uses two versions of the same upload action", WF_GATE),

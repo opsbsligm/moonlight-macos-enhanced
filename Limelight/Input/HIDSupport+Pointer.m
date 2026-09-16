@@ -633,37 +633,28 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
         }
         short rx = me.controller.lastRightStickX;
         short ry = me.controller.lastRightStickY;
-        short deadzone = 4000;
-        float sensitivity = 15.0f; // Approx match to Qt/ControllerSupport
-        
-        if (abs(rx) > deadzone || abs(ry) > deadzone) {
-            float dx = (float)(abs(rx) > deadzone ? rx : 0) / 32767.0f * sensitivity;
-            float dy = (float)(abs(ry) > deadzone ? ry : 0) / 32767.0f * sensitivity;
-            
-            // Invert Y? Usually stick Y is up=negative or positive depending on driver.
-            // HID usage: Y min is top (-32768), max is bottom (32767).
-            // Mouse move: +Y is down.
-            // So +StickY should be +MouseY.
-            // ControllerSupport uses -dy. Let's try direct map first.
-            // ControllerSupport: dy = -dy * sens.
-            // Let's use -dy for now.
-            
-            short moveX = (short)dx;
-            short moveY = (short)dy; // Try positive first based on HID mapping logic above (MIN(-(val), ...)) inverted already?
-            
-            // Wait, updateButtonFlags logic:
-            // kHIDUsage_GD_Y: self.controller.lastLeftStickY = MIN(-(intValue - 32768), 32767);
-            // It inverts it. So Up is Positive?
-            // Standard XInput: Up is Positive.
-            // Mouse Move: +Y is Down.
-            // So Up (+Stick) -> Up (-Mouse).
-            // So we need to invert Y.
-            
-            moveY = (short)(-dy);
-            
+        CGFloat emulationDeltaX = HIDControllerMouseDeltaForAxis(rx);
+        CGFloat emulationDeltaY = HIDControllerMouseDeltaForAxis(ry);
+
+        // updateButtonFlags already converts the stick's raw Z and Rz into "up is
+        // positive", and a relative pointer move counts +Y as down, so the sign is
+        // flipped here and nowhere else: neither the deadzone nor the scaling above
+        // knows which way the host counts.
+        CGFloat emulationResidualX = me.mouseEmulationResidualX;
+        CGFloat emulationResidualY = me.mouseEmulationResidualY;
+        short moveX = HIDDrainRelativeDelta(&emulationResidualX,
+                                            emulationDeltaX,
+                                            HIDMouseEmulationSpeed);
+        short moveY = HIDDrainRelativeDelta(&emulationResidualY,
+                                            -emulationDeltaY,
+                                            HIDMouseEmulationSpeed);
+        me.mouseEmulationResidualX = emulationResidualX;
+        me.mouseEmulationResidualY = emulationResidualY;
+
+        if (emulationDeltaX != 0.0 || emulationDeltaY != 0.0) {
             [me recordRelativeInputDiagnosticsFrom:@"controllerMouse"
-                                         rawDeltaX:dx
-                                         rawDeltaY:-dy
+                                         rawDeltaX:emulationDeltaX
+                                         rawDeltaY:-emulationDeltaY
                                         sentDeltaX:moveX
                                         sentDeltaY:moveY
                                         suppressed:NO];

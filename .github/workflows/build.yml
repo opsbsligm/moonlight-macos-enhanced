@@ -282,6 +282,20 @@ jobs:
       # fail.
       run: python3 scripts/relative-pointer-gain-tests.py
 
+    - name: Verify the stick-driven pointer keeps the travel it promises
+      # Two files move the cursor with the right stick, and they disagreed. The HID
+      # consumer normalised the stick to a fraction, multiplied by 15.0 and truncated
+      # the product per frame with nothing kept, so a stick held just past the
+      # deadzone asked for one and eight tenths pixels and shipped one: 45 per cent of
+      # the movement a player asked for disappeared, and only a full deflection kept
+      # its promise. The display-link consumer accumulated and was already exact, so
+      # the same stick meant two cursor speeds depending on the device, and the two
+      # deadzones (4000 counts out of 32767 there, 0.1 of full scale here) did not
+      # even agree on where movement began. The harness runs the shared normaliser and
+      # the draining helper the shipping call sequence uses, and restores the
+      # per-frame truncation to prove the verdict can fail.
+      run: python3 scripts/controller-mouse-emulation-tests.py
+
     - name: Verify one scroll event sends the notches it received
       # A rewritten or synthetic scroll accumulates displacement across frames and
       # then asks the notch consumer how much of it may leave now. That consumer

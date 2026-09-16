@@ -953,6 +953,7 @@ CI_ONLY = {
     "scroll-notch-consumption-tests.py": "macOS SDK",
     "relative-pointer-gain-tests.py": "macOS SDK",
     "discrete-scroll-click-tests.py": "macOS SDK",
+    "controller-mouse-emulation-tests.py": "macOS SDK",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})

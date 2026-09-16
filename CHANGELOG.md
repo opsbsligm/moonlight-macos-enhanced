@@ -1418,6 +1418,47 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 37: the stick moved the cursor at two different speeds
+
+- **Two paths, one feature, two answers.** The right stick drives the
+  emulated pointer from two places: the HID consumer in
+  `HIDSupport+Pointer.m` and the display-link consumer in
+  `ControllerSupport.m`. The second accumulated what it could not ship and
+  was already exact. The first normalised the stick, multiplied by 15.0 and
+  truncated the product every frame with nothing kept, so held just past the
+  deadzone it asked for one and eight tenths pixels a frame and sent one:
+  forty-five per cent of a careful player's movement disappeared, and only a
+  full deflection kept its promise. The same stick position meant two cursor
+  speeds, decided by which device produced the frame.
+
+- **The thresholds disagreed too.** 4000 counts out of 32767 on one side and
+  0.1 of full scale on the other, so the paths did not even agree on where
+  movement begins. `MouseEmulation.h` owns both numbers and the
+  normalisation now, in a header with no project imports, because the two
+  consumers sit on opposite sides of the input code and one of them should
+  not have to pull in the HID internals to agree on a threshold.
+
+- **Drained rather than truncated.** The stick path hands its frame to the
+  draining helper the mouse path already uses, so what a frame cannot ship
+  stays with the pointer instead of being thrown away, and a reversal pays
+  that residue back instead of being charged for it. The sign the block
+  needed was already decided upstream: `updateButtonFlags` inverts raw Z and
+  Rz on the way in. The block's six lines of "Invert Y? ... for now", and an
+  assignment to `moveY` the next line overwrote, are gone.
+
+- **Judged twice over.** `scripts/controller-mouse-emulation-tests.py`
+  compiles the shared normaliser together with the shipping drain and
+  asserts that a held deflection arrives at what it asked for, that a full
+  deflection arrives at the promised rate, that a shipped total may trail
+  but never lead, and that the old truncation loses travel on identical
+  input -- which is what gives those verdicts meaning. It also reads the
+  block it is testing, because the drain being right in a header proves
+  nothing about the call site: `stick-keeps-only-whole-pixels`,
+  `stick-rate-drafted-into-a-literal` and `stick-counted-in-raw-units` put
+  each of the three regressions back and all three go red.
+
+The battery went from 83 to 86, and the new harness is a step in both macOS build jobs. Product code moved, so the delivered image has to be rebuilt from the commit that carries it.
+
 ### Round 36: a moment of network ended both macOS builds
 
 - **What the failing run actually said.** The x86_64 job died in dependency

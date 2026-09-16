@@ -9,6 +9,7 @@
 #import "Controller.h"
 #import "Ticks.h"
 #import "HIDSupportRumbleTypes.h"
+#import "MouseEmulation.h"
 
 #import "Moonlight-Swift.h"
 #include <limits.h>
@@ -167,6 +168,12 @@
 @property (nonatomic) CGFloat relativeMotionResidualY;
 @property (nonatomic) CGFloat relativeDeltaResidualX;
 @property (nonatomic) CGFloat relativeDeltaResidualY;
+// The emulated pointer keeps its own debt, separate from the mouse's: a stick held a
+// little off centre asks for one and eight tenths pixels a frame, and the residue is
+// what makes the cursor travel at the rate the settings promise instead of the two
+// pixels a frame that truncation reported.
+@property (nonatomic) CGFloat mouseEmulationResidualX;
+@property (nonatomic) CGFloat mouseEmulationResidualY;
 @property (nonatomic) uint64_t accumulatedQuantizedWheelLastEventMsX;
 @property (nonatomic) uint64_t accumulatedQuantizedWheelLastEventMsY;
 @property (nonatomic) NSInteger gcMouseScrollLastClickY;
