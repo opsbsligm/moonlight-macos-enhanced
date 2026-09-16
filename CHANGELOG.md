@@ -1418,6 +1418,92 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 48: the Swift half waited for a runner to notice its types
+
+### Fixed
+
+- **A stale anchor threw away a hundred and three proofs.** The battery
+  plants a regression by replacing a piece of text it has found in the real
+  source, and it asks first that the piece be there exactly once. It used to
+  answer a missing anchor by leaving: the one mutation whose anchor had gone
+  took the run with it, the aggregate had no line left to read, reported "no
+  verdict reported", and nobody could tell from that phrase whether the
+  battery had proved nothing or almost everything. It happened the day the
+  compiler finder's body moved up one level of indentation -- a correct
+  refactor, with the battery reading as though the tree had failed a hundred
+  and one assertions. A gate that cannot distinguish "this regressed" from "I
+  stopped looking" is not a gate, so a missing anchor is now its own outcome:
+  named on the console, counted apart from a mutation a gate genuinely failed
+  to catch, and never again allowed to end the run early.
+
+
+### Added
+
+- **The Swift half of the app now has the check the Objective-C half has
+  had.** A type error in Swift reached three failing jobs before anything in
+  this repository could see it: asking an `NSResponder` which window it
+  belonged to parses, reads as a sensible sentence, and names a member that
+  only a view, or the window itself, has. The aggregate compiles every
+  Objective-C source against every SDK the host offers, and nothing compiled
+  -- or type-checked -- a Swift file. `scripts/swift-typecheck.py` closes
+  that: the project's own bridging header, the same vendored include paths
+  compile-audit uses, the compiler and SDK taken as one matched pair from the
+  one module every harness already asks, and one `swiftc -typecheck` per
+  installable SDK over all thirty-two files. On the host that has no Xcode
+  licence accepted -- the one this round was written on -- it takes nine
+  seconds and says which SDK it read. It was run against the mistake that
+  caused the round: the gate refuses it.
+
+- **A compiler complaint is not one thing but three, and the gate is built on
+  telling them apart.** A missing macro plugin means this host cannot read
+  the file. Every other error means the tree is wrong. Between them sits the
+  case that makes the difference worth coding: a macro that never expanded
+  breaks the code around it, because a `@State` that did not become a
+  property wrapper is not assignable, so the SDK with no plugin also reports
+  three "isn't mutable" errors in that same file. Treating those as defects
+  would turn every licence-less machine red for a reason no source caused;
+  skipping a run the moment any plugin goes missing would let a real defect
+  travel inside the noise, which is exactly the hole this gate was written to
+  close. So the gap is recorded per file, and an error is only forgiven in a
+  file where the compiler had already said it could not see the macro. All
+  four readings are exercised, including the one that matters most -- a
+  genuine error in another file is not forgiven because a plugin went missing
+  here -- and the pipeline has to name the check twice, once for the gate's
+  own proof and once for the tree, or the aggregate says so.
+
+- **A check that reads nothing must say so, and a check that reads something
+  must not hide behind what it could not read.** The first version of the
+  wiring treated any output containing the word "skipped" as a host without
+  an answer, which is what the disk image and compile gates do. On a machine
+  where one SDK checks clean and another loses a plugin, that erased the
+  clean verdict and left the local answer meaning less than CI's -- the
+  precise imbalance this repository added its wiring rules to prevent. The
+  aggregate now skips only on the sentence the gate prints when it read
+  nothing at all: no compiler, or no SDK whose macros it can see.
+
+### Audited, and not changed
+
+- **A borrowed first responder elsewhere is not the same fault.** The
+  settings page hands the keyboard back now, so the same question was asked
+  of every other site that moves the focus: sixteen call sites in the
+  Objective-C sources, counted rather than remembered. Fifteen of them name
+  the responder that is to receive the focus -- a controller, a collection
+  view, an alert, a search field -- and the one that passes `nil` is not
+  leaving the choice to AppKit either: it clears the focus immediately before
+  a view-controller transition whose completion handler names the receiver on
+  the next line. Nothing was found on the other side of any of them -- no key
+  that lands where the user did not aim it, no control that answers after the
+  thing that owned it closed. Left alone, because two sites reading alike is
+  not evidence, and this repository has already paid for changing code on
+  that basis.
+
+The battery stays at 104 mutations, workflow rules stay at 25, the
+behavioural harnesses stay at twelve, and the settings-page constraints stay
+at twenty. The Swift type check is a gate of its own: ten readings proved in
+its self test, and two invocations the pipeline has to keep naming. The
+battery now names an anchor it can no longer plant, rather than losing the
+verdict for every mutation that would have followed it.
+
 ### Round 47: the page took the keyboard and never gave it back
 
 ### Fixed

@@ -778,6 +778,20 @@ jobs:
         python3 scripts/compile-audit.py --self-test --derived "$RUNNER_TEMP/analyze"
         python3 scripts/compile-audit.py --derived "$RUNNER_TEMP/analyze"
 
+    - name: Type-check the Swift sources against this image's SDK
+      # The step above compiles the Objective-C half of the app. Nothing compiled the
+      # Swift half: a fix that asked an NSResponder which window it belonged to -- a
+      # question only a view, or the window itself, can answer -- passed the syntax
+      # parse, passed every source rule in this file, and was refused by three jobs.
+      # Twelve minutes was the only latency this tree had for a Swift type error, so
+      # the same check the C half already had is extended to the half that lacked it,
+      # with the project's own bridging header and the same vendored include paths.
+      # Where a host has no macro plugin for a region, the region is named; a check
+      # that quietly stops reading part of the tree is worth less than none.
+      run: |
+        python3 scripts/swift-typecheck.py --self-test
+        python3 scripts/swift-typecheck.py
+
     - name: Upload the analyzer transcript
       # The baseline is keyed by file, checker and message shape, so a different
       # clang can legitimately disagree about a finding. The transcript is what

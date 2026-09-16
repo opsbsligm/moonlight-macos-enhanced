@@ -19,7 +19,7 @@ import subprocess
 CLANG_TOOLS = "/Library/Developer/CommandLineTools"
 
 # (clang, sdk), in preference order. A pair is used only when both halves exist.
-def _xcrun_pair():
+def _ask_xcrun(arguments):
     # `xcrun` does not exist on a machine that has never seen Xcode -- the audits
     # job's ubuntu runner, or any Linux box a contributor tries -- and a missing
     # binary arrives as FileNotFoundError from inside subprocess, not as an empty
@@ -27,13 +27,16 @@ def _xcrun_pair():
     # behavioural harness died with a traceback instead of reporting that it has no
     # compiler, which is the difference between a gate that says "not here" and one
     # that looks like the code under test is broken.
-    def ask(arguments):
-        try:
-            return subprocess.run(["xcrun"] + arguments,
-                                  capture_output=True, text=True).stdout.strip()
-        except OSError:
-            return ""
-    return ask(["--find", "clang"]), ask(["--sdk", "macosx", "--show-sdk-path"])
+    try:
+        return subprocess.run(["xcrun"] + arguments,
+                              capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return ""
+
+
+def _xcrun_pair():
+    return (_ask_xcrun(["--find", "clang"]),
+            _ask_xcrun(["--sdk", "macosx", "--show-sdk-path"]))
 
 
 def _command_line_tools_pair():
@@ -54,3 +57,32 @@ def clang_and_sdk(what="probe"):
     raise SystemExit("no usable clang and macOS SDK pair was found for the %s, tried %s. "
                      "Neither is a defect in the code under test."
                      % (what, " and ".join(tried)))
+
+
+def _xcrun_swift_pair():
+    # The same pairing rule as clang: a swiftc from one vendor and an SDK from the
+    # other is a check that is red for a reason nothing in the tree caused. The
+    # license refusal is answered the same way -- `ask` above, not a traceback.
+    return _ask_xcrun(["--find", "swiftc"]), _ask_xcrun(
+        ["--sdk", "macosx", "--show-sdk-path"])
+
+
+def _command_line_tools_swift_pair():
+    return (os.path.join(CLANG_TOOLS, "usr", "bin", "swiftc"),
+            os.path.join(CLANG_TOOLS, "SDKs", "MacOSX.sdk"))
+
+
+def swiftc_and_sdk(what="type check"):
+    """A usable (swiftc, sdk) pair from one vendor, or None when the host has none.
+
+    Unlike ``clang_and_sdk`` this answers ``None`` instead of exiting. The aggregate
+    runs it inside a larger pass, where a host with no Swift compiler is one line of
+    skip -- the same shape the disk image gate uses when there is no ``hdiutil`` --
+    and not a crash that takes the rest of the audit with it.
+    """
+    for name, locate in (("xcrun", _xcrun_swift_pair),
+                         ("Command Line Tools", _command_line_tools_swift_pair)):
+        swiftc, sdk = locate()
+        if swiftc and sdk and os.path.exists(swiftc) and os.path.isdir(sdk):
+            return swiftc, sdk
+    return None

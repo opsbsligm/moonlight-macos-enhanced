@@ -1162,12 +1162,12 @@ GLASS_MEMBER_ENTRY = "\t\t\t\tmacOS/Views/GlassOverlayContainer.m,\n"
 # no xcrun the answer has to be "none", not a traceback: two CI runs on ubuntu
 # learned the difference the expensive way. Narrowing the exception to something
 # that cannot happen is how a hardening like that quietly stops being one.
-NARROWED_EXCEPTION = '        except OSError:\n            return ""\n'
+NARROWED_EXCEPTION = '    except OSError:\n        return ""\n'
 
 
 def xcrun_assumed_present(text):
     return once(text, NARROWED_EXCEPTION, "the compiler finder's answer").replace(
-        NARROWED_EXCEPTION, '        except KeyboardInterrupt:\n            return ""\n', 1)
+        NARROWED_EXCEPTION, '    except KeyboardInterrupt:\n        return ""\n', 1)
 
 
 BLIND_IMPORT = '#import "GlassOverlayContainer.h"\n'
@@ -1600,6 +1600,7 @@ def main():
     original = {entry[1]: open(entry[1], encoding="utf-8").read()
                 for entry in MUTATIONS}
     missed = []
+    unapplied = []
 
     # A planted mutation lives in the real file for as long as the gate reads it.
     # The restore below runs in a finally, which covers an exception inside the
@@ -1653,7 +1654,21 @@ def main():
             # the file name first, so a mutation that raises part way through used to
             # leave the real source empty -- which is how a green-looking battery run
             # once took the video pane apart and left the tree unable to compile.
-            mutated = mutate(original[path])
+            try:
+                mutated = mutate(original[path])
+            except SystemExit as anchor:
+                # The anchor is the battery's claim about where the source says what
+                # it says. When the source moves and the anchor does not, the mutation
+                # cannot be planted: that is neither a gate that caught a regression
+                # nor a gate that let one through, it is evidence that stopped
+                # existing. It used to leave through SystemExit, which destroyed the
+                # verdict for every mutation after it -- a hundred and three proofs
+                # were thrown away because one anchor was stale, and the aggregate
+                # called the whole run "no verdict reported". Name it, count it apart,
+                # and go on proving the rest.
+                print("ANCHOR  %-18s %s" % (name, str(anchor).strip()))
+                unapplied.append(name)
+                continue
             pending[path] = original[path]
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(mutated)
@@ -1674,9 +1689,13 @@ def main():
         for signum, handler in displaced.items():
             signal.signal(signum, handler)
 
-    print("\n%d/%d mutations caught" % (len(MUTATIONS) - len(missed), len(MUTATIONS)))
+    print("\n%d/%d mutations caught"
+          % (len(MUTATIONS) - len(missed) - len(unapplied), len(MUTATIONS)))
     if missed:
         print("assertions that a real regression would slip past: %s" % ", ".join(missed))
+    if unapplied:
+        print("mutations whose anchor is gone, so nothing was proved either way: %s"
+              % ", ".join(unapplied))
     if keep:
         for entry in MUTATIONS:
             name, path, mutate = entry[0], entry[1], entry[2]
@@ -1684,7 +1703,7 @@ def main():
                 with open(path, "w", encoding="utf-8") as handle:
                     handle.write(mutate(original[path]))
                 print("left %s applied for manual inspection" % name)
-    return 1 if missed else 0
+    return 1 if missed or unapplied else 0
 
 
 if __name__ == "__main__":

@@ -1751,6 +1751,32 @@ if run_battery:
                   if compiled.returncode == 0 else
                   "%s:" % label + "\n" + outcome[-1500:])
 
+        # The same two halves for the Swift half of the app. A mistake that only a
+        # type-checker can see -- asking an NSResponder which window it belongs to --
+        # passed the syntax parse and every source rule here, and arrived as three
+        # failing jobs, because the only thing in the tree that read Swift types was
+        # a build step twelve minutes away. Self-test first so a gate that has stopped
+        # being able to fail is reported before a gate that reports a clean tree.
+        for swift_flags, swift_label in (
+                (["--self-test"],
+                 "the Swift gate refuses the shape that reached CI and accepts the "
+                 "shape that fixed it"),
+                ([], "the Swift sources type-check against every installable SDK")):
+            swift_run = subprocess.run(
+                [sys.executable, os.path.join(root, "scripts", "swift-typecheck.py")]
+                + swift_flags, capture_output=True, text=True, cwd=root)
+            swift_outcome = (swift_run.stdout + swift_run.stderr).strip()
+            # The gate says "swift type-check skipped" only when it read nothing --
+            # no compiler, or no SDK whose macros it can see. A run that checked one
+            # SDK and could not read another is a verdict, and the local answer has
+            # to mean what the CI answer means, so that one is judged, not excused.
+            if swift_run.returncode == 0 and "swift type-check skipped" in swift_outcome:
+                print("skip %s: %s" % (swift_label, swift_outcome.splitlines()[0]))
+                continue
+            check(swift_run.returncode == 0, swift_label
+                  if swift_run.returncode == 0 else
+                  "%s:" % swift_label + "\n" + swift_outcome[-1500:])
+
         image_rules = subprocess.run([sys.executable,
                                       os.path.join(root, "scripts", "dmg-audit.py"),
                                       "--self-test"],
@@ -1816,6 +1842,26 @@ for base, _, files in os.walk(os.path.join(root, "Limelight")):
 check(not offenders,
       "an API newer than the build\'s SDK is reached by lookup, never by name"
       if not offenders else "; ".join(offenders))
+
+# --- the Swift half has to be checked by something the workflow runs ----------
+# The rule above refuses a newer-SDK name written in source, and compile-audit
+# compiles the Objective-C half against every SDK the host has. Neither reads a Swift
+# type, and the tree paid twelve minutes and three jobs for that gap. A gate that
+# exists but is only ever run in self-test mode is the same hole wearing a hat -- it
+# proves the gate can fail and never asks whether this tree would fail -- so the
+# aggregate requires the pipeline to name the Swift check twice: once to prove the
+# gate can still fail, once to run it over the sources.
+swift_invocations = re.findall(r"python3 scripts/swift-typecheck\.py[ \t]*(.*)", pipeline)
+swift_wired = (len(swift_invocations) == 2
+               and any(not tail.strip() for tail in swift_invocations)
+               and any("--self-test" in tail for tail in swift_invocations))
+check(swift_wired,
+      "the Swift half is type-checked over the tree, and its gate proves it can fail"
+      if swift_wired else
+      "the workflow runs the Swift check %d time(s) [%s]; it needs one self-test "
+      "invocation and one that reads the tree"
+      % (len(swift_invocations),
+         ", ".join(repr(t.strip()) for t in swift_invocations)))
 
 # --- a menu hint has to be something AppKit can compare to a key ------------
 # The settings page names keys for people (`Space`, `Return`, an arrow), and those
