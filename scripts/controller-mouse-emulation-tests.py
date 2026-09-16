@@ -40,6 +40,8 @@ EMULATION_HEADER = os.path.join(ROOT, "Limelight", "Input", "MouseEmulation.h")
 INTERNAL_HEADER = os.path.join(ROOT, "Limelight", "Input", "HIDSupport_Internal.h")
 POINTER_SOURCE = os.path.join(ROOT, "Limelight", "Input", "HIDSupport+Pointer.m")
 CONTROLLER_SOURCE = os.path.join(ROOT, "Limelight", "Input", "ControllerSupport.m")
+UNCAPTURE_SOURCE = os.path.join(ROOT, "Limelight", "macOS", "ViewControllers",
+                                  "StreamViewController+MouseCapture.m")
 DRAIN_ANCHOR = "static inline short HIDDrainRelativeDelta"
 
 TEST_BODY = r"""
@@ -89,6 +91,50 @@ static short stick_tick(double *accumulated, double delta, int forwarding,
         *accumulated -= whole;
     }
     return whole;
+}
+
+// The mouse-mode click path in ControllerSupport.m: the forwarding gate, the
+// edge it refuses, the button the host was told about, and what the uncapture
+// commit point does with all three. As above, the defines come from the source.
+#ifndef CLICKS_ARE_GATED
+#define CLICKS_ARE_GATED 0
+#endif
+#ifndef CLICK_GATE_COVERS_THE_EDGE
+#define CLICK_GATE_COVERS_THE_EDGE 0
+#endif
+#ifndef HANDBACK_RETURNS_PRESSED_BUTTONS
+#define HANDBACK_RETURNS_PRESSED_BUTTONS 0
+#endif
+
+#define CLICK_A 1
+#define CLICK_B 2
+
+typedef struct {
+    int tracker;   /* the last state this handler reported */
+    int hostDown;  /* the buttons the host believes are pressed */
+    int packets;   /* button packets that reached the host */
+} clickPath;
+
+static void click_edge(clickPath *path, int bit, int pressed, int forwarding) {
+    int last = (path->tracker & bit) != 0;
+    if (last == pressed) return;
+    if (CLICKS_ARE_GATED && CLICK_GATE_COVERS_THE_EDGE && !forwarding) return;
+    if (pressed) path->tracker |= bit;
+    else path->tracker &= ~bit;
+    if (CLICKS_ARE_GATED && !forwarding) return;
+    path->packets++;
+    if (pressed) path->hostDown |= bit;
+    else path->hostDown &= ~bit;
+}
+
+/* The uncapture commit point: return what the host was told about, then forget
+   it, so the host and the tracker both land on nothing down. */
+static void click_uncapture(clickPath *path) {
+    if (!HANDBACK_RETURNS_PRESSED_BUTTONS) return;
+    if (path->hostDown & CLICK_A) path->packets++;
+    if (path->hostDown & CLICK_B) path->packets++;
+    path->hostDown = 0;
+    path->tracker = 0;
 }
 
 static int failures = 0;
@@ -193,6 +239,30 @@ int main(void) {
               "and recapture answers the current frame, not the whole uncapture");
     }
 
+    // A gamepad in mouse mode clicks on the host with A and B. Handing the
+    // pointer back to the Mac does not unregister that handler, so a button the
+    // player was holding when the pointer went back has to be lifted on the host,
+    // and a click made afterwards -- while their own cursor is what they are
+    // moving -- has to leave no trace on either side of it.
+    {
+        clickPath path;
+        path.tracker = 0; path.hostDown = 0; path.packets = 0;
+        click_edge(&path, CLICK_A, 1, 1);
+        check(path.packets == 1 && (path.hostDown & CLICK_A) != 0,
+              "a mouse-mode gamepad press reaches the host exactly once");
+        click_uncapture(&path);
+        check(path.hostDown == 0,
+              "handing the pointer back lifts the button the host was told about");
+        int handedBack = path.packets;
+        click_edge(&path, CLICK_A, 0, 0);
+        click_edge(&path, CLICK_B, 1, 0);
+        check(path.packets == handedBack,
+              "a click made while the Mac owns the pointer never reaches the host");
+        click_edge(&path, CLICK_B, 0, 1);
+        check(path.hostDown == 0 && path.packets == handedBack,
+              "and recapture opens with a clean button table on both sides");
+    }
+
     printf("%d mouse-emulation failures\n", failures);
     return failures ? 1 : 0;
 }
@@ -269,13 +339,47 @@ def stick_timer_facts(text):
     }
 
 
-def probe_source(drainer, gated, refuses_first, drops):
-    """The probe source with the drainer and the timer's real shape baked in."""
-    facts = ("#define STICK_TIMER_IS_GATED %d\n"
-             "#define STICK_GATE_REFUSES_BEFORE_ACCUMULATING %d\n"
-             "#define STICK_TIMER_DROPS_MOTION %d\n"
-             % (1 if gated else 0, 1 if refuses_first else 0, 1 if drops else 0))
-    return TEST_BODY.replace("__FACTS__", facts).replace("__DRAIN__", drainer)
+def click_path_facts(controller, uncapture):
+    """What the shipping mouse-mode click path does about a pointer it lost.
+
+    Three things have to hold at once, and each is read from the source rather
+    than assumed: a click edge asks whether input is forwarded at all, the gate
+    covers the recorded edge and not only the packet, and the uncapture commit
+    point returns a button the host was told about while it still can.
+    """
+    gate = re.search(r"BOOL pointerForwarded = self->_shouldSendInputEvents;", controller)
+    sends = [m.start() for m in re.finditer(r"LiSendMouseButtonEventCtx\(inputCtx, current", controller)]
+    edges = len(re.findall(r"if \(current[AB] != last[AB] && pointerForwarded\) \{", controller))
+    release = uncapture.find("releaseRemoteMouseButtonsForUncapture")
+    switch = uncapture.find("self.controllerSupport.shouldSendInputEvents = NO;")
+    return {
+        "CLICKS_ARE_GATED": bool(gate) and len(sends) == 2 and
+                            all(gate.start() < p for p in sends),
+        "CLICK_GATE_COVERS_THE_EDGE": edges == 2,
+        # Finding the call is not enough: after the flag goes down, the release
+        # it performs can no longer reach the host it is trying to please.
+        "HANDBACK_RETURNS_PRESSED_BUTTONS": release >= 0 and switch >= 0 and
+                                            release < switch,
+    }
+
+
+def bake_in_facts(stick, clicks):
+    """The one place that maps what the sources do to what the probe assumes."""
+    return {
+        "STICK_TIMER_IS_GATED": stick["gated"],
+        "STICK_GATE_REFUSES_BEFORE_ACCUMULATING": stick["refuses_before_accumulating"],
+        "STICK_TIMER_DROPS_MOTION": stick["drops"],
+        "CLICKS_ARE_GATED": clicks["CLICKS_ARE_GATED"],
+        "CLICK_GATE_COVERS_THE_EDGE": clicks["CLICK_GATE_COVERS_THE_EDGE"],
+        "HANDBACK_RETURNS_PRESSED_BUTTONS": clicks["HANDBACK_RETURNS_PRESSED_BUTTONS"],
+    }
+
+
+def probe_source(drainer, facts):
+    """The probe source with the drainer and the shipping shapes baked in."""
+    defines = "".join("#define %s %d\n" % (name, 1 if facts[name] else 0)
+                      for name in sorted(facts))
+    return TEST_BODY.replace("__FACTS__", defines).replace("__DRAIN__", drainer)
 
 
 def source_checks():
@@ -353,6 +457,22 @@ def source_checks():
         # too, which is why only their combination is a defect.
         problems.append("the stick timer accumulates the motion it will not send, so "
                         "the host takes one throw at recapture")
+
+    # A gamepad in mouse mode clicks on the host with A and B, through a handler
+    # that stays registered when the pointer is handed back to the Mac and is
+    # only torn down with the session. Handing the pointer back also stops the
+    # one thing that could still lift a button on the host, so the uncapture has
+    # to do that itself, and do it before the flag goes down.
+    clicks = click_path_facts(controller, open(UNCAPTURE_SOURCE, encoding="utf-8").read())
+    if not clicks["CLICKS_ARE_GATED"]:
+        problems.append("the mouse-mode click path moves the host cursor without "
+                        "asking whether input is being forwarded")
+    elif not clicks["CLICK_GATE_COVERS_THE_EDGE"]:
+        problems.append("the mouse-mode click path records the edge it refuses, so "
+                        "the host is owed a release for a button it never took on")
+    elif not clicks["HANDBACK_RETURNS_PRESSED_BUTTONS"]:
+        problems.append("nothing returns a gamepad mouse button at the uncapture "
+                        "while the packet can still reach the host")
     return problems
 
 
@@ -389,14 +509,15 @@ def main():
         print("FAIL %s" % line)
     clang, sdk = clang_and_sdk("controller mouse emulation probe")
     drainer = drain_block(open(INTERNAL_HEADER, encoding="utf-8").read())
-    facts = stick_timer_facts(open(CONTROLLER_SOURCE, encoding="utf-8").read())
+    base = bake_in_facts(
+        stick_timer_facts(open(CONTROLLER_SOURCE, encoding="utf-8").read()),
+        click_path_facts(open(CONTROLLER_SOURCE, encoding="utf-8").read(),
+                         open(UNCAPTURE_SOURCE, encoding="utf-8").read()))
 
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "probe.m")
         exe = os.path.join(tmp, "probe")
-        open(path, "w", encoding="utf-8").write(
-            probe_source(drainer, facts["gated"],
-                         facts["refuses_before_accumulating"], facts["drops"]))
+        open(path, "w", encoding="utf-8").write(probe_source(drainer, base))
         compile_run = subprocess.run(compile_args(clang, sdk, path, exe),
                                      capture_output=True, text=True)
         if compile_run.returncode != 0:
@@ -409,16 +530,22 @@ def main():
         if "--self-test" in sys.argv:
             variants = [
                 ("throwing the residue away is refused",
-                 throw_the_residue_away(drainer), facts["gated"],
-                 facts["refuses_before_accumulating"], facts["drops"]),
+                 throw_the_residue_away(drainer), {}),
                 ("a stick timer with no forwarding gate is refused", drainer,
-                 False, True, False),
+                 {"STICK_TIMER_IS_GATED": False}),
                 ("a stick timer that refuses after it has banked the motion is "
-                 "refused", drainer, True, False, False),
+                 "refused", drainer, {"STICK_GATE_REFUSES_BEFORE_ACCUMULATING": False}),
+                ("a mouse-mode gamepad click with no forwarding gate is refused",
+                 drainer, {"CLICKS_ARE_GATED": False}),
+                ("a click gate that still records the refused edge is refused",
+                 drainer, {"CLICK_GATE_COVERS_THE_EDGE": False}),
+                ("an uncapture that leaves the gamepad button down is refused",
+                 drainer, {"HANDBACK_RETURNS_PRESSED_BUTTONS": False}),
             ]
-            for label, broken_drainer, gated, first, drops in variants:
+            for label, broken_drainer, override in variants:
                 rc |= expect_red(clang, sdk, tmp,
-                                 probe_source(broken_drainer, gated, first, drops),
+                                 probe_source(broken_drainer,
+                                              dict(base, **override)),
                                  label)
         return rc
 

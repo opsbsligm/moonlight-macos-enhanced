@@ -143,6 +143,17 @@ STICK_FORWARDING_GATE = """            if (!_shouldSendInputEvents) {
 """
 STICK_SEND = "                if (truncX != 0 || truncY != 0) {\n"
 
+# The mouse-mode click path and the uncapture that has to lift its buttons. A
+# gamepad in mouse mode presses the host's mouse buttons with A and B, and the
+# handler that does it outlives the pointer capture, so these two anchors are
+# what a hand-back depends on.
+MOUSE_MODE_A_EDGE = ("                    if (currentA != lastA && pointerForwarded) {\n"
+                     "                        if (inputCtx) {\n")
+MOUSE_MODE_B_EDGE = ("                    if (currentB != lastB && pointerForwarded) {\n"
+                     "                        if (inputCtx) {\n")
+POINTER_GATE_DECL = "                    BOOL pointerForwarded = self->_shouldSendInputEvents;\n"
+UNCAPTURE_MOUSE_RELEASE = ("    [self.controllerSupport releaseRemoteMouseButtonsForUncapture];\n")
+
 
 def once(text, needle, where):
     if text.count(needle) != 1:
@@ -552,6 +563,52 @@ def drag_the_uncaptured_pointer(text):
     """
     once(text, STICK_FORWARDING_GATE, "the stick timer forwarding gate")
     return text.replace(STICK_FORWARDING_GATE, "", 1)
+
+
+def ignore_the_pointer_gate(text):
+    """Stop asking whether input is forwarded before clicking on the host.
+
+    This is the shape that shipped: the pointer has gone back to the Mac, the
+    player clicks with the gamepad at their own desktop, and the host takes the
+    click as if the player were still inside the stream.
+    """
+    once(text, POINTER_GATE_DECL, "the mouse-mode forwarding gate")
+    once(text, MOUSE_MODE_A_EDGE, "the mouse-mode A edge")
+    once(text, MOUSE_MODE_B_EDGE, "the mouse-mode B edge")
+    rest = text.replace(POINTER_GATE_DECL, "", 1)
+    for edge in (MOUSE_MODE_A_EDGE, MOUSE_MODE_B_EDGE):
+        rest = rest.replace(edge, edge.replace(" && pointerForwarded", ""), 1)
+    return rest
+
+
+def gate_the_packet_and_record_the_edge_anyway(text):
+    """Gate the packet but keep the refused edge, which is only half a gate.
+
+    Nothing goes out while the player owns the cursor, but the refused press is
+    remembered, so the first packet after recapture is a release for a button the
+    host was never told about.
+    """
+    once(text, MOUSE_MODE_A_EDGE, "the mouse-mode A edge")
+    once(text, MOUSE_MODE_B_EDGE, "the mouse-mode B edge")
+    rest = text
+    for edge in (MOUSE_MODE_A_EDGE, MOUSE_MODE_B_EDGE):
+        moved = edge.replace(" && pointerForwarded", "")
+        moved = moved.replace("                        if (inputCtx) {",
+                              "                        if (inputCtx && pointerForwarded) {")
+        rest = rest.replace(edge, moved, 1)
+    return rest
+
+
+def forget_the_gamepad_button_at_handback(text):
+    """Take the fourth flush out of the uncapture commit point.
+
+    The keys, the modifiers and the HID buttons all go back to the host here; a
+    gamepad mouse button is tracked nowhere else, so this is the last moment its
+    release can still arrive.
+    """
+    once(text, UNCAPTURE_MOUSE_RELEASE, "the uncapture button return")
+    return text.replace(UNCAPTURE_MOUSE_RELEASE, "", 1)
+
 
 
 def bank_the_refused_stick_motion(text):
@@ -1261,6 +1318,18 @@ MUTATIONS = [
      bank_the_refused_stick_motion,
      "the gate sits behind the accumulation, so recapture spends every refused "
      "frame as one throw", EMULATION_GATE),
+    ("mouse-mode-clicks-ignore-the-forwarding-gate", CONTROLLER_FILE,
+     ignore_the_pointer_gate,
+     "a gamepad clicks the host after the pointer went back to the Mac, because "
+     "the click path never asks", EMULATION_GATE),
+    ("click-gate-keeps-the-edge-it-refused", CONTROLLER_FILE,
+     gate_the_packet_and_record_the_edge_anyway,
+     "the refused press is remembered, so recapture releases a button the host "
+     "was never told about", EMULATION_GATE),
+    ("uncapture-keeps-a-gamepad-button-down", MOUSE_CAPTURE,
+     forget_the_gamepad_button_at_handback,
+     "the last moment a gamepad mouse button can be released passes without one",
+     EMULATION_GATE),
     ("baseline-refresh-forgets-why", ANALYZER, forget_the_written_reasons,
      "regenerating the analyzer baseline deletes the reasons a person wrote for it",
      ANALYZER_GATE),

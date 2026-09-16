@@ -31,6 +31,15 @@
 - (void)initAutoOnScreenControlMode:(OnScreenControls *)osc;
 - (Controller *)getOscController;
 #endif
+/// Hands the mouse buttons this class pressed on the host back to it: for the
+/// moment input forwarding stops (mouse capture released) and the session
+/// continues afterwards. It covers the mouse-mode A and B and the buttons of a
+/// GCMouse device, which no other tracker knows about. It clears this class's
+/// button trackers as it sends, so the host and the trackers agree that nothing
+/// is down: a player still holding a button has to press it again after
+/// recapture, and nothing from the hand-back is left owed to either side.
+- (void)releaseRemoteMouseButtonsForUncapture;
+
 - (void)cleanup;
 
 - (void)updateLeftStick:(Controller *)controller x:(short)x y:(short)y;

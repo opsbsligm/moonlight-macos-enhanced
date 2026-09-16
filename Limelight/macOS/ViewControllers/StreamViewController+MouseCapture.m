@@ -3194,6 +3194,12 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     // returned here or it stays down over every pointer click that follows.
     [self.hidSupport releaseRemoteModifierKeysForUncapture];
     [self.hidSupport releaseAllPressedMouseButtons];
+    // One tracker over again, on the controller side this time. A mouse-mode
+    // gamepad press and a GCMouse click are this session's mouse buttons too,
+    // and neither the key table nor the HID button table knows they exist, so
+    // the button a player was holding when the pointer went back would have
+    // stayed down on the host with nothing left able to lift it.
+    [self.controllerSupport releaseRemoteMouseButtonsForUncapture];
     self.pendingMouseUncaptureAfterButtonsReleased = NO;
     self.pendingMouseUncaptureRecheckScheduled = NO;
     self.hasCoreHIDFreeMouseLastTruthPoint = NO;

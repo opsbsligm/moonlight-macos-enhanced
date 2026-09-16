@@ -1418,6 +1418,54 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 41: a gamepad kept clicking on a host whose pointer it no longer owned
+
+- **The fourth flush was missing, and the first three prove it.**
+  `uncaptureMouseWithCode: reason:` already returns three things before it
+  sets `shouldSendInputEvents` to `NO`: the keys being held, the modifiers the
+  host was told about, and the HID buttons. Everything that can move or click
+  the host's pointer has to be settled there, because the moment the flag goes
+  down the paths that pressed them can no longer release them. A gamepad in
+  mouse mode clicks those same buttons with A and B through
+  `valueChangedHandler`, and nothing asked it whether input was still being
+  forwarded. Hand the pointer back to the Mac, keep playing on the desktop,
+  and every gamepad click went on landing on the host machine. The same was
+  true of a GCMouse device's buttons, movement and wheel, which sit in the iOS
+  branch of the shared source.
+- **Half a gate is a ghost waiting to be paid.** Refusing the packet is the
+  obvious half. The tracker next to it records the edge the packet was built
+  from, and if that edge is recorded while the packet is refused, the first
+  thing sent after recapture is a release for a button the host never took on.
+  So the gate covers the recorded edge as well: while the Mac owns the pointer
+  the gamepad leaves no trace on either side of the link.
+- **Then the button still has to come up.** A gate alone would strand a button
+  the player was holding when the pointer went back: its release has to pass
+  the same gate, so it never arrives and the host drags forever.
+  `releaseRemoteMouseButtonsForUncapture` runs at the commit point before the
+  flag goes down -- the fourth flush -- and empties this class's button
+  trackers as it sends, so the host and the trackers both land on nothing
+  down. The cost is stated plainly: a button held straight through the hand-
+  back has to be pressed again after recapture, which is a click the player
+  can see the reason for, rather than one neither side can explain.
+- **The probe reads all three facts.** `scripts/controller-mouse-emulation-
+  tests.py` bakes the click path's shape in from the source alongside the
+  stick timer's: that the click path asks, that its gate covers the edge, that
+  the uncapture return happens while the packet can still reach the host --
+  found is not enough, it has to happen before the flag goes down. Four
+  verdicts run against the model, and `--self-test` now requires six shapes to
+  be red, one of them the half gate described above.
+- **Where the shared source bit.** Checking the change with `-fsyntax-only`
+  found the button table defined inside `#if TARGET_OS_IPHONE`, because every
+  line of `registerMouseCallbacks:` is iOS-only and the new macOS flush needed
+  the same table. It sits above the platform conditionals now, which is where
+  a shared invariant belongs. The GCMouse gate is unreachable in this
+  product's binary and stays for the shared source that also builds iOS.
+- **Three plantings, all confirmed red.** `mouse-mode-clicks-ignore-the-
+  forwarding-gate` is the shipped shape, `click-gate-keeps-the-edge-it-
+  refused` is the half gate, and `uncapture-keeps-a-gamepad-button-down`
+  removes the fourth flush. The battery went from 92 assertions to 95, all
+  judged by the harness that is already a step in both macOS build jobs.
+
 ### Round 40: the stick cursor moved a pointer it had handed back
 
 - **One decision, three consumers, and one of them deaf.** Whether motion may

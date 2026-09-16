@@ -21,6 +21,23 @@
 @import AudioToolbox;
 @import CoreHaptics;
 
+// The buttons a controller can drive a pointer with, in one table, because
+// the uncapture has to hand back exactly what the host was told about and
+// nothing that it was not.
+#define DERIVED_MOUSE_LEFT   0x1
+#define DERIVED_MOUSE_RIGHT  0x2
+#define DERIVED_MOUSE_MIDDLE 0x4
+#define DERIVED_MOUSE_X1     0x8
+#define DERIVED_MOUSE_X2     0x10
+
+static const int kDerivedMouseButtonBits[5] = {
+    DERIVED_MOUSE_LEFT, DERIVED_MOUSE_RIGHT, DERIVED_MOUSE_MIDDLE,
+    DERIVED_MOUSE_X1, DERIVED_MOUSE_X2
+};
+static const int kDerivedMouseButtonCodes[5] = {
+    BUTTON_LEFT, BUTTON_RIGHT, BUTTON_MIDDLE, BUTTON_X1, BUTTON_X2
+};
+
 static inline PML_INPUT_STREAM_CONTEXT ControllerInputContext(ControllerSupport *support) {
     PML_INPUT_STREAM_CONTEXT ctx = (PML_INPUT_STREAM_CONTEXT)support.inputContext;
     if (ctx != NULL && ctx->connectionContext != NULL) {
@@ -205,6 +222,9 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
     NSDate *_startPressTime;
     float _accumulatedMouseX;
     float _accumulatedMouseY;
+    // Which controller-derived mouse buttons the host was told about,
+    // so an uncapture can return the ones it stops being able to release.
+    int _derivedMouseButtonFlags;
     NSTimer *_mouseTimer;
 
     NSMutableDictionary<NSNumber * /* key flag */, NSMutableDictionary<NSNumber * /* player index */, ButtonDebouncer *> *> *_debouncers;
@@ -463,20 +483,31 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
                     // Mouse Toggle and Movement are handled by timer
                     
                     // Mouse Clicks (A = Left, B = Right)
+                    // Handing the pointer back to the Mac leaves this handler
+                    // registered for the rest of the session, and in mouse mode
+                    // A and B are host mouse buttons, so a press made while the
+                    // player is using their own cursor clicked on the host.
+                    // The gate covers the recorded edge as well as the packet,
+                    // because the uncapture has already brought the host back to
+                    // no buttons down and cleared this tracker along with it. A
+                    // press kept here would be a debt the host never took on,
+                    // and it would come back as a release for a button the host
+                    // was never told about.
+                    BOOL pointerForwarded = self->_shouldSendInputEvents;
                     BOOL currentA = gamepad.buttonA.pressed;
                     BOOL currentB = gamepad.buttonB.pressed;
                     BOOL lastA = (limeController.lastMouseModeButtonFlags & A_FLAG) != 0;
                     BOOL lastB = (limeController.lastMouseModeButtonFlags & B_FLAG) != 0;
                     PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
                     
-                    if (currentA != lastA) {
+                    if (currentA != lastA && pointerForwarded) {
                         if (inputCtx) {
                             LiSendMouseButtonEventCtx(inputCtx, currentA ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_LEFT);
                         }
                         if (currentA) limeController.lastMouseModeButtonFlags |= A_FLAG;
                         else limeController.lastMouseModeButtonFlags &= ~A_FLAG;
                     }
-                    if (currentB != lastB) {
+                    if (currentB != lastB && pointerForwarded) {
                         if (inputCtx) {
                             LiSendMouseButtonEventCtx(inputCtx, currentB ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
                         }
@@ -579,8 +610,44 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
     }
 }
 
+// One handler for every button of a GCMouse device. Handing the pointer back to
+// the Mac leaves these registered, so a click made while the player is using
+// their own cursor used to reach the host as a click there too. The gate refuses
+// before the button table is touched: an uncapture has already brought the host
+// back to no buttons down and emptied this table with it, so a press kept here
+// would be something the host never took on and would surface later as a release
+// for a button the host was never told about.
+-(GCControllerButtonValueChangedHandler)
+    derivedMouseButtonHandlerForBit:(int)buttonBit
+{
+    return ^(GCControllerButtonInput *button, float value, BOOL pressed) {
+        if (!self->_shouldSendInputEvents) {
+            return;
+        }
+        if (pressed) self->_derivedMouseButtonFlags |= buttonBit;
+        else self->_derivedMouseButtonFlags &= ~buttonBit;
+        PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
+        if (inputCtx) {
+            for (int i = 0; i < 5; i++) {
+                if (kDerivedMouseButtonBits[i] != buttonBit) continue;
+                LiSendMouseButtonEventCtx(inputCtx,
+                                          pressed ? BUTTON_ACTION_PRESS
+                                                  : BUTTON_ACTION_RELEASE,
+                                          kDerivedMouseButtonCodes[i]);
+                break;
+            }
+        }
+    };
+}
+
 -(void) registerMouseCallbacks:(GCMouse*) mouse API_AVAILABLE(ios(14.0)) {
     mouse.mouseInput.mouseMovedHandler = ^(GCMouseInput * _Nonnull mouse, float deltaX, float deltaY) {
+        // Asked before the accumulation rather than before the send, so motion
+        // refused while the Mac owns the cursor is dropped and not kept as a
+        // debt that recapture would spend on the host in one packet.
+        if (!self->_shouldSendInputEvents) {
+            return;
+        }
         self->accumulatedDeltaX += deltaX / MOUSE_SPEED_DIVISOR;
         self->accumulatedDeltaY += -deltaY / MOUSE_SPEED_DIVISOR;
         
@@ -598,46 +665,31 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
         }
     };
     
-    mouse.mouseInput.leftButton.pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-        PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
-        if (inputCtx) {
-            LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_LEFT);
-        }
-    };
-    mouse.mouseInput.middleButton.pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-        PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
-        if (inputCtx) {
-            LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_MIDDLE);
-        }
-    };
-    mouse.mouseInput.rightButton.pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-        PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
-        if (inputCtx) {
-            LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
-        }
-    };
+    mouse.mouseInput.leftButton.pressedChangedHandler =
+        [self derivedMouseButtonHandlerForBit:DERIVED_MOUSE_LEFT];
+    mouse.mouseInput.middleButton.pressedChangedHandler =
+        [self derivedMouseButtonHandlerForBit:DERIVED_MOUSE_MIDDLE];
+    mouse.mouseInput.rightButton.pressedChangedHandler =
+        [self derivedMouseButtonHandlerForBit:DERIVED_MOUSE_RIGHT];
     
     if (mouse.mouseInput.auxiliaryButtons != nil) {
         if (mouse.mouseInput.auxiliaryButtons.count >= 1) {
-            mouse.mouseInput.auxiliaryButtons[0].pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-                PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
-                if (inputCtx) {
-                    LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_X1);
-                }
-            };
+            mouse.mouseInput.auxiliaryButtons[0].pressedChangedHandler =
+                [self derivedMouseButtonHandlerForBit:DERIVED_MOUSE_X1];
         }
         if (mouse.mouseInput.auxiliaryButtons.count >= 2) {
-            mouse.mouseInput.auxiliaryButtons[1].pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-                PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
-                if (inputCtx) {
-                    LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_X2);
-                }
-            };
+            mouse.mouseInput.auxiliaryButtons[1].pressedChangedHandler =
+                [self derivedMouseButtonHandlerForBit:DERIVED_MOUSE_X2];
         }
     }
     
     // TODO: Confirm scroll direction
     mouse.mouseInput.scroll.yAxis.valueChangedHandler = ^(GCControllerAxisInput * _Nonnull axis, float value) {
+        // The wheel belongs to the pointer the player handed back, and the same
+        // rule applies: refuse before accumulating, so nothing is owed later.
+        if (!self->_shouldSendInputEvents) {
+            return;
+        }
         self->accumulatedScrollY += -value;
         
         short truncatedScrollY = (short)self->accumulatedScrollY;
@@ -970,6 +1022,38 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
         
         _debouncers[@(PLAY_FLAG)][@(controller.playerIndex)] = play;
         _debouncers[@(BACK_FLAG)][@(controller.playerIndex)] = back;
+    }
+}
+
+// Handing the pointer back stops forwarding, which stops every path above
+// from releasing a button it had already pressed on the host. The uncapture
+// commit point returns the keys, the modifiers and the buttons the HID
+// support tracks; the pointer this class derives from a controller is in no
+// table but this one, so the return has to happen here. Both the host and the
+// trackers land on no buttons down, which is what makes the gate above safe to
+// refuse with: a button the player goes on holding has to be pressed again
+// after recapture, and no packet from the hand-back can be owed either way.
+-(void) releaseRemoteMouseButtonsForUncapture {
+    int pressed = _derivedMouseButtonFlags;
+    _derivedMouseButtonFlags = 0;
+    for (Controller *controller in [_controllers allValues]) {
+        int flags = controller.lastMouseModeButtonFlags;
+        if (flags & A_FLAG) pressed |= DERIVED_MOUSE_LEFT;
+        if (flags & B_FLAG) pressed |= DERIVED_MOUSE_RIGHT;
+        controller.lastMouseModeButtonFlags = flags & ~(A_FLAG | B_FLAG);
+    }
+    if (!pressed) {
+        return;
+    }
+    PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
+    if (!inputCtx) {
+        return;
+    }
+    for (int i = 0; i < 5; i++) {
+        if (pressed & kDerivedMouseButtonBits[i]) {
+            LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_RELEASE,
+                                      kDerivedMouseButtonCodes[i]);
+        }
     }
 }
 
