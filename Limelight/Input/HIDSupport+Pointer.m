@@ -120,6 +120,20 @@ static inline double HIDBlendFreeMouseGain(double currentGain, double rawDelta, 
 
 @implementation HIDSupport (Pointer)
 
+/** Drop the motion owed to the host, because nothing is going to send it.
+
+Each caller of this is a decision that the motion taken from the accumulator will
+not be dispatched: the input context vanished, the pointer went absolute, or the
+relative path is muted. Keeping the debt across that decision would bank a sub-pixel
+fraction and then hand it to a later frame, so the cursor would answer a movement the
+player finished making -- the same family of ghost motion this file has been fixing,
+only with the delay measured in gestures instead of frames.
+*/
+- (void)resetRelativeMotionResidualForDisplayLinkConsumer {
+    self.relativeMotionResidualX = 0.0;
+    self.relativeMotionResidualY = 0.0;
+}
+
 - (void)suppressRelativeMouseMotionForMilliseconds:(uint64_t)durationMs {
     if (durationMs == 0) {
         self.suppressRelativeMouseUntilMs = 0;
@@ -563,13 +577,21 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
         if (me.shouldSendInputEvents) {
             PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(me);
             if (!inputCtx) {
+                [me resetRelativeMotionResidualForDisplayLinkConsumer];
                 return kCVReturnSuccess;
             }
             NSInteger touchscreenMode = [SettingsClass touchscreenModeFor:me.host.uuid];
             BOOL useAbsolutePointerPath = HIDShouldUseAbsolutePointerPath(me, touchscreenMode);
+            if (useAbsolutePointerPath) {
+                // The absolute path reports where the cursor is rather than how far it
+                // went, so a pixel owed here would be a pixel charged twice the next
+                // time the pointer path is relative.
+                [me resetRelativeMotionResidualForDisplayLinkConsumer];
+            }
             if (!useAbsolutePointerPath) {
                 BOOL suppressed = HIDShouldSuppressRelativeMouse(me);
                 if (suppressed) {
+                    [me resetRelativeMotionResidualForDisplayLinkConsumer];
                     [me recordRelativeInputDiagnosticsFrom:@"gcMouse"
                                                  rawDeltaX:deltaX
                                                  rawDeltaY:deltaY
@@ -581,8 +603,12 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
                 CGFloat normalizedDeltaX = deltaX / HIDGCMouseRelativeSpeedDivisor;
                 CGFloat normalizedDeltaY = deltaY / HIDGCMouseRelativeSpeedDivisor;
                 CGFloat sensitivity = HIDPointerSensitivityForHost(me.host);
-                short moveX = HIDScaledRelativeDelta(normalizedDeltaX, sensitivity);
-                short moveY = HIDScaledRelativeDelta(normalizedDeltaY, sensitivity);
+                CGFloat residualX = me.relativeMotionResidualX;
+                CGFloat residualY = me.relativeMotionResidualY;
+                short moveX = HIDDrainRelativeDelta(&residualX, normalizedDeltaX, sensitivity);
+                short moveY = HIDDrainRelativeDelta(&residualY, normalizedDeltaY, sensitivity);
+                me.relativeMotionResidualX = residualX;
+                me.relativeMotionResidualY = residualY;
                 [me recordRelativeInputDiagnosticsFrom:@"gcMouse"
                                              rawDeltaX:deltaX
                                              rawDeltaY:deltaY

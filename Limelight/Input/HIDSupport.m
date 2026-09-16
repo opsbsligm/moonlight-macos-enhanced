@@ -1411,6 +1411,19 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     HIDInvalidateCoreHIDFreeMouseAbsoluteSync(self);
 }
 
+/** Drop what this queue owes the host, for the same reason the display-link
+ * consumer drops its own pair: every path that calls this has already decided the
+ * motion it holds is not going to be dispatched, and a debt kept past that decision
+ * is paid into a later, unrelated movement of the hand.
+ *
+ * This touches only the pair this queue drains. The display-link consumer owns the
+ * other pair, and the two consumers are different threads.
+ */
+- (void)resetRelativeMotionResidualForHIDQueueConsumer {
+    self.relativeDeltaResidualX = 0.0;
+    self.relativeDeltaResidualY = 0.0;
+}
+
 - (void)dispatchRelativeMouseDeltaX:(CGFloat)deltaX
                              deltaY:(CGFloat)deltaY
                           sourceTag:(NSString *)sourceTag {
@@ -1419,23 +1432,33 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     }
 
     if (!self.shouldSendInputEvents) {
+        [self resetRelativeMotionResidualForHIDQueueConsumer];
         return;
     }
 
     PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
     if (!HIDValidateInputContext(inputCtx, "dispatchRelativeMouseDelta")) {
+        [self resetRelativeMotionResidualForHIDQueueConsumer];
         return;
     }
 
     NSInteger touchscreenMode = [SettingsClass touchscreenModeFor:self.host.uuid];
     if (HIDShouldUseAbsolutePointerPath(self, touchscreenMode)) {
+        [self resetRelativeMotionResidualForHIDQueueConsumer];
         return;
     }
 
     BOOL suppressed = HIDShouldSuppressRelativeMouse(self);
+    if (suppressed) {
+        [self resetRelativeMotionResidualForHIDQueueConsumer];
+    }
     CGFloat sensitivity = HIDPointerSensitivityForHost(self.host);
-    short moveX = HIDScaledRelativeDelta(deltaX, sensitivity);
-    short moveY = HIDScaledRelativeDelta(deltaY, sensitivity);
+    CGFloat residualX = self.relativeDeltaResidualX;
+    CGFloat residualY = self.relativeDeltaResidualY;
+    short moveX = HIDDrainRelativeDelta(&residualX, deltaX, sensitivity);
+    short moveY = HIDDrainRelativeDelta(&residualY, deltaY, sensitivity);
+    self.relativeDeltaResidualX = residualX;
+    self.relativeDeltaResidualY = residualY;
     [self recordRelativeInputDiagnosticsFrom:sourceTag
                                    rawDeltaX:deltaX
                                    rawDeltaY:deltaY

@@ -1418,6 +1418,65 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 34: a careful pointer move was answered with a whole pixel
+
+- **A promise that only points one way.** `HIDScaledRelativeDelta` answers
+  each display-link frame on its own, and its last branch answers one pixel
+  whenever the scaled move is non-zero but under one. Pointer Sensitivity
+  goes down to 0.25 -- the settings UI offers it and the shipping clamp
+  enforces it -- so moving carefully asks for a tenth of a pixel a frame and
+  ships a whole one. The promise is one-directional and nothing ever
+  subtracts what it invented: the low half of the slider changed how often
+  the promise fired rather than how far the cursor went, and a still hand
+  drifted, because jitter of any size bought a pixel in whatever direction
+  it happened to point. Measured over twenty frames at the bottom of the
+  slider, two pixels of intention shipped twenty.
+
+- **Drained rather than promised.** `HIDDrainRelativeDelta` leaves the sub-
+  pixel remainder with the caller and lets the next frame add to it, so over
+  any run of frames what ships trails what was asked by under one pixel and
+  never leads it. A slow move arrives a frame late, which is what scaling
+  means; it does not arrive amplified, and a reversal pays the residue back
+  instead of being charged for it. Each consumer keeps its own pair of
+  residuals, because the display-link consumer and the HID-queue consumer
+  are different threads, and every path that has already decided not to
+  dispatch -- the input context vanished, the pointer went absolute, the
+  relative path is muted -- drops the debt, since a fraction kept past that
+  decision is paid into some later, unrelated movement of the hand.
+
+- **Both halves of the claim are checked.** `scripts/relative-pointer-gain-
+  tests.py` runs the extracted shipping functions frame by frame at both
+  ends of the real slider range, read out of the expression that clamps it
+  rather than restated, asserts the shipped total may trail but not lead,
+  that jitter does not move the cursor, that a reversal nets nothing, and
+  that an absurd frame clamps to one packet instead of wrapping into the
+  opposite direction. It then rewires both shipping paths back to the per-
+  frame answer and requires the wiring verdict to go red, and puts the one-
+  pixel floor inside the drain and requires six verdicts to go red. The
+  shipping per-frame function is still asserted to overshoot on the same
+  numbers, so the fixed case cannot quietly become the old one.
+
+
+### Audited, and not changed
+
+- **The controller stick path truncates, and stays that way for a stated
+  reason.** Mouse emulation from the right stick scales by a hard-coded 15.0
+  that the comment calls an approximation of the Qt client, applies a
+  4000-count dead zone, and then stores `(short)dx`. Past the dead zone that
+  is roughly 1.83, truncated to 1, and a push shorter than a pixel ships
+  nothing, so the same class of error lives there too. The drain would fix
+  the arithmetic. It would also change how the macOS client feels against
+  the reference client the constant is trying to match, and the comment
+  block above it is still arguing with itself about which way the stick's Y
+  axis points. Truncation bias is provable from here; cross-client feel and
+  that inversion are not, so the arithmetic stays on the record rather than
+  being half-changed next to an unresolved question.
+
+
+The battery went from 78 to 79 with `pointer-promises-a-pixel`, the new
+harness is a step in both macOS build jobs, and product code moved, so the
+delivered image has to be rebuilt from the commit that carries it.
+
 ### Round 33: a fast flick lost most of its scroll before the host saw it
 
 - **One event was allowed to answer one notch.**

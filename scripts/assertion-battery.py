@@ -17,6 +17,7 @@ import sys
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HID = os.path.join(root, "Limelight", "Input", "HIDSupport.m")
 HID_INTERNAL = os.path.join(root, "Limelight", "Input", "HIDSupport_Internal.h")
+POINTER_FILE = os.path.join(root, "Limelight", "Input", "HIDSupport+Pointer.m")
 STREAM_SVC = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                           "StreamViewController.m")
 CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -90,6 +91,7 @@ PREP_GATE = (os.path.join(root, "scripts", "release-gate.py"), ["--self-test"])
 # runs it, since the behaviour lives in an inline function the app never calls on a
 # testable path here.
 NOTCH_GATE = (os.path.join(root, "scripts", "scroll-notch-consumption-tests.py"), [])
+GAIN_GATE = (os.path.join(root, "scripts", "relative-pointer-gain-tests.py"), [])
 SHORTCUT_PROFILE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                                  "SettingsShortcuts.swift")
 MOUSE_CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -431,6 +433,18 @@ AMEND_ADVICE = '    print("Do not commit that as a new commit. %s" % AMEND_HOWTO
 # out: the arrival can be several notches, and answering one while subtracting one
 # parks the rest in an accumulator that a finished gesture never returns to.
 NOTCH_LIMIT = "    CGFloat limit = (CGFloat)(SHRT_MAX / HIDScrollWheelDelta);\n"
+
+
+# The draining replacement is only a fix where the call sites use it, so the
+# mutation rewires one of them to the per-frame answer that promises a pixel.
+POINTER_DRAIN = "                short moveX = HIDDrainRelativeDelta(&residualX, normalizedDeltaX, sensitivity);\n"
+
+
+def promise_a_pixel(text):
+    once(text, POINTER_DRAIN, "the display-link drain of relative pointer motion")
+    return text.replace(POINTER_DRAIN,
+                        "                short moveX = HIDScaledRelativeDelta(normalizedDeltaX, sensitivity);\n",
+                        1)
 
 
 def hoard_a_notch(text):
@@ -982,6 +996,9 @@ MUTATIONS = [
     ("notch-consumer-hoards-a-notch", HID_INTERNAL, hoard_a_notch,
      "one scroll event hoards the notches it was given, and a finished gesture never pays them",
      NOTCH_GATE),
+    ("pointer-promises-a-pixel", POINTER_FILE, promise_a_pixel,
+     "a pointer frame answers a whole pixel for a tenth of one, so the slider's low half lies",
+     GAIN_GATE),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,
      "one workflow uses two versions of the same upload action", WF_GATE),

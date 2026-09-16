@@ -159,6 +159,14 @@
 @property (nonatomic) CGFloat accumulatedHighResScrollDeltaY;
 @property (nonatomic) CGFloat accumulatedQuantizedWheelDeltaX;
 @property (nonatomic) CGFloat accumulatedQuantizedWheelDeltaY;
+// Motion that has been asked for but not yet worth a whole pixel, one pair per
+// producing thread. HIDDrainRelativeDelta keeps the debt; these pairs are where it
+// lives, and they are separate because the display-link consumer and the HID-queue
+// consumer are not the same thread.
+@property (nonatomic) CGFloat relativeMotionResidualX;
+@property (nonatomic) CGFloat relativeMotionResidualY;
+@property (nonatomic) CGFloat relativeDeltaResidualX;
+@property (nonatomic) CGFloat relativeDeltaResidualY;
 @property (nonatomic) uint64_t accumulatedQuantizedWheelLastEventMsX;
 @property (nonatomic) uint64_t accumulatedQuantizedWheelLastEventMsY;
 @property (nonatomic) NSInteger gcMouseScrollLastClickY;
@@ -505,6 +513,57 @@ static inline short HIDScaledRelativeDelta(CGFloat delta, CGFloat sensitivity) {
     }
 
     return (short)lrint(scaled);
+}
+
+/** Send the whole pixels a relative move has earned, and remember the rest.
+ *
+ * HIDScaledRelativeDelta answers every frame on its own and promises at least one
+ * pixel whenever a frame's scaled move is non-zero but under one. At the low end of
+ * the Pointer Sensitivity slider (0.25, which the settings UI offers and the
+ * function above clamps to) that promise is a lie in the loud direction: a frame
+ * asking for a tenth of a pixel ships a whole one, so moving the cursor carefully
+ * moves it ten times too far, and the difference between the ends of the slider is
+ * made of how often the promise fires rather than of the number the player set.
+ * Noise drifts the same way, because every jitter of any size ships a pixel it was
+ * never asked for and nothing ever subtracts it.
+ *
+ * This drains a running debt instead: the sub-pixel remainder stays with the caller
+ * and the next frame adds to it, so over any number of frames what ships differs
+ * from what was asked by less than one pixel. A slow move arrives a frame late,
+ * which is what scaling means; it does not arrive amplified, and a reversal pays
+ * back the residue rather than being charged for it.
+ *
+ * Residual state belongs to whoever drains it, and each caller here runs on one
+ * thread, so an ordinary CGFloat is enough -- the pointer deltas themselves are
+ * already handed over atomically by HIDMouseDeltaAccumulator.
+ */
+static inline short HIDDrainRelativeDelta(CGFloat *residual, CGFloat delta, CGFloat sensitivity) {
+    if (residual == NULL) {
+        return 0;
+    }
+    if (!isfinite(*residual)) {
+        *residual = 0.0;
+    }
+    if (delta == 0.0 || !isfinite(delta) || !isfinite(sensitivity)) {
+        return 0;
+    }
+
+    CGFloat owed = *residual + (delta * sensitivity);
+    if (!isfinite(owed)) {
+        *residual = 0.0;
+        return 0;
+    }
+
+    CGFloat clamped = owed;
+    if (clamped > SHRT_MAX) {
+        clamped = SHRT_MAX;
+    } else if (clamped < SHRT_MIN) {
+        clamped = SHRT_MIN;
+    }
+
+    short move = (short)clamped;
+    *residual = owed - (CGFloat)move;
+    return move;
 }
 
 static inline CGFloat HIDAbsoluteMouseReferencePrecisionScale(NSSize referenceSize) {

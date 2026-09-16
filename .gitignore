@@ -100,3 +100,5 @@ xccheckout/
 
 # Locally assembled delivery bundles, named after the build number they carry.
 dist/
+# The sidecar copies verify-release-images.sh consumes when it is run locally.
+checksums/

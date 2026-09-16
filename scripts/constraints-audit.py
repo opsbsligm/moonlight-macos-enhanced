@@ -930,6 +930,7 @@ CI_ONLY = {
     # The notch consumer is compiled and run, so it needs Apple's toolchain, which
     # this job's runner does not have. The two macOS build jobs run it for real.
     "scroll-notch-consumption-tests.py": "macOS SDK",
+    "relative-pointer-gain-tests.py": "macOS SDK",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})
