@@ -947,8 +947,8 @@ static inline NSString *HIDScrollDiagnosticModeForClassification(HIDScrollClassi
     }
 }
 
-static inline signed char HIDDeduplicatedScrollClick(HIDSupport *support,
-                                                     signed char clicks,
+static inline short HIDDeduplicatedScrollClick(HIDSupport *support,
+                                               short clicks,
                                                      BOOL horizontalAxis,
                                                      BOOL deduplicateBurst) {
     if (clicks == 0) {
@@ -1010,7 +1010,23 @@ static inline short HIDDispatchAccumulatedHighResScrollDelta(CGFloat *accumulate
     return dispatchedDelta;
 }
 
-static inline signed char HIDNormalizedDiscreteScrollClick(CGFloat delta) {
+/** How many notches a wheel event actually went through.
+ *
+ * The count comes from the event's own wheel fields, which carry more than one notch
+ * whenever AppKit coalesces a fast scroll into a single event, whenever a
+ * free-spinning wheel reports several detents at once, and whenever the driver
+ * reports a jump. Clamping that to one here was the same loss the accumulated
+ * consumer had, only with less to show for it: the quantized and fallback branches
+ * each answer once per event and keep nothing back, so a three-notch event shipped
+ * one notch and the other two never existed anywhere.
+ *
+ * The floor stays, because it is a different thing: a real detent that rounds below
+ * one has to send something, or the wheel looks broken at exactly the moment the
+ * player is gentlest with it. The bound that replaces the clamp is the packet -- the
+ * caller multiplies by HIDScrollWheelDelta into a short, and saturating an absurd
+ * frame is honest where wrapping through SHRT_MIN would scroll the host backwards.
+ */
+static inline short HIDNormalizedDiscreteScrollClick(CGFloat delta) {
     if (!isfinite(delta) || delta == 0.0) {
         return 0;
     }
@@ -1019,12 +1035,44 @@ static inline signed char HIDNormalizedDiscreteScrollClick(CGFloat delta) {
     if (clicks == 0) {
         clicks = delta > 0.0 ? 1 : -1;
     }
-    if (clicks > 1) {
-        clicks = 1;
-    } else if (clicks < -1) {
-        clicks = -1;
+    NSInteger limit = SHRT_MAX / HIDScrollWheelDelta;
+    if (clicks > limit) {
+        clicks = limit;
+    } else if (clicks < -limit) {
+        clicks = -limit;
     }
-    return (signed char)clicks;
+    return (short)clicks;
+}
+
+/** Turn a notch count into the units one scroll packet can carry at this speed.
+ *
+ * Kept separate from the count because the two bounds are different: the count is
+ * bounded by what a packet can hold at the default speed, and the units are bounded
+ * again after the speed multiplier, which reaches 4.0 in the settings UI. Multiplying
+ * first and clamping here is what keeps three notches at 4x speed -- 1440 units --
+ * inside the short, where clamping the count alone would still have allowed a wrap.
+ */
+static inline short HIDDiscreteScrollPacketUnits(short clicks, CGFloat speed) {
+    if (clicks == 0) {
+        return 0;
+    }
+    if (!isfinite(speed) || speed <= 0.0) {
+        speed = 1.0;
+    }
+
+    CGFloat units = llround((CGFloat)clicks * (CGFloat)HIDScrollWheelDelta * speed);
+    if (!isfinite(units)) {
+        return clicks > 0 ? SHRT_MAX : SHRT_MIN;
+    }
+    if (units > SHRT_MAX) {
+        units = SHRT_MAX;
+    } else if (units < SHRT_MIN) {
+        units = SHRT_MIN;
+    }
+    if (units == 0.0) {
+        units = clicks > 0 ? 1.0 : -1.0;
+    }
+    return (short)units;
 }
 
 static inline short HIDConsumeAccumulatedDiscreteScrollClick(CGFloat *accumulatedDelta) {

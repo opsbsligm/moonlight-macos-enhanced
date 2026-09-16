@@ -931,6 +931,7 @@ CI_ONLY = {
     # this job's runner does not have. The two macOS build jobs run it for real.
     "scroll-notch-consumption-tests.py": "macOS SDK",
     "relative-pointer-gain-tests.py": "macOS SDK",
+    "discrete-scroll-click-tests.py": "macOS SDK",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})
@@ -943,6 +944,64 @@ stale_excuses = [name for name, marker in sorted(CI_ONLY.items())
                  if name in gates_in_workflow
                  and marker not in open(os.path.join(scripts_dir, name),
                                         encoding="utf-8").read()]
+# A changelog round that says a script "is now a step in both macOS build jobs" is a
+# claim about the pipeline, and one made exactly that claim while the step existed in
+# neither the commit nor the file: the reachability rule above accepts the assertion
+# battery naming a gate as a mutation judge, which is honest wiring for a gate but is
+# not a build step. Where the prose names a script and a job, the workflow has to name
+# the script too, or the sentence is a claim nobody checked.
+changelog_text = open(os.path.join(root, "CHANGELOG.md"), encoding="utf-8").read()
+# The file is hard-wrapped at eighty columns, so a sentence is not a line and a
+# phrase is not contiguous: matching against the raw text would miss exactly the
+# claims this is looking for, because the wrap lands in the middle of them. Fold each
+# paragraph back into one line first.
+claimed_steps = set()
+for paragraph in changelog_text.split("\n\n"):
+    folded = " ".join(line.strip() for line in paragraph.splitlines() if line.strip())
+    for sentence in re.split(r"(?<=[.!?])\s+", folded):
+        if "step in both macOS build jobs" in sentence or "step in the workflow" in sentence:
+            claimed_steps.update(re.findall(r"scripts/([\w.\-]+\.py)", sentence))
+not_a_step = sorted(name for name in claimed_steps
+                    if ("python3 scripts/%s" % name) not in pipeline
+                    and os.path.exists(os.path.join(scripts_dir, name)))
+check(not not_a_step,
+      "every changelog claim about a build step names a step the workflow runs"
+      if not not_a_step else
+      "the changelog says these run in the build jobs but the workflow never runs them: "
+      + ", ".join(not_a_step))
+
+# The shape of the changelog is a fact a rewrite can destroy. One rewrite this round
+# swallowed the tail of the file: seven rounds and every released-version section went
+# away, and the rule above stayed green because it reads sentences rather than
+# structure. Rounds are numbered, so the numbering is the part a truncation cannot
+# survive, and a release section without its date is the next thing a truncation drops.
+round_numbers = [int(n) for n in re.findall(r"^### Round (\d+):", changelog_text, re.M)]
+shape_problems = []
+if round_numbers:
+    gaps = sorted(set(range(min(round_numbers), max(round_numbers) + 1)) - set(round_numbers))
+    repeats = sorted({n for n in round_numbers if round_numbers.count(n) > 1})
+    if gaps:
+        label = "round" if len(gaps) == 1 else "rounds"
+        verb = "is" if len(gaps) == 1 else "are"
+        shape_problems.append("%s %s %s gone from the changelog"
+                              % (label, ", ".join(str(g) for g in gaps), verb))
+    if repeats:
+        shape_problems.append("rounds %s are written twice" % ", ".join(str(r) for r in repeats))
+sections = [line for line in changelog_text.splitlines() if line.startswith("## [")]
+if not sections or sections[0] != "## [Unreleased]":
+    shape_problems.append("the changelog no longer opens with the Unreleased section")
+released = sections[1:]
+undated = [line for line in released
+           if not re.match(r"^## \[[\w.\-]+\] - \d{4}-\d{2}-\d{2}$", line)]
+if undated:
+    shape_problems.append("a released section lost its date: " + ", ".join(undated))
+dates = [line[-10:] for line in released]
+if dates != sorted(dates, reverse=True):
+    shape_problems.append("the released sections are no longer in date order")
+check(not shape_problems,
+      "the changelog has every round once and every release section dated"
+      if not shape_problems else "; ".join(shape_problems))
+
 parity_problems = []
 if not gates_in_workflow:
     parity_problems.append("the workflow names no gate script at all")

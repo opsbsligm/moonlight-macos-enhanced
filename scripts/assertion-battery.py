@@ -38,6 +38,7 @@ APP_CELL = os.path.join(root, "Limelight", "macOS", "ViewControllers", "AppCell.
 PREPARER = os.path.join(root, "scripts", "prepare-release.py")
 BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
 WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
+CHANGELOG = os.path.join(root, "CHANGELOG.md")
 AUDIT = os.path.join(root, "scripts", "constraints-audit.py")
 TOOLCHAIN = os.path.join(root, "scripts", "apple_toolchain.py")
 INTERNAL = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -92,6 +93,10 @@ PREP_GATE = (os.path.join(root, "scripts", "release-gate.py"), ["--self-test"])
 # testable path here.
 NOTCH_GATE = (os.path.join(root, "scripts", "scroll-notch-consumption-tests.py"), [])
 GAIN_GATE = (os.path.join(root, "scripts", "relative-pointer-gain-tests.py"), [])
+# The notch count a packet answers with lives in the same header, and the
+# harness that judges it compiles the function out and runs it, because no
+# test path in the app reaches the quantized branch.
+CLICK_GATE = (os.path.join(root, "scripts", "discrete-scroll-click-tests.py"), [])
 SHORTCUT_PROFILE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                                  "SettingsShortcuts.swift")
 MOUSE_CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -438,6 +443,59 @@ NOTCH_LIMIT = "    CGFloat limit = (CGFloat)(SHRT_MAX / HIDScrollWheelDelta);\n"
 # The draining replacement is only a fix where the call sites use it, so the
 # mutation rewires one of them to the per-frame answer that promises a pixel.
 POINTER_DRAIN = "                short moveX = HIDDrainRelativeDelta(&residualX, normalizedDeltaX, sensitivity);\n"
+
+
+# The count a wheel event answers with, and the step the changelog claims for it.
+CLICK_LIMIT = "    NSInteger limit = SHRT_MAX / HIDScrollWheelDelta;\n"
+GAIN_STEP = re.compile(
+    r"    - name: Verify the pointer ships the motion it was asked for\n"
+    r"(?:.*\n)*?      run: python3 scripts/relative-pointer-gain-tests\.py\n\n"
+)
+
+
+def answer_one_notch(text):
+    """Put the one-notch clamp back on the count a wheel event answers with.
+
+    The count is what the fix widened, so the mutation is the exact line the
+    defect shipped with: round, then refuse anything past a single notch. The
+    accumulator half of the path is untouched, which is why only the harness
+    that runs the quantized branch can see it.
+    """
+    once(text, CLICK_LIMIT, "the packet bound on a discrete scroll count")
+    clamp = "    if (clicks > 1) { clicks = 1; } else if (clicks < -1) { clicks = -1; }\n"
+    return text.replace(CLICK_LIMIT, clamp + CLICK_LIMIT, 1)
+
+
+LOST_ROUND_HEADER = ("### Round 33: a fast flick lost most of its scroll before "
+                     "the host saw it\n")
+
+
+def lose_a_round_header(text):
+    """Delete a round's heading from the changelog.
+
+    A rewrite that swallows the tail of the file does not look like a deletion of
+    seven rounds when the gate only reads sentences: the claim above this one was
+    green while it happened. Round numbers are the part of the file a truncation
+    cannot survive, so the rule that reads them has to be judged by the same
+    battery it exists to complement.
+    """
+    once(text, LOST_ROUND_HEADER, "the round-33 heading")
+    return text.replace(LOST_ROUND_HEADER, "", 1)
+
+
+def unhook_a_claimed_step(text):
+    """Delete the build step the changelog says the pointer harness has.
+
+    Round 34 wrote that its harness is a step in both macOS build jobs when the
+    step existed in no commit. The rule that replaced that sentence reads the
+    claim back out of the changelog and looks for the step, so removing the step
+    has to redden the aggregate -- a claim about the pipeline that the pipeline
+    cannot show is the class of defect this battery exists to keep impossible.
+    """
+    match = GAIN_STEP.search(text)
+    if not match:
+        raise SystemExit("anchor found 0 times, expected 1: the pointer harness step")
+    return text[:match.start()] + text[match.end():]
 
 
 def promise_a_pixel(text):
@@ -999,6 +1057,15 @@ MUTATIONS = [
     ("pointer-promises-a-pixel", POINTER_FILE, promise_a_pixel,
      "a pointer frame answers a whole pixel for a tenth of one, so the slider's low half lies",
      GAIN_GATE),
+    ("wheel-answers-one-notch-for-several", HID_INTERNAL, answer_one_notch,
+     "a wheel event carrying three notches answers for one, and the other two never existed",
+     CLICK_GATE),
+    ("changelog-claims-a-step-the-pipeline-lacks", WORKFLOW, unhook_a_claimed_step,
+     "the changelog says a harness is a build step and the workflow does not run it",
+     AUDIT_GATE),
+    ("changelog-loses-a-whole-round", CHANGELOG, lose_a_round_header,
+     "a rewrite takes a round of history out of the changelog and nothing notices",
+     AUDIT_GATE),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,
      "one workflow uses two versions of the same upload action", WF_GATE),

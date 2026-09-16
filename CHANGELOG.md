@@ -1418,6 +1418,95 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 35: a three-notch wheel event was answered with one notch
+
+- **The count the driver reports, thrown away.**
+  `HIDScrollEventDiscreteDeltaForAxis` reads the notch count out of the
+  event's own wheel fields -- raw first, then line, then the AppKit delta --
+  and those fields carry more than one whenever AppKit coalesces a fast
+  scroll into a single event, a free-spinning wheel reports several detents
+  at once, or the driver reports a jump. `HIDNormalizedDiscreteScrollClick`
+  rounded that count and clamped it to one notch. This is last round's
+  accumulated-consumer loss with nothing to show for it: the quantized and
+  fallback branches each answer once per event and keep nothing back, so
+  three notches became one and the other two never existed anywhere in the
+  process. The floor stays where it belongs -- a real detent that rounds
+  below one has to send something, or the wheel looks broken exactly when
+  the player is gentlest with it -- and the bound that replaced the clamp is
+  the packet.
+
+- **Bounded twice, for two different reasons.** `HIDDiscreteScrollPacketUnits`
+  multiplies the notch count by the wheel speed before it clamps. The two
+  bounds are not the same number and not the same question: the count is
+  bounded by what one packet holds at the default speed, and the units are
+  bounded again after a speed multiplier that reaches 4.0 in the settings
+  UI. Clamping only the count would still have let three notches at 4x
+  overflow the short the wire carries, which does not lose the scroll -- it
+  wraps through SHRT_MIN and scrolls the host the other way.
+
+- **A claim from last round that was not true, and the rule that checks it
+  now.** Round 34's summary said its harness is a step in both macOS build
+  jobs. That sentence went into the commit message and the changelog, and
+  the step was never added to `build.yml`. The pipeline audit stayed green
+  because the reachability rule counts a gate as wired when another wired
+  script runs it, and the assertion battery does name it as a mutation judge
+  -- true for a gate, false for a build step. The harness was run by the
+  audits job and by nothing else, which is exactly what the round's own
+  sentence promised it was not. Both steps are in the workflow now, and
+  `constraints-audit.py` reads the changelog's build-step claims back
+  against the workflow, folding the eighty-column wraps first -- the first
+  version of that rule was itself defeated by a wrap landing inside the
+  phrase it searched for, which is the same shape of failure this round
+  exists to record.
+
+
+### Audited, and not changed
+
+- **Zero-size views do not fling the cursor to the corner.**
+  `HIDClampFreeMouseCoordinate` answers 0 when a reference size is missing,
+  which looked like a full-screen-transition jump to (0,0). It is
+  unreachable that way: `updateFreeMouseVirtualCursorAnchorWithViewPoint:`
+  and `reconcileFreeMouseVirtualCursorToViewPoint:` both refuse a non-finite
+  or non-positive reference size before clamping anything, and the absolute
+  path's `HIDAbsoluteMouseReferenceForEvent` refuses a view with no window
+  or content view. Recorded as checked so the next reader does not have to
+  walk it again.
+
+- **The 25 ms de-duplication still drops whole events, on purpose.**
+  `HIDDeduplicatedScrollClick` discards a same-direction wheel event
+  arriving inside `HIDQuantizedWheelDuplicateSuppressMinMs`, and it now
+  carries a count rather than a single notch, so a dropped event can drop
+  several notches. That is the behaviour it was written for -- the
+  GameController path receives the same physical wheel twice inside that
+  window -- and `deduplicateBurst` is `useGCMouse`, so a plain mouse never
+  passes through it. Loosening it would put duplicate scrolls back onto the
+  host, and there is no reproducible wrong outcome on the other side of it.
+
+- **A rewrite of this file ate seven rounds, and no gate noticed.** While
+  the closing paragraph of this round was being rewritten, the patch's own
+  pattern matched to the end of the file, so Round 28 through Round 34 and
+  every released-version section went away: 527 lines deleted silently, with
+  the aggregate still green. The damage was caught by reading a diffstat,
+  not by the pipeline. The `### Round` headings are now checked for a
+  gap-free numbering and every `## [` release section for its date, and
+  `changelog-loses-a-whole-round` deletes one heading so the shape rule
+  answers to the battery as well. Prose about a file is only as safe as a
+  check on the shape of the file.
+
+The battery went from 79 to 82 with three entries: one for the defect, one
+for the claim last round got wrong, and one for the mistake just described.
+`wheel-answers-one-notch-for-several` puts the one-notch clamp back on the
+count a wheel event answers with, judged by a harness that
+`scripts/discrete-scroll-click-tests.py` compiles and runs, and that harness
+is now a step in both macOS build jobs.
+`changelog-claims-a-step-the-pipeline-lacks` deletes the step this file
+claims for `scripts/relative-pointer-gain-tests.py`, which is a step in both
+macOS build jobs and is checked against that claim from now on.
+`changelog-loses-a-whole-round` deletes a round heading, so the shape rule
+that caught this round's truncation cannot lapse unnoticed either. Product
+code moved, so the delivered image has to be rebuilt from the commit that
+carries it.
+
 ### Round 34: a careful pointer move was answered with a whole pixel
 
 - **A promise that only points one way.** `HIDScaledRelativeDelta` answers

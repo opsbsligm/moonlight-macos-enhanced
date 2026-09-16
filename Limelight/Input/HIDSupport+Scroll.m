@@ -63,7 +63,7 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
         mappedDeltaY = -mappedDeltaY;
     }
 
-    signed char clicks = mappedDeltaY > 0.0f ? 1 : -1;
+    short clicks = mappedDeltaY > 0.0f ? 1 : -1;
     uint64_t nowMs = LiGetMillis();
     BOOL suppressForPreciseTrace = NO;
     if (traceId != 0) {
@@ -139,10 +139,7 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
         return;
     }
 
-    short dispatchedAmount = (short)lrint((CGFloat)(clicks * HIDScrollWheelDelta) * wheelSpeed);
-    if (dispatchedAmount == 0) {
-        dispatchedAmount = clicks > 0 ? 1 : -1;
-    }
+    short dispatchedAmount = HIDDiscreteScrollPacketUnits(clicks, wheelSpeed);
 
     LiNoteScrollTraceLocalDispatchCtx(inputCtx,
                                       traceId,
@@ -333,22 +330,22 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
                                                                           kCGScrollWheelEventRawDeltaAxis2,
                                                                           kCGScrollWheelEventDeltaAxis2,
                                                                           -deltaX);
-            signed char clicks = HIDDeduplicatedScrollClick(self,
+            short clicks = HIDDeduplicatedScrollClick(self,
                                                             HIDNormalizedDiscreteScrollClick(discreteDeltaX),
                                                             YES,
                                                             deduplicateQuantizedWheel);
-            dispatchedDeltaX = (short)lrint((CGFloat)(clicks * HIDScrollWheelDelta) * wheelScrollSpeed);
+            dispatchedDeltaX = HIDDiscreteScrollPacketUnits(clicks, wheelScrollSpeed);
             normalizedDeltaX = (CGFloat)clicks * wheelScrollSpeed;
         } else {
             NSInteger discreteDeltaY = HIDScrollEventDiscreteDeltaForAxis(event,
                                                                           kCGScrollWheelEventRawDeltaAxis1,
                                                                           kCGScrollWheelEventDeltaAxis1,
                                                                           deltaY);
-            signed char clicks = HIDDeduplicatedScrollClick(self,
+            short clicks = HIDDeduplicatedScrollClick(self,
                                                             HIDNormalizedDiscreteScrollClick(discreteDeltaY),
                                                             NO,
                                                             deduplicateQuantizedWheel);
-            dispatchedDeltaY = (short)lrint((CGFloat)(clicks * HIDScrollWheelDelta) * wheelScrollSpeed);
+            dispatchedDeltaY = HIDDiscreteScrollPacketUnits(clicks, wheelScrollSpeed);
             normalizedDeltaY = (CGFloat)clicks * wheelScrollSpeed;
         }
 
@@ -446,16 +443,16 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
                                                                           kCGScrollWheelEventRawDeltaAxis2,
                                                                           kCGScrollWheelEventDeltaAxis2,
                                                                           -deltaX);
-            signed char clicks = HIDNormalizedDiscreteScrollClick(discreteDeltaX);
-            dispatchedDeltaX = (short)lrint((CGFloat)(clicks * HIDScrollWheelDelta) * wheelScrollSpeed);
+            short clicks = HIDNormalizedDiscreteScrollClick(discreteDeltaX);
+            dispatchedDeltaX = HIDDiscreteScrollPacketUnits(clicks, wheelScrollSpeed);
             normalizedDeltaX = (CGFloat)clicks * wheelScrollSpeed;
         } else {
             NSInteger discreteDeltaY = HIDScrollEventDiscreteDeltaForAxis(event,
                                                                           kCGScrollWheelEventRawDeltaAxis1,
                                                                           kCGScrollWheelEventDeltaAxis1,
                                                                           deltaY);
-            signed char clicks = HIDNormalizedDiscreteScrollClick(discreteDeltaY);
-            dispatchedDeltaY = (short)lrint((CGFloat)(clicks * HIDScrollWheelDelta) * wheelScrollSpeed);
+            short clicks = HIDNormalizedDiscreteScrollClick(discreteDeltaY);
+            dispatchedDeltaY = HIDDiscreteScrollPacketUnits(clicks, wheelScrollSpeed);
             normalizedDeltaY = (CGFloat)clicks * wheelScrollSpeed;
         }
     }

@@ -256,6 +256,32 @@ jobs:
       # glass, which is what makes the availability branch a behaviour and not a claim.
       run: python3 scripts/liquid-glass-overlay-tests.py
 
+    - name: Verify a multi-notch wheel event is worth the notches it carries
+      # HIDScrollEventDiscreteDeltaForAxis reads the notch count out of the event's own
+      # wheel fields, which carry several at once whenever AppKit coalesces a fast
+      # scroll into one event, a free-spinning wheel reports several detents, or the
+      # driver reports a jump. HIDNormalizedDiscreteScrollClick rounded that and
+      # clamped it to one, and unlike the accumulated path there is nothing to keep the
+      # rest: the quantized and fallback branches answer once per event, so a
+      # three-notch event shipped one and the other two never existed. The harness runs
+      # the shipping count and the new packet bound, keeps the floor that belongs (a
+      # detent too small to round still has to move), and restores the clamp to prove
+      # the verdict can fail.
+      run: python3 scripts/discrete-scroll-click-tests.py
+
+    - name: Verify the pointer ships the motion it was asked for
+      # HIDScaledRelativeDelta answered every display-link frame on its own and promised
+      # a whole pixel whenever the scaled move was non-zero but under one. Pointer
+      # Sensitivity goes down to 0.25, so a careful move asked for a tenth of a pixel a
+      # frame and shipped a whole one: the low half of the slider changed how often the
+      # promise fired rather than how far the cursor went, and a still hand drifted
+      # because every jitter of any size shipped a pixel nobody asked for. The harness
+      # runs the draining replacement frame by frame at both ends of the real slider
+      # range, asserts the shipped total may trail the asked total but never lead it,
+      # and rewires both shipping paths back to the per-frame answer to prove it can
+      # fail.
+      run: python3 scripts/relative-pointer-gain-tests.py
+
     - name: Verify one scroll event sends the notches it received
       # A rewritten or synthetic scroll accumulates displacement across frames and
       # then asks the notch consumer how much of it may leave now. That consumer
