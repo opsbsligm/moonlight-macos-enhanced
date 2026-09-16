@@ -487,6 +487,22 @@ DRAFT_THE_RATE = """                                            -emulationDeltaY
 NORMALISE_Y_HERE = "        CGFloat emulationDeltaY = HIDControllerMouseDeltaForAxis(ry);\n"
 
 
+REASON_PRESERVATION = '    reasons = previous.get("_accepted_reasons") or DEFAULT_ACCEPTED_REASONS\n'
+
+
+def forget_the_written_reasons(text):
+    """Let a refresh overwrite the explanations a person wrote.
+
+    The baseline is the file that says why a finding is tolerated, and the tool that
+    regenerates it used to carry its own copy of those sentences and write them over
+    whatever was on file -- it deleted the audit and printed a success line. Fixing
+    one finding is what makes the damage visible, so the battery keeps the guard on.
+    """
+    once(text, REASON_PRESERVATION, "the refresh keeping the reasons already on file")
+    return text.replace(REASON_PRESERVATION,
+                        "    reasons = DEFAULT_ACCEPTED_REASONS\n", 1)
+
+
 def truncate_a_stick_frame(text):
     """Answer one stick frame on its own, which is what shipped.
 
@@ -1136,6 +1152,9 @@ MUTATIONS = [
     ("stick-counted-in-raw-units", POINTER_FILE, count_the_stick_in_raw_units,
      "the two pointer paths disagree about where stick movement begins",
      EMULATION_GATE),
+    ("baseline-refresh-forgets-why", ANALYZER, forget_the_written_reasons,
+     "regenerating the analyzer baseline deletes the reasons a person wrote for it",
+     ANALYZER_GATE),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,
      "one workflow uses two versions of the same upload action", WF_GATE),

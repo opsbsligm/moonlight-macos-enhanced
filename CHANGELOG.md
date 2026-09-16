@@ -1457,7 +1457,28 @@ stay at 140, and the behavioural harnesses stay at ten.
   `stick-rate-drafted-into-a-literal` and `stick-counted-in-raw-units` put
   each of the three regressions back and all three go red.
 
-The battery went from 83 to 86, and the new harness is a step in both macOS build jobs. Product code moved, so the delivered image has to be rebuilt from the commit that carries it.
+- **The run for this round went red, and for a good reason.** The analyzer
+  job refused the commit because a finding it had been told to accept had
+  gone away: the block that lost forty-five per cent of a held stick also
+  stored a value it never read, and deleting the line removed the last
+  instance of it in the tree. The job treats a finding disappearing as a
+  baseline that has stopped describing the code, which is the same refusal
+  in the other direction, so the baseline was regenerated from the CI
+  transcript rather than adjusted by hand, and the entry is gone for the
+  only reason that is allowed.
+
+- **The regeneration destroyed the reasons and said nothing.**
+  `analyzer-audit.py --write-baseline` carried its own copy of the
+  accepted-reason sentences and wrote that copy over the file, so refreshing
+  the baseline after one fixed finding deleted the explanation behind every
+  other one and printed a success line while doing it. It keeps what is on
+  file now and names the shapes whose reason phrases it could not match;
+  `baseline-refresh-forgets-why` puts the overwrite back so the guard is
+  judged by the battery rather than by memory.
+
+The battery went from 83 to 87, and the new harness is a step in both macOS
+build jobs. Product code moved, so the delivered image has to be rebuilt
+from the commit that carries it.
 
 ### Round 36: a moment of network ended both macOS builds
 

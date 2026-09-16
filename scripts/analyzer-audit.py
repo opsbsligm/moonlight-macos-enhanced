@@ -27,7 +27,7 @@ Usage:
   analyzer-audit.py [root] --self-test                    fixtures only, no log
 Exit 0 only when the sweep is real and the findings match the baseline.
 """
-import io, json, os, re, sys
+import io, json, os, re, sys, tempfile
 
 ANALYZED = re.compile(r"--analyze (\S+\.(?:m|mm|c))")
 FINDING = re.compile(r"(\S+?\.(?:m|mm|c|h|swift)):(\d+):(\d+): warning: "
@@ -177,32 +177,71 @@ def load_baseline(path):
             for entry in document.get("findings", [])}
 
 
-def save_baseline(path, findings):
+# The reasons a person wrote for accepting a finding. Used only when there is no
+# baseline to read them from: a regeneration has to keep what is on file rather than
+# replace it with this.
+DEFAULT_ACCEPTED_REASONS = {
+
+        "NSNumber nil test read as a boolean conversion":
+            "the retain-count checker reports any NSNumber in a condition, "
+            "including a nil test, and these sites compare or test for nil",
+        "VideoToolbox parameter documented as pass-NULL":
+            "Apple's VTDecompressionSessionCreate says pass NULL for the "
+            "default decoder; the header marks the parameter nonnull",
+        "CoreFoundation reference kept in an assign property":
+            "clang does not manage a CF typed property, so the checker sees a "
+            "store into a non-owning slot and cannot follow the release in "
+            "another method; BackgroundColorView retains before releasing and "
+            "never calls CFRetain or CFRelease with NULL, and HIDSupport "
+            "releases its manager both in tearDownHidManager and in dealloc",
+        "dead store":
+            "a value written and then overwritten or ignored: no behaviour "
+            "depends on it, and removing it changes nothing a test can see",
+}
+
+
+def load_baseline_document(path):
+    """The baseline as written, reasons and all, or nothing if there is none."""
+    if not os.path.exists(path):
+        return None
+    try:
+        return json.loads(io.open(path, encoding="utf-8").read())
+    except ValueError:
+        return None
+
+
+def unexplained_shapes(findings, reasons):
+    """Accepted findings that no written reason covers.
+
+    A reason is keyed by a phrase from the message shape, which is how a reader of
+    the baseline finds the explanation for a line in it.
+    """
+    keys = [key.lower() for key in reasons]
+    return sorted({shape for (_file, _checker, shape) in findings
+                   if not any(key in shape.lower() for key in keys)})
+
+
+def save_baseline(path, findings, previous_document=None):
+    """Write the accepted findings, keeping whatever reasons a person wrote.
+
+    The reasons are the part of the baseline a human wrote and the part a
+    regeneration cannot know. This function used to carry a fixed copy of them and
+    overwrite the file with that copy, so refreshing the baseline after one fixed
+    finding also deleted the explanation behind every other one -- and reported
+    success while doing it. A refresh now keeps what is on file and refuses to invent
+    a reason for a class nobody has read.
+    """
+    previous = previous_document if isinstance(previous_document, dict) else {}
+    reasons = previous.get("_accepted_reasons") or DEFAULT_ACCEPTED_REASONS
     document = {
         "_about": "Accepted static analyzer findings. Compare is by file, checker "
                   "and message shape, counted. Regenerate with "
                   "`python3 scripts/analyzer-audit.py --write-baseline --log <transcript>` "
                   "and read the diff: an entry that disappears means a finding was "
                   "fixed, which is the only good reason for one to go.",
-        "_accepted_reasons": {
-            "NSNumber nil test read as a boolean conversion":
-                "the retain-count checker reports any NSNumber in a condition, "
-                "including a nil test, and these sites compare or test for nil",
-            "VideoToolbox parameter documented as pass-NULL":
-                "Apple's VTDecompressionSessionCreate says pass NULL for the "
-                "default decoder; the header marks the parameter nonnull",
-            "CoreFoundation reference kept in an assign property":
-                "clang does not manage a CF typed property, so the checker sees a "
-                "store into a non-owning slot and cannot follow the release in "
-                "another method; BackgroundColorView retains before releasing and "
-                "never calls CFRetain or CFRelease with NULL, and HIDSupport "
-                "releases its manager both in tearDownHidManager and in dealloc",
-            "dead store":
-                "a value written and then overwritten or ignored: no behaviour "
-                "depends on it, and removing it changes nothing a test can see",
-        },
-        "findings": [{"count": count, "file": path, "checker": checker, "shape": shape}
-                     for (path, checker, shape), count in sorted(findings.items())],
+        "_accepted_reasons": reasons,
+        "findings": [{"count": count, "file": file_, "checker": checker, "shape": shape}
+                     for (file_, checker, shape), count in sorted(findings.items())],
     }
     io.open(path, "w", encoding="utf-8").write(json.dumps(document, indent=2,
                                                           ensure_ascii=False) + "\n")
@@ -295,6 +334,35 @@ def self_test():
         "warning: Something about 'x' [deadcode.DeadStores]")
     check(vendored == {}, "a finding in vendored code is not this project's")
 
+    # The reasons are what a person wrote. A refresh that replaces them with a
+    # generic sentence, or invents one for a class nobody has read, is a tool
+    # reporting success while deleting the audit it was supposed to serve.
+    with tempfile.TemporaryDirectory() as tmp:
+        written_path = os.path.join(tmp, "baseline.json")
+        human = {"_accepted_reasons":
+                 {"potential leak of an object stored into X":
+                  "a reason a person wrote after reading the code"},
+                 "findings": []}
+        io.open(written_path, "w", encoding="utf-8").write(json.dumps(human))
+        save_baseline(written_path, FIXTURE_BASELINE, load_baseline_document(written_path))
+        written = json.loads(io.open(written_path, encoding="utf-8").read())
+        check(written["_accepted_reasons"].get(
+                  "potential leak of an object stored into X")
+              == "a reason a person wrote after reading the code",
+              "refreshing the baseline keeps a reason a person wrote")
+        check(unexplained_shapes(FIXTURE_BASELINE, written["_accepted_reasons"])
+              == ["Value stored to X is never read"],
+              "a refresh can say which accepted findings lost their explanation")
+        check(unexplained_shapes(FIXTURE_BASELINE, {
+                  "potential leak of an object stored into X": "r",
+                  "value stored to x": "r"}) == [],
+              "a reason covering every shape leaves nothing pending")
+        check(load_baseline_document(os.path.join(tmp, "nothing.json")) is None,
+              "a missing baseline is not read as an empty one")
+        io.open(written_path, "w", encoding="utf-8").write("{not json")
+        check(load_baseline_document(written_path) is None,
+              "a baseline that will not parse is not read as an empty one")
+
     real = "Limelight/Input/HIDSupport.m"
     check(sweep_health({real}, 2) is None, "a full sweep of a small tree is accepted")
     check(sweep_health({real}, 2, "no-such-tree") is not None,
@@ -316,8 +384,19 @@ check(health is None, "the analyzer really ran on this tree"
       if health is None else "the analyzer sweep is not trustworthy: " + health)
 
 if write_baseline:
-    save_baseline(baseline_path, findings)
-    print("wrote %d accepted findings to %s" % (len(findings), baseline_path))
+    previous = load_baseline_document(baseline_path)
+    pending = [] if previous is None else unexplained_shapes(
+        findings, previous.get("_accepted_reasons", {}))
+    for shape in pending:
+        # A note, not a refusal: the reasons are keyed by phrases a reader chose, so
+        # a shape they already explained under a different phrase is not an absence.
+        # A refresh that cannot say which lines lost their explanation is the failure.
+        print("::notice::no reason phrase in the baseline matches this shape, add one if "
+              "it is not covered: %s" % shape)
+    if not failures:
+        save_baseline(baseline_path, findings, previous)
+        print("wrote %d accepted findings to %s, keeping the reasons already on file"
+              % (len(findings), baseline_path))
     sys.exit(1 if failures else 0)
 
 baseline = load_baseline(baseline_path)

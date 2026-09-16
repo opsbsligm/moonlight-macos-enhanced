@@ -15,12 +15,6 @@
     },
     {
       "count": 1,
-      "file": "Limelight/Input/HIDSupport+Pointer.m",
-      "checker": "deadcode.DeadStores",
-      "shape": "Value stored to X during its initialization is never read"
-    },
-    {
-      "count": 1,
       "file": "Limelight/Input/HIDSupport+Scroll.m",
       "checker": "deadcode.DeadStores",
       "shape": "Value stored to X during its initialization is never read"
