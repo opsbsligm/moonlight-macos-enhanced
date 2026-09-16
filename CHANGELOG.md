@@ -1418,6 +1418,62 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 33: a fast flick lost most of its scroll before the host saw it
+
+- **One event was allowed to answer one notch.**
+  `HIDConsumeAccumulatedDiscreteScrollClick` in `HIDSupport_Internal.h` is
+  the function the notched rewritten-scroll path asks when it wants to know
+  how much of the accumulated displacement may leave now. It floored the
+  accumulator, clamped the answer to one notch, and subtracted that same one
+  -- so an arrival of four notches dispatched one and parked three. Nothing
+  else in the file ever empties that accumulator: each sibling branch zeroes
+  the other accumulators when that other branch runs, and a gesture that
+  ends simply stops calling. Three notches parked after lift-off are three
+  notches the host is never told about. Run against the extracted shipping
+  function, a four-frame flick asking for 15.5 notches shipped 4.
+
+- **The symptom only shows up at speed, which is why it survived.** A slow
+  drag arrives in sub-notch frames, takes the `fabs < 1.0` branch, and
+  behaves exactly as intended, so the control reads as fine while the player
+  is browsing carefully. The loss appears when they scroll with intent: the
+  harder the flick, the larger the fraction that disappears, and the residue
+  leaks into the next gesture instead of being paid for the last one. That
+  is the whole signature of scrolling that will not keep up and then jerks a
+  beat late, and no grep, compile, or unit of the shipping app could see it,
+  because the behaviour lives in an inline function no test path calls.
+
+- **Fixed against the neighbour that already gets it right.**
+  `HIDDispatchAccumulatedHighResScrollDelta` does the same job one branch
+  over: it clamps to what one packet can carry and subtracts exactly what it
+  returned, so the residue is always below one unit. The consumer now keeps
+  the same bargain -- every whole notch leaves, the fraction stays, which is
+  what lets a slow drag add up -- and its return widened to `short` with the
+  ceiling derived from the shipped `HIDScrollWheelDelta` rather than
+  restated, because the call site multiplies into a short and 274 notches
+  would wrap and hand the host the opposite direction.
+
+
+### Audited, and not changed
+
+- **Trackpad Speed is a calibration, not a units mistake.** The high-
+  resolution path scales `scrollingDeltaY` by Trackpad Speed -- default 1.0,
+  range 0.1 to 4.0, clamped again in the header -- and sends it on a wire
+  whose one tick is 120. That reads at first glance like a twelvefold
+  miscalibration. It is not: a tick is on the order of a hundred pixels of
+  document movement on the host, while a natural two-finger travel is
+  several hundred pixels spread over dozens of accumulating frames, so 1.0
+  lands near parity rather than one twelfth, and the physical wheel's 7.0
+  scale is the same correction for a device that reports lines instead of
+  pixels. Feel is the only thing that could settle the difference, there is
+  no way to measure it from here, and a wrong guess would move every working
+  scroll. Both values stay, recorded as the open question they are rather
+  than quietly "fixed".
+
+
+The battery went from 77 to 78 with `notch-consumer-hoards-a-notch`, the new
+harness is a step in both macOS build jobs, and product code moved, so the
+delivered image has to be rebuilt from the commit that carries it.
+
 ### Round 32: the preparer reported success while blocking the tag
 
 - **`--apply` cleared a promotion that could not be committed.** The script

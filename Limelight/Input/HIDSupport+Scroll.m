@@ -368,7 +368,9 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
             }
             self.accumulatedHighResScrollDeltaX += rewrittenDeltaX;
             CGFloat accumulatedDeltaX = self.accumulatedHighResScrollDeltaX;
-            signed char clicks = HIDConsumeAccumulatedDiscreteScrollClick(&accumulatedDeltaX);
+            // short, not signed char: one event can now carry more than one notch,
+            // and the helper clamps to what one packet can hold.
+            short clicks = HIDConsumeAccumulatedDiscreteScrollClick(&accumulatedDeltaX);
             self.accumulatedHighResScrollDeltaX = accumulatedDeltaX;
             dispatchedDeltaX = (short)lrint((CGFloat)(clicks * HIDScrollWheelDelta));
             normalizedDeltaX = (CGFloat)clicks;
@@ -383,7 +385,9 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
             }
             self.accumulatedHighResScrollDeltaY += rewrittenDeltaY;
             CGFloat accumulatedDeltaY = self.accumulatedHighResScrollDeltaY;
-            signed char clicks = HIDConsumeAccumulatedDiscreteScrollClick(&accumulatedDeltaY);
+            // short, not signed char: one event can now carry more than one notch,
+            // and the helper clamps to what one packet can hold.
+            short clicks = HIDConsumeAccumulatedDiscreteScrollClick(&accumulatedDeltaY);
             self.accumulatedHighResScrollDeltaY = accumulatedDeltaY;
             dispatchedDeltaY = (short)lrint((CGFloat)(clicks * HIDScrollWheelDelta));
             normalizedDeltaY = (CGFloat)clicks;

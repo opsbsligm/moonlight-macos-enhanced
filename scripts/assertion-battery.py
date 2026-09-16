@@ -16,6 +16,7 @@ import sys
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HID = os.path.join(root, "Limelight", "Input", "HIDSupport.m")
+HID_INTERNAL = os.path.join(root, "Limelight", "Input", "HIDSupport_Internal.h")
 STREAM_SVC = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                           "StreamViewController.m")
 CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -85,6 +86,10 @@ OVERLAY_GATE = (os.path.join(root, "scripts", "liquid-glass-overlay-tests.py"), 
 # runs: `--self-test` on release-gate.py executes the preparation fixtures too, so a
 # preparer whose release procedure has gone wrong cannot leave the audit green.
 PREP_GATE = (os.path.join(root, "scripts", "release-gate.py"), ["--self-test"])
+# The notch consumer is judged by the harness that lifts it out of the header and
+# runs it, since the behaviour lives in an inline function the app never calls on a
+# testable path here.
+NOTCH_GATE = (os.path.join(root, "scripts", "scroll-notch-consumption-tests.py"), [])
 SHORTCUT_PROFILE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                                  "SettingsShortcuts.swift")
 MOUSE_CAPTURE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -420,6 +425,19 @@ def recounted_build(text):
 # build one too low, and every further commit moves the target again. The sentence
 # telling them to amend is the only thing preventing the loop, so it is an assertion.
 AMEND_ADVICE = '    print("Do not commit that as a new commit. %s" % AMEND_HOWTO)\n'
+
+
+# Restoring the one-notch clamp is the regression this consumer was written to keep
+# out: the arrival can be several notches, and answering one while subtracting one
+# parks the rest in an accumulator that a finished gesture never returns to.
+NOTCH_LIMIT = "    CGFloat limit = (CGFloat)(SHRT_MAX / HIDScrollWheelDelta);\n"
+
+
+def hoard_a_notch(text):
+    once(text, NOTCH_LIMIT, "the notch consumer's packet limit")
+    return text.replace(NOTCH_LIMIT,
+                        "    if (whole > 1.0) { whole = 1.0; } else if (whole < -1.0) { whole = -1.0; }\n"
+                        + NOTCH_LIMIT, 1)
 
 
 def forgot_the_amend(text):
@@ -961,6 +979,9 @@ MUTATIONS = [
     ("believed-shallow", BUILD_SH, believe_shallow, "a shallow clone stamps a build number that is too small"),
     ("promoted-then-committed", PREPARER, forgot_the_amend,
      "a cleared promotion hides the amend the build count forces", PREP_GATE),
+    ("notch-consumer-hoards-a-notch", HID_INTERNAL, hoard_a_notch,
+     "one scroll event hoards the notches it was given, and a finished gesture never pays them",
+     NOTCH_GATE),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,
      "one workflow uses two versions of the same upload action", WF_GATE),

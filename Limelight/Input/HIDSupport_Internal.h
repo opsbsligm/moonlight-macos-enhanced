@@ -968,7 +968,7 @@ static inline signed char HIDNormalizedDiscreteScrollClick(CGFloat delta) {
     return (signed char)clicks;
 }
 
-static inline signed char HIDConsumeAccumulatedDiscreteScrollClick(CGFloat *accumulatedDelta) {
+static inline short HIDConsumeAccumulatedDiscreteScrollClick(CGFloat *accumulatedDelta) {
     if (accumulatedDelta == NULL || !isfinite(*accumulatedDelta)) {
         if (accumulatedDelta != NULL) {
             *accumulatedDelta = 0.0;
@@ -980,18 +980,32 @@ static inline signed char HIDConsumeAccumulatedDiscreteScrollClick(CGFloat *accu
         return 0;
     }
 
-    CGFloat clickValue = *accumulatedDelta > 0.0 ? floor(*accumulatedDelta) : ceil(*accumulatedDelta);
-    NSInteger clicks = (NSInteger)clickValue;
-    if (clicks > 1) {
-        clicks = 1;
-    } else if (clicks < -1) {
-        clicks = -1;
+    CGFloat whole = *accumulatedDelta > 0.0 ? floor(*accumulatedDelta) : ceil(*accumulatedDelta);
+
+    // Emit every whole notch the arrival contains, and subtract exactly that. The
+    // fraction stays, which is what lets a slow drag add up to a notch, but a whole
+    // notch must not: a scroll gesture ends by simply stopping, and nothing else in
+    // this file ever empties the accumulator, so a notch held here after lift-off is
+    // a notch the host never learns about. Clamping the answer to one notch while
+    // the arrival can be several is how a fast flick lost most of its distance --
+    // four frames asking for fifteen and a half notches shipped four.
+    //
+    // One packet is a short measured in HIDScrollWheelDelta units, so the most this
+    // may return is SHRT_MAX / HIDScrollWheelDelta. Sending more would wrap the short
+    // at the call site and hand the host the opposite direction; leaving the rest is
+    // the same bargain HIDDispatchAccumulatedHighResScrollDelta strikes, and it is a
+    // queue rather than a loss, because the next frame of the same gesture drains it.
+    CGFloat limit = (CGFloat)(SHRT_MAX / HIDScrollWheelDelta);
+    if (whole > limit) {
+        whole = limit;
+    } else if (whole < -limit) {
+        whole = -limit;
     }
 
-    *accumulatedDelta -= (CGFloat)clicks;
+    *accumulatedDelta -= whole;
     if (fabs(*accumulatedDelta) < 0.0001) {
         *accumulatedDelta = 0.0;
     }
 
-    return (signed char)clicks;
+    return (short)whole;
 }
