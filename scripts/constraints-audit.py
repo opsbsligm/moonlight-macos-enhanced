@@ -391,6 +391,43 @@ check(bridge_body.count("SettingsOverlayPresenter.") == 3
       and "SettingsOverlayPresenter.present(in: window, hostId: hostId)" in bridge_body,
       "the settings bridge forwards all three calls to the presenter and adds nothing")
 
+# Building a window is not the only way the page can leave the subject. A sheet,
+# a popover and a modal present each put the page in a window AppKit builds for
+# it, none of which spells NSWindow(, and every one of them is the thing the
+# request was about: the page has to share the interface it was opened from.
+# Raising the window that already holds the page is legal and already happens,
+# so this names the mechanisms that move the page somewhere else rather than the
+# ones that bring an existing window forward.
+DETACHED_PRESENTATION = ("NSPopover", "beginSheet", "beginAnimatedSheet", "endSheet",
+                         "presentViewController", "presentAsPopover",
+                         "presentAsModalWindow", "runModal", "openWindow(",
+                         ".sheet(", ".popover(", "fullScreenCover")
+
+for rel, source in ((presenter_path, presenter_src), (settings_view_path, settings_view_src),
+                    ("SettingsWindowObjCBridge", bridge_body)):
+    found = [token for token in DETACHED_PRESENTATION if token in source]
+    check(not found, "the settings page never moves itself into another window (%s)" % rel
+          if not found else "the settings page detaches from its window in %s: %s" % (rel, found))
+
+# Where the page is attached is the same claim from the other side: it goes into
+# the content view of the window it was asked to present in, not into a view of
+# something presented on top of that window.
+present_body = swift_block(presenter_src, "static func present(in window: NSWindow?")
+check("let content = window.contentView" in present_body,
+      "the page attaches to the content view of the window it was opened from")
+
+# Both directions. The mutation is what the ban is for, and the older ban has to
+# stay demonstrably blind to it, or this second rule is only decoration.
+detached_probe = presenter_src.replace(
+    "    content.addSubview(hosting.view)",
+    "    let relocated = NSPopover()" + chr(10) + "    content.addSubview(hosting.view)", 1)
+check(detached_probe != presenter_src
+      and any(token in detached_probe for token in DETACHED_PRESENTATION),
+      "a settings page handed to a popover is refused by the presentation ban")
+check(not any(token in detached_probe for token in WINDOW_CONSTRUCTION),
+      "the window-construction ban alone would miss a popover-based page, which is "
+      "what the presentation ban above is for")
+
 
 # AppKit asks the key-equivalent question on keyDown only. A branch that consumes
 # a key therefore has to say so, or the matching keyUp still reaches -keyUp: and

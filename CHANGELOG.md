@@ -1418,6 +1418,103 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 46: an interrupted audit could leave its own defect in the tree
+
+### Fixed
+
+- **An interrupted audit could leave its own defect in the tree.** The
+  battery writes each mutation into the real source file, asks the gate
+  whether it noticed, and puts the original back in a `finally`. A `finally`
+  answers an exception raised inside the gate. It does not answer a signal:
+  the first Ctrl+C can land in the restore, and the second can land a few
+  instructions later, inside the write that was putting the file back. One
+  interrupted audit here did precisely that, and the tree came back holding
+  the mutation -- keyboard bookkeeping moved to the wrong side of a dispatch
+  -- so the next run reported four broken keyboard scenarios and a
+  release-path rule that could find nothing, which is how a defect that never
+  existed nearly got fixed. CI cannot see this shape at all, because every CI
+  run starts from a fresh checkout; only a person who interrupts a run by
+  hand meets it, and they meet it as a regression.
+
+  Every dirty file is tracked now, and the restore is interrupt-proof rather
+  than merely exception-proof: the three terminal signals put the tree back
+  with the signal mask held, and only then does the process end the way it
+  was asked to, with `atexit` and an outer `finally` covering the paths that
+  never reach a handler. Restoring before responding is the order that
+  matters -- deferring the interrupt until the gate finished would have been
+  safe and useless, since a gate here can be the whole audit. Interrupting a
+  battery that is holding a planted mutation now returns a clean tree in
+  under a tenth of a second, measured against both SIGINT and SIGTERM on the
+  mutation that touches the keyboard state machine, and a full uninterrupted
+  run still catches 104 of 104.
+
+### Added
+
+- **A popover says none of the four words the old ban knew.** The request was
+  that the settings pages share the interface they are opened from instead of
+  arriving in a window of their own. The page is an overlay attached to the
+  host window, and the audit said so: it refused `NSWindow(`, `NSPanel(`,
+  `NSWindowController(` and `initWithContentRect` in the presenter, the view
+  and the bridge. Every one of those tokens names a window somebody builds by
+  hand. An implementation that hands the page to `NSPopover` builds no window
+  at all, passes all three checks, and still puts the page into a window
+  AppKit builds for it -- which is the same visible result the request was
+  about, reached by a route no gate was watching. Sheets and modal presents
+  are the same shape.
+
+  The ban now names the mechanisms that move the page somewhere else:
+  popovers, sheets, modal presents, modal windows, `runModal`, SwiftUI's
+  `openWindow`, `.sheet`, `.popover` and `fullScreenCover`, across the
+  presenter, the view and the bridge. It deliberately does not name
+  `makeKeyAndOrderFront`, which the presenter already calls, because
+  reopening the same page raises the window that already holds it rather than
+  moving the page into another one. The attachment is pinned from the other
+  side as well: the page goes into `window.contentView`, not into the view of
+  something presented over that window.
+
+  Both directions are proven, and the second one is unusual enough to say
+  outright. A settings page handed to a popover must be refused -- it is, by
+  name and by file. Under that same mutation the older window-construction
+  ban still reports nothing, and that fact is now an assertion of its own, so
+  the day the first ban grows the shape the second one covers, the audit says
+  so rather than letting two rules quietly agree on the same blind spot.
+
+### Audited, and not changed
+
+- **A held movement key is released on every path that stops forwarding.**
+  The asymmetry looked wrong: `-releaseAllModifierKeys` is called from
+  sixteen places and `-releaseAllHeldKeys` from two. The question that
+  decides it is which state stops `keyUp:` from forwarding, and that is one
+  property, `shouldSendInputEvents`, written in exactly three places. The
+  uncapture path calls `-releaseAllHeldKeys` on the line before it.
+  `-beginStopStreamIfNeeded` writes the flag and clears the input context,
+  and the session teardown that follows releases held keys as its step zero,
+  before it disables anything -- and `-performCloseStreamWindow` runs that
+  teardown first, deliberately, so the context is still valid when the
+  packets go. The third write is inside that teardown, after the release. No
+  path stops the forwarding and leaves the record behind, so the counts stay
+  as they are: modifiers are released more often because a modifier has to be
+  returned on more occasions, not because ordinary keys were forgotten.
+
+- **Two front doors, one room.** `-AppDelegateForAppKit` reaches the page
+  twice through `SettingsOverlayPresenter` and once through the Objective-C
+  bridge, which reads like the two-implementations fault this repository has
+  been bitten by before. It is not: the bridge's three methods each forward
+  one call and add nothing, and an existing rule already refuses a second
+  presentation site and refuses a bridge that stops forwarding. Nothing to
+  change, and the shape is already gated.
+
+- **Auto-repeat is forwarded as presses.** `keyDown:` does not test
+  `isARepeat`, so a held key sends the host a stream of DOWN edges. That is
+  the upstream behaviour, some games read the repeats rather than the state,
+  and no wrong outcome was found on the other side of it -- the held-key
+  record is a set, so the repeats cannot duplicate what a release has to
+  undo. Left alone.
+
+The battery stays at 104 mutations, workflow rules stay at 25, the
+behavioural harnesses stay at twelve, and the settings-page constraints go
+from ten to sixteen.
+
 ### Round 45: a refusal was forgotten, so the hardware was asked again
 
 ### Fixed

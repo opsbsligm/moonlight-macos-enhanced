@@ -9,8 +9,10 @@ place while the behaviour is gone.
 Usage: assertion-battery.py [--keep-broken <name>]
 Exit 0 only when every mutation is caught by constraints-audit.py.
 """
+import atexit
 import os
 import re
+import signal
 import subprocess
 import sys
 
@@ -1598,28 +1600,79 @@ def main():
     original = {entry[1]: open(entry[1], encoding="utf-8").read()
                 for entry in MUTATIONS}
     missed = []
-    for entry in MUTATIONS:
-        name, path, mutate, note = entry[:4]
-        gate = entry[4] if len(entry) > 4 else AUDIT_GATE
-        # Evaluate the mutation before the file is opened. `open(path, "w")` truncates
-        # the moment it is called, and `write(mutate(...))` evaluates the file name
-        # first, so a mutation that raises part way through used to leave the real
-        # source empty -- which is how a green-looking battery run once took the video
-        # pane apart and left the tree unable to compile.
-        mutated = mutate(original[path])
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(mutated)
-        try:
-            failed, detail = gate_failed(gate)
-        finally:
+
+    # A planted mutation lives in the real file for as long as the gate reads it.
+    # The restore below runs in a finally, which covers an exception inside the
+    # gate but not a signal: Ctrl+C on this terminal, or the SIGTERM a cancelled
+    # CI job delivers, lands wherever it lands, and a second one can land inside
+    # the restore itself. The result is a source tree that still carries the
+    # defect the battery planted, and the next person to read it -- or to run the
+    # audit, or to commit it -- is looking at a regression that never existed.
+    # That is not hypothetical: one interrupted audit here left a moved
+    # removeObject: call in the keyboard state machine, four keyboard scenarios
+    # read as broken, and the audit's own release-path rule reported nothing.
+    #
+    # So signals are held rather than acted on while a file is dirty, every dirty
+    # file is tracked, and the tree is put back before this process leaves, by
+    # whichever of the three paths takes it there.
+    pending = {}
+
+    def restore_pending():
+        while pending:
+            path, text = pending.popitem()
             with open(path, "w", encoding="utf-8") as handle:
-                handle.write(original[path])
-        caught = "CAUGHT " if failed else "MISSED "
-        print("%s %-18s %s" % (caught, name, note))
-        if failed and detail:
-            print("        %s" % detail[0].strip()[:160])
-        if not failed:
-            missed.append(name)
+                handle.write(text)
+
+    def restore_and_return(signum, frame):
+        # Block all three while the tree goes back. The failure this whole
+        # block exists for is the second interrupt landing inside the restore,
+        # so the restore must not be interruptible. Waiting for the gate to
+        # finish first would be safe and useless: a gate here can be the whole
+        # audit, and nobody wants a Ctrl+C that answers twenty minutes later.
+        signal.pthread_sigmask(signal.SIG_BLOCK,
+                               {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
+        restore_pending()
+        # Then end the way the terminal asked, with the tree whole.
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    displaced = {}
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        try:
+            displaced[signum] = signal.signal(signum, restore_and_return)
+        except (OSError, ValueError):
+            pass
+    atexit.register(restore_pending)
+
+    try:
+        for entry in MUTATIONS:
+            name, path, mutate, note = entry[:4]
+            gate = entry[4] if len(entry) > 4 else AUDIT_GATE
+            # Evaluate the mutation before the file is opened. `open(path, "w")`
+            # truncates the moment it is called, and `write(mutate(...))` evaluates
+            # the file name first, so a mutation that raises part way through used to
+            # leave the real source empty -- which is how a green-looking battery run
+            # once took the video pane apart and left the tree unable to compile.
+            mutated = mutate(original[path])
+            pending[path] = original[path]
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(mutated)
+            try:
+                failed, detail = gate_failed(gate)
+            finally:
+                text = pending.pop(path)
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+            caught = "CAUGHT " if failed else "MISSED "
+            print("%s %-18s %s" % (caught, name, note))
+            if failed and detail:
+                print("        %s" % detail[0].strip()[:160])
+            if not failed:
+                missed.append(name)
+    finally:
+        restore_pending()
+        for signum, handler in displaced.items():
+            signal.signal(signum, handler)
 
     print("\n%d/%d mutations caught" % (len(MUTATIONS) - len(missed), len(MUTATIONS)))
     if missed:
