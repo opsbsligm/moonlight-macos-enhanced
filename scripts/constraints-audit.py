@@ -413,6 +413,33 @@ check(paired >= 8,
       "every shortcut branch that consumes a key records the debt"
       if paired >= 8 else "only %d consuming branches record the debt" % paired)
 
+# The gate is not the only place a key gets consumed. The translation-rule helper
+# runs from inside it and hands its answer straight back through it, so a bare
+# `return YES;` in there consumes a key exactly the way the gate does -- and the
+# rule above cannot see it, because the helper sits above the gate in the file.
+# Both of its consuming exits were exactly that, which is how a rule that sends a
+# synthetic shortcut also handed the host a release for the player's own key: a
+# key the host never saw go down, coming up on its own, mid-action.
+helper_start = capture_all.index("- (BOOL)handleKeyboardTranslationRuleForEvent:")
+helper_body = capture_all[helper_start:
+                          capture_all.index("\n#pragma mark - KeyboardNotifiable", helper_start)]
+check("return YES;" not in helper_body,
+      "the rule helper records the debt for every key it consumes"
+      if "return YES;" not in helper_body else
+      "the translation-rule helper consumes a key without recording the debt")
+check(helper_body.count("return [self consumeKeyDownEvent:event];") >= 2,
+      "both consuming exits of the rule helper pair the release"
+      if helper_body.count("return [self consumeKeyDownEvent:event];") >= 2 else
+      "only %d of the rule helper's consuming exits record the debt"
+      % helper_body.count("return [self consumeKeyDownEvent:event];"))
+# A local action returns whether it ran, which is not a claim about the key. The
+# one place that calls it has to turn that answer into a recorded consumption.
+check(capture_all.count("if ([self performKeyboardTranslationLocalAction:rule.localAction]) {") == 1,
+      "the local-action answer is turned into a recorded consumption at its one call site"
+      if capture_all.count("if ([self performKeyboardTranslationLocalAction:rule.localAction]) {") == 1 else
+      "the local-action answer reaches the gate with %d wrapped call sites"
+      % capture_all.count("if ([self performKeyboardTranslationLocalAction:rule.localAction]) {"))
+
 monitor_start = capture_all.index("self.localKeyDownMonitor = [NSEvent addLocalMonitorForEventsMatchingMask")
 monitor_body = capture_all[monitor_start:capture_all.index("    }];", monitor_start)]
 check("return nil;" not in monitor_body

@@ -1418,6 +1418,37 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 42: a translation rule took the key and left the release behind
+
+- **The rule helper consumed a key without saying so.** The pairing rule is
+  old and clearly written down: AppKit asks the key-equivalent question on
+  `keyDown` only, so any branch that consumes a key has to record the debt, or
+  `-keyUp:` forwards a release for a key the host never saw pressed. The
+  gate's own branches were paired when that rule was written down;
+  `handleKeyboardTranslationRuleForEvent:`, the helper the gate calls for the
+  player's own translation rules, had two consuming exits and neither recorded
+  anything -- the branch that dispatches a synthetic remote shortcut, and the
+  branch that runs a local action.
+- **What that looked like on the host.** A rule fires, the host gets the
+  shortcut it was asked for, and a moment later it gets the release of
+  whatever the player actually tapped -- a key it never saw go down. In a game
+  that is an action letting go on its own, which is one of the shapes players
+  file as a key conflict. The `isARepeat` exit of the same helper already
+  recorded its debt, so this is one rule and three exits, two of them obeying
+  it by accident.
+- **Why no gate saw it.** The audit rule that counts unpaired swallows slices
+  the file from `- (BOOL)onKeyboardEquivalent:` onward, and the helper sits
+  above that line, so the two bare `return YES;` answers were outside every
+  check that existed. The rule now also reads the helper's own body: no bare
+  `return YES;` in it, both consuming exits record the debt, and the answer of
+  `performKeyboardTranslationLocalAction:` -- which says whether an action
+  ran, not who owns the key -- is turned into a recorded consumption at its
+  one call site.
+- **Two plantings, both red before this landed.** `translation-rule-consumes-
+  a-key-silently` puts the bare `return YES;` back on the shortcut branch, and
+  `local-action-answer-becomes-key-ownership` hands the action's answer
+  straight back through the gate. The battery went from 95 assertions to 97.
+
 ### Round 41: a gamepad kept clicking on a host whose pointer it no longer owned
 
 - **The fourth flush was missing, and the first three prove it.**

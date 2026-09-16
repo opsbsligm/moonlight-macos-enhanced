@@ -2799,12 +2799,23 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
                 (long)rule.outputShortcut.keyCode,
                 (unsigned long long)rule.outputShortcut.modifierFlagsRaw);
             [self.hidSupport sendSyntheticRemoteShortcut:rule.outputShortcut];
-            return YES;
+            // The rule took the key, so AppKit will not deliver -keyDown: for it
+            // and the host never learns that the player's own key went down. The
+            // release still arrives through ordinary dispatch, and without this
+            // record -keyUp: forwards it: one orphan release for a key nobody
+            // pressed, which in a game is the jump letting go early.
+            return [self consumeKeyDownEvent:event];
         }
         return NO;
     }
 
-    return [self performKeyboardTranslationLocalAction:rule.localAction];
+    if ([self performKeyboardTranslationLocalAction:rule.localAction]) {
+        // The second exit of this method that consumes the key, and the debt is
+        // the same one: the client ran the action, so the release is the
+        // client's to swallow as well.
+        return [self consumeKeyDownEvent:event];
+    }
+    return NO;
 }
 
 

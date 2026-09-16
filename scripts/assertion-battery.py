@@ -154,6 +154,20 @@ MOUSE_MODE_B_EDGE = ("                    if (currentB != lastB && pointerForwar
 POINTER_GATE_DECL = "                    BOOL pointerForwarded = self->_shouldSendInputEvents;\n"
 UNCAPTURE_MOUSE_RELEASE = ("    [self.controllerSupport releaseRemoteMouseButtonsForUncapture];\n")
 
+# The two exits of the translation-rule helper that consume a key. AppKit asks
+# the key-equivalent question on keyDown only, so a key consumed here still has
+# its release delivered to -keyUp:, and only the record makes that pair.
+TRANSLATION_SHORTCUT_DISPATCH = "[self.hidSupport sendSyntheticRemoteShortcut:rule.outputShortcut];"
+TRANSLATION_RECORD_LINE = "            return [self consumeKeyDownEvent:event];\n"
+TRANSLATION_ACTION_EXIT = (
+    "    if ([self performKeyboardTranslationLocalAction:rule.localAction]) {\n"
+    "        // The second exit of this method that consumes the key, and the debt is\n"
+    "        // the same one: the client ran the action, so the release is the\n"
+    "        // client's to swallow as well.\n"
+    "        return [self consumeKeyDownEvent:event];\n"
+    "    }\n"
+    "    return NO;\n}\n")
+
 
 def once(text, needle, where):
     if text.count(needle) != 1:
@@ -563,6 +577,33 @@ def drag_the_uncaptured_pointer(text):
     """
     once(text, STICK_FORWARDING_GATE, "the stick timer forwarding gate")
     return text.replace(STICK_FORWARDING_GATE, "", 1)
+
+
+def unrecord_the_shortcut_consumption(text):
+    """Consume the key on the way to a synthetic shortcut, without saying so.
+
+    This is the shape that shipped: the rule fires, the host gets the shortcut it
+    was asked for, and then it gets a release for the player's own key -- a key
+    the host never saw pressed. In a game that is the jump letting go early, and
+    it reads exactly like the key conflicts players report.
+    """
+    once(text, TRANSLATION_SHORTCUT_DISPATCH, "the synthetic-shortcut dispatch")
+    start = text.index(TRANSLATION_SHORTCUT_DISPATCH)
+    at = text.index(TRANSLATION_RECORD_LINE, start)
+    return text[:at] + "            return YES;\n" + text[at + len(TRANSLATION_RECORD_LINE):]
+
+
+def unrecord_the_local_action_consumption(text):
+    """Hand the action's answer straight back through the gate as key ownership.
+
+    Whether an action ran is not a claim about the key, and the release still
+    comes: the other exit that shipped unpaired.
+    """
+    once(text, TRANSLATION_ACTION_EXIT, "the local-action exit")
+    return text.replace(TRANSLATION_ACTION_EXIT,
+                        "    return [self performKeyboardTranslationLocalAction:rule.localAction];\n"
+                        "}\n", 1)
+
 
 
 def ignore_the_pointer_gate(text):
@@ -1330,6 +1371,14 @@ MUTATIONS = [
      forget_the_gamepad_button_at_handback,
      "the last moment a gamepad mouse button can be released passes without one",
      EMULATION_GATE),
+    ("translation-rule-consumes-a-key-silently", MOUSE_CAPTURE,
+     unrecord_the_shortcut_consumption,
+     "a rule that sends a shortcut also hands the host a release for a key it "
+     "never saw pressed", AUDIT_GATE),
+    ("local-action-answer-becomes-key-ownership", MOUSE_CAPTURE,
+     unrecord_the_local_action_consumption,
+     "whether an action ran is not a claim that the client owns the key release",
+     AUDIT_GATE),
     ("baseline-refresh-forgets-why", ANALYZER, forget_the_written_reasons,
      "regenerating the analyzer baseline deletes the reasons a person wrote for it",
      ANALYZER_GATE),
