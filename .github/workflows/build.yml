@@ -787,10 +787,13 @@ jobs:
       # the same check the C half already had is extended to the half that lacked it,
       # with the project's own bridging header and the same vendored include paths.
       # Where a host has no macro plugin for a region, the region is named; a check
-      # that quietly stops reading part of the tree is worth less than none.
+      # that quietly stops reading part of the tree is worth less than none. It is
+      # pointed at the same derived data the compile step above is given, because the
+      # generated headers it reads are xcodebuild's and live wherever the build was
+      # told to go -- which on a runner is outside the checkout.
       run: |
         python3 scripts/swift-typecheck.py --self-test
-        python3 scripts/swift-typecheck.py
+        python3 scripts/swift-typecheck.py --derived "$RUNNER_TEMP/analyze"
 
     - name: Upload the analyzer transcript
       # The baseline is keyed by file, checker and message shape, so a different

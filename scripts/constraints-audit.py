@@ -1852,14 +1852,19 @@ check(not offenders,
 # aggregate requires the pipeline to name the Swift check twice: once to prove the
 # gate can still fail, once to run it over the sources.
 swift_invocations = re.findall(r"python3 scripts/swift-typecheck\.py[ \t]*(.*)", pipeline)
-swift_wired = (len(swift_invocations) == 2
-               and any(not tail.strip() for tail in swift_invocations)
-               and any("--self-test" in tail for tail in swift_invocations))
+swift_reads_tree = [tail for tail in swift_invocations if "--self-test" not in tail]
+# The second invocation has to name the derived data as well. The generated headers
+# the Swift sources import are xcodebuild's, and on a runner they live outside the
+# checkout, so an invocation without --derived reads nothing and says so -- a skip
+# that is honest in the log and empty in the pipeline.
+swift_wired = (len(swift_invocations) == 2 and len(swift_reads_tree) == 1
+               and any("--self-test" in tail for tail in swift_invocations)
+               and "--derived" in swift_reads_tree[0])
 check(swift_wired,
       "the Swift half is type-checked over the tree, and its gate proves it can fail"
       if swift_wired else
       "the workflow runs the Swift check %d time(s) [%s]; it needs one self-test "
-      "invocation and one that reads the tree"
+      "invocation and one that reads the tree with --derived"
       % (len(swift_invocations),
          ", ".join(repr(t.strip()) for t in swift_invocations)))
 

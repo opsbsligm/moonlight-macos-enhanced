@@ -1437,6 +1437,25 @@ stay at 140, and the behavioural harnesses stay at ten.
   to catch, and never again allowed to end the run early.
 
 
+- **The gate crashed on the machine that mattered, and passed on the one that
+  lied.** Its include list is the one the Objective-C gate uses, and that
+  list ends with the headers xcodebuild generates -- the CoreData classes and
+  the Swift interface the bridge imports -- which live wherever the build was
+  told to go. On the machine this round was written on, eight old build
+  directories sat inside the checkout, so the headers were found and the
+  check looked clean. On a runner the derived data is outside the checkout,
+  the lookup answered with nothing, and the script pasted that nothing into
+  the compiler's argument list: `TypeError: can only concatenate list (not
+  "NoneType") to list`, one step red, and two build jobs green beside it. A
+  gate that dies when its environment is thin is worse than one that refuses,
+  because the log says nothing about the tree: the answer is now the same
+  shape the Objective-C gate gives -- name the missing precondition, say that
+  it will not guess, and let the aggregate treat it as a skip -- and the run
+  takes `--derived`, the same path the compile step is given. The wiring rule
+  was tightened in the same breath to require that flag, because the honest
+  skip is also the shape a Swift check would take forever if somebody dropped
+  the flag and the log stayed polite.
+
 ### Added
 
 - **The Swift half of the app now has the check the Objective-C half has

@@ -41,12 +41,25 @@ PREVIEW = re.compile(r"^#Preview\b")
 
 
 def parse_arguments(argv):
-    """root, self-test, and whether the host was asked to say what it found."""
+    """root, self-test, and any derived-data roots named on the command line.
+
+    ``--derived`` is forwarded to the module that owns the include list: xcodebuild
+    writes generated headers -- the CoreData classes and the Swift interface the
+    bridge imports -- into whichever derived-data root it was pointed at, and on a
+    runner that is outside the checkout. compile-audit is told the same way, and a
+    Swift check that guessed at those headers instead would be checking a different
+    tree than the one that ships.
+    """
     arguments = list(argv)
     self_test = "--self-test" in arguments
-    explain = "--list-sdk" in arguments
-    arguments = [a for a in arguments if a not in ("--self-test", "--list-sdk")]
-    return (arguments[0] if arguments else "."), self_test, explain
+    derived = []
+    index = 0
+    while index + 1 < len(arguments) and arguments[index] != "--derived":
+        index += 1
+    while index + 1 < len(arguments) and arguments[index] == "--derived":
+        derived.append(os.path.realpath(arguments.pop(index + 1)))
+        arguments.pop(index)
+    return (arguments[0] if arguments else "."), self_test, derived
 
 
 def include_module():
@@ -290,7 +303,7 @@ def self_test():
 
 
 def main(argv):
-    root, run_self_test, explain = parse_arguments(argv)
+    root, run_self_test, derived = parse_arguments(argv)
     if run_self_test:
         problems = self_test()
         print("%d swift type-check self-test failures" % len(problems))
@@ -303,23 +316,27 @@ def main(argv):
     swiftc, default_sdk = pair
     audit = include_module()
     usable, too_old = audit.usable_sdks(default_sdk)
-    if explain:
-        for path in usable:
-            print("sdk %s" % os.path.basename(path))
-        for path in too_old:
-            print("sdk %s is older than the deployment target" % os.path.basename(path))
-        return 0
 
     bridging = os.path.join(root, "Limelight", "Moonlight-Bridging-Header.h")
     if not os.path.exists(bridging):
         print("swift type-check failed: no bridging header at %s" % bridging)
         return 1
 
+    EXTRA = "EXTRA_DERIVED"
+    getattr(audit, EXTRA).extend(derived)
+    includes = audit.include_dirs(default_sdk)
+    if includes is None:
+        print("swift type-check skipped: no xcodebuild DerivedSources were found for "
+              "this checkout. The Swift sources import generated headers, so this "
+              "check needs one build to have happened, or --derived to name the root "
+              "of one; pass the same path the compile step is given. It does not "
+              "substitute its own guesses for those headers.")
+        return 0
+
     failures, skipped, reports = [], [], []
     for sdk in usable:
         name = os.path.basename(sdk)
-        status, detail = check_tree(root, swiftc, sdk,
-                                    audit.include_dirs(sdk), bridging)
+        status, detail = check_tree(root, swiftc, sdk, includes, bridging)
         reports.append("%-18s %s (%s)" % (name, status, detail.splitlines()[0]))
         if status == "failed":
             failures.append("%s: %s" % (name, detail))
