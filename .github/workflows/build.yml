@@ -349,6 +349,20 @@ jobs:
       # Three planted shapes prove it can fail, and each one breaks 1816 of the orders.
       run: python3 scripts/key-order-exhaustive-tests.py
 
+    - name: Verify a rule that takes a key takes its release too
+      # A keyboard translation rule that fires has to keep its side of a promise that
+      # spans two events: it stops -keyDown:, so the release that AppKit still delivers
+      # is the client's to swallow, and the next press of that key has to spend whatever
+      # record was left. The rules already written over this file count how often a
+      # method is called, which stays green while the state outliving the call is wrong.
+      # This harness plays the shipping matcher and the shipping record against each
+      # other: two keys, every combination of the five modifiers the shortcut layer
+      # reads, six rule shapes, the guard answering both ways, and three shapes of
+      # release -- including one that never arrives. Four planted shapes fail 304, 210,
+      # 80 and 6 cases. A sweep that never fired a rule once also fails, because it did
+      # exactly that on its first run and reported ok while doing so.
+      run: python3 scripts/translation-rule-consumption-tests.py
+
     - name: Verify the timeout overlay can reach its submenus
       # The overlay's three buttons used to find the stream menu's Window, Monitor
       # and Quality submenus by comparing each item's title against a Chinese

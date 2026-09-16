@@ -1418,6 +1418,59 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 50: a green sweep that had never fired a rule
+
+### Added
+
+- **A rule that takes a key has to take that key's release, and nothing
+  checked it across the two events.**
+  `scripts/translation-rule-consumption-tests.py` drives the shipping
+  `keyboardTranslationRuleMatchingEvent:` against the shipping suppression
+  record in `HIDSupport.m`, with the release path that reads it. The promise
+  being tested spans events, which is why the rules already written over that
+  file -- counting how many times a method is called -- stay green while the
+  state that has to outlive the call is wrong. Two keys, the two from the
+  report; every combination of the five modifiers the shortcut layer reads;
+  six rule shapes; the guard answering both ways, because what is checked is
+  that the matcher obeys the guard rather than what it answers; and three
+  shapes of release, the third being one that never arrives at all, which is
+  what a window losing focus while a key is held looks like to the record.
+  Four planted shapes fail 304, 210, 80 and 6 of the cases: a rule firing on
+  extra modifiers the player never bound it to, a shortcut the guard refused
+  still taking the key, a consumed press that records no debt, and a press
+  that leaves an old record behind so the next release is swallowed with it.
+
+- **A sweep that never reaches its branch reports ok, so coverage is now
+  counted and demanded.** The first version of the sweep above came back
+  green over every case. A stand-in had forgotten to carry the guard's
+  answer, so every shortcut was refused, no press was ever taken, no debt was
+  ever recorded, and two of the four planted shapes walked free beside a
+  passing sweep. The counts of presses taken by a rule, presses released,
+  releases following a taken press, and taken presses whose release never
+  came are now printed and have to be non-zero. `known-bad` shapes were what
+  eventually surfaced the emptiness; coverage is what says it in one line, in
+  the run where it happens, rather than waiting for a planted shape to happen
+  to notice.
+
+### Audited, and not changed
+
+- **The remaining suspects in the W-and-Space report were checked and left
+  alone.** Four candidates were chased this round and none survived being
+  looked at. `MLRelevantShortcutModifiers` keeps the Shift bit, so sprinting
+  does not reduce a key to its bare form and cannot make a held key match a
+  rule bound to nothing.
+  `StreamShortcutProfile.shortcutCanMatchKeyboardEvent` requires a modifier,
+  and its own comment names this report -- a bare binding "deletes a movement
+  or action key from the host" -- which is the guard the new sweep now proves
+  is obeyed rather than merely present. The control-centre pill is a button,
+  which on AppKit is a key-equivalent shape worth fearing, but it carries no
+  key equivalent and refuses first responder, so a Space pressed during a
+  stream is not eaten by it. And the pass-through branch that turns every key
+  into a tap -- the shape that made W and Space collide for every held key --
+  was fixed in an earlier round and is what the new sweep now runs on top of.
+  No product line moved: `constraints-audit` ends at zero failures with the
+  battery at 104 of 104, and the behavioural harnesses rise to fourteen.
+
 ### Round 49: the orders nobody wrote down
 
 ### Added
