@@ -27,6 +27,16 @@ super resolution and has it should get that engine and not a quieter substitute;
 same reasoning says Auto has to reach for the hardware path when the hardware offers
 it, rather than settling for the scaling it can always do.
 
+The question that decides everything else is whether the window needs a bigger
+picture at all, and it is asked without reference to the window's shape. A stream
+that fills a 2560x2160 panel from 1280x720 has had every pixel invented, and MetalFX
+is handed an input size and an output size rather than a factor, so it can do that
+job; a resolver that asks for a uniform scale first calls that window "no upscale
+required" and draws a bilinear stretch instead. Two of the six pairs are non-uniform
+on purpose, and they part company on one axis: 2x horizontally and 3x vertically is
+an upscale, 1.5x horizontally and 0.97x vertically is not. Both are asserted, because
+a rule with no edge does not have a meaning either.
+
 The two VT menus deliberately disagree, because the real per-size and any-size APIs do
 not: the fallback from quality to low-latency only shows up when they differ. The
 low-latency menu is keyed on the frame it is asked about, which is the shape that API
@@ -58,6 +68,7 @@ ACTIVE_ENUM = "typedef NS_ENUM(NSInteger, MLActiveVideoEnhancementEngine)"
 # spelled them out would be a claim about whitespace rather than about the method.
 SCALE_FACTOR = "- (float)requestedScaleFactorForSourceWidth:(NSUInteger)sourceWidth"
 FLOAT_SUPPORTED = "- (BOOL)floatScaleFactor:(float)scaleFactor isSupportedByValues:"
+UP_SCALE = "- (BOOL)targetNeedsUpScaleFromSourceWidth:(NSUInteger)sourceWidth"
 RESOLVER = ("- (MLActiveVideoEnhancementEngine)resolveEnhancementEngineForSourceWidth:"
             "(NSUInteger)sourceWidth")
 
@@ -178,18 +189,33 @@ static NSString *EngineName(MLActiveVideoEnhancementEngine engine) {
     }
 }
 
-// Five source and window pairs chosen to straddle the branches: an even frame, a
-// fractional upscale, a doubling, a downscale, and a window whose aspect ratio does
-// not match the stream, so there is no uniform scale for a scaler to be offered.
-static const int kSizePairCount = 5;
-static const NSUInteger kSourceWidth[kSizePairCount] = {1920, 1280, 1920, 1280, 1280};
-static const NSUInteger kSourceHeight[kSizePairCount] = {1080, 720, 1080, 720, 720};
-static const NSUInteger kTargetWidth[kSizePairCount] = {1920, 1920, 3840, 640, 2560};
-static const NSUInteger kTargetHeight[kSizePairCount] = {1080, 1080, 2160, 360, 2160};
+// Six source and window pairs chosen to straddle the branches: an even frame, a
+// fractional upscale, a doubling, a downscale, a window whose aspect ratio does not
+// match the stream but is larger than it on every axis, and a window whose aspect
+// ratio does not match and is shorter than the stream on one axis. The last two are
+// the pair that separates "the window is the stream's shape" from "the window needs
+// more picture than the stream has": they have no uniform scale in common with any
+// of the others, and they disagree with each other on one axis only.
+static const int kSizePairCount = 6;
+static const NSUInteger kSourceWidth[kSizePairCount] = {1920, 1280, 1920, 1280, 1280, 1280};
+static const NSUInteger kSourceHeight[kSizePairCount] = {1080, 720, 1080, 720, 720, 720};
+static const NSUInteger kTargetWidth[kSizePairCount] = {1920, 1920, 3840, 640, 2560, 1920};
+static const NSUInteger kTargetHeight[kSizePairCount] = {1080, 1080, 2160, 360, 2160, 700};
 
 // The scale each pair means, written rather than recomputed, so the expectation is not
 // the arithmetic of the code under test wearing a different name.
-static const float kExpectedScale[kSizePairCount] = {1.0f, 1.5f, 2.0f, 0.5f, 0.0f};
+static const float kExpectedScale[kSizePairCount] = {1.0f, 1.5f, 2.0f, 0.5f, 0.0f, 0.0f};
+
+// Whether the window has more pixels to fill than the stream delivered, written per
+// pair rather than derived: it is the question the policy is built on, so restating
+// it as arithmetic would let a wrong rule and a wrong expectation agree.
+//   1920x1080 into 1920x1080 -- nothing to invent
+//   1280x720  into 1920x1080 -- both axes grow
+//   1920x1080 into 3840x2160 -- both axes double
+//   1280x720  into 640x360   -- both axes shrink
+//   1280x720  into 2560x2160 -- 2x across, 3x down: a bigger picture either way
+//   1280x720  into 1920x700  -- wider but shorter: the panel wants fewer rows
+static const BOOL kNeedsUpScale[kSizePairCount] = {NO, YES, YES, NO, YES, NO};
 
 // Whether the menu each stand-in publishes offers that scale. The two differ on
 // purpose: the per-size API and the any-size API do not agree in the field, and the
@@ -198,20 +224,25 @@ static const BOOL kLowLatencyMenuOffers[kSizePairCount] = {NO, YES, YES, NO, NO}
 static const BOOL kQualityMenuOffers[kSizePairCount] = {NO, NO, YES, NO, NO};
 
 // The policy, stated rather than copied: off stays off; HDR never goes through a
-// post-processing scaler; a target that needs no upscale needs no scaler; and
-// otherwise the engine asked for is the engine that runs when the machine offers it,
-// falling back along a named path only when it does not.
-static MLActiveVideoEnhancementEngine PolicyEngine(NSInteger mode, BOOL hdr, float scale,
+// post-processing scaler, though it is still scaled directly when the panel is bigger
+// than the stream; a target that needs no upscale needs no scaler; and otherwise the
+// engine asked for is the engine that runs when the machine offers it, falling back
+// along a named path only when it does not.
+//
+// "Needs an upscale" is its own question, asked of the two sizes and not of whether
+// they have the same shape, because the scaler that can take any output size is the
+// one a mismatched window can still use.
+static MLActiveVideoEnhancementEngine PolicyEngine(NSInteger mode, BOOL hdr, BOOL needsUpScale,
                                                    BOOL vtLowLatency, BOOL vtQuality,
                                                    BOOL metalFX) {
     if (mode == MLRequestedVideoEnhancementModeOff) {
         return MLActiveVideoEnhancementEngineNone;
     }
     if (hdr) {
-        return scale > 1.0f ? MLActiveVideoEnhancementEngineBasicScaling
+        return needsUpScale ? MLActiveVideoEnhancementEngineBasicScaling
                             : MLActiveVideoEnhancementEngineNone;
     }
-    if (scale <= 1.0f && mode != MLRequestedVideoEnhancementModeBasicScaling) {
+    if (!needsUpScale && mode != MLRequestedVideoEnhancementModeBasicScaling) {
         return MLActiveVideoEnhancementEngineNone;
     }
     switch (mode) {
@@ -279,7 +310,7 @@ static void Check(NSInteger mode, BOOL hdr, int sizeIndex, BOOL lowLatencyCapabl
     const BOOL vtLowLatency = lowLatencyCapable && kLowLatencyMenuOffers[sizeIndex];
     const BOOL vtQuality = qualityCapable && kQualityMenuOffers[sizeIndex];
     const MLActiveVideoEnhancementEngine want =
-        PolicyEngine(mode, hdr, wantScale, vtLowLatency, vtQuality, metalFX);
+        PolicyEngine(mode, hdr, kNeedsUpScale[sizeIndex], vtLowLatency, vtQuality, metalFX);
 
     if (got >= 0 && got < kEngineCount) {
         gEngineSeen[got]++;
@@ -435,11 +466,24 @@ KNOWN_BAD = [
      "the scaler menu is read for the window being drawn instead of the stream being "
          "scaled, so a machine that offers one is told it offers nothing"),
     ("the-resolver-answers-without-saying-why",
-     '            *reasonOut = @"enhancement disabled";\n        }\n'
-     '        return MLActiveVideoEnhancementEngineNone;\n    }\n\n    if (_enableHdr) {',
-     '            *reasonOut = nil;\n        }\n'
-     '        return MLActiveVideoEnhancementEngineNone;\n    }\n\n    if (_enableHdr) {',
+     '    if (_requestedEnhancementMode == MLRequestedVideoEnhancementModeOff) {\n'
+     '        if (reasonOut != NULL) {\n            *reasonOut = @"enhancement disabled";',
+     '    if (_requestedEnhancementMode == MLRequestedVideoEnhancementModeOff) {\n'
+     '        if (reasonOut != NULL) {\n            *reasonOut = nil;',
      "a resolution leaves no reason, so the log cannot answer why the scaler did not engage"),
+    ("a-window-that-is-not-the-streams-shape-is-told-it-needs-no-upscale",
+     "    if (!needsUpScale && _requestedEnhancementMode != "
+     "MLRequestedVideoEnhancementModeBasicScaling) {",
+     "    if ((!needsUpScale || requestedScaleFactor <= 1.0f) && "
+     "_requestedEnhancementMode != MLRequestedVideoEnhancementModeBasicScaling) {",
+     "a window bigger than the stream in a different proportion is turned away as "
+         "needing no upscale, which is the answer a player at 2x3 reads as a scaler "
+         "that silently does nothing"),
+    ("one-growing-axis-is-enough",
+     "    return targetWidth > sourceWidth && targetHeight > sourceHeight;",
+     "    return targetWidth > sourceWidth || targetHeight > sourceHeight;",
+     "a window shorter than the stream is sent to an edge-directed upscale filter, so "
+         "the rule about every axis growing is not the rule that runs"),
     ("every-case-resolves-to-nothing",
      "    if (_requestedEnhancementMode == MLRequestedVideoEnhancementModeOff) {",
      "    if (YES) {",
@@ -461,6 +505,7 @@ def build(source, known_bad=None):
             + CLASS_HEAD + "\n"
             + method(source, SCALE_FACTOR) + "\n"
             + method(source, FLOAT_SUPPORTED) + "\n"
+            + method(source, UP_SCALE) + "\n"
             + method(source, RESOLVER) + "\n"
             + CLASS_TAIL + "\n" + DRIVER)
 

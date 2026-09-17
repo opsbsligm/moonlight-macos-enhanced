@@ -477,6 +477,40 @@ jobs:
       # condition each turn it red.
       run: python3 scripts/interpolated-frame-count-tests.py
 
+    - name: Verify the scalers' output is counted and the windows that need them get them
+      # Two scalers can enlarge a stream in this renderer -- MetalFX inside
+      # the render pass, the Video Toolbox processor before it -- and until
+      # now the app could name the one it had chosen without saying whether
+      # either of them made a single pixel. The overlay quotes the resolution
+      # of the *stream*, so a 1280x720 picture the blit stretched to fill a
+      # window and a 1280x720 picture a scaler resampled to 2560x2160 print
+      # the same line. What is counted is one decision, asked of what the
+      # encode actually did, and it refuses a present whose sizes came out as
+      # they went in: a scaler that invented no pixels has nothing to report,
+      # so "0 fps scaled" stays a claim rather than a description of 1:1
+      # blitting.  The gate that decides which scaler may run is asked at the
+      # same time, and its question changed shape: "does the panel have more
+      # pixels than the stream" is not "is the panel the stream's shape".
+      # MetalFX is given an input size and an output size, so a window that is
+      # wider than the stream in a different proportion is a window whose
+      # pixels still have to be invented, and the resolver used to turn that
+      # window away as needing no upscale while it was being drawn at two and
+      # three times its size. Six hundred and seventy-six resolutions sweep
+      # the new rule, and the pairs keep their edge: 2x across and 3x down is
+      # an upscale, 1.5x across and 0.97x down is not, because a window
+      # shorter than the stream is not asking the client to make picture.  The
+      # harness lifts the enum, the struct, the decision and the block in the
+      # draw pass verbatim out of VideoDecoderRenderer.m and plays 360
+      # presents, every one of them into a bigger drawable, because the thing
+      # being asked is "did a scaler run", not "do the sizes differ". A plain
+      # stretch, an exactly-sized panel and a scaler that only widened the
+      # frame have to report nothing; MetalFX and the Video Toolbox each have
+      # to report their own output size. Charging a stretch, counting a scaler
+      # that invented nothing, counting without the size, and letting the
+      # frame processor answer for an engine that is not VideoToolbox each
+      # turn it red.
+      run: python3 scripts/scaling-output-evidence-tests.py
+
     - name: Verify the timeout overlay can reach its submenus
       # The overlay's three buttons used to find the stream menu's Window, Monitor
       # and Quality submenus by comparing each item's title against a Chinese

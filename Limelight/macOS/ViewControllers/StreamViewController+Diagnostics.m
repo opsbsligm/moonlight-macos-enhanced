@@ -2557,6 +2557,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     float decodedFps = displayedFps(stats.decodedFps, stats.decodedFrames);
     float renderedFps = displayedFps(stats.renderedFps, stats.renderedFrames);
     float interpolatedFps = displayedFps(stats.interpolatedFps, stats.interpolatedFrames);
+    float scaledFps = displayedFps(stats.scaledFps, stats.scaledFrames);
     
     uint32_t rtt = 0;
     BOOL rttAvailable = NO;
@@ -2636,6 +2637,19 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         append(@" ", labelAttrs);
         append([NSString stringWithFormat:@"+%.1f", interpolatedFps], valueAttrs);
         append(@" fps", labelAttrs);
+    }
+    // A scaler that is running has to look different from a scaler that was picked.
+    // The size beside the tally is what the player asked for when they asked for a
+    // bigger picture, and it is the one figure that says the hardware scaler wrote
+    // this frame rather than the blit that stretches the decode to fill the window.
+    if (scaledFps > 0.05f && stats.scaledOutputWidth > 0 && stats.scaledOutputHeight > 0) {
+        append(@"  ", labelAttrs);
+        append(MLString(@"Scaled", nil), labelAttrs);
+        append(@" ", labelAttrs);
+        append([NSString stringWithFormat:@"+%.1f", scaledFps], valueAttrs);
+        append(@" fps -> ", labelAttrs);
+        append([NSString stringWithFormat:@"%ux%u", stats.scaledOutputWidth, stats.scaledOutputHeight],
+               valueAttrs);
     }
     append(@"  ", labelAttrs);
     append(MLString(@"1% Low", nil), labelAttrs);

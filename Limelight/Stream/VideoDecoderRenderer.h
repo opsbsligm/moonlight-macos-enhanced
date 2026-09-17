@@ -54,6 +54,23 @@ typedef struct {
 
   // interpolatedFrames as a rate over the window that just closed.
   float interpolatedFps;
+
+  // Frames a hardware scaler resampled and drew during this measurement window.
+  // It counts pixels that reached the display, not a scaler being selected: the
+  // renderer can name the engine it chose and still have that engine make nothing,
+  // and a player who picked a hardware scaler can only tell the two apart if the
+  // frames it produced are tallied where they are drawn. Interpolation is counted
+  // separately, so a doubled stream that is also scaled reads on both lines.
+  uint32_t scaledFrames;
+
+  // scaledFrames as a rate over the window that just closed.
+  float scaledFps;
+
+  // The size the scaler wrote those frames at, from the window that published
+  // scaledFps. What the player asked for was a bigger picture, so the size is the
+  // part of the answer that a count cannot give: 0 means no scaler ran.
+  uint32_t scaledOutputWidth;
+  uint32_t scaledOutputHeight;
 } VideoStats;
 
 @interface VideoDecoderRenderer : NSObject

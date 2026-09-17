@@ -1418,6 +1418,55 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 56: the window that needed a scaler was told it needed none
+
+### Fixed
+
+- **A window that is bigger than the stream in a different proportion got no
+  hardware scaler at all, and was told it needed none.** The renderer decided
+  whether to scale by asking for a scale factor, and a factor only exists
+  when the window has the stream's own shape; a window that differed by more
+  than two percent on the two axes was answered with a factor of zero, which
+  the next line read as "target size does not require upscale" and resolved
+  to no engine. So a 1280x720 stream drawn into 2560x2160 -- two times
+  across, three times down, what a resized window or a non-16:9 display gives
+  a player who asked for MetalFX -- was stretched by the bilinear blit while
+  the log blamed the target size. The question was the wrong shape: MetalFX
+  is handed an input size and an output size rather than a factor, measured
+  here to fill the window it was given on both axes, ramp reaching ramp. The
+  gate now asks whether the panel has more pixels to fill than the stream
+  delivered, on every axis, and still lets the two Video Toolbox scalers take
+  only the factors they were offered, because that is a limit those APIs
+  have. An HDR stream enlarged onto the panel is now labelled the direct
+  Metal scaling it is rather than a bypass it is not; the pixels are
+  unchanged. - **No counter anywhere recorded that a scaler had enlarged a
+  frame.** The overlay quotes the resolution of the stream, so a 1280x720
+  picture stretched to fill the window and a 1280x720 picture resampled to
+  2560x2160 print the same line, and the one figure that separates them --
+  how many pixels arrived, and at what size -- was dropped. VideoStats gained
+  a tally of scaled frames, its rate, and the size the scaler wrote; the
+  overlay shows `Scaled +N fps -> WxH` only when a scaler produced something.
+  Two scalers can enlarge a frame here and neither is the blit that shows it,
+  so the charge goes through one file-scope decision asked what the encode
+  actually did -- MetalFX answers for its own, and Video Toolbox super
+  resolution announces itself only by having handed back an enlarged buffer.
+  It refuses a present whose sizes came out as they went in: a scaler that
+  invented no pixels has nothing to report, and a scaler that only widened a
+  frame is resampling rather than making picture. - **Two gates were added
+  and one was rewritten to match the rule it now guards.** The enhancement
+  sweep went from five hundred and sixty resolutions to six hundred and
+  seventy-six, with two non-uniform pairs that have to disagree: two across
+  and three down is an upscale, one and a half across and zero-nine-seven
+  down is not, since a window shorter than the stream is not asking the
+  client to make picture. The new scaling gate lifts the decision and the
+  draw pass verbatim out of the renderer and plays three hundred and sixty
+  presents, every one of them into a bigger drawable, because the question is
+  whether a scaler ran rather than whether the sizes differ. The hardware
+  premise underneath the change -- that an anisotropic window is one the
+  scaler can write -- is now measured on the GPU that runs the gate, ramp
+  sampled at all four edges, and a machine without MetalFX says it cannot
+  answer instead of passing quietly.
+
 ### Round 55: a stream it could never take was retried every frame
 
 ### Fixed

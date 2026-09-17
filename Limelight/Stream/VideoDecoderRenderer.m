@@ -137,6 +137,60 @@ static inline MLPresentedFrameAccounting MLAccountingForPresentedFrame(
     return MLPresentedFrameAccountingNone;
 }
 
+// Which scaler, if any, put its pixels into the frame that is about to be shown.
+//
+// Two scalers can enlarge a stream in this renderer, and neither of them is the
+// blit that draws the result: MetalFX runs inside the render pass, and VideoToolbox
+// super resolution hands back an already-enlarged buffer before the pass starts.
+// Both leave through the same drawable, so the question "did a hardware scaler make
+// the picture I am looking at" cannot be answered by the engine name alone.
+typedef NS_ENUM(NSInteger, MLScalerKind) {
+    MLScalerKindNone = 0,
+    MLScalerKindMetalFX,
+    MLScalerKindVideoToolbox,
+};
+
+typedef struct {
+    BOOL reachedDisplay;
+    uint32_t outputWidth;
+    uint32_t outputHeight;
+} MLScaledFrameEvidence;
+
+// Decide, from what the encode actually did rather than from what was requested,
+// whether this present is worth reporting as hardware scaling, and what the scaler
+// wrote.
+//
+// A scaler asked to write no more pixels than it was handed invented nothing, so it
+// reports nothing: the figure a player reads has to survive the window where the
+// stream already fills the panel, or "0 fps scaled" and "the picture is being scaled
+// 1:1" become the same line. Both axes have to grow, because a scaler that widens a
+// frame while shortening it is resampling, not inventing pixels.
+static inline MLScaledFrameEvidence MLHardwareScaledEvidenceForPresentedFrame(
+    MLScalerKind scalerKind,
+    uint32_t scalerInputWidth,
+    uint32_t scalerInputHeight,
+    uint32_t scalerOutputWidth,
+    uint32_t scalerOutputHeight)
+{
+    MLScaledFrameEvidence evidence = { NO, 0, 0 };
+
+    if (scalerKind == MLScalerKindNone) {
+        return evidence;
+    }
+    if (scalerInputWidth == 0 || scalerInputHeight == 0 ||
+        scalerOutputWidth == 0 || scalerOutputHeight == 0) {
+        return evidence;
+    }
+    if (scalerOutputWidth <= scalerInputWidth || scalerOutputHeight <= scalerInputHeight) {
+        return evidence;
+    }
+
+    evidence.reachedDisplay = YES;
+    evidence.outputWidth = scalerOutputWidth;
+    evidence.outputHeight = scalerOutputHeight;
+    return evidence;
+}
+
 extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
                               int write_seq_header);
 
@@ -3310,6 +3364,30 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     return NO;
 }
 
+// Whether the panel has more pixels to fill than the stream delivered.
+//
+// A scaler's job is to invent pixels, so this is the only honest trigger for asking
+// it to run. It deliberately does not ask about the aspect ratio: MetalFX is given an
+// input size and an output size, not a factor, so a window that is wider than the
+// stream in a different proportion still has to have every one of its pixels
+// invented. Asking for a uniform factor first is what used to answer that window with
+// "no upscale required" while it was being stretched to more than twice its size.
+//
+// Every axis has to grow. A window shorter than the stream is not one where the
+// display is asking the client to make picture, and an edge-directed upscale filter
+// has no claim over a frame that is being reduced.
+- (BOOL)targetNeedsUpScaleFromSourceWidth:(NSUInteger)sourceWidth
+                            sourceHeight:(NSUInteger)sourceHeight
+                               targetWidth:(NSUInteger)targetWidth
+                              targetHeight:(NSUInteger)targetHeight
+{
+    if (sourceWidth == 0 || sourceHeight == 0 || targetWidth == 0 || targetHeight == 0) {
+        return NO;
+    }
+
+    return targetWidth > sourceWidth && targetHeight > sourceHeight;
+}
+
 - (MLActiveVideoEnhancementEngine)resolveEnhancementEngineForSourceWidth:(NSUInteger)sourceWidth
                                                              sourceHeight:(NSUInteger)sourceHeight
                                                               targetWidth:(NSUInteger)targetWidth
@@ -3332,22 +3410,32 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         return MLActiveVideoEnhancementEngineNone;
     }
 
+    const BOOL needsUpScale = [self targetNeedsUpScaleFromSourceWidth:sourceWidth
+                                                        sourceHeight:sourceHeight
+                                                         targetWidth:targetWidth
+                                                        targetHeight:targetHeight];
+
     if (_enableHdr) {
         if (reasonOut != NULL) {
-            *reasonOut = requestedScaleFactor > 1.0f
+            *reasonOut = needsUpScale
                 ? @"HDR stream uses direct Metal scaling to preserve HDR output"
                 : @"HDR stream bypasses post-processing to preserve HDR output";
         }
-        return requestedScaleFactor > 1.0f ? MLActiveVideoEnhancementEngineBasicScaling
-                                           : MLActiveVideoEnhancementEngineNone;
+        return needsUpScale ? MLActiveVideoEnhancementEngineBasicScaling
+                            : MLActiveVideoEnhancementEngineNone;
     }
 
-    if (requestedScaleFactor <= 1.0f && _requestedEnhancementMode != MLRequestedVideoEnhancementModeBasicScaling) {
+    if (!needsUpScale && _requestedEnhancementMode != MLRequestedVideoEnhancementModeBasicScaling) {
         if (reasonOut != NULL) {
             *reasonOut = @"target size does not require upscale";
         }
         return MLActiveVideoEnhancementEngineNone;
     }
+
+    // The VideoToolbox scalers are offered a scale factor, so they can only take a
+    // window that is the stream's own shape. MetalFX can take the window as it is,
+    // and when the two disagree the log has to say which of them the window caused.
+    const BOOL uniformScaleAvailable = requestedScaleFactor > 1.0f;
 
     BOOL vtLowLatencySupported = NO;
     BOOL vtQualitySupported = NO;
@@ -3373,7 +3461,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             }
             if (metalFXSupported) {
                 if (reasonOut != NULL) {
-                    *reasonOut = @"Auto selected MetalFX";
+                    *reasonOut = uniformScaleAvailable
+                        ? @"Auto selected MetalFX"
+                        : @"Auto selected MetalFX for a window that is not the stream's shape";
                 }
                 return MLActiveVideoEnhancementEngineMetalFXQuality;
             }
@@ -3390,7 +3480,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             }
             if (metalFXSupported) {
                 if (reasonOut != NULL) {
-                    *reasonOut = @"VT low-latency super resolution unavailable; fell back to MetalFX";
+                    *reasonOut = uniformScaleAvailable
+                        ? @"VT low-latency super resolution unavailable; fell back to MetalFX"
+                        : @"VT low-latency super resolution needs the stream's own shape; MetalFX scales this window";
                 }
                 return MLActiveVideoEnhancementEngineMetalFXQuality;
             }
@@ -3413,7 +3505,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             }
             if (metalFXSupported) {
                 if (reasonOut != NULL) {
-                    *reasonOut = @"VT quality super resolution unavailable; fell back to MetalFX";
+                    *reasonOut = uniformScaleAvailable
+                        ? @"VT quality super resolution unavailable; fell back to MetalFX"
+                        : @"VT quality super resolution needs the stream's own shape; MetalFX scales this window";
                 }
                 return MLActiveVideoEnhancementEngineMetalFXQuality;
             }
@@ -3424,7 +3518,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         case MLRequestedVideoEnhancementModeMetalFXQuality:
             if (metalFXSupported) {
                 if (reasonOut != NULL) {
-                    *reasonOut = @"MetalFX quality requested";
+                    *reasonOut = uniformScaleAvailable
+                        ? @"MetalFX quality requested"
+                        : @"MetalFX quality requested for a window that is not the stream's shape";
                 }
                 return MLActiveVideoEnhancementEngineMetalFXQuality;
             }
@@ -3435,7 +3531,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         case MLRequestedVideoEnhancementModeMetalFXPerformance:
             if (metalFXSupported) {
                 if (reasonOut != NULL) {
-                    *reasonOut = @"MetalFX performance requested";
+                    *reasonOut = uniformScaleAvailable
+                        ? @"MetalFX performance requested"
+                        : @"MetalFX performance requested for a window that is not the stream's shape";
                 }
                 return MLActiveVideoEnhancementEngineMetalFXPerformance;
             }
@@ -4809,6 +4907,46 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                               commandBuffer:commandBuffer];
         }
 
+        // What the scalers made of this frame, charged where their pixels are drawn.
+        //
+        // MetalFX reports its own success, so it is asked. VideoToolbox super
+        // resolution says nothing at this point; it announces itself by having handed
+        // back an enlarged buffer, which is the only thing here that can tell its
+        // output from the decoder's, because the processor returns NULL for every
+        // other engine. The two are mutually exclusive by construction: an engine is
+        // one of them, and a frame processor that gave up on VideoToolbox has already
+        // moved the engine off it.
+        MLScalerKind scalerKindForPresent = MLScalerKindNone;
+        uint32_t scaledInputWidth = 0;
+        uint32_t scaledInputHeight = 0;
+        uint32_t scaledOutputWidth = 0;
+        uint32_t scaledOutputHeight = 0;
+        if (usedMetalFX) {
+            scalerKindForPresent = MLScalerKindMetalFX;
+            scaledInputWidth = (uint32_t)workingWidth;
+            scaledInputHeight = (uint32_t)workingHeight;
+            scaledOutputWidth = (uint32_t)drawable.texture.width;
+            scaledOutputHeight = (uint32_t)drawable.texture.height;
+        } else if (processedFrame != NULL) {
+            scalerKindForPresent = MLScalerKindVideoToolbox;
+            scaledInputWidth = (uint32_t)sourceWidth;
+            scaledInputHeight = (uint32_t)sourceHeight;
+            scaledOutputWidth = (uint32_t)workingWidth;
+            scaledOutputHeight = (uint32_t)workingHeight;
+        }
+
+        MLScaledFrameEvidence scalingEvidence =
+            MLHardwareScaledEvidenceForPresentedFrame(scalerKindForPresent,
+                                                      scaledInputWidth,
+                                                      scaledInputHeight,
+                                                      scaledOutputWidth,
+                                                      scaledOutputHeight);
+        if (scalingEvidence.reachedDisplay) {
+            _activeWndVideoStats.scaledFrames += 1;
+            _activeWndVideoStats.scaledOutputWidth = scalingEvidence.outputWidth;
+            _activeWndVideoStats.scaledOutputHeight = scalingEvidence.outputHeight;
+        }
+
         NSUInteger presentedCount = 0;
         if (!presentingInterpolatedFrame && frameSequence != 0) {
             @synchronized(self) {
@@ -5026,6 +5164,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
             self->_activeWndVideoStats.decodedFps = (float)self->_activeWndVideoStats.decodedFrames;
             self->_activeWndVideoStats.renderedFps = (float)self->_activeWndVideoStats.renderedFrames;
             self->_activeWndVideoStats.interpolatedFps = (float)self->_activeWndVideoStats.interpolatedFrames;
+            self->_activeWndVideoStats.scaledFps = (float)self->_activeWndVideoStats.scaledFrames;
 
             self->_activeWndVideoStats.jitterMs = self->_jitterMsEstimate;
             self->_activeWndVideoStats.renderedFpsOnePercentLow = MLComputeRenderedOnePercentLowFps(self->_renderIntervalSamples,

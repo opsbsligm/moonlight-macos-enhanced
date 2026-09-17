@@ -220,6 +220,74 @@ static BOOL scaleRuns(BOOL *supportedOut) {
     return NO;
 }
 
+// Does the scaler fill a window that is not the stream's shape?
+//
+// The renderer used to answer that window by asking for a uniform scale factor, not
+// finding one, and reporting that no upscale was required -- while drawing the stream
+// at twice its width and three times its height. The rule that replaced it rests on a
+// claim about the hardware: that MetalFX is given an input size and an output size
+// rather than a factor, so an anisotropic window is a window it can write. A claim
+// about hardware belongs in front of the hardware, so the scaler is asked to resample
+// a 64x64 ramp into 96x176 the same way the product asks -- with the colour-processing
+// mode and content size left alone -- and the pixels that come back are measured.
+//
+// Both ramps have to reach the far edge. A scaler that kept the source's shape would
+// stop short of it, and a scaler that cropped rather than stretched would not start at
+// the near edge; either answer means the window cannot be handed to it as it is.
+static BOOL nonUniformFills(void) {
+#if HAVE_METALFX
+    if (@available(macOS 13.0, *)) {
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        if (device == nil) return NO;
+        if (![MTLFXSpatialScalerDescriptor supportsDevice:device]) return NO;
+        MTLFXSpatialScalerDescriptor *d = [[MTLFXSpatialScalerDescriptor alloc] init];
+        d.inputWidth = 64; d.inputHeight = 64; d.outputWidth = 96; d.outputHeight = 176;
+        d.colorTextureFormat = MTLPixelFormatBGRA8Unorm;
+        d.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
+        d.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
+        id<MTLFXSpatialScaler> scaler = [d newSpatialScalerWithDevice:device];
+        if (scaler == nil) return NO;
+
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:
+            MTLPixelFormatBGRA8Unorm width:64 height:64 mipmapped:NO];
+        td.storageMode = MTLStorageModeShared; td.usage = scaler.colorTextureUsage;
+        id<MTLTexture> src = [device newTextureWithDescriptor:td];
+        NSUInteger bpr = 64 * 4;
+        uint8_t *in = calloc(1, bpr * 64);
+        for (NSUInteger y = 0; y < 64; y++)
+            for (NSUInteger x = 0; x < 64; x++) {
+                uint8_t *p = in + y * bpr + x * 4;
+                p[0] = (uint8_t)(x * 255 / 63);   // the ramp across the window
+                p[2] = (uint8_t)(y * 255 / 63);   // and down it
+                p[1] = 0; p[3] = 255;
+            }
+        [src replaceRegion:MTLRegionMake2D(0, 0, 64, 64) mipmapLevel:0 withBytes:in bytesPerRow:bpr];
+
+        MTLTextureDescriptor *od = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:
+            MTLPixelFormatBGRA8Unorm width:96 height:176 mipmapped:NO];
+        od.storageMode = MTLStorageModeShared; od.usage = scaler.outputTextureUsage;
+        id<MTLTexture> dst = [device newTextureWithDescriptor:od];
+        scaler.colorTexture = src; scaler.outputTexture = dst;
+        id<MTLCommandBuffer> cb = [[device newCommandQueue] commandBuffer];
+        [scaler encodeToCommandBuffer:cb]; [cb commit]; [cb waitUntilCompleted];
+        if (cb.error != nil) { free(in); return NO; }
+
+        NSUInteger obpr = 96 * 4;
+        uint8_t *out = calloc(1, obpr * 176);
+        [dst getBytes:out bytesPerRow:obpr fromRegion:MTLRegionMake2D(0, 0, 96, 176) mipmapLevel:0];
+        uint8_t nearX = out[(88 * obpr) + (0 * 4) + 0];               // first column, mid row
+        uint8_t farX = out[(88 * obpr) + (95 * 4) + 0];           // last column, mid row
+        uint8_t nearY = out[(0 * obpr) + (48 * 4) + 2];               // first row, mid column
+        uint8_t farY = out[(175 * obpr) + (48 * 4) + 2];          // last row, mid column
+        free(in); free(out);
+        printf("[metalfx] nonuniform 64x64 into 96x176 nearX=%u farX=%u nearY=%u farY=%u\n",
+               nearX, farX, nearY, farY);
+        return farX >= 200 && farY >= 200 && nearX <= 40 && nearY <= 40;
+    }
+#endif
+    return NO;
+}
+
 static void reportSupportAndFacts(Class cls, const char *label, NSInteger width, NSInteger height) {
     // The class answers two different questions, and only the second one is about
     // this GPU. Printing both keeps a runner from reading isSupported as proof:
@@ -280,6 +348,21 @@ int main(void) {
         BOOL scaled = scaleRuns(&supported);
         printf("METALFX_SUPPORT=%s\n", supported ? "yes" : "no");
         printf("METALFX_SCALING=%s\n", scaled ? "yes" : "no");
+        BOOL anisotropic = NO;
+        BOOL metalFXHere = NO;
+#if HAVE_METALFX
+        if (@available(macOS 13.0, *)) {
+            id<MTLDevice> probeDevice = MTLCreateSystemDefaultDevice();
+            metalFXHere = probeDevice != nil
+                && [MTLFXSpatialScalerDescriptor supportsDevice:probeDevice];
+        }
+#endif
+        if (metalFXHere) {
+            anisotropic = nonUniformFills();
+            printf("METALFX_NONUNIFORM=%s\n", anisotropic ? "yes" : "no");
+        } else {
+            printf("METALFX_NONUNIFORM=unavailable\n");
+        }
         probeInterpolation();
         return 0;
     }
@@ -584,6 +667,19 @@ def main():
                         r"MLActiveVideoEnhancementEngineMetalFXQuality\s*:\s*"
                         r"MLActiveVideoEnhancementEngineBasicScaling", src) is not None,
               "an unsupported GPU falls back to basic scaling, never to a scaler it cannot run")
+    # The resolver now asks whether the panel has more pixels than the stream rather
+    # than whether the panel has the stream's shape, because MetalFX takes sizes and not
+    # a factor. That premise is the whole change, and it is a claim about a GPU, so it is
+    # checked against one rather than asserted in a comment. A machine without MetalFX
+    # cannot answer it, and says so instead of passing quietly.
+    anisotropic = re.search(r"METALFX_NONUNIFORM=(\w+)", out)
+    if support is not None and support.group(1) == "yes":
+        check(anisotropic is not None and anisotropic.group(1) == "yes",
+              "the scaler fills a window that is not the stream's shape on this GPU, so "
+              "an anisotropic window is one the resolver may hand it")
+    else:
+        print("     no MetalFX on this GPU; the anisotropic premise is not testable here")
+
     slots = re.search(r"\[vt\] slots offered=(\d+)", out)
     if slots is None:
         print('     (no interpolation verdict reported; skipped)')

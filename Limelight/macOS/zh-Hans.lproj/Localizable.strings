@@ -427,6 +427,7 @@
 "Pipeline" = "管线";
 "Host" = "主机";
 "Interpolated" = "插帧";
+"Scaled" = "缩放输出";
 "%@ %@ budget is below the recommended realtime floor (%.3f < %.3f bpppf)." = "%@ %@ 的压缩预算低于实时低延迟串流的建议下限（%.3f < %.3f bpppf）。";
 "%@ %@ budget is usable but tight for low-latency streaming (%.3f < %.3f bpppf)." = "%@ %@ 的压缩预算可以使用，但对低延迟串流来说已经比较紧张（%.3f < %.3f bpppf）。";
 "YUV 4:4:4 increases chroma sample load and usually needs more bitrate or lower FPS to stay clean." = "YUV 4:4:4 会明显增加色度采样负载，通常需要更高码率或更低帧率才能保持干净画质。";
