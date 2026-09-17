@@ -378,6 +378,21 @@ jobs:
       # is how it catches itself testing nothing.
       run: python3 scripts/enhancement-engine-resolution-tests.py
 
+    - name: Verify the frame interpolation report says what happened
+      # The settings page shows two lines about interpolation: the engine that ran, and a
+      # sentence meant to explain it. That sentence used to be picked by searching the
+      # reason for a phrase, and the phrasing was the bug. "provides cadence headroom over"
+      # and "does not have cadence headroom over" share the phrase one branch looked for,
+      # so an interpolation that was running was described by the sentence saying it had
+      # refused; and a frame that failed after the feature engaged was caught by the
+      # shortcut that only asks whether the engine is none, telling a player who turned it
+      # on that no stream had asked for it. Two translated sentences were unreachable on
+      # every machine. This harness enumerates the eleven states the renderer can report,
+      # with the shipping gate answering for the refusals and the shipping texts lifted
+      # rather than retyped, and demands each one land on its own sentence -- four planted
+      # shapes fail, and so does any answer count below the one the player needs.
+      run: python3 scripts/frame-interpolation-status-tests.py
+
     - name: Verify the timeout overlay can reach its submenus
       # The overlay's three buttons used to find the stream menu's Window, Monitor
       # and Quality submenus by comparing each item's title against a Chinese

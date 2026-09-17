@@ -161,6 +161,29 @@ typedef NS_ENUM(NSInteger, MLActiveVideoFrameInterpolationEngine) {
     MLActiveVideoFrameInterpolationEngineVTLowLatency = 1,
 };
 
+// Which sentence to show the player about frame interpolation. The prose reasons in this
+// file belong to the log, where a person reads them; the settings line used to be chosen
+// by searching one of them for a phrase, and that is what made the feature report itself
+// broken twice over. "provides cadence headroom over" and "does not have cadence headroom
+// over" share the phrase the branch looked for, so a working interpolator was described
+// by the refusal sentence; and a per-frame failure was caught by the shortcut that asks
+// only whether the engine is none, telling a player who enabled the feature that no
+// stream had asked for it. The states are named here so the answer cannot be inferred
+// from wording again.
+typedef NS_ENUM(NSInteger, MLVideoFrameInterpolationReport) {
+    MLVideoFrameInterpolationReportActive = 0,
+    MLVideoFrameInterpolationReportWarmup,
+    MLVideoFrameInterpolationReportRuntimeUnavailable,
+    MLVideoFrameInterpolationReportNoCadenceHeadroom,
+    MLVideoFrameInterpolationReportRequiresMetalRenderer,
+    MLVideoFrameInterpolationReportDisabledForHdr,
+    MLVideoFrameInterpolationReportRefreshRateUnknown,
+    MLVideoFrameInterpolationReportNoInterpolationSlots,
+    MLVideoFrameInterpolationReportAboveInterpolationCeiling,
+    MLVideoFrameInterpolationReportWaitingForSourceFrame,
+    MLVideoFrameInterpolationReportDisabled,
+};
+
 typedef NS_ENUM(NSUInteger, MLHDRTransferMode) {
     MLHDRTransferModeSDR = 0,
     MLHDRTransferModePQ = 1,
@@ -379,6 +402,22 @@ static const char *MLInterpolationSlotReason(MLInterpolationSlotVerdict verdict)
 // slotsAtStreamSize is what the engine said about the stream; slotsAtProbeSize is
 // what it said about ML_INTERPOLATION_PROBE_* (pass the stream answer again when
 // the stream already is that size). Negative means no configuration was made.
+static MLVideoFrameInterpolationReport MLVideoFrameInterpolationReportForSlotVerdict(
+    MLInterpolationSlotVerdict verdict) {
+    switch (verdict) {
+        case MLInterpolationSlotVerdictNoHardware:
+            return MLVideoFrameInterpolationReportNoInterpolationSlots;
+        case MLInterpolationSlotVerdictStreamAboveCeiling:
+            return MLVideoFrameInterpolationReportAboveInterpolationCeiling;
+        case MLInterpolationSlotVerdictRuns:
+            // The engine said yes and the frame has not landed yet, which is what the
+            // warm-up line says. Nothing refuses on a verdict of Runs today, so this
+            // branch keeps a new verdict from having to answer for it later.
+            return MLVideoFrameInterpolationReportWarmup;
+    }
+    return MLVideoFrameInterpolationReportDisabled;
+}
+
 static MLInterpolationSlotVerdict MLClassifyInterpolationSlots(NSInteger streamWidth,
                                                               NSInteger streamHeight,
                                                               NSInteger slotsAtStreamSize,
@@ -1584,7 +1623,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     [self publishVideoFrameInterpolationRuntimeStatusSummary:MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpolationEngineNone)
-                                                      detail:@"Video Frame Interpolation Runtime Detail Off"];
+                                                      detail:[self runtimeDetailKeyForFrameInterpolationReport:MLVideoFrameInterpolationReportDisabled]];
 
     if (_frameInterpolationOutputPool != NULL) {
         CFRelease(_frameInterpolationOutputPool);
@@ -2112,11 +2151,12 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 }
 
 - (void)logActiveFrameInterpolationEngine:(MLActiveVideoFrameInterpolationEngine)engine
+                                   report:(MLVideoFrameInterpolationReport)report
                                    reason:(NSString *)reason
 {
     [self publishVideoFrameInterpolationRuntimeStatusSummary:MLVideoFrameInterpolationEngineName(engine)
-                                                      detail:[self runtimeDetailKeyForFrameInterpolationEngine:engine
-                                                                                                       reason:reason]];
+                                                      detail:[self runtimeDetailKeyForFrameInterpolationReport:report]];
+
 
     if (_lastLoggedFrameInterpolationEngine == engine) {
         return;
@@ -2209,49 +2249,43 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     return @"Video Enhancement Runtime Detail Active";
 }
 
-- (NSString *)runtimeDetailKeyForFrameInterpolationEngine:(MLActiveVideoFrameInterpolationEngine)engine
-                                                    reason:(NSString *)reason
+- (NSString *)runtimeDetailKeyForFrameInterpolationReport:(MLVideoFrameInterpolationReport)report
 {
-    NSString *normalizedReason = reason.lowercaseString ?: @"";
-    if ([normalizedReason containsString:@"warmup in progress"]) {
-        return @"Video Frame Interpolation Runtime Detail Warmup";
+    // Every state keeps its own line on purpose. Collapsing the refusals into the generic
+    // Off sentence is what made the feature look broken -- a 120 FPS stream on a 144 Hz
+    // panel was indistinguishable from a player who never enabled interpolation -- and the
+    // collapse ran the other way too while this was chosen by searching the reason for
+    // phrases: interpolation that was running answered the refusal line, because "provides
+    // cadence headroom over" carries the phrase the refusal branch looked for, and a
+    // per-frame failure answered "not enabled", because the engine-is-none shortcut ran
+    // before the word "unavailable" was ever consulted.
+    switch (report) {
+        case MLVideoFrameInterpolationReportActive:
+            return @"Video Frame Interpolation Runtime Detail Active";
+        case MLVideoFrameInterpolationReportWarmup:
+            return @"Video Frame Interpolation Runtime Detail Warmup";
+        case MLVideoFrameInterpolationReportRuntimeUnavailable:
+            return @"Video Frame Interpolation Runtime Detail Fallback";
+        case MLVideoFrameInterpolationReportNoCadenceHeadroom:
+            return @"Video Frame Interpolation Runtime Detail No Cadence Headroom";
+        case MLVideoFrameInterpolationReportRequiresMetalRenderer:
+            return @"Video Frame Interpolation Runtime Detail Requires Metal Renderer";
+        case MLVideoFrameInterpolationReportDisabledForHdr:
+            return @"Video Frame Interpolation Runtime Detail Disabled For Hdr";
+        case MLVideoFrameInterpolationReportRefreshRateUnknown:
+            return @"Video Frame Interpolation Runtime Detail Refresh Rate Unknown";
+        case MLVideoFrameInterpolationReportNoInterpolationSlots:
+            return @"Video Frame Interpolation Runtime Detail No Interpolation Slots";
+        case MLVideoFrameInterpolationReportAboveInterpolationCeiling:
+            return @"Video Frame Interpolation Runtime Detail Above Interpolation Ceiling";
+        case MLVideoFrameInterpolationReportWaitingForSourceFrame:
+            return @"Video Frame Interpolation Runtime Detail Off";
+        case MLVideoFrameInterpolationReportDisabled:
+            return @"Video Frame Interpolation Runtime Detail Off";
     }
-    // Report why interpolation is off. Collapsing every rejection into the
-    // generic Off line is what made the feature look broken: the cadence gate,
-    // the renderer gate and the HDR gate all produced the same text, so a
-    // 120 FPS stream on a 144 Hz panel was indistinguishable from the user
-    // never having enabled interpolation.
-    if ([normalizedReason containsString:@"cadence headroom"]) {
-        return @"Video Frame Interpolation Runtime Detail No Cadence Headroom";
-    }
-    if ([normalizedReason containsString:@"only available in metal renderer"]) {
-        return @"Video Frame Interpolation Runtime Detail Requires Metal Renderer";
-    }
-    if ([normalizedReason containsString:@"hdr stream"]) {
-        return @"Video Frame Interpolation Runtime Detail Disabled For Hdr";
-    }
-    if ([normalizedReason containsString:@"refresh rate unavailable"]) {
-        return @"Video Frame Interpolation Runtime Detail Refresh Rate Unknown";
-    }
-    // The resolution answer is tested first because it is the narrower claim: a
-    // machine with no engine at all reports "no interpolation slots", which is what
-    // the branch below is for, and only a machine that does have one can say the
-    // stream is simply too big for it.
-    if ([normalizedReason containsString:@"above the interpolation ceiling"]) {
-        return @"Video Frame Interpolation Runtime Detail Above Interpolation Ceiling";
-    }
-    if ([normalizedReason containsString:@"no interpolation slots"]) {
-        return @"Video Frame Interpolation Runtime Detail No Interpolation Slots";
-    }
-    if (engine == MLActiveVideoFrameInterpolationEngineNone) {
-        return @"Video Frame Interpolation Runtime Detail Off";
-    }
-    if ([normalizedReason containsString:@"fell back"] ||
-        [normalizedReason containsString:@"unavailable"]) {
-        return @"Video Frame Interpolation Runtime Detail Fallback";
-    }
-    return @"Video Frame Interpolation Runtime Detail Active";
+    return @"Video Frame Interpolation Runtime Detail Off";
 }
+
 
 - (NSString *)runtimeDetailKeyForActiveMode:(MLActiveVideoRendererMode)mode
                               requestedMode:(MLRequestedVideoRendererMode)requestedMode
@@ -3050,6 +3084,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     } else if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff) {
         _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
         [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                         report:MLVideoFrameInterpolationReportWaitingForSourceFrame
                                          reason:@"waiting for a previously presented source frame"];
     }
 
@@ -3336,9 +3371,13 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 }
 
 - (BOOL)shouldUseFrameInterpolationForDisplayRefreshRate:(double)displayRefreshRate
+                                                  report:(MLVideoFrameInterpolationReport *)reportOut
                                                   reason:(NSString **)reasonOut
 {
     if (_requestedFrameInterpolationMode == MLRequestedVideoFrameInterpolationModeOff) {
+        if (reportOut != NULL) {
+            *reportOut = MLVideoFrameInterpolationReportDisabled;
+        }
         if (reasonOut != NULL) {
             *reasonOut = @"frame interpolation disabled";
         }
@@ -3346,6 +3385,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     if (_activeRendererMode != MLActiveVideoRendererModeEnhanced) {
+        if (reportOut != NULL) {
+            *reportOut = MLVideoFrameInterpolationReportRequiresMetalRenderer;
+        }
         if (reasonOut != NULL) {
             *reasonOut = @"frame interpolation is only available in Metal Renderer";
         }
@@ -3353,6 +3395,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     if (_enableHdr) {
+        if (reportOut != NULL) {
+            *reportOut = MLVideoFrameInterpolationReportDisabledForHdr;
+        }
         if (reasonOut != NULL) {
             *reasonOut = @"HDR stream keeps native Metal present path; frame interpolation stays disabled";
         }
@@ -3360,6 +3405,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     if (displayRefreshRate <= 0.0) {
+        if (reportOut != NULL) {
+            *reportOut = MLVideoFrameInterpolationReportRefreshRateUnknown;
+        }
         if (reasonOut != NULL) {
             *reasonOut = @"display refresh rate unavailable";
         }
@@ -3368,6 +3416,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
     double minimumRefreshRate = MAX((double)self.frameRate * 1.5, (double)self.frameRate + 12.0);
     if (displayRefreshRate < minimumRefreshRate) {
+        if (reportOut != NULL) {
+            *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;
+        }
         if (reasonOut != NULL) {
             *reasonOut = [NSString stringWithFormat:@"display %.2fHz does not have cadence headroom over stream %d FPS",
                           displayRefreshRate,
@@ -3376,6 +3427,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         return NO;
     }
 
+    if (reportOut != NULL) {
+        *reportOut = MLVideoFrameInterpolationReportActive;
+    }
     return YES;
 }
 
@@ -3572,6 +3626,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     self->_frameInterpolationNoSlotWidth = streamWidth;
                     self->_frameInterpolationNoSlotHeight = streamHeight;
                     [self logActiveFrameInterpolationEngine:MLActiveVideoFrameInterpolationEngineNone
+                                                     report:MLVideoFrameInterpolationReportForSlotVerdict(verdict)
                                                      reason:slotReason];
                 });
                 return;
@@ -3786,23 +3841,36 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                               displayRefreshRate:(double)displayRefreshRate
 {
     NSString *reason = nil;
-    if (![self shouldUseFrameInterpolationForDisplayRefreshRate:displayRefreshRate reason:&reason]) {
+    MLVideoFrameInterpolationReport report = MLVideoFrameInterpolationReportActive;
+    if (![self shouldUseFrameInterpolationForDisplayRefreshRate:displayRefreshRate
+                                                         report:&report
+                                                         reason:&reason]) {
         _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
-        [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine reason:reason];
+        [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                         report:report
+                                         reason:reason];
         return NO;
     }
 
     CVImageBufferRef interpolatedFrame =
         [self copyInterpolatedFrameFromPreviousSource:previousSourceFrame toSource:sourceFrame];
     if (interpolatedFrame == NULL) {
-        NSString *runtimeReason = _frameInterpolationWarmupInFlight
+        const BOOL stillWarmingUp = _frameInterpolationWarmupInFlight;
+        NSString *runtimeReason = stillWarmingUp
             ? @"VT frame interpolation warmup in progress"
             : @"VT frame interpolation unavailable at runtime";
+        // Both readings of this one branch, chosen together: a log that says the
+        // processor failed while the settings line says it is still warming up is two
+        // different bugs for whoever reads them, and neither is worth the hunt.
+        const MLVideoFrameInterpolationReport runtimeReport = stillWarmingUp
+            ? MLVideoFrameInterpolationReportWarmup
+            : MLVideoFrameInterpolationReportRuntimeUnavailable;
         if (!_frameInterpolationWarmupInFlight && _frameInterpolationProcessor != nil) {
             [self teardownFrameInterpolationProcessor];
         }
         _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
         [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                         report:runtimeReport
                                          reason:runtimeReason];
         return NO;
     }
@@ -3821,6 +3889,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineVTLowLatency;
     [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                     report:MLVideoFrameInterpolationReportActive
                                      reason:[NSString stringWithFormat:@"display %.2fHz provides cadence headroom over %d FPS stream",
                                              displayRefreshRate,
                                              self.frameRate]];

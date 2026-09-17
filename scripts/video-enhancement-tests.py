@@ -86,10 +86,47 @@ def refusal_turn(text):
     return body[start:end]
 
 
+def report_enum_block(text):
+    """The whole report enum typedef, so the model compiles the shipping states."""
+    start = text.index(REPORT_ENUM)
+    end = text.index("};", start)
+    return text[start:end + 2]
+
+
+def case_literal(body, case):
+    """The @"..." a switch case returns, or None when the case is gone."""
+    tail = case_tail(body, case)
+    if tail is None:
+        return None
+    literal = re.search(r'@"([^"]*)"', tail)
+    return literal.group(1) if literal else None
+
+
+def case_return(body, case):
+    """The value a switch case returns, as written, or None when the case is gone."""
+    tail = case_tail(body, case)
+    if tail is None:
+        return None
+    returned = re.search(r"return\s+([A-Za-z_][\w:]*)", tail)
+    return returned.group(1) if returned else None
+
+
+def case_tail(body, case):
+    start = re.search(r"\bcase\s+" + re.escape(case) + r"\s*:", body)
+    if not start:
+        return None
+    tail = body[start.end():]
+    stop = re.search(r"\bcase\b|\bdefault\b", tail)
+    return tail[:stop.start()] if stop else tail
+
+
 INTERPOLATION_REGION_START = "typedef NS_ENUM(NSInteger, MLInterpolationSlotVerdict)"
 INTERPOLATION_REGION_END = "static MLHDRTransferMode MLResolveHDRTransferMode"
-DETAIL_MAPPER = ("- (NSString *)runtimeDetailKeyForFrameInterpolationEngine:"
-                 "(MLActiveVideoFrameInterpolationEngine)engine")
+REPORT_ENUM = "typedef NS_ENUM(NSInteger, MLVideoFrameInterpolationReport)"
+DETAIL_MAPPER = ("- (NSString *)runtimeDetailKeyForFrameInterpolationReport:"
+                 "(MLVideoFrameInterpolationReport)report")
+REPORT_FOR_VERDICT = ("static MLVideoFrameInterpolationReport "
+                      "MLVideoFrameInterpolationReportForSlotVerdict(")
 DERIVED = "Limelight/macOS/ViewControllers/SettingsModel+DerivedValues.swift"
 
 
@@ -251,11 +288,13 @@ int main(void) {
 
 
 # extracted from Limelight/Stream/VideoDecoderRenderer.m by this harness, compiled
-# against the scenarios the renderer actually meets. @@DEFINES@@ is the two probe
+# against the scenarios the renderer actually meets. @@REPORT_ENUM@@ is the
+# report enum, @@DEFINES@@ is the two probe
 # defines and @@REGION@@ the verdict region, both taken from the shipping file.
 VERDICT_MODEL = r"""
 #import <Foundation/Foundation.h>
 
+@@REPORT_ENUM@@
 @@DEFINES@@
 @@REGION@@
 
@@ -313,6 +352,21 @@ int main(void) {
         printf("FAIL a reason string lost the words the settings page routes on\n");
     }
 
+    /* The settings page routes on the report enum now, so the compiled model has
+     * to prove the two zero-slot verdicts still reach two different states. */
+    MLVideoFrameInterpolationReport hardwareReport =
+        MLVideoFrameInterpolationReportForSlotVerdict(MLInterpolationSlotVerdictNoHardware);
+    MLVideoFrameInterpolationReport ceilingReport =
+        MLVideoFrameInterpolationReportForSlotVerdict(MLInterpolationSlotVerdictStreamAboveCeiling);
+    if (hardwareReport != MLVideoFrameInterpolationReportNoInterpolationSlots ||
+        ceilingReport != MLVideoFrameInterpolationReportAboveInterpolationCeiling) {
+        gFailed += 1;
+        printf("FAIL the zero-slot verdicts report as %ld and %ld\n",
+               (long)hardwareReport, (long)ceilingReport);
+    } else {
+        printf("ok   the two zero-slot verdicts report as two states\n");
+    }
+
     printf("%s\n", gFailed ? "verdict scenarios failed" : "all verdict scenarios passed");
     return gFailed;
 }
@@ -323,6 +377,7 @@ def main():
     cc, sdk = toolchain()
 
     src = open(os.path.join(ROOT, SRC), encoding="utf-8").read()
+    report_enum = report_enum_block(src)
 
     gate = method_body(src, "static BOOL MLMetalFXIsSupported(id<MTLDevice> device)")
     check("supportsDevice:" in gate,
@@ -400,15 +455,58 @@ def main():
     check("MLClassifyInterpolationSlots" in warmup and "reason:slotReason" in warmup,
           "the warmup reports the verdict it classified rather than one fixed sentence")
 
+    # The settings page line used to be picked by searching the reason text, and
+    # the two zero-slot answers were ordered so the narrower one was asked first.
+    # A report enum replaces that ordering with two states, so the guard is now
+    # that each verdict still reaches its own line through the enum -- and that
+    # nothing picks either answer by reading prose again.
+    verdict_report = method_body(src, REPORT_FOR_VERDICT)
+    ceiling_report = case_return(verdict_report, "MLInterpolationSlotVerdictStreamAboveCeiling")
+    hardware_report = case_return(verdict_report, "MLInterpolationSlotVerdictNoHardware")
     mapper = method_body(src, DETAIL_MAPPER)
-    check("above the interpolation ceiling" in mapper
-          and "Video Frame Interpolation Runtime Detail Above Interpolation Ceiling" in mapper,
+    ceiling_key = case_literal(mapper, "MLVideoFrameInterpolationReportAboveInterpolationCeiling")
+    hardware_key = case_literal(mapper, "MLVideoFrameInterpolationReportNoInterpolationSlots")
+    check(ceiling_key == "Video Frame Interpolation Runtime Detail Above Interpolation Ceiling"
+          and hardware_key == "Video Frame Interpolation Runtime Detail No Interpolation Slots",
           "the resolution verdict has its own line on the settings page")
-    ceiling_branch = 'containsString:@"above the interpolation ceiling"'
-    hardware_branch = 'containsString:@"no interpolation slots"'
-    check(ceiling_branch in mapper and hardware_branch in mapper
-          and mapper.index(ceiling_branch) < mapper.index(hardware_branch),
-          "the narrower resolution verdict is tested before the hardware verdict")
+    check(ceiling_key is not None and hardware_key is not None
+          and ceiling_key != hardware_key,
+          "a stream above the ceiling does not read as a GPU with no engine")
+    check("containsString:" not in mapper and "containsString:" not in verdict_report,
+          "neither the settings line nor the verdict mapping is chosen by searching "
+          "the reason text for a phrase")
+    check(ceiling_report == "MLVideoFrameInterpolationReportAboveInterpolationCeiling"
+          and hardware_report == "MLVideoFrameInterpolationReportNoInterpolationSlots",
+          "the verdict that says the resolution is too high is the one the page "
+          "calls the interpolation ceiling")
+    check(ceiling_report is not None and hardware_report is not None
+          and ceiling_report != hardware_report,
+          "the two zero-slot verdicts map to two reports, so a merge cannot be "
+          "hidden by an enum that still has two names")
+
+    merged_answers = mapper.replace(
+        'case MLVideoFrameInterpolationReportAboveInterpolationCeiling:\n'
+        '            return @"Video Frame Interpolation Runtime Detail Above Interpolation Ceiling";',
+        'case MLVideoFrameInterpolationReportAboveInterpolationCeiling:\n'
+        '            return @"Video Frame Interpolation Runtime Detail No Interpolation Slots";')
+    check(merged_answers != mapper,
+          "the merged-answer mutation has to be a real edit, or the test below proves nothing")
+    check(case_literal(merged_answers, "MLVideoFrameInterpolationReportAboveInterpolationCeiling")
+          == hardware_key,
+          "the ceiling-line assertion fails on a renderer that answers a resolution "
+          "refusal with the no-engine sentence")
+
+    collapsed_verdicts = verdict_report.replace(
+        "        case MLInterpolationSlotVerdictStreamAboveCeiling:\n"
+        "            return MLVideoFrameInterpolationReportAboveInterpolationCeiling;",
+        "        case MLInterpolationSlotVerdictStreamAboveCeiling:\n"
+        "            return MLVideoFrameInterpolationReportNoInterpolationSlots;")
+    check(collapsed_verdicts != verdict_report,
+          "the collapsed-verdict mutation has to be a real edit, or the test below proves nothing")
+    check(case_return(collapsed_verdicts, "MLInterpolationSlotVerdictStreamAboveCeiling")
+          == hardware_report,
+          "the verdict-mapping assertion fails on a renderer that folds the two "
+          "zero-slot answers into one report")
 
     asked = probe_size(src)
     matrix = matrix_sizes(open(os.path.join(ROOT, DERIVED), encoding="utf-8").read())
@@ -426,7 +524,8 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         model = os.path.join(tmp, "verdicts.m")
         open(model, "w", encoding="utf-8").write(
-            VERDICT_MODEL.replace("@@DEFINES@@", defines(asked)).replace("@@REGION@@", verdict))
+            VERDICT_MODEL.replace("@@REPORT_ENUM@@", report_enum)
+                .replace("@@DEFINES@@", defines(asked)).replace("@@REGION@@", verdict))
         built = subprocess.run([cc, "-x", "objective-c", "-isysroot", sdk, "-Wall", "-Werror",
                                 "-framework", "Foundation",
                                 model, "-o", os.path.join(tmp, "verdicts")],
@@ -442,7 +541,8 @@ def main():
 
         inverted_model = os.path.join(tmp, "inverted.m")
         open(inverted_model, "w", encoding="utf-8").write(
-            VERDICT_MODEL.replace("@@DEFINES@@", defines(asked)).replace("@@REGION@@", old_shape))
+            VERDICT_MODEL.replace("@@REPORT_ENUM@@", report_enum)
+                .replace("@@DEFINES@@", defines(asked)).replace("@@REGION@@", old_shape))
         built = subprocess.run([cc, "-x", "objective-c", "-isysroot", sdk, "-Wall", "-Werror",
                                 "-framework", "Foundation",
                                 inverted_model, "-o", os.path.join(tmp, "inverted")],

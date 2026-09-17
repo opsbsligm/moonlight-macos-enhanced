@@ -1418,6 +1418,105 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 52: the settings page described the feature backwards
+
+### Fixed
+
+- **Frame interpolation reported itself the wrong way round, in both
+  directions, while it was working.** The settings page shows two rows about
+  this feature: the engine that ran, and a sentence meant to explain it. That
+  sentence was chosen by searching the reason for a phrase, and the phrasing
+  was the bug. "provides cadence headroom over" and "does not have cadence
+  headroom over" share the phrase a branch tested for, so a player whose
+  interpolation was running read "the display leaves no headroom,
+  interpolation stays off" under a row naming the VT low-latency engine. The
+  other direction is worse to act on: a frame that failed after the processor
+  existed was caught by the shortcut that asks only whether the engine is
+  none, before the word "unavailable" is ever read, so the settings page told
+  a player who had turned the feature on that no stream had asked for it. Two
+  translated sentences -- the one that says interpolation is running, the one
+  that says it fell back -- were unreachable on every machine. The state is
+  named now, the sentence comes from a switch over it, and the two readings
+  of the runtime branch are chosen from one flag so the log and the page
+  cannot part company. Searching a message to decide what to do is the shape
+  the pairing layer gave up years ago for exactly this reason.
+
+### Added
+
+- **Every state the renderer can report, checked against what the player
+  should be told.** `scripts/frame-interpolation-status-tests.py` enumerates
+  eleven states -- five refusals asked of the shipping gate itself, four
+  texts lifted from the inline branches, two from the slot verdict -- and
+  compares the summary and the detail beside each other, because the two
+  render one under the other and a summary naming a hardware engine above a
+  detail claiming the feature is off is exactly what a player reads. The log
+  sentence is demanded non-empty on every state. Both halves of each report
+  are lifted from the call site rather than typed into the probe: which
+  sentence a player reads is a pair of a state and a text, and a harness that
+  wrote either half itself would be auditing its own transcription. Four
+  planted shapes fail, one state each: the working report answering the
+  refusal line, a runtime failure answering "not enabled", a landed frame
+  still named as a pending one, and a cadence refusal named as an unknown
+  refresh rate. The last collapses two refusals into one sentence, and the
+  count of distinct answers is what notices -- a player with a 120 FPS stream
+  on a 144 Hz panel would be advised to look at the refresh rate sensor
+  instead of the frame rate.
+
+- **The wording is checked against the language tables, and the check is
+  checked.** Three rules: the detail key comes from a switch on the state
+  with no phrase search anywhere in it; every state in the enum has a case;
+  every key the switch hands back exists in English and in Simplified
+  Chinese. The first version of the third rule collected keys with a pattern
+  that could not match a space, so it read six of the ten sentences and
+  reported green over the other four -- the same failure this round keeps
+  tripping over, arriving in the checker instead of the product. The number
+  of returns is now itself a check, and six mutations each turn at least one
+  rule red: a word search restored inside the dispatcher, a state added with
+  no case, a key no table has, one Chinese line removed, a cast over the
+  switch, and prose returned where a key belongs.
+
+- **The harness that guarded the two zero-slot answers now guards the enum
+  that replaced the word search.** `video-enhancement-tests.py` used to
+  insist that the resolution sentence be tested before the hardware sentence,
+  because the settings line was picked by searching a reason and order was
+  all that kept the two answers apart. The report enum removes that ordering,
+  so the harness asks the enum: each slot verdict has to reach its own state,
+  each state its own key, and the two keys have to differ. The mapping is
+  compiled into the model that already measures the slot verdicts, so merging
+  the answers fails the shipping classifier's own binary rather than a string
+  comparison in Python. Two planted shapes fail it from inside the harness,
+  and three more were planted in the shipping file -- the two answers sharing
+  one sentence, the two verdicts sharing one report, and a phrase search
+  restored beside the switch -- each turning the harness red and the file
+  returning byte-identical.
+
+### Audited, and not changed
+
+- **The same word search over the enhancement side answers correctly today,
+  and was left where it is.** `runtimeDetailKeyForEnhancementEngine:` still
+  reads phrases, and every reason its resolver can produce lands on the right
+  sentence, because an enhancement fallback never resolves to no engine --
+  which is the one thing that let the engine-is-none shortcut pre-empt
+  interpolation. The other half is already guarded from outside: the sweep
+  added last round refuses a fallback that resolves to nothing. No evidence,
+  no change.
+
+- **Four suspicions about this feature were chased and none of them are
+  defects.** `@(MLInterpolationSlotReason(verdict))` reads like a C string
+  boxed into an `NSValue` and then sent `lowercaseString`, which would be an
+  unrecognized-selector crash on the main queue for every Mac whose GPU
+  offers no interpolation slots; boxed C strings are `NSString`s, established
+  by running it rather than by reading the spec, and nothing is wrong.
+  `_lastDisplayRefreshRate` is written from the display link's measured
+  output period, so the cadence gate is not reading a zero it never learns.
+  The settings page's own cadence analysis disagrees with the interpolation
+  gate on purpose: one asks whether the display suits the frame rate, the
+  other whether there is room to also show interpolated frames. And
+  `frameRate` is an `int`, so the `%d` in the working report is the right
+  conversion. No line moved beyond the report itself: `constraints-audit`
+  ends at zero failures with the battery at 104 of 104, the behavioural
+  harnesses rise to sixteen and the build job's step list to thirty-six.
+
 ### Round 51: the answer was being recorded, and never read
 
 ### Added

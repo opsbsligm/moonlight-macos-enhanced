@@ -942,6 +942,54 @@ check("settingsModel.frameInterpolationExplanationKey" in video_page
       and "settingsModel.upscalingExplanationKey" in video_page,
       "the video page shows the explanation its own rules chose")
 
+# What the settings page says about frame interpolation used to be chosen by searching
+# the reason for a phrase, and the phrasing was the bug twice over: "provides cadence
+# headroom over" and "does not have cadence headroom over" share the phrase, so the
+# working case answered the refusal sentence, and a per-frame failure was caught by the
+# engine-is-none shortcut before the word "unavailable" was read. The pairing layer had
+# this ruled out years ago for the same reason, so the rule is repeated here rather than
+# re-argued: the sentence comes from a named state, every state has a sentence, and every
+# sentence exists in both languages.
+RENDERER = os.path.join(root, "Limelight", "Stream", "VideoDecoderRenderer.m")
+renderer = open(RENDERER, encoding="utf-8").read()
+interpolation_report = method_body(
+    renderer, "- (NSString *)runtimeDetailKeyForFrameInterpolationReport:"
+              "(MLVideoFrameInterpolationReport)report")
+check("switch (report)" in interpolation_report
+      and "containsString:" not in interpolation_report,
+      "the frame interpolation sentence is chosen by state and not by reading the reason")
+
+named_states = sorted({m.group(1) for m in re.finditer(
+    r"MLVideoFrameInterpolationReport([A-Z][A-Za-z]+)\s*(?:,|=)", renderer)})
+answered_states = sorted({m.group(1) for m in re.finditer(
+    r"case\s+MLVideoFrameInterpolationReport([A-Z][A-Za-z]+)\s*:", interpolation_report)})
+check(bool(named_states) and answered_states == named_states,
+      "every frame interpolation state has a sentence behind it"
+      if answered_states == named_states else
+      "frame interpolation states with no wording: %s"
+      % ", ".join(sorted(set(named_states) - set(answered_states)) or
+                  "none; extra: " + ", ".join(sorted(set(answered_states) - set(named_states)))))
+
+# Every string the switch hands back, not every string matching a pattern: a filter that
+# quietly missed the keys with spaces in them would leave six of ten sentences unchecked
+# while the rule reported green, which is the failure this round keeps tripping over.
+REPORT_LKEYS = sorted(set(re.findall(r'return @"([^"]+)"', interpolation_report)))
+check(len(REPORT_LKEYS) >= 2,
+      "the frame interpolation report answers with localization keys"
+      if len(REPORT_LKEYS) >= 2 else
+      "the frame interpolation report returns %d keys, so the wording check below is "
+      "reading an answer that is not there" % len(REPORT_LKEYS))
+for language in ("en", "zh-Hans"):
+    table = open(os.path.join(root, "Limelight", "macOS", "%s.lproj" % language,
+                              "Localizable.strings"), encoding="utf-8").read()
+    untranslated = [key for key in REPORT_LKEYS if '"%s" =' % key not in table]
+    check(bool(REPORT_LKEYS) and not untranslated,
+          "the frame interpolation sentences all exist in %s" % language
+          if not untranslated else
+          "frame interpolation sentences missing from %s: %s"
+          % (language, ", ".join(untranslated)))
+
+
 def compiled_sources(scan_root):
     base = os.path.join(scan_root, "Limelight")
     for directory, _, names in os.walk(base):
@@ -1720,6 +1768,7 @@ if run_battery:
                           os.path.join("scripts", "stream-menu-addressing-tests.py"),
                           os.path.join("scripts", "video-enhancement-tests.py"),
                           os.path.join("scripts", "enhancement-engine-resolution-tests.py"),
+                          os.path.join("scripts", "frame-interpolation-status-tests.py"),
                           os.path.join("scripts", "liquid-glass-overlay-tests.py"),
                           os.path.join("scripts", "shortcut-menu-key-tests.py"))
         for behaviour in behaviours:
