@@ -90,6 +90,40 @@ static inline NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFl
     return flags & (NSEventModifierFlagShift | NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand | NSEventModifierFlagFunction);
 }
 
+// Shift is not a free modifier in a game. It is sprint, aim, crouch-walk and the
+// jump variant, and the player holds it while pressing the movement cluster, so a
+// rule triggered by Shift+W is reachable by ordinary play. A matched rule consumes
+// the press, which means the host never learns the player started running forward,
+// and the release that does arrive reads as a key letting go on its own. The
+// report this produced was "W and Space collide when I play": the binding looked
+// harmless in the settings form, and the game lost the keys at runtime.
+//
+// Control, Option and Command are exempt because no game reads one of them as an
+// action of its own, so a binding behind one cannot be reached by playing. Function
+// alone is exempt as well: a bare F-key carries its own risk, but a player picks
+// that knowingly and nothing has reported it.
+//
+// The settings form asks the same question in Swift, as
+// StreamShortcutProfile.shortcutUsesGameplayOnlyModifiers, because the runtime
+// cannot depend on the form having refused the shape: rules are decoded from
+// per-host stored data and normalization repairs identity, not validity. The two
+// are pinned to each other by scripts/constraints-audit.py, and this function is
+// compiled and played key by key by scripts/gameplay-modifier-tests.py.
+static inline BOOL MLShortcutUsesGameplayOnlyModifiers(NSEventModifierFlags relevantModifiers,
+                                                       BOOL hasKeyCode,
+                                                       BOOL modifierOnly) {
+    if (!hasKeyCode || modifierOnly) {
+        return NO;
+    }
+    const NSEventModifierFlags outsideGames = NSEventModifierFlagControl |
+                                              NSEventModifierFlagOption |
+                                              NSEventModifierFlagCommand;
+    if (relevantModifiers & outsideGames) {
+        return NO;
+    }
+    return (relevantModifiers & NSEventModifierFlagShift) != 0;
+}
+
 static inline BOOL MLIsPrivateOrLocalIPv4String(NSString *ip) {
     struct in_addr addr;
     if (inet_pton(AF_INET, ip.UTF8String, &addr) != 1) {

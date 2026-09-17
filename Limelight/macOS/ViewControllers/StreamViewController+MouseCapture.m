@@ -2579,6 +2579,15 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
             continue;
         }
 
+        // Refusing this shape in the settings form is not enough: rules are
+        // decoded from per-host stored data, and a Shift-only trigger already on
+        // disk keeps stealing the movement keys until this line says otherwise.
+        if (MLShortcutUsesGameplayOnlyModifiers(MLRelevantShortcutModifiers(trigger.modifierFlags),
+                                                trigger.hasKeyCode,
+                                                trigger.modifierOnly)) {
+            continue;
+        }
+
         if (event.keyCode == trigger.keyCode && relevantModifiers == trigger.modifierFlags) {
             Log(LOG_I, @"[diag] keyboard translation trigger matched: event=%@ outputKind=%ld",
                 MLDisconnectEventSummary(event),

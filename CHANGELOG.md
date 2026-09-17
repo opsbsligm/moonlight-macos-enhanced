@@ -1418,6 +1418,81 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 53: Shift is not a free modifier
+
+### Fixed
+
+- **A rule bound to Shift and a movement key took the keys the game moves
+  with.** A keyboard translation rule that fires keeps the press: the client
+  consumes the key down, and the release that AppKit still delivers is the
+  client's to swallow as well. That is the right bargain for a binding nobody
+  reaches by playing, and the wrong one for Shift+W. Shift is sprint, aim,
+  crouch-walk and the jump variant, and a player holds it while pressing W,
+  A, S, D and the space bar, so such a rule fires during ordinary play: the
+  host never learns the player started running forward, and the release that
+  does arrive reads as a key letting go by itself. One answer was missing at
+  both ends. The settings form accepted any trigger with one modifier, and so
+  did the matcher, which is the half that matters, because rules are decoded
+  from per-host stored data and normalization repairs identity rather than
+  validity. Control, Option and Command are left alone -- no game reads one
+  of them as an action of its own, so a binding behind one is not reachable
+  by playing -- and a bare Function key is left alone too, since that is a
+  binding a person picks knowingly and nothing has reported it.
+
+### Added
+
+- **One question, asked in two languages, answered by one sweep of both.**
+  The guard has to exist at two moments that cannot see each other: in
+  Objective-C when a key arrives, and in Swift when a person records a
+  binding. Two answers drift, so `scripts/gameplay-modifier-tests.py`
+  compiles both out of the shipping files -- the inline function from the
+  internal header, the Swift function with nothing but a fake shortcut as its
+  container -- plays all 128 shapes of the five relevant modifiers with and
+  without a key code, and requires the two answers to agree shape by shape.
+  Agreement is not correctness, so the shipped defaults are parsed out of
+  `defaultShortcuts()` and every one of the ten has to survive: the six
+  Control+Option actions, the Command+W that opens the disconnect page and
+  the Control+Shift+W that quits are keys a player must not lose. Shift+W and
+  Shift+Space have to be named. Three planted shapes fail it -- a guard that
+  never fires, one that also seizes Control, Option and Command, and a
+  settings form that learned the rule on its own -- and a sweep that checked
+  nothing fails with them, because a coverage count of zero is this file's
+  own known failure.
+
+- **The rule-consumption sweep now states the second gate as well as the
+  first.** That harness promises only that the matcher obeys the gates it
+  asks, and it took the answer from the shipping guard rather than restating
+  it, so its own statement of what a rule means grew the same clause and two
+  of its 1544 cases left the sweep -- the Shift-only presses it used to
+  expect a rule to take are now expected to reach the host. Its coverage
+  moved from 18 taken and 1520 released to 18 taken and 1524 released, and
+  the four planted shapes still fail, one of them now by answering four cases
+  wrongly instead of failing to compile.
+
+### Audited, and not changed
+
+- **Two suspected gaps in the shortcut layer are not gaps.** The settings
+  form refuses a binding that collides with a translation rule, and the rule
+  form refuses a trigger that collides with a shortcut: the check is
+  symmetric and both halves exclude the entry being edited, so neither can be
+  reached around from the other side. And the settings page is still a page
+  inside the main window's content region -- the offscreen probe window that
+  counts how many windows host settings is the evidence, and it reports no
+  second window.
+
+- **The host cannot regenerate the bridging header, and that is what decided
+  where the answer lives.** A Swift method reached from Objective-C needs
+  `Moonlight-Swift.h`, which CI takes from the build its analyzer step just
+  made. Regenerating it here with the Command Line Tools fails, because
+  emitting a header means generating code and `@State`'s macro plugin ships
+  with Xcode and not with the tools -- the same gap that makes the 27 SDK
+  report itself skipped. So the guard is a static inline in the header the
+  runtime already reads, and the Objective-C half calls it without asking a
+  generated file for a new symbol: 46 of 46 sources type-check against both
+  installable SDKs, seventeen behavioural harnesses pass, the assertion
+  battery catches 104 of 104 mutations, and the build job's step list is
+  thirty-seven.
+
 ### Round 52: the settings page described the feature backwards
 
 ### Fixed

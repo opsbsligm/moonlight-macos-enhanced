@@ -68,6 +68,7 @@ MATCHER_SIGNATURE = ("- (KeyboardTranslationRule *)keyboardTranslationRuleMatchi
                     "(NSEvent *)event")
 RELEVANT_SIGNATURE = "static inline NSEventModifierFlags MLRelevantShortcutModifiers("
 KEY_EVENT_SIGNATURE = "static inline BOOL MLIsKeyboardKeyEvent(NSEvent *event)"
+GUARD_SIGNATURE = ("static inline BOOL MLShortcutUsesGameplayOnlyModifiers(")
 
 
 def load_pair_harness():
@@ -108,8 +109,17 @@ STUBS = r"""
 // What the profile answers for this shortcut. Both answers are swept: the matcher has
 // to obey the guard whether it allows the shortcut or turns it down.
 @property (nonatomic) BOOL guardAllowsMatch;
+// The two things the gameplay guard reads. They are modelled the way the shipping
+// StreamShortcut derives them, so a shape the guard has to refuse cannot be
+// smuggled into the sweep as a shortcut that has no key code: -1 means no key,
+// and a modifier-only binding never names one.
+@property (nonatomic) BOOL modifierOnly;
+- (BOOL)hasKeyCode;
 @end
 @implementation StreamShortcut
+- (BOOL)hasKeyCode {
+    return self.keyCode != -1;
+}
 @end
 
 @interface KeyboardTranslationRule : NSObject
@@ -211,6 +221,17 @@ static NSUInteger gPressesTakenWhoseReleaseNeverCame;
 static BOOL RuleShouldMatch(StreamShortcut *trigger, unsigned short keyCode,
                             NSEventModifierFlags flags) {
     if (!trigger.guardAllowsMatch) {
+        return NO;
+    }
+    // The matcher asks a second gate before a rule may take a key, and what is
+    // promised here is that the matcher obeys every gate it asks. The answer is
+    // taken from the shipping function rather than restated, so this file keeps
+    // checking that the call site is obeyed instead of offering a second opinion
+    // on what the answer should be. Gameplay answers belong to
+    // scripts/gameplay-modifier-tests.py.
+    if (MLShortcutUsesGameplayOnlyModifiers(MLRelevantShortcutModifiers(trigger.modifierFlags),
+                                            trigger.hasKeyCode,
+                                            trigger.modifierOnly)) {
         return NO;
     }
     if (trigger.keyCode != (NSInteger)keyCode) {
@@ -551,6 +572,9 @@ def build(module, known_bad=None):
     helpers = "\n".join([
         module.static_function(internal, RELEVANT_SIGNATURE),
         module.static_function(internal, KEY_EVENT_SIGNATURE),
+        # The matcher asks the gameplay guard before it lets a rule take a key, so
+        # the model has to carry the same answer rather than a copy of it.
+        module.static_function(internal, GUARD_SIGNATURE),
     ]) + "\n"
 
     matcher = module.method(capture, MATCHER_SIGNATURE)

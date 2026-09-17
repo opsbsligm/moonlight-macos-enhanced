@@ -1761,6 +1761,7 @@ if run_battery:
                           os.path.join("scripts", "modifier-only-release-collision-tests.py"),
                           os.path.join("scripts", "key-order-exhaustive-tests.py"),
                           os.path.join("scripts", "translation-rule-consumption-tests.py"),
+                          os.path.join("scripts", "gameplay-modifier-tests.py"),
                           os.path.join("scripts", "controller-key-navigation-tests.py"),
                           os.path.join("scripts", "space-transition-held-key-tests.py"),
                           os.path.join("scripts", "keyboard-modifier-mapping-tests.py"),

@@ -187,6 +187,31 @@ final class StreamShortcutProfile: NSObject {
     return modifierCount(relevantModifierFlags(shortcut.modifierFlags)) >= 1
   }
 
+  /// True when Shift is the only thing holding this shortcut down.
+  ///
+  /// Shift is not a free modifier in a game: it is sprint, aim, crouch-walk and
+  /// the jump variant, and a player holds it while pressing the movement cluster.
+  /// A translation rule triggered by Shift+W therefore fires during ordinary
+  /// play, and a matched rule consumes the press -- so the host never learns the
+  /// player started running forward, and the release that does reach it reads as
+  /// a key letting go on its own. The report this produced was "W and Space
+  /// collide when I play": the binding looked harmless in the form and the game
+  /// lost the keys at runtime.
+  ///
+  /// Control, Option and Command are excluded because no game reads them as an
+  /// action of its own, so a rule behind one of them cannot be reached by playing.
+  /// Function alone is left alone as well: a bare F-key binding carries its own
+  /// risk, but a player chooses it knowingly and nothing has reported it.
+  @objc static func shortcutUsesGameplayOnlyModifiers(_ shortcut: StreamShortcut?) -> Bool {
+    guard let shortcut, !shortcut.modifierOnly, shortcut.hasKeyCode else { return false }
+    let flags = relevantModifierFlags(shortcut.modifierFlags)
+    let outsideGames: NSEvent.ModifierFlags = [.control, .option, .command]
+    if !flags.intersection(outsideGames).isEmpty {
+      return false
+    }
+    return flags.contains(.shift)
+  }
+
   @objc static func actionOrder() -> [String] {
     orderedActions
   }
@@ -621,6 +646,9 @@ final class KeyboardTranslationProfile: NSObject {
     }
     if StreamShortcutProfile.modifierCount(modifiers) < 1 {
       return "Shortcut requires modifier"
+    }
+    if StreamShortcutProfile.shortcutUsesGameplayOnlyModifiers(shortcut) {
+      return "Shortcut reserved by gameplay keys"
     }
     if StreamShortcutProfile.keySymbol(for: shortcut.keyCode) == nil {
       return "Shortcut key unsupported"

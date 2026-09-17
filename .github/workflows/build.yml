@@ -363,6 +363,23 @@ jobs:
       # exactly that on its first run and reported ok while doing so.
       run: python3 scripts/translation-rule-consumption-tests.py
 
+    - name: Verify a Shift-only binding cannot steal the movement keys
+      # Shift is sprint, aim and the jump variant in a game, and the player holds it
+      # while pressing the movement cluster, so a translation rule triggered by
+      # Shift+W is reachable by ordinary play -- and a matched rule consumes the
+      # press. The host then never learns the player started running forward, and the
+      # release that does arrive reads as a key letting go by itself, which is the
+      # "W and Space collide when I play" report. The answer is asked twice, at two
+      # moments that cannot see each other: in Objective-C when a key arrives, and in
+      # Swift when a person records a binding. This harness compiles both out of the
+      # shipping files and plays all 128 modifier shapes through each, requires the
+      # two answers to agree shape by shape, requires Shift+W and Shift+Space to be
+      # named, and requires every binding the app ships with to survive -- the six
+      # Control+Option actions, Command+W and Control+Shift+W included. A guard that
+      # never fires, one that also seizes Control, Option and Command, and a form that
+      # learned the rule on its own each turn it red.
+      run: python3 scripts/gameplay-modifier-tests.py
+
     - name: Verify the enhancement that runs is the one that was asked for
       # The rules over the enhancement code ask the GPU whether it can scale and count
       # the interpolation slots a machine offers -- both true statements about capability,
