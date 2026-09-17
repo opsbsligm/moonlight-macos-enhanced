@@ -1418,6 +1418,69 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 51: the answer was being recorded, and never read
+
+### Added
+
+- **The enhancement that runs had never been compared with the enhancement
+  that was asked for.** `scripts/enhancement-engine-resolution-tests.py`
+  lifts `resolveEnhancementEngineForSourceWidth:` out of
+  `VideoDecoderRenderer.m` verbatim and sweeps it against a statement of the
+  policy written from the policy. The rules already over this feature ask the
+  GPU what it can scale and count the interpolation slots a machine offers,
+  which are true things about capability and one step away from the frame;
+  the resolver's own answer is stored next to the requested mode and read by
+  nothing, so a mode could resolve to nothing everywhere, or to a quieter
+  engine than the one picked, and every rule would have stayed green. Seven
+  requested modes, HDR on and off, five source-and-window pairs, the three
+  capabilities every which way, and four calls that decline the
+  out-parameters: 564 resolutions, each judged on the engine, on the scale
+  the decision was made from, and on giving a reason at all, because "why did
+  my scaler not engage" is answered out of the log and nowhere else. Five
+  planted shapes fail 12, 8, 26, 80 and 220 of them: Auto that never reaches
+  the hardware it is being offered, an explicit choice replaced by a quieter
+  one, a menu read for the wrong frame, a resolution that leaves no reason,
+  and one that is always nothing.
+
+- **Expectations are written down rather than recomputed, and the two scaler
+  menus disagree on purpose.** The scale each pair of sizes means, and
+  whether each menu offers it, are tables in the harness. Recomputing either
+  would have made the expectation the code's own arithmetic under a different
+  name, unable to disagree with anything. The per-size menu and the any-size
+  menu answer differently because the two real APIs do, which is the only
+  reason a fallback from VT quality to VT low latency ever gets exercised;
+  and the per-size menu answers only for the frame it is asked about, which
+  is what turns the 26-case shape above into a failure: ask about the window
+  instead of the stream and the machine reports a scaler it does not have,
+  silently, because nothing checks which dimensions the question was asked
+  with.
+
+### Audited, and not changed
+
+- **The suspicion that the local gate was asking the wrong machine was
+  checked and did not survive.** The mode a player picks is named
+  `upscalingMode`, which reads like a setting handed to the host for
+  execution -- in which case a client-side gate would be settling a question
+  it has no standing to answer. It is not: the client turns it into a
+  requested enhancement mode of its own before the resolver runs, which is
+  the method this round now sweeps, so the decision under test is a local one
+  and the gate is pointed at the right machine. `enhancement.vtLowLatencyFI`
+  looked like a second switch over the same feature and is not one; it is a
+  row of the capability display matrix, and the switch is the upscaling-mode
+  option list.
+
+- **The probe was answered by the system before it was ever run, which the
+  runtime said out loud.** The stand-ins for the two scaler configurations
+  carry the names the shipping source uses, so the lifted text needed no
+  adaptation -- and on a machine with VideoToolbox loaded, that produced
+  "implemented in both", with either class free to answer. That is the
+  green-that-tests-nothing in a new costume: the probe would have been asking
+  a real machine what it offers instead of asking the case. The lifted text
+  still spells both names as the source does, and the names are bound to the
+  stand-ins instead. No product line moved: `constraints-audit` ends at zero
+  failures with the battery at 104 of 104, the behavioural harnesses rise to
+  fifteen and the build job's step list to thirty-five.
+
 ### Round 50: a green sweep that had never fired a rule
 
 ### Added

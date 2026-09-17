@@ -1719,6 +1719,7 @@ if run_battery:
                           os.path.join("scripts", "keyboard-shortcut-modifier-tests.py"),
                           os.path.join("scripts", "stream-menu-addressing-tests.py"),
                           os.path.join("scripts", "video-enhancement-tests.py"),
+                          os.path.join("scripts", "enhancement-engine-resolution-tests.py"),
                           os.path.join("scripts", "liquid-glass-overlay-tests.py"),
                           os.path.join("scripts", "shortcut-menu-key-tests.py"))
         for behaviour in behaviours:
