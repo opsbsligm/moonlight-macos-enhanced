@@ -91,7 +91,7 @@ static BOOL HIDIsModifierKeyCode(unsigned short kc) { return kc == 54 || kc == 5
 @property (nonatomic) BOOL shouldSendInputEvents;
 @property (nonatomic) BOOL keyboardHeldKeyReleaseInProgress;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
-@property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event;
 - (short)translateKeyModifierWithEvent:(NSEvent *)event;
@@ -109,7 +109,7 @@ EPILOGUE = r"""
     if ((self = [super init])) {
         _shouldSendInputEvents = YES;
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
-        _keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];
+        _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
         // Only the two keys from the report: W and Space, mapped as the shipping
         // table maps them.
         _mappings = @{ @13: @(0x57), @49: @(0x20) };
@@ -128,7 +128,7 @@ LEGACY = r"""
     if ((self = [super init])) {
         _shouldSendInputEvents = YES;
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
-        _keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];
+        _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
         _mappings = @{ @13: @(0x57), @49: @(0x20) };
     }
     return self;
@@ -141,7 +141,7 @@ LEGACY = r"""
     if (translated == 0) return;
     short keyCode = 0x8000 | translated;
     [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];
-    [self.keyboardForwardedKeyDownKeyCodes addObject:@(keyCode)];
+    self.keyboardForwardedKeyDownKeyCodes[@(keyCode)] = @(keyCode);
     LiSendKeyboardEventCtx(HIDInputContext(self), keyCode, KEY_ACTION_DOWN, 0);
 }
 - (void)keyUp:(NSEvent *)event {
@@ -152,7 +152,7 @@ LEGACY = r"""
     LiSendKeyboardEventCtx(HIDInputContext(self), 0x8000 | translated, KEY_ACTION_UP, 0);
 }
 - (void)releaseAllHeldKeys {
-    for (NSNumber *keyCode in self.keyboardForwardedKeyDownKeyCodes.allObjects) {
+    for (NSNumber *keyCode in self.keyboardForwardedKeyDownKeyCodes.allValues) {
         LiSendKeyboardEventCtx(HIDInputContext(self), keyCode.shortValue, KEY_ACTION_UP, 0);
     }
     [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];

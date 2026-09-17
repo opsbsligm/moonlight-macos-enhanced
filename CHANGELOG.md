@@ -1418,6 +1418,40 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 57: two fingers that share a key code kept only one of them
+
+### Fixed
+
+- The keyboard table sends Return and Keypad Enter to the host as the same
+  Windows code, VK_RETURN, and Equals and Keypad Equals as another,
+  VK_OEM_PLUS: 114 rows cover 112 codes, so exactly two pairs are shared. The
+  record of presses the host had been told about was filed under that
+  dispatched code, which is one entry per pair rather than one per finger, so
+  letting go of either member spent the record that belonged to the other.
+  Capture ending while the other finger was still down then found nothing to
+  release: keyUp: stops forwarding once input is off, and the host kept that
+  key pressed for the rest of the session.
+- The record is filed under the physical key code the event carried and keeps
+  the dispatched code as its value, so a release spends only its own entry
+  and capture end releases every press the host was told about, twice where
+  two fingers were sending one code.
+- Measured against the shape that shipped, it leaves the host holding a key:
+  pressing Return and Keypad Enter and releasing the second first sends 800DD
+  800DD 800DU and nothing more, one press net still pressed, while the
+  shipped record also sends the release capture end owes. A pair that shares
+  no code, W and Space, comes out identical under both shapes, so what the
+  new test reports is the collision and not a general change in behaviour.
+- scripts/held-key-identity-tests.py reads the colliding pairs out of keys[]
+  itself rather than hard-coding them, presents 3 scenarios to each of the
+  two shapes, and refuses the old record. It runs in build_arch, now 41
+  steps, and in the aggregate, and the battery carries the mutation record-
+  keys-the-dispatched-code, which reddens it (exit 1) when the shipping
+  source is edited back to the old identity: 105 of 105 mutations caught.
+- The migration had to be the whole record rather than one line of it, and
+  the compiler said so: the vocabulary of a set does not exist on a
+  dictionary, and clang refuses removeObject: with no visible @interface
+  declaring that selector.
+
 ### Round 56: the window that needed a scaler was told it needed none
 
 ### Fixed

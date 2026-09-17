@@ -202,7 +202,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 @property (nonatomic) NSUInteger keyboardPhysicalModifierSourceMask;
 @property (nonatomic) NSUInteger keyboardRemoteModifierMask;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
-@property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event;
@@ -220,7 +220,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
     if ((self = [super init])) {
         _shouldSendInputEvents = YES;
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
-        _keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];
+        _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
         // W and Space are the keys from the report; the shifts are the sprint.
         _mappings = @{ @13: @(0x57), @49: @(0x20),
                        @56: @(0xA0), @60: @(0xA1) };

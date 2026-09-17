@@ -597,12 +597,12 @@ hid_capture_off = method_body(capture_all,
 hid_init = method_body(hid_all, "- (instancetype)init:(TemporaryHost *)host")
 
 for problem, message in [
-    (ordered_once(hid_down, "[self.keyboardForwardedKeyDownKeyCodes addObject:",
+    (ordered_once(hid_down, "self.keyboardForwardedKeyDownKeyCodes[@(event.keyCode)] = @(keyCode)",
                   "LiSendKeyboardEventCtx", "recording the press"),
      "a press the host is told about is recorded before it is sent"),
-    (ordered_once(hid_up, "[self.keyboardForwardedKeyDownKeyCodes removeObject:",
+    (ordered_once(hid_up, "[self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(event.keyCode)]",
                   "LiSendKeyboardEventCtx", "spending the held-key record"),
-     "a forwarded release spends the held-key record"),
+     "a forwarded release spends the held-key record for that physical key"),
     (ordered_once(hid_release, "[self.keyboardForwardedKeyDownKeyCodes removeAllObjects]",
                   "LiSendKeyboardEventCtx", "dropping the records"),
      "the held-key release drops its records before sending the releases"),
@@ -627,8 +627,11 @@ check(guard_exits(hid_release, "if (self.keyboardHeldKeyReleaseInProgress)",
       "the held-key release cannot re-enter itself")
 check("KEY_ACTION_UP" in hid_release,
       "the held-key release actually sends releases")
-check("self.keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];" in hid_init,
+check("self.keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];" in hid_init,
       "the held-key record exists before the first key can reach it")
+check("self.keyboardForwardedKeyDownKeyCodes.allValues" in hid_release,
+      "the held-key release reads the dispatched code back out of the record, "
+      "not the physical key it was filed under")
 check("- (void)releaseAllHeldKeys;" in open(os.path.join(root, "Limelight/Input/HIDSupport.h"),
                                             encoding="utf-8").read(),
       "the held-key release is part of the public HID interface")
@@ -1757,6 +1760,7 @@ if run_battery:
     else:
         behaviours = (os.path.join("scripts", "input-concurrency-tests.py"),
                           os.path.join("scripts", "keyboard-concurrency-tests.py"),
+                          os.path.join("scripts", "held-key-identity-tests.py"),
                           os.path.join("scripts", "held-modifier-keyboard-pair-tests.py"),
                           os.path.join("scripts", "modifier-only-release-collision-tests.py"),
                           os.path.join("scripts", "key-order-exhaustive-tests.py"),

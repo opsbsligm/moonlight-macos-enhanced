@@ -196,7 +196,7 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 @property (nonatomic) BOOL keyboardModifierReleaseInProgress;
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
-@property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
 - (void)flagsChanged:(NSEvent *)event;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event;
@@ -220,7 +220,7 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
         // KeyMapping table: 13 -> 'W', 48 -> 0x0F, 49 -> 0x20).
         _mappings = @{ @48: @(0x0F), @13: @(0x57), @49: @(0x20) };
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
-        _keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];
+        _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -316,7 +316,7 @@ static void ConsumeKey(MLModifiersUnderProbe *k, unsigned short keyCode, NSEvent
 // an entry here, which is the difference between "the host will let go at capture
 // end" and "the host holds W for the rest of the session".
 static NSString *HeldKeys(MLModifiersUnderProbe *k) {
-    NSArray *sorted = [k.keyboardForwardedKeyDownKeyCodes.allObjects
+    NSArray *sorted = [k.keyboardForwardedKeyDownKeyCodes.allValues
                        sortedArrayUsingSelector:@selector(compare:)];
     NSMutableArray *out = [NSMutableArray array];
     for (NSNumber *number in sorted) {

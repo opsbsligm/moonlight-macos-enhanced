@@ -96,12 +96,20 @@
 /// keyDown of the same key, by session teardown, and by consuming the release.
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 
-/// Key codes the host was told went down, in the encoding that was dispatched
-/// (0x8000 | translated), so the release can replay the exact same code. Capture
-/// can end while a key is still physically held: keyUp: is gated on
-/// shouldSendInputEvents, so that release would be dropped and the host would
-/// keep the key pressed for the rest of the session.
-@property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+/// Presses the host was told about, keyed by the PHYSICAL key code the event
+/// carried, holding the code that was dispatched (0x8000 | translated) so the
+/// release can replay the exact same value. Capture can end while a key is
+/// still physically held: keyUp: is gated on shouldSendInputEvents, so that
+/// release would be dropped and the host would keep the key pressed for the
+/// rest of the session.
+///
+/// The identity has to be the physical key, not the dispatched code, because
+/// the table gives two different Mac keys the same Windows code: Return and
+/// Keypad Enter both go out as 0x0D, Equals and Keypad Equals both as 0xBB.
+/// A set keyed by the dispatched code holds one entry for both, so letting go
+/// of either one spends the record for the other, and the press the player is
+/// still holding is never released when capture ends behind it.
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
 
 /// Reentry guard for -releaseAllHeldKeys, matching the modifier release guard.
 @property (atomic) BOOL keyboardHeldKeyReleaseInProgress;

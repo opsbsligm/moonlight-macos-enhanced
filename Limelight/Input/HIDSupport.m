@@ -790,8 +790,8 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         self.pressedMouseButtonsMask = 0;
         // The held-key record has to exist before the first keyDown: sending a
         // message to nil drops the record silently, which is the same stuck-key
-        // bug this set exists to prevent, just quieter.
-        self.keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];
+        // bug this table exists to prevent, just quieter.
+        self.keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
         [self resetInputDiagnostics];
 
         // SIMPLIFIED: Print the active keyboard mapping matrix once at init.
@@ -1106,9 +1106,12 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         if (!HIDValidateInputContext(inputCtx, "keyDown")) {
             return;
         }
-        // Record the press in the exact encoding that is about to be dispatched,
-        // so capture can end safely with this key still held down.
-        [self.keyboardForwardedKeyDownKeyCodes addObject:@(keyCode)];
+        // Record the press under the physical key that produced it, holding the
+        // exact encoding that is about to be dispatched, so capture can end
+        // safely with this key still held down. Keying by the dispatched code
+        // would make Return and Keypad Enter share one slot and let the release
+        // of one spend the record of the other.
+        self.keyboardForwardedKeyDownKeyCodes[@(event.keyCode)] = @(keyCode);
         HIDDispatchInput(self, inputCtx, ^{
             LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
         });
@@ -1139,8 +1142,11 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         }
         short keyCode = 0x8000 | translated;
         char modifiers = [self translateKeyModifierWithEvent:event];
-        // This release is going through, so the held-key record for it is spent.
-        [self.keyboardForwardedKeyDownKeyCodes removeObject:@(keyCode)];
+        // This release is going through, so the held-key record for this
+        // physical key is spent - and only this one. Two Mac keys can share a
+        // dispatched code, so spending by that code would forget a key the
+        // player is still holding.
+        [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(event.keyCode)];
         PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
         if (!HIDValidateInputContext(inputCtx, "keyUp")) {
             return;
@@ -1226,7 +1232,10 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 
     // Take the records out first: a stray keyUp: racing on the main queue must
     // not find a record it can pair with a release we are already sending.
-    NSArray<NSNumber *> *held = self.keyboardForwardedKeyDownKeyCodes.allObjects;
+    // Every physical press gets its own release, even when two of them were
+    // dispatched as the same code; a repeated release is inert on the host, a
+    // missing one is a key that stays down for the rest of the session.
+    NSArray<NSNumber *> *held = self.keyboardForwardedKeyDownKeyCodes.allValues;
     [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];
     if (held.count == 0) {
         self.keyboardHeldKeyReleaseInProgress = NO;

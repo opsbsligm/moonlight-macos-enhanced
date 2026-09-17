@@ -73,6 +73,7 @@ ANALYZER_GATE = (ANALYZER, ["--self-test"])
 # The synthetic-shortcut gate is its own harness: it compiles the state machine, so
 # only it can see a packet sequence that strands the modifier tracker.
 SHORTCUT_GATE = (os.path.join(root, "scripts", "keyboard-shortcut-modifier-tests.py"), [])
+HELD_IDENTITY_GATE = (os.path.join(root, "scripts", "held-key-identity-tests.py"), [])
 COLLISION_GATE = (os.path.join(root, "scripts", "modifier-only-release-collision-tests.py"), [])
 SPACE_HELD_GATE = (os.path.join(root, "scripts", "space-transition-held-key-tests.py"), [])
 NAVIGATION_GATE = (os.path.join(root, "scripts", "controller-key-navigation-tests.py"), [])
@@ -253,10 +254,32 @@ DOWN_DISPATCH = """        HIDDispatchInput(self, inputCtx, ^{
             LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
         });
 """
-REC = """        [self.keyboardForwardedKeyDownKeyCodes addObject:@(keyCode)];
+REC = """        self.keyboardForwardedKeyDownKeyCodes[@(event.keyCode)] = @(keyCode);
 """
-INIT = """        self.keyboardForwardedKeyDownKeyCodes = [NSMutableSet set];
+INIT = """        self.keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
 """
+
+# The record is keyed by the physical key code and spends by it. Keying it by the
+# dispatched code is the shape that shipped, and it is invisible to a harness that
+# drives non-colliding keys, because two Mac keys that share a Windows code share
+# one record there: Return and Keypad Enter, Equals and Keypad Equals. The gate
+# for this pair of edits is the identity harness, which reads the colliding pairs
+# out of the table itself.
+SPEND = """        [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(event.keyCode)];
+"""
+RECORD_BY_DISPATCHED_CODE = """        self.keyboardForwardedKeyDownKeyCodes[@(keyCode)] = @(keyCode);
+"""
+SPEND_BY_DISPATCHED_CODE = """        [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(keyCode)];
+"""
+
+
+def record_keyed_by_dispatched_code(text):
+    once(text, REC, "held-key record")
+    once(text, SPEND, "held-key spend")
+    text = text.replace(REC, RECORD_BY_DISPATCHED_CODE, 1)
+    return text.replace(SPEND, SPEND_BY_DISPATCHED_CODE, 1)
+
+
 CLEAR = """    [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];
 """
 TEARDOWN = """    // 0) Release keys the host still believes are pressed, before input is
@@ -1384,6 +1407,9 @@ MUTATIONS = [
     ("neuter-settings", CAPTURE, neuter_settings, "settings guard is disabled but still worded"),
     ("late-clear", HID, late_clear, "stale record cleared after the press is sent"),
     ("no-record", HID, no_record, "forwarded presses are never recorded"),
+    ("record-keys-the-dispatched-code", HID, record_keyed_by_dispatched_code,
+     "the held-key record identifies a press by the code it sent, so two Mac"
+     " keys that share one Windows code share one record", HELD_IDENTITY_GATE),
     ("late-record", HID, late_record, "the press is recorded after it is sent"),
     ("no-init", HID, no_init, "the held-key set is left nil so records vanish"),
     ("leak-records", HID, leak_records, "the held-key release keeps its records"),
