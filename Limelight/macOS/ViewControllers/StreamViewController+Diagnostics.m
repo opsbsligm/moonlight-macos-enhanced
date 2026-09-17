@@ -2556,6 +2556,7 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     float receivedFps = displayedFps(stats.receivedFps, stats.receivedFrames);
     float decodedFps = displayedFps(stats.decodedFps, stats.decodedFrames);
     float renderedFps = displayedFps(stats.renderedFps, stats.renderedFrames);
+    float interpolatedFps = displayedFps(stats.interpolatedFps, stats.interpolatedFrames);
     
     uint32_t rtt = 0;
     BOOL rttAvailable = NO;
@@ -2625,6 +2626,17 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     append(@" De · ", labelAttrs);
     append([NSString stringWithFormat:@"%.1f", renderedFps], valueAttrs);
     append(@" Rd", labelAttrs);
+    // Interpolated frames are deliberately absent from Rd, so the tally appears
+    // beside it rather than inside it. A player comparing 60 Rd against 60 Rd with
+    // +60 Interpolated is looking at the difference between a 60 FPS stream and a
+    // 60 FPS stream that is being doubled; without this the two are the same line.
+    if (interpolatedFps > 0.05f) {
+        append(@"  ", labelAttrs);
+        append(MLString(@"Interpolated", nil), labelAttrs);
+        append(@" ", labelAttrs);
+        append([NSString stringWithFormat:@"+%.1f", interpolatedFps], valueAttrs);
+        append(@" fps", labelAttrs);
+    }
     append(@"  ", labelAttrs);
     append(MLString(@"1% Low", nil), labelAttrs);
     append(@" ", labelAttrs);

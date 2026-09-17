@@ -42,6 +42,47 @@
 @end
 #endif
 
+// What a frame that has just been drawn is worth to the numbers on screen.
+//
+// Both kinds of frame leave through the same drawable: an interpolated frame is
+// drawn by the same pass that would have drawn its source frame, so one present
+// has to pick a counter, and that pick decides whether interpolation can be
+// measured at all.
+//
+// Charging an interpolated frame to the rendered counter would fold it into every
+// figure that describes the road a source frame travelled. The queue time comes
+// from that frame's own enqueue stamp, so a frame that never crossed the network
+// would be timed from the arrival of its neighbour; the intervals behind the 1%
+// low would gain an ~8ms cadence nobody streamed; and rendered fps would report
+// twice the frames the host ever sent. So an interpolated frame never counts as a
+// rendered one.
+//
+// Counting nothing instead is the failure a player actually sees: a 120 FPS
+// picture still reports 60 Rd, which looks exactly like interpolation that never
+// produced a frame. Hence a counter of its own, incremented by the same present
+// that put those pixels on the panel.
+typedef NS_OPTIONS(NSUInteger, MLPresentedFrameAccounting) {
+    MLPresentedFrameAccountingNone = 0,
+    MLPresentedFrameAccountingRendered = 1 << 0,
+    MLPresentedFrameAccountingInterpolated = 1 << 1,
+};
+
+static inline MLPresentedFrameAccounting MLAccountingForPresentedFrame(
+    BOOL interpolatedFrameWasDrawn,
+    BOOL sourceFramePresentedForFirstTime)
+{
+    // One pass draws one buffer, so the two never both apply. The interpolated
+    // case is asked first: a present cannot be counted as its own source frame
+    // just because that source frame had not been presented yet.
+    if (interpolatedFrameWasDrawn) {
+        return MLPresentedFrameAccountingInterpolated;
+    }
+    if (sourceFramePresentedForFirstTime) {
+        return MLPresentedFrameAccountingRendered;
+    }
+    return MLPresentedFrameAccountingNone;
+}
+
 extern int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size,
                               int write_seq_header);
 
@@ -4696,7 +4737,14 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             }
         }
 
-        if (presentedCount > 0) {
+        MLPresentedFrameAccounting accounting =
+            MLAccountingForPresentedFrame(presentingInterpolatedFrame, presentedCount > 0);
+
+        if (accounting & MLPresentedFrameAccountingInterpolated) {
+            _activeWndVideoStats.interpolatedFrames++;
+        }
+
+        if (accounting & MLPresentedFrameAccountingRendered) {
             uint64_t presentMs = LiGetMillis();
             [self recordRenderedFrameSampleAtTimeMs:presentMs enqueueTimeMs:frameEnqueueTimeMs];
             if (presentedCount == 1) {
@@ -4868,6 +4916,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
             self->_activeWndVideoStats.receivedFps = (float)self->_activeWndVideoStats.receivedFrames;
             self->_activeWndVideoStats.decodedFps = (float)self->_activeWndVideoStats.decodedFrames;
             self->_activeWndVideoStats.renderedFps = (float)self->_activeWndVideoStats.renderedFrames;
+            self->_activeWndVideoStats.interpolatedFps = (float)self->_activeWndVideoStats.interpolatedFrames;
 
             self->_activeWndVideoStats.jitterMs = self->_jitterMsEstimate;
             self->_activeWndVideoStats.renderedFpsOnePercentLow = MLComputeRenderedOnePercentLowFps(self->_renderIntervalSamples,

@@ -44,6 +44,16 @@ typedef struct {
 
   // Rolling 1% low FPS derived from recent rendered frame intervals.
   float renderedFpsOnePercentLow;
+
+  // Frames the frame interpolator produced and drew during this measurement
+  // window. It counts pixels that reached the display, not attempts: a window
+  // that reads zero is a window where interpolation made nothing, which is a
+  // different answer from interpolation being switched off, and the difference
+  // is the only way to tell whether the feature does anything at all.
+  uint32_t interpolatedFrames;
+
+  // interpolatedFrames as a rate over the window that just closed.
+  float interpolatedFps;
 } VideoStats;
 
 @interface VideoDecoderRenderer : NSObject

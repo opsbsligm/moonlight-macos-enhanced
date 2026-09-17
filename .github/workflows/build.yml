@@ -410,6 +410,39 @@ jobs:
       # shapes fail, and so does any answer count below the one the player needs.
       run: python3 scripts/frame-interpolation-status-tests.py
 
+    - name: Verify the frames interpolation produced are actually counted
+      # The app could name the interpolation engine it chose and could
+      # not say whether that engine made a single frame. Nothing counted
+      # a produced frame anywhere in the tree, and the one figure a
+      # player reads while streaming -- Rd on the performance overlay --
+      # is fed only when the frame leaving the drawable is a source
+      # frame, because the tally rides inside the branch that records a
+      # first source present. So a stream doubled to 120 FPS reported 60
+      # Rd, the identical line a stream that is not being doubled
+      # reports, and "is interpolation doing anything on my machine" had
+      # no answer on the machine running it.  One present has to pick a
+      # counter, since both kinds of frame leave through the same
+      # drawable, and the pick matters in both directions. Charge an
+      # interpolated frame to the rendered counter and it inherits every
+      # figure describing the road a source frame travelled: its queue
+      # time is measured from a neighbour's enqueue stamp, the 1% low
+      # gains an 8ms cadence nobody streamed, and the frame count doubles
+      # past what the host sent. Count nothing and the work stays
+      # invisible. So VideoStats gained a counter of its own, one file-
+      # scope function decides which tally a present feeds, the window
+      # that closes publishes it as a rate, and the overlay reads it back
+      # beside Rd only when there is a number to say.  The harness runs
+      # the product's own bookkeeping: the block that picks and applies
+      # the counters is lifted out of VideoDecoderRenderer.m and played
+      # against a fake renderer across 213 presents, so 60 source frames
+      # plus 60 interpolated frames have to read 60 and 60 rather than
+      # 120, a stream nobody interpolates has to read 0, and 25 overlay
+      # refreshes over one frame must invent nothing. Charging
+      # interpolated pixels at Rd, dropping the increment, reporting the
+      # source rate as interpolation and stripping the overlay's
+      # condition each turn it red.
+      run: python3 scripts/interpolated-frame-count-tests.py
+
     - name: Verify the timeout overlay can reach its submenus
       # The overlay's three buttons used to find the stream menu's Window, Monitor
       # and Quality submenus by comparing each item's title against a Chinese

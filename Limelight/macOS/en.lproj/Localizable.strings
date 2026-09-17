@@ -426,6 +426,7 @@
 "Path Probe" = "Path Probe";
 "Pipeline" = "Pipeline";
 "Host" = "Host";
+"Interpolated" = "Interpolated";
 "%@ %@ budget is below the recommended realtime floor (%.3f < %.3f bpppf)." = "%@ %@ budget is below the recommended realtime floor (%.3f < %.3f bpppf).";
 "%@ %@ budget is usable but tight for low-latency streaming (%.3f < %.3f bpppf)." = "%@ %@ budget is usable but tight for low-latency streaming (%.3f < %.3f bpppf).";
 "YUV 4:4:4 increases chroma sample load and usually needs more bitrate or lower FPS to stay clean." = "YUV 4:4:4 increases chroma sample load and usually needs more bitrate or lower FPS to stay clean.";

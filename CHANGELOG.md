@@ -1418,6 +1418,31 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 54: nothing on earth could say interpolation made a frame
+
+### Added
+
+- **A stream being doubled to 120 FPS reported the same numbers as a stream
+  that is not being doubled.** The app could name the interpolation engine it
+  had chosen and could not say whether that engine had produced one frame or
+  none: nothing in the tree counted a produced frame. The figure a player
+  actually reads while streaming, Rd on the performance overlay, is fed from
+  the branch that records a first source present, so interpolated pixels left
+  the drawable without touching any counter. Two machines running the same
+  setting at the same frame rate looked identical, one of them doubling and
+  one silently offering no interpolation slots. A present has to choose a
+  counter, because both kinds of frame leave through the same drawable, and
+  the choice runs both ways: charged to the rendered counter, an interpolated
+  frame takes its queue time from a neighbouring frame's enqueue stamp, gives
+  the 1% low an 8ms cadence nobody streamed, and reports twice the frames the
+  host ever sent; counted nowhere, the work stays invisible. VideoStats
+  therefore gained a counter of its own, one file-scope function decides
+  which tally a present feeds, the measurement window publishes it as a rate
+  as it closes, and the overlay reads it back as "+N Interpolated" beside Rd,
+  and only when there is a number to say. Rd stays the source-frame figure,
+  so latency and the 1% low still describe the frames that crossed the
+  network.
+
 ### Round 53: Shift is not a free modifier
 
 ### Fixed

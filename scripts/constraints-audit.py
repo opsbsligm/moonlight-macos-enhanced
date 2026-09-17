@@ -1770,6 +1770,7 @@ if run_battery:
                           os.path.join("scripts", "video-enhancement-tests.py"),
                           os.path.join("scripts", "enhancement-engine-resolution-tests.py"),
                           os.path.join("scripts", "frame-interpolation-status-tests.py"),
+                          os.path.join("scripts", "interpolated-frame-count-tests.py"),
                           os.path.join("scripts", "liquid-glass-overlay-tests.py"),
                           os.path.join("scripts", "shortcut-menu-key-tests.py"))
         for behaviour in behaviours:
