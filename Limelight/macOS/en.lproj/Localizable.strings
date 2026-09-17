@@ -647,6 +647,7 @@
 "Video Frame Interpolation Runtime Detail Active" = "Shows the actual frame interpolation engine currently in use.";
 "Video Frame Interpolation Runtime Detail Warmup" = "Low-latency frame interpolation is warming up and will engage automatically when ready.";
 "Video Frame Interpolation Runtime Detail Fallback" = "Low-latency frame interpolation isn't active right now. Moonlight is continuing without interpolation.";
+"Video Frame Interpolation Runtime Detail Source Format Unsupported" = "Frame interpolation needs video decoded as 8-bit 4:2:0. This stream is decoded in another format, so interpolation is skipped for it and no extra frames are made.";
 "Video Frame Interpolation Runtime Detail No Cadence Headroom" = "Interpolation stayed off because the display refresh rate leaves no headroom over the stream frame rate. Interpolated frames still need scanout slots: raise the display refresh rate or lower the stream frame rate.";
 "Video Frame Interpolation Runtime Detail Requires Metal Renderer" = "Interpolation only runs on the Metal Renderer. Switch the renderer mode to enable it.";
 "Video Frame Interpolation Runtime Detail Disabled For Hdr" = "HDR streams keep the native present path, so interpolation stays off. Turn HDR off to use interpolation.";

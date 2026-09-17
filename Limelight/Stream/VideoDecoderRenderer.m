@@ -67,6 +67,60 @@ typedef NS_OPTIONS(NSUInteger, MLPresentedFrameAccounting) {
     MLPresentedFrameAccountingInterpolated = 1 << 1,
 };
 
+// Why preparing the interpolator for one more source frame should do the work it does.
+//
+// A low-latency interpolation configuration accepts one source pixel format, and on
+// Apple silicon that format is 420v -- measured, not assumed. The decoder is asked for
+// something else whenever the stream is 10-bit or 4:4:4, both of which are ordinary
+// settings, so the mismatch arrives on every decoded frame rather than never.
+//
+// Asking anyway is expensive in a way that no log made visible. With a session already
+// running, the old shape of this decision fell through to a warmup request, and the
+// warmup answered "the session for this size already exists" and did nothing. The
+// caller read that as a runtime failure and tore the session down. The next frame built
+// another configuration, queried the hardware for its slots, allocated another frame
+// processor and started another session, and was refused again at the same line. That is
+// one hardware session destroyed and rebuilt per frame -- 60 times a second at 60 FPS --
+// plus a warning per frame, plus a settings status that alternated between two sentences
+// and so never de-duplicated.
+//
+// So the refusal is remembered as a fact about the stream, and the session that is
+// already there is left alone: a format the interpolator will never accept is not a
+// reason to throw away hardware work, and the same stream can switch back.
+typedef NS_ENUM(NSInteger, MLFrameInterpolationPrepareAction) {
+    MLFrameInterpolationPrepareActionReuse = 0,
+    MLFrameInterpolationPrepareActionBuildOutputPool,
+    MLFrameInterpolationPrepareActionRequestWarmup,
+    MLFrameInterpolationPrepareActionSourceFormatUnsupported,
+};
+
+static inline MLFrameInterpolationPrepareAction MLFrameInterpolationPrepareActionForSource(
+    BOOL processorExists,
+    BOOL sizeMatches,
+    OSType rememberedSourceFormat,
+    OSType refusedSourceFormat,
+    OSType incomingSourceFormat)
+{
+    // The refusal is per format, not per frame: 4:4:4 and 10-bit arrive together with
+    // every other property of the stream, and a size change does not make a rejected
+    // format acceptable, because the accepted list belongs to the format family.
+    if (refusedSourceFormat != 0 && incomingSourceFormat == refusedSourceFormat) {
+        return MLFrameInterpolationPrepareActionSourceFormatUnsupported;
+    }
+    if (processorExists && sizeMatches) {
+        if (incomingSourceFormat == rememberedSourceFormat) {
+            return MLFrameInterpolationPrepareActionReuse;
+        }
+        if (rememberedSourceFormat == 0) {
+            // A session exists but no pool has been agreed for any format yet.
+            return MLFrameInterpolationPrepareActionBuildOutputPool;
+        }
+        // A different format needs a configuration built for it, which is a new session.
+        return MLFrameInterpolationPrepareActionRequestWarmup;
+    }
+    return MLFrameInterpolationPrepareActionRequestWarmup;
+}
+
 static inline MLPresentedFrameAccounting MLAccountingForPresentedFrame(
     BOOL interpolatedFrameWasDrawn,
     BOOL sourceFramePresentedForFirstTime)
@@ -215,6 +269,7 @@ typedef NS_ENUM(NSInteger, MLVideoFrameInterpolationReport) {
     MLVideoFrameInterpolationReportActive = 0,
     MLVideoFrameInterpolationReportWarmup,
     MLVideoFrameInterpolationReportRuntimeUnavailable,
+    MLVideoFrameInterpolationReportSourceFormatUnsupported,
     MLVideoFrameInterpolationReportNoCadenceHeadroom,
     MLVideoFrameInterpolationReportRequiresMetalRenderer,
     MLVideoFrameInterpolationReportDisabledForHdr,
@@ -1250,6 +1305,10 @@ static BOOL MLGetSharedMetalPipelines(MTLPixelFormat pixelFormat,
     NSInteger _frameInterpolationInputWidth;
     NSInteger _frameInterpolationInputHeight;
     OSType _frameInterpolationSourcePixelFormat;
+    // The source format the running configuration refused, remembered so a stream that
+    // cannot be interpolated is refused once instead of once per frame. Zero means the
+    // question has not been asked and answered.
+    OSType _frameInterpolationRefusedSourcePixelFormat;
     dispatch_queue_t _vtWarmupQueue;
     BOOL _frameInterpolationWarmupInFlight;
     NSUInteger _frameInterpolationWarmupGeneration;
@@ -1661,6 +1720,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _frameInterpolationInputWidth = 0;
     _frameInterpolationInputHeight = 0;
     _frameInterpolationSourcePixelFormat = 0;
+    _frameInterpolationRefusedSourcePixelFormat = 0;
     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     [self publishVideoFrameInterpolationRuntimeStatusSummary:MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpolationEngineNone)
@@ -2307,6 +2367,12 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
             return @"Video Frame Interpolation Runtime Detail Warmup";
         case MLVideoFrameInterpolationReportRuntimeUnavailable:
             return @"Video Frame Interpolation Runtime Detail Fallback";
+        case MLVideoFrameInterpolationReportSourceFormatUnsupported:
+            // Not a failure of the machine and not a setting to turn on: the stream
+            // is being decoded in a format the interpolator cannot be given. Telling
+            // somebody to retry, or to look for a hardware engine, points at a knob
+            // that will not move.
+            return @"Video Frame Interpolation Runtime Detail Source Format Unsupported";
         case MLVideoFrameInterpolationReportNoCadenceHeadroom:
             return @"Video Frame Interpolation Runtime Detail No Cadence Headroom";
         case MLVideoFrameInterpolationReportRequiresMetalRenderer:
@@ -3486,7 +3552,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 }
 
 - (BOOL)prepareFrameInterpolationProcessorForSourceFrame:(CVImageBufferRef)sourceFrame
+                                                  report:(MLVideoFrameInterpolationReport *)reportOut
 {
+    if (reportOut != NULL) {
+        // Anything left unanswered reads as the runtime failure the caller already knows.
+        *reportOut = MLVideoFrameInterpolationReportRuntimeUnavailable;
+    }
     if (sourceFrame == NULL) {
         return NO;
     }
@@ -3495,25 +3566,47 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         const NSInteger sourceWidth = (NSInteger)CVPixelBufferGetWidth(sourceFrame);
         const NSInteger sourceHeight = (NSInteger)CVPixelBufferGetHeight(sourceFrame);
         const OSType sourcePixelFormat = CVPixelBufferGetPixelFormatType(sourceFrame);
+        const BOOL sizeMatches = (_frameInterpolationInputWidth == sourceWidth &&
+                                  _frameInterpolationInputHeight == sourceHeight);
 
-        if (_frameInterpolationProcessor != nil &&
-            _frameInterpolationInputWidth == sourceWidth &&
-            _frameInterpolationInputHeight == sourceHeight &&
-            _frameInterpolationSourcePixelFormat == sourcePixelFormat) {
-            return YES;
-        }
+        switch (MLFrameInterpolationPrepareActionForSource(_frameInterpolationProcessor != nil,
+                                                           sizeMatches,
+                                                           _frameInterpolationSourcePixelFormat,
+                                                           _frameInterpolationRefusedSourcePixelFormat,
+                                                           sourcePixelFormat)) {
+            case MLFrameInterpolationPrepareActionReuse:
+                return YES;
 
-        if (_frameInterpolationProcessor != nil &&
-            _frameInterpolationInputWidth == sourceWidth &&
-            _frameInterpolationInputHeight == sourceHeight &&
-            _frameInterpolationSourcePixelFormat == 0 &&
-            [self ensureFrameInterpolationOutputPoolForConfiguration:(VTLowLatencyFrameInterpolationConfiguration *)_frameInterpolationConfiguration
-                                                   sourcePixelFormat:sourcePixelFormat]) {
-            return YES;
+            case MLFrameInterpolationPrepareActionBuildOutputPool:
+                if ([self ensureFrameInterpolationOutputPoolForConfiguration:(VTLowLatencyFrameInterpolationConfiguration *)_frameInterpolationConfiguration
+                                                           sourcePixelFormat:sourcePixelFormat]) {
+                    return YES;
+                }
+                // The configuration refused this format. Say so once and mean it: the
+                // session beside it is not broken and must survive to the next stream.
+                _frameInterpolationRefusedSourcePixelFormat = sourcePixelFormat;
+                if (reportOut != NULL) {
+                    *reportOut = MLVideoFrameInterpolationReportSourceFormatUnsupported;
+                }
+                return NO;
+
+            case MLFrameInterpolationPrepareActionSourceFormatUnsupported:
+                if (reportOut != NULL) {
+                    *reportOut = MLVideoFrameInterpolationReportSourceFormatUnsupported;
+                }
+                return NO;
+
+            case MLFrameInterpolationPrepareActionRequestWarmup:
+                break;
         }
 
         [self requestFrameInterpolationWarmupForStreamWidth:sourceWidth
                                                streamHeight:sourceHeight];
+        if (reportOut != NULL) {
+            *reportOut = _frameInterpolationProcessor == nil
+                ? MLVideoFrameInterpolationReportWarmup
+                : MLVideoFrameInterpolationReportRuntimeUnavailable;
+        }
         return NO;
     }
 
@@ -3813,12 +3906,13 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
 - (CVImageBufferRef)copyInterpolatedFrameFromPreviousSource:(CVImageBufferRef)previousSourceFrame
                                                    toSource:(CVImageBufferRef)sourceFrame
+                                                     report:(MLVideoFrameInterpolationReport *)reportOut
 {
     if (previousSourceFrame == NULL || sourceFrame == NULL) {
         return NULL;
     }
 
-    if (![self prepareFrameInterpolationProcessorForSourceFrame:sourceFrame]) {
+    if (![self prepareFrameInterpolationProcessorForSourceFrame:sourceFrame report:reportOut]) {
         return NULL;
     }
 
@@ -3893,20 +3987,35 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         return NO;
     }
 
+    MLVideoFrameInterpolationReport copyReport = MLVideoFrameInterpolationReportRuntimeUnavailable;
     CVImageBufferRef interpolatedFrame =
-        [self copyInterpolatedFrameFromPreviousSource:previousSourceFrame toSource:sourceFrame];
+        [self copyInterpolatedFrameFromPreviousSource:previousSourceFrame
+                                             toSource:sourceFrame
+                                               report:&copyReport];
     if (interpolatedFrame == NULL) {
-        const BOOL stillWarmingUp = _frameInterpolationWarmupInFlight;
-        NSString *runtimeReason = stillWarmingUp
-            ? @"VT frame interpolation warmup in progress"
-            : @"VT frame interpolation unavailable at runtime";
-        // Both readings of this one branch, chosen together: a log that says the
-        // processor failed while the settings line says it is still warming up is two
-        // different bugs for whoever reads them, and neither is worth the hunt.
-        const MLVideoFrameInterpolationReport runtimeReport = stillWarmingUp
-            ? MLVideoFrameInterpolationReportWarmup
-            : MLVideoFrameInterpolationReportRuntimeUnavailable;
-        if (!_frameInterpolationWarmupInFlight && _frameInterpolationProcessor != nil) {
+        // Which sentence the log keeps and which line the settings page shows are the
+        // same decision, so they are made in the same branch, one branch per answer.
+        // Choosing them apart is what let a running interpolator answer with the refusal
+        // sentence and a per-frame failure answer "not enabled". A third answer was
+        // needed here: a stream decoded in a format the interpolator will never accept.
+        // It is not a broken session, it is not warming up, and it must not be torn down
+        // once per frame, so it says what is true instead of borrowing a neighbour's
+        // sentence.
+        NSString *runtimeReason;
+        MLVideoFrameInterpolationReport runtimeReport;
+        if (_frameInterpolationWarmupInFlight) {
+            runtimeReason = @"VT frame interpolation warmup in progress";
+            runtimeReport = MLVideoFrameInterpolationReportWarmup;
+        } else if (copyReport == MLVideoFrameInterpolationReportSourceFormatUnsupported) {
+            runtimeReason = @"VT frame interpolation cannot accept the decoded pixel format";
+            runtimeReport = MLVideoFrameInterpolationReportSourceFormatUnsupported;
+        } else {
+            runtimeReason = @"VT frame interpolation unavailable at runtime";
+            runtimeReport = MLVideoFrameInterpolationReportRuntimeUnavailable;
+        }
+        if (!_frameInterpolationWarmupInFlight &&
+            _frameInterpolationProcessor != nil &&
+            runtimeReport != MLVideoFrameInterpolationReportSourceFormatUnsupported) {
             [self teardownFrameInterpolationProcessor];
         }
         _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;

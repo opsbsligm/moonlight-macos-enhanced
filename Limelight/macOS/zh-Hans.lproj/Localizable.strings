@@ -647,6 +647,7 @@
 "Video Frame Interpolation Runtime Detail Active" = "这里显示当前实际正在使用的插帧引擎。";
 "Video Frame Interpolation Runtime Detail Warmup" = "低延迟插帧正在预热中，准备好后会自动接管。";
 "Video Frame Interpolation Runtime Detail Fallback" = "低延迟插帧当前未生效，Moonlight 会继续使用非插帧链路。";
+"Video Frame Interpolation Runtime Detail Source Format Unsupported" = "插帧需要视频以 8 位 4:2:0 解码。当前串流使用了其他解码格式，因此对它跳过插帧，也不会产生额外帧。";
 "Video Frame Interpolation Runtime Detail No Cadence Headroom" = "显示器刷新率相对串流帧率没有余量，插出来的帧没有可显示的时机，插帧保持关闭。请提高显示器刷新率，或降低串流帧率。";
 "Video Frame Interpolation Runtime Detail Requires Metal Renderer" = "插帧仅在 Metal 渲染器下可用，切换渲染器模式后即可启用。";
 "Video Frame Interpolation Runtime Detail Disabled For Hdr" = "HDR 串流保留原生上屏链路，插帧保持关闭。需要插帧请关闭 HDR。";

@@ -103,6 +103,9 @@ static MLVideoFrameInterpolationReport const kWarmupReport =
 static NSString *const kRuntimeFailureReason = kRuntimeFailureReason_PLACEHOLDER;
 static MLVideoFrameInterpolationReport const kRuntimeFailureReport =
     kRuntimeFailureReport_PLACEHOLDER;
+static NSString *const kSourceFormatReason = kSourceFormatReason_PLACEHOLDER;
+static MLVideoFrameInterpolationReport const kSourceFormatReport =
+    kSourceFormatReport_PLACEHOLDER;
 static NSString *const kWaitingReason = kWaitingReason_PLACEHOLDER;
 static MLVideoFrameInterpolationReport const kWaitingReport =
     kWaitingReport_PLACEHOLDER;
@@ -203,6 +206,9 @@ int main(void) {
         Report("runtime failure", MLActiveVideoFrameInterpolationEngineNone,
                kRuntimeFailureReport, kRuntimeFailureReason, @"Off",
                @"Video Frame Interpolation Runtime Detail Fallback");
+        Report("refused pixel format", MLActiveVideoFrameInterpolationEngineNone,
+               kSourceFormatReport, kSourceFormatReason, @"Off",
+               @"Video Frame Interpolation Runtime Detail Source Format Unsupported");
         Report("warming up", MLActiveVideoFrameInterpolationEngineNone, kWarmupReport,
                kWarmupReason, @"Off",
                @"Video Frame Interpolation Runtime Detail Warmup");
@@ -310,8 +316,16 @@ REPORT_LABEL = re.compile(r"report:(MLVideoFrameInterpolationReport[A-Za-z]*)")
 # reason. Position is the meaning here: the question arm is the warm-up answer, the
 # colon arm is the failure, exactly as in the text ternary above it.
 RUNNING = r"(MLVideoFrameInterpolationReport[A-Za-z]*)"
-REPORT_TERNARY = re.compile(r"MLVideoFrameInterpolationReport\s+\w*[Rr]eport\s*="
-                        r"\s*\w+\s*\?\s*" + RUNNING + r"\s*:\s*" + RUNNING)
+# One runtime branch is a sentence and a state written together, in that order, and a
+# branch that names one without the other is the bug this file was written for. The
+# pattern reads a pair rather than a ternary because the branch is a three-way choice
+# now: a stream decoded in a format the interpolator will never take is neither a
+# session still warming up nor a session that failed.
+REPORT_PAIR = re.compile(r"runtimeReason = (@[^;]*);[ \r\n ]*runtimeReport = "
+                          r"(MLVideoFrameInterpolationReport[A-Za-z]*);")
+# The slot a sentence belongs to is decided by the sentence, so a branch that keeps
+# its words and swaps its state is caught by the sweep instead of disappearing.
+RUNTIME_SLOTS = (("warmup", "kWarmup"), ("pixel format", "kSourceFormat"))
 
 
 def literal_after(text, start, where):
@@ -335,27 +349,29 @@ def lifted_literals(source):
     either one out itself would be checking its own transcription.
     """
     staging = method(source, STAGING)
-    warmup_at = staging.find(WARMUP_MARK)
-    if warmup_at < 0:
-        raise SystemExit("the staging method no longer mentions %s" % WARMUP_MARK)
-    warmup, warmup_end = literal_after(staging, warmup_at, WARMUP_MARK)
-    runtime, _ = literal_after(staging, warmup_end, "the runtime refusal")
+    pairs = REPORT_PAIR.findall(staging)
+    if len(pairs) != 3:
+        raise SystemExit("the runtime branch answers %d reasons, expected 3"
+                         % len(pairs))
+    texts = {}
+    labels = {}
+    for reason_literal, report_label in pairs:
+        slot = next((name for needle, name in RUNTIME_SLOTS if needle in reason_literal),
+                    "kRuntimeFailure")
+        if slot in texts:
+            raise SystemExit("the staging branch answers with %s twice" % slot)
+        texts[slot + "Reason"] = reason_literal
+        labels[slot + "Report"] = report_label
     working, _ = literal_after(staging, staging.find(FORMAT_MARK), "the working report")
     waiting_matches = re.findall(WAITING_SHAPE, source)
     if len(waiting_matches) != 1:
         raise SystemExit("the transient report was found %d times, expected exactly 1"
                          % len(waiting_matches))
     waiting = waiting_matches[0]
-    texts = {"kWarmupReason": warmup, "kRuntimeFailureReason": runtime,
-             "kWorkingFormat": working, "kWaitingReason": waiting}
-    ternary = REPORT_TERNARY.findall(staging)
-    if len(ternary) != 1:
-        raise SystemExit("the runtime branch names %d report pairs, expected exactly 1"
-                         % len(ternary))
-    warmup_report, runtime_report = ternary[0]
-    labels = {"kWarmupReport": warmup_report, "kRuntimeFailureReport": runtime_report,
-              "kWorkingReport": label_of(staging, working, "kWorkingFormat"),
-              "kWaitingReport": label_of(source, waiting, "kWaitingReason")}
+    texts["kWorkingFormat"] = working
+    texts["kWaitingReason"] = waiting
+    labels["kWorkingReport"] = label_of(staging, working, "kWorkingFormat")
+    labels["kWaitingReport"] = label_of(source, waiting, "kWaitingReason")
     return texts, labels
 
 
@@ -379,6 +395,7 @@ WANT_KEYS = (
     "Video Frame Interpolation Runtime Detail Refresh Rate Unknown",
     "Video Frame Interpolation Runtime Detail No Cadence Headroom",
     "Video Frame Interpolation Runtime Detail Fallback",
+    "Video Frame Interpolation Runtime Detail Source Format Unsupported",
     "Video Frame Interpolation Runtime Detail Warmup",
     "Video Frame Interpolation Runtime Detail No Interpolation Slots",
     "Video Frame Interpolation Runtime Detail Above Interpolation Ceiling",
@@ -428,7 +445,21 @@ def compile_and_run(source_path, binary, clang, sdk, work):
     return run([binary], work)
 
 
+# Whether a refusal may destroy the session is a fact about the source, not a
+# behaviour the compiled probe can observe: the probe has neither Metal nor VideoToolbox
+# here. So it is read where it is written. A guard that stopped naming the report it
+# protects fails at this line instead of quietly rebuilding a hardware video session
+# once per decoded frame.
+TEARDOWN_GUARD = re.compile(
+    r"if [(]!_frameInterpolationWarmupInFlight &&[^}]*[)] [{]", re.S)
+RUNTIME_GUARD = "runtimeReport != MLVideoFrameInterpolationReportSourceFormatUnsupported"
+TEARDOWN_CALL = "[self teardownFrameInterpolationProcessor];"
+
 KNOWN_BAD = [
+    ("a-refused-format-borrows-the-runtime-failure-sentence",
+     "            runtimeReport = MLVideoFrameInterpolationReportSourceFormatUnsupported;",
+     "            runtimeReport = MLVideoFrameInterpolationReportRuntimeUnavailable;",
+     "a stream the interpolator can never take is announced as a session that broke at runtime"),
     ("the-working-report-answers-the-refusal",
      '        case MLVideoFrameInterpolationReportActive:\n'
      '            return @"Video Frame Interpolation Runtime Detail Active";',
@@ -462,8 +493,22 @@ def main():
     except SystemExit as error:  # noqa: BLE001 - a host with no compiler is a skip
         print("%s" % error)
         return 0
+    guard = TEARDOWN_GUARD.search(source)
+    print("-- whether a refusal leaves the session alone --")
+    if guard is None:
+        print("FAIL the teardown decision cannot be read, so nothing proves a refusal "
+              "spares the session")
+        return 1
+    tail = source[guard.end():guard.end() + 160]
+    keeps = RUNTIME_GUARD in guard.group(0) and TEARDOWN_CALL in tail
+    print("%-4s a stream whose format is refused keeps the session it already has"
+          % ("ok" if keeps else "FAIL"))
+    if not keeps:
+        print("     tearing the session down here is what rebuilds a hardware video "
+              "session once per decoded frame")
+
     with tempfile.TemporaryDirectory() as work:
-        failures = 0
+        failures = 0 if keeps else 1
         clean = os.path.join(work, "clean.m")
         with open(clean, "w", encoding="utf-8") as handle:
             handle.write(build(source))

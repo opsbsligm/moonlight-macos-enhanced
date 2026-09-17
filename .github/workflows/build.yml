@@ -410,6 +410,40 @@ jobs:
       # shapes fail, and so does any answer count below the one the player needs.
       run: python3 scripts/frame-interpolation-status-tests.py
 
+    - name: Verify a stream the interpolator cannot take is refused once, not per frame
+      # A low-latency interpolation configuration takes one source pixel
+      # format, and measured on Apple silicon that format is 420v. The
+      # decoder is asked for something else whenever the stream is 10-bit
+      # or 4:4:4 -- ordinary settings, HEVC 10-bit being a common default
+      # -- so the mismatch arrived on every decoded frame. The shape this
+      # replaced fell through to a warmup request, the warmup answered
+      # that a session for this size already exists and did nothing, the
+      # caller read that as a runtime failure and tore the session down,
+      # and the next frame built another configuration, queried the
+      # hardware for slots, allocated another frame processor and started
+      # another session, only to be refused at the same line: one
+      # hardware video session destroyed and rebuilt per frame, a warning
+      # per frame, and a settings status alternating between two
+      # sentences so it never de-duplicated.  The refusal is now
+      # remembered as a fact about the stream, the session that is
+      # already there is left alone, and the settings page says what is
+      # actually true instead of borrowing the sentence for a session
+      # that broke. The decision is one file-scope function so the two
+      # cannot drift.  The harness compiles and runs the shipping prepare
+      # method. The renderer beside it answers the output-pool step the
+      # way the machine does, because the outcome turns on a hardware
+      # fact: the probe asks VideoToolbox which source formats a
+      # configuration takes and hands each format through the real
+      # method. A stream in an unacceptable format has to be settled in
+      # one step and remembered -- 60 frames have to cost one pool step
+      # and no warmup, where the shipped defect cost 60 -- and a stream
+      # in an acceptable format has to be unaffected by that memory,
+      # which is checked by refusing one format and then running another
+      # through the same renderer. Forgetting the refusal, refusing every
+      # format because one was refused, and refusing without recording it
+      # each turn it red.
+      run: python3 scripts/interpolation-source-format-tests.py
+
     - name: Verify the frames interpolation produced are actually counted
       # The app could name the interpolation engine it chose and could
       # not say whether that engine made a single frame. Nothing counted

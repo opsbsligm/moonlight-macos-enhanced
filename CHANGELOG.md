@@ -1418,6 +1418,31 @@ toolchain, the behavioural harnesses stay at ten, and workflow rules stay at 24.
 The battery went from 70 to 71, workflow rules went from 24 to 25, constraints
 stay at 140, and the behavioural harnesses stay at ten.
 
+### Round 55: a stream it could never take was retried every frame
+
+### Fixed
+
+- **On a machine with the interpolation engine, a 10-bit or 4:4:4 stream paid
+  for interpolation it could never get, once per frame.** A low-latency
+  interpolation configuration accepts one source pixel format, and measured
+  here that format is 420v. The decoder is asked for something else whenever
+  the stream is 10-bit or 4:4:4 -- ordinary settings, HEVC 10-bit being a
+  common default -- so the mismatch arrived on every decoded frame. The old
+  shape of the decision fell through to a warmup request; the warmup answered
+  that a session for that size already exists and did nothing; the caller
+  read that silence as a runtime failure and tore the session down; and the
+  next frame built another configuration, asked the hardware for its slots,
+  allocated another frame processor and started another session, only to be
+  refused at the same line. One hardware video session destroyed and rebuilt
+  per frame, a warning per frame, and a settings status that alternated
+  between two sentences, so it never de-duplicated and posted to the main
+  queue at frame rate. Whether the machine even has the engine decides who
+  pays: a GPU with no slots is refused before any session exists and never
+  reached this path. The refusal is now remembered as a fact about the
+  stream, the session already standing is left alone, the decision lives in
+  one file-scope function so the two cannot drift, and the settings page has
+  its own sentence instead of borrowing the one that says a session broke.
+
 ### Round 54: nothing on earth could say interpolation made a frame
 
 ### Added
