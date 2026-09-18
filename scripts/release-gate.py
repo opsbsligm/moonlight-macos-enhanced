@@ -76,7 +76,13 @@ def evaluate(tag, versions, build_number, changelog_text, existing_tags):
     if not changelog_has(changelog_text, parsed["version"]):
         reasons.append("CHANGELOG.md has no [%s] section" % parsed["version"])
 
-    top = highest(existing_tags)
+    # The tag being gated is already in the repository when CI gates it: the release
+    # job passes --existing-tags from `git tag --list`, so the tag that triggered the
+    # run sits in its own list, and comparing it against itself refused every release,
+    # including the first one this gate ever saw. A different tag of the same version
+    # whose build is not lower still refuses, so re-releasing a shipped build stays
+    # refused -- see the fixture where build19 loses to a build20 already in the tree.
+    top = highest([t for t in existing_tags if t.strip() != tag.strip()])
     if top is not None:
         if parsed["base"] < top["base"]:
             reasons.append("%s is older than the released %d.%d.%d"
@@ -93,7 +99,10 @@ def self_test():
                    "\n## [1.3.9-build20]\n")
     cases = [
         ("v1.3.9-build20", ["v1.3.9-build19"], True, None, "newer build of the shipped version"),
-        ("v1.3.9-build19", ["v1.3.9-build19"], False, "not newer than build 19", "the same build again"),
+        ("v1.3.9-build20", ["v1.3.9-build19", "v1.3.9-build20"], True, None,
+         "the tag CI is gating is in its own --existing-tags list"),
+        ("v1.3.9-build19", ["v1.3.9-build19", "v1.3.9-build20"], False, "not newer than build 20",
+         "a build that shipped already, with a newer one beside it"),
         ("v1.3.9", ["v1.3.9-build19"], False, "not newer than build 19", "the bare version after a build of it"),
         ("v1.4.0-build20", ["v1.3.9-build19"], False, "the project builds 1.3.9", "a version the project does not build"),
         ("v1.3.8-build20", ["v1.3.9-build19"], False, "older than the released", "an older version"),

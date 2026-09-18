@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.10-build1508] - 2026-09-18
+
 Post-release engineering audit of the v1.3.9-build19 tree. Every item below was
 verified against a clean `xcodebuild clean build` and an x86_64 cross-compile on
 Apple Silicon hardware.
@@ -306,6 +308,17 @@ Apple Silicon hardware.
   destination on Apple Silicon produces a binary that `lipo` reports as
   `architecture: x86_64`. The bare `macos-26` label is also avoided because it
   is the spelling that historically denoted an Intel image.
+
+- **The release gate refused its own tag.** The release job hands
+  `release-gate.py` its `--existing-tags` from `git tag --list`, so the tag that
+  triggered the run is in its own list, and the rule against a build that already
+  shipped read that as a repeat of itself: `1.3.10-build1508 is not newer than
+  build 1508 of the same version`. Every release was unreachable, and the gate
+  fixtures had the same shape as the bug, so the suite stayed green while the
+  pipeline it guarded could not run. The gate now leaves the tag it is gating out
+  of the comparison, and the fixture set carries both sides: the CI shape passes,
+  and a tag that a different and higher tag already in the tree outranks still
+  refuses.
 
 #### Added
 

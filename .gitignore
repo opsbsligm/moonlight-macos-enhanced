@@ -102,3 +102,6 @@ xccheckout/
 dist/
 # The sidecar copies verify-release-images.sh consumes when it is run locally.
 checksums/
+
+# Release body the release job assembles from .github/release-notes/.
+release_body.md
