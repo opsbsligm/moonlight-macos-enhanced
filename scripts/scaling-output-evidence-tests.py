@@ -43,6 +43,9 @@ OVERLAY = "Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m"
 KIND = "MLScalerKind"
 EVIDENCE = "MLScaledFrameEvidence"
 DECIDER = "MLHardwareScaledEvidenceForPresentedFrame"
+FIT = "static MLContentRect MLContentRectForSource("
+FIT_NOTE = "// The rectangle a picture of one shape occupies"
+CONTENT_TYPE = "} MLContentRect;"
 LABEL = "Scaled"
 
 # The answer the Video Toolbox processor gives for every engine but its own.
@@ -139,6 +142,18 @@ typedef struct {
     uint32_t scaledOutputHeight;
 } FakeVideoStats;
 
+@@HELPER@@
+
+// The draw pass settles the content rectangle before the bookkeeping below runs, so
+// the fake settles it the same way and from the same two inputs. Without this the
+// lifted block would be measured against a size a fake invented.
+static MLContentRect MLContentRectForFakePresent(NSUInteger sourceWidth,
+                                                 NSUInteger sourceHeight,
+                                                 NSUInteger drawableWidth,
+                                                 NSUInteger drawableHeight) {
+    return MLContentRectForSource(sourceWidth, sourceHeight, drawableWidth, drawableHeight);
+}
+
 static FakeVideoStats _activeWndVideoStats;
 static int g_checked;
 static int g_metalfxPresents;
@@ -183,6 +198,9 @@ static void present(FakeDrawable *drawable,
                     NSUInteger sourceHeight,
                     size_t workingWidth,
                     size_t workingHeight) {
+    const MLContentRect contentRect = MLContentRectForFakePresent(sourceWidth, sourceHeight,
+                                                                  drawable.texture.width,
+                                                                  drawable.texture.height);
     @@BLOCK@@
 }
 
@@ -290,10 +308,25 @@ def compiled(source, work, name, cc, sdk):
     return ran.stdout, (ran.stdout + ran.stderr).strip()[-1800:]
 
 
-def build(kinds, evidence, decider, block):
+def content_helper(text):
+    """The one answer about shapes, with the type it returns, verbatim.
+
+    The lifted present bookkeeping asks for the rectangle the picture occupies, so the
+    harness has to run the real answer rather than a copy of it. A drift between the
+    shape rule and the size the overlay prints is exactly what no player would ever
+    describe as "the numbers look wrong".
+    """
+    start = text.index(FIT_NOTE)
+    typedef_end = text.index(CONTENT_TYPE) + len(CONTENT_TYPE)
+    return (text[start:typedef_end] + chr(10) + chr(10)
+            + brace_span(text, text.index(FIT, typedef_end)))
+
+
+def build(kinds, evidence, decider, block, helper):
     return (DRIVER.replace("@@KIND@@", kinds)
                   .replace("@@EVIDENCE@@", evidence)
                   .replace("@@DECIDER@@", decider)
+                  .replace("@@HELPER@@", helper)
                   .replace("@@BLOCK@@", block))
 
 
@@ -311,10 +344,10 @@ def reading(stdout):
     return rows, checked, kinds
 
 
-def run_compiled(label, kinds, evidence, decider, block, cc, sdk, expect):
+def run_compiled(label, kinds, evidence, decider, block, helper, cc, sdk, expect):
     """Plant one wrong answer in the lifted text and require the run to show it."""
     with tempfile.TemporaryDirectory() as work:
-        rows, log = compiled(build(kinds, evidence, decider, block), work, "bad", cc, sdk)
+        rows, log = compiled(build(kinds, evidence, decider, block, helper), work, "bad", cc, sdk)
         check(rows is not None,
               "the mutation that %s compiles" % label if rows is not None
               else "the mutation that %s must compile:%s" % (label, log))
@@ -336,6 +369,7 @@ def main():
     evidence = struct_block(renderer, EVIDENCE)
     decider = inline_function(renderer, DECIDER)
     block = charge_block(renderer)
+    helper = content_helper(renderer)
 
     print("-- what the scalers produced, and who is told --")
 
@@ -414,7 +448,7 @@ def main():
 
     # --- play the shipping bookkeeping ---------------------------------------
     cc, sdk = apple_toolchain.clang_and_sdk("scaling output evidence")
-    source = build(kinds, evidence, decider, block)
+    source = build(kinds, evidence, decider, block, helper)
     with tempfile.TemporaryDirectory() as work:
         rows, log = compiled(source, work, "evidence", cc, sdk)
         check(rows is not None,
@@ -457,15 +491,20 @@ def main():
     blind = block.replace("        if (usedMetalFX) {", "        if (YES) {")
     check(blind != block,
           "the mutation that charges a stretch no scaler made has to be a real edit")
-    run_compiled("charges a stretch no scaler made", kinds, evidence, decider, blind, cc, sdk,
+    run_compiled("charges a stretch no scaler made", kinds, evidence, decider, blind, helper, cc, sdk,
                  {"bilinear": (60, 3840, 2160), "video-toolbox": (0, 0, 0),
-                  "mixed": (50, 2560, 2160)})  # 30 plus 20, the 10 enlarge-and-show frames not
+                  # 30 plus 20, the 10 enlarge-and-show frames not. The size is the
+                  # rectangle the scaler wrote, which for a 16:9 stream in a 2560x2160
+                  # drawable is 2560x1440: the scaler is no longer handed the drawable,
+                  # because drawable-sized output is a picture already stretched out of
+                  # its shape. bilinear keeps 3840x2160 -- that drawable is 16:9 too.
+                  "mixed": (50, 2560, 1440)})
 
     # And the counters have to follow the decision rather than the draw call.
     mute = block.replace("        if (scalingEvidence.reachedDisplay) {", "        if (YES) {")
     check(mute != block,
           "the mutation that counts presents where the scaler wrote nothing has to be a real edit")
-    run_compiled("counts presents where the scaler wrote nothing", kinds, evidence, decider, mute, cc, sdk,
+    run_compiled("counts presents where the scaler wrote nothing", kinds, evidence, decider, mute, helper, cc, sdk,
                  {"bilinear": (60, 0, 0), "exact-fit": (60, 0, 0), "one-axis": (60, 0, 0)})
 
     greedy = decider.replace(
@@ -473,8 +512,11 @@ def main():
         "        return evidence;\n    }\n", "")
     check(greedy != decider,
           "the mutation that counts a scaler that invented no pixels has to be a real edit")
-    run_compiled("counts a scaler that invented no pixels", kinds, evidence, greedy, block, cc, sdk,
-                 {"exact-fit": (60, 1920, 1080), "one-axis": (60, 3840, 720)})
+    run_compiled("counts a scaler that invented no pixels", kinds, evidence, greedy, block, helper, cc, sdk,
+                 # A 1280x720 stream in a 3840x720 drawable fits to 1280x720: the
+                 # drawable was only wider, never taller, so there is nothing to
+                 # invent. The mutation has to show that as scaling to be caught.
+                 {"exact-fit": (60, 1920, 1080), "one-axis": (60, 1280, 720)})
 
     sizeless = evidence.replace("    uint32_t outputWidth;", "    uint32_t outputWidthUnused;")
     check(sizeless != evidence,
@@ -486,7 +528,7 @@ def main():
                                   + chr(10), "")
     check(forgotten != block,
           "the mutation that counts without recording the size has to be a real edit")
-    run_compiled("counts without recording the size", kinds, evidence, decider, forgotten, cc, sdk,
+    run_compiled("counts without recording the size", kinds, evidence, decider, forgotten, helper, cc, sdk,
                  {"metalfx": (60, 0, 0), "video-toolbox": (60, 0, 0)})
 
     lying = window.replace("scaledFps = (float)self->_activeWndVideoStats.scaledFrames;",
@@ -516,7 +558,37 @@ def used_metalfx_marker():
     return "if (usedMetalFX) {"
 
 
+# The path is spelled at the call rather than parked in a constant: the audit that
+# lets this gate ride this step looks for the name and the invocation on the same
+# line, because a name in a constant proves nothing about whether anything runs it.
+
+
+def run_aspect_fit():
+    """The shape of the picture inside the window, which is the other half of these sizes.
+
+    This file asks what a scaler wrote; that one asks where the result is drawn. They
+    are the one decision seen from two ends -- a scaler handed the drawable, or a blit
+    told to cover it, produces sizes that are both true and a picture that is stretched
+    -- so the two run together. It also matters practically: a gate that needs a real
+    clang and a macOS SDK cannot run in the Ubuntu audits job, so it needs a step on a
+    macOS runner, and adding a step means a token with the `workflow` scope, which the
+    pushing credential here does not have. Riding the neighbouring step is the honest
+    way to be executed by CI in the meantime, and it is what
+    constraints-audit.py's DRIVEN_BY records rather than letting the gate look covered
+    while nothing on a runner ever invokes it.
+    """
+    ran = subprocess.run([sys.executable, "scripts/aspect-fit-presentation-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "the picture keeps its shape in a window of another shape"
+          if ran.returncode == 0 else
+          "the aspect-fit gate failed:\n" + chr(10).join(tail))
+
+
 def finish():
+    run_aspect_fit()
+
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0
 

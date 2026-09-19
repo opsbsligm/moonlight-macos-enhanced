@@ -1281,6 +1281,86 @@ static BOOL MLGetSharedMetalPipelines(MTLPixelFormat pixelFormat,
     return success;
 }
 
+// The rectangle a picture of one shape occupies inside a surface of another.
+//
+// The metal view resizes with its window in both axes (`_metalView.frame = _view.bounds`
+// with a flexible width and height), so the drawable is whatever shape the player
+// dragged the window to, not the shape of the stream. Drawing a texture across the
+// whole drawable is what turns 2560x1440 in a 16:10 window into a stretched picture,
+// and it is the same fault whichever way the pixels got there: a blit that covers the
+// drawable, a MetalFX scaler asked for drawable-sized output, or a VideoToolbox
+// processor handed a drawable-sized target. So the question is answered once and the
+// answer is shared by the blit viewport, the scaler's output size, the super
+// resolution target, the enhancement decision that asks whether there is anything to
+// enlarge at all, and the evidence that says what a scaler wrote. Where the two
+// shapes agree the answer is the whole surface, which is why an ordinary fullscreen
+// stream is untouched by any of this.
+typedef struct {
+    NSUInteger width;
+    NSUInteger height;
+    NSUInteger originX;
+    NSUInteger originY;
+} MLContentRect;
+
+static MLContentRect MLContentRectForSource(NSUInteger sourceWidth,
+                                           NSUInteger sourceHeight,
+                                           NSUInteger targetWidth,
+                                           NSUInteger targetHeight)
+{
+    MLContentRect fit = { targetWidth, targetHeight, 0, 0 };
+    if (sourceWidth == 0 || sourceHeight == 0 || targetWidth == 0 || targetHeight == 0) {
+        return fit;
+    }
+
+    // Cross-multiplied instead of comparing two ratios: this decides pixel counts, and
+    // two quotients that disagree below a unit in the last place would move the
+    // letterbox by a pixel on some sources and not on others.
+    const unsigned long long sourceIsWider = (unsigned long long)sourceWidth * (unsigned long long)targetHeight;
+    const unsigned long long targetIsWider = (unsigned long long)targetWidth * (unsigned long long)sourceHeight;
+    if (sourceIsWider == targetIsWider) {
+        return fit;
+    }
+
+    if (sourceIsWider > targetIsWider) {
+        // The source is the wider of the two: full width, bars above and below.
+        fit.width = targetWidth;
+        fit.height = (NSUInteger)(((unsigned long long)targetWidth * (unsigned long long)sourceHeight) /
+                                 (unsigned long long)sourceWidth);
+        if (fit.height == 0) {
+            fit.height = 1;
+        }
+        fit.originY = (targetHeight - fit.height) / 2;
+    } else {
+        // The target is the wider of the two: full height, bars left and right.
+        fit.height = targetHeight;
+        fit.width = (NSUInteger)(((unsigned long long)targetHeight * (unsigned long long)sourceWidth) /
+                                (unsigned long long)sourceHeight);
+        if (fit.width == 0) {
+            fit.width = 1;
+        }
+        fit.originX = (targetWidth - fit.width) / 2;
+    }
+    return fit;
+}
+
+/// The geometry the blit will be handed for one content rectangle.
+///
+/// It exists as a function of its own so a check can run the answer rather than read
+/// it back out of a method body: the rectangle and the viewport are two names for one
+/// decision, and the failure mode worth fearing is the two of them disagreeing.
+static MTLViewport MLViewportForContent(MLContentRect content)
+{
+    const MTLViewport viewport = {
+        .originX = (double)content.originX,
+        .originY = (double)content.originY,
+        .width = (double)content.width,
+        .height = (double)content.height,
+        .znear = 0.0,
+        .zfar = 1.0,
+    };
+    return viewport;
+}
+
 @implementation VideoDecoderRenderer {
     OSView *_view;
 
@@ -1529,13 +1609,21 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
             self->_metalView != nil &&
             self->_metalView.drawableSize.width > 0.0 &&
             self->_metalView.drawableSize.height > 0.0) {
+            // The same rectangle the first real frame will draw into, so a session
+            // warmed here is a session the first frame can use. Warming the drawable
+            // size and presenting into a smaller one spends the warmup on nothing.
+            const MLContentRect prewarmContent =
+                MLContentRectForSource((NSUInteger)streamConfig.width,
+                                       (NSUInteger)streamConfig.height,
+                                       (NSUInteger)llround(self->_metalView.drawableSize.width),
+                                       (NSUInteger)llround(self->_metalView.drawableSize.height));
             float prewarmScaleFactor = 1.0f;
             NSString *prewarmReason = nil;
             MLActiveVideoEnhancementEngine prewarmEngine =
                 [self resolveEnhancementEngineForSourceWidth:streamConfig.width
                                                 sourceHeight:streamConfig.height
-                                                 targetWidth:(NSUInteger)llround(self->_metalView.drawableSize.width)
-                                                targetHeight:(NSUInteger)llround(self->_metalView.drawableSize.height)
+                                                 targetWidth:prewarmContent.width
+                                                targetHeight:prewarmContent.height
                                                  scaleFactor:&prewarmScaleFactor
                                                       reason:&prewarmReason];
             if (prewarmEngine == MLActiveVideoEnhancementEngineVTLowLatencySuperResolution ||
@@ -4532,7 +4620,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
     MTLRenderPassDescriptor *passDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
     passDescriptor.colorAttachments[0].texture = drawable.texture;
-    passDescriptor.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+    // The content rectangle does not cover the drawable when the window's shape and
+    // the stream's shape disagree, and whatever the drawable carried then belongs to
+    // no picture at all: left as DontCare it shows the previous frame's leftovers in
+    // the bars. Clear to black, which is what a letterbox is supposed to read as.
+    passDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+    passDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
     passDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
 
     id<MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:passDescriptor];
@@ -4542,6 +4635,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
     [renderEncoder setRenderPipelineState:_blitRenderPipelineState];
     [renderEncoder setFragmentTexture:sourceTexture atIndex:0];
+    const MLContentRect content = MLContentRectForSource((NSUInteger)sourceTexture.width,
+                                                        (NSUInteger)sourceTexture.height,
+                                                        (NSUInteger)drawable.texture.width,
+                                                        (NSUInteger)drawable.texture.height);
+    [renderEncoder setViewport:MLViewportForContent(content)];
     [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
     [renderEncoder endEncoding];
     return YES;
@@ -4566,11 +4664,21 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         MTLFXSpatialScalerColorProcessingMode colorMode =
             _enableHdr ? MTLFXSpatialScalerColorProcessingModeHDR : MTLFXSpatialScalerColorProcessingModePerceptual;
 
+        // A scaler that is handed the whole drawable produces drawable-sized output,
+        // which is a picture that has already been stretched before the blit ever sees
+        // it: the viewport cannot put back a shape the scaler discarded. The scaler is
+        // therefore asked for the content rectangle, so its output keeps the stream's
+        // shape and the blit only has to centre it.
+        const MLContentRect content = MLContentRectForSource((NSUInteger)sourceTexture.width,
+                                                            (NSUInteger)sourceTexture.height,
+                                                            (NSUInteger)drawable.texture.width,
+                                                            (NSUInteger)drawable.texture.height);
+
         if (_spatialScaler
             && ([_spatialScaler inputWidth] != sourceTexture.width
                 || [_spatialScaler inputHeight] != sourceTexture.height
-                || [_spatialScaler outputWidth] != drawable.texture.width
-                || [_spatialScaler outputHeight] != drawable.texture.height
+                || [_spatialScaler outputWidth] != content.width
+                || [_spatialScaler outputHeight] != content.height
                 || [_spatialScaler colorTextureFormat] != sourceTexture.pixelFormat
                 || [_spatialScaler outputTextureFormat] != view.colorPixelFormat
                 || [_spatialScaler colorProcessingMode] != colorMode)) {
@@ -4581,8 +4689,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             MTLFXSpatialScalerDescriptor *scalerDesc = [[MTLFXSpatialScalerDescriptor alloc] init];
             scalerDesc.inputWidth = sourceTexture.width;
             scalerDesc.inputHeight = sourceTexture.height;
-            scalerDesc.outputWidth = drawable.texture.width;
-            scalerDesc.outputHeight = drawable.texture.height;
+            scalerDesc.outputWidth = content.width;
+            scalerDesc.outputHeight = content.height;
             scalerDesc.colorTextureFormat = sourceTexture.pixelFormat;
             scalerDesc.outputTextureFormat = view.colorPixelFormat;
             scalerDesc.colorProcessingMode = colorMode;
@@ -4593,15 +4701,22 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             return NO;
         }
 
+        // A content rectangle that is smaller than the drawable cannot be written into
+        // the drawable directly, so that case always goes through the intermediate the
+        // private-storage case already needed. When the two shapes agree this is the
+        // same decision it always was, including the path that renders straight into
+        // the drawable and returns without a second pass.
         id<MTLTexture> targetTexture = drawable.texture;
-        if (drawable.texture.storageMode != MTLStorageModePrivate) {
-            if (!_upscaledTexture || _upscaledTexture.width != drawable.texture.width
-                || _upscaledTexture.height != drawable.texture.height
+        const BOOL needsIntermediateTexture = content.width != (NSUInteger)drawable.texture.width ||
+                                              content.height != (NSUInteger)drawable.texture.height;
+        if (drawable.texture.storageMode != MTLStorageModePrivate || needsIntermediateTexture) {
+            if (!_upscaledTexture || _upscaledTexture.width != content.width
+                || _upscaledTexture.height != content.height
                 || _upscaledTexture.pixelFormat != drawable.texture.pixelFormat) {
                 MTLTextureDescriptor *upscaledDesc =
                     [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:drawable.texture.pixelFormat
-                                                                      width:drawable.texture.width
-                                                                     height:drawable.texture.height
+                                                                      width:content.width
+                                                                     height:content.height
                                                                   mipmapped:NO];
                 upscaledDesc.storageMode = MTLStorageModePrivate;
                 upscaledDesc.usage = MTLTextureUsageShaderWrite | MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
@@ -4682,8 +4797,17 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
     const NSUInteger sourceWidth = CVPixelBufferGetWidth(presentationFrame);
     const NSUInteger sourceHeight = CVPixelBufferGetHeight(presentationFrame);
-    const NSUInteger targetWidth = MAX((NSUInteger)1, (NSUInteger)llround(view.drawableSize.width));
-    const NSUInteger targetHeight = MAX((NSUInteger)1, (NSUInteger)llround(view.drawableSize.height));
+    const NSUInteger drawableWidth = MAX((NSUInteger)1, (NSUInteger)llround(view.drawableSize.width));
+    const NSUInteger drawableHeight = MAX((NSUInteger)1, (NSUInteger)llround(view.drawableSize.height));
+    // Every question about this frame that involves a size is asked about the rectangle
+    // the picture will occupy, not the rectangle the window occupies: a super
+    // resolution processor handed the drawable builds pixels that are already out of
+    // shape, and an enhancement decision made against the drawable can promise a
+    // scaler that the letterbox then makes pointless.
+    const MLContentRect contentRect = MLContentRectForSource(sourceWidth, sourceHeight,
+                                                             drawableWidth, drawableHeight);
+    const NSUInteger targetWidth = contentRect.width;
+    const NSUInteger targetHeight = contentRect.height;
     float resolvedScaleFactor = 1.0f;
     NSString *enhancementReason = nil;
     MLActiveVideoEnhancementEngine resolvedEngine =
@@ -4925,8 +5049,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             scalerKindForPresent = MLScalerKindMetalFX;
             scaledInputWidth = (uint32_t)workingWidth;
             scaledInputHeight = (uint32_t)workingHeight;
-            scaledOutputWidth = (uint32_t)drawable.texture.width;
-            scaledOutputHeight = (uint32_t)drawable.texture.height;
+            // The rectangle the picture occupies, not the rectangle the window
+            // occupies. A scaler that wrote 1600x900 inside a 1600x1000 drawable made
+            // 1600x900 of pixels, and the overlay has to print the number a player
+            // could measure off the letterboxed picture.
+            scaledOutputWidth = (uint32_t)contentRect.width;
+            scaledOutputHeight = (uint32_t)contentRect.height;
         } else if (processedFrame != NULL) {
             scalerKindForPresent = MLScalerKindVideoToolbox;
             scaledInputWidth = (uint32_t)sourceWidth;

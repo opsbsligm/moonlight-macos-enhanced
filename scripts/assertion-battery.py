@@ -78,6 +78,7 @@ COLLISION_GATE = (os.path.join(root, "scripts", "modifier-only-release-collision
 SPACE_HELD_GATE = (os.path.join(root, "scripts", "space-transition-held-key-tests.py"), [])
 NAVIGATION_GATE = (os.path.join(root, "scripts", "controller-key-navigation-tests.py"), [])
 VIDEO_GATE = (os.path.join(root, "scripts", "video-enhancement-tests.py"), [])
+ASPECT_GATE = (os.path.join(root, "scripts", "aspect-fit-presentation-tests.py"), [])
 # The workflow audit reads the pipeline that runs every other gate, so a mutation of
 # the pipeline itself is judged by it and by nothing else.
 WF_GATE = (os.path.join(root, "scripts", "workflow-audit.py"), [])
@@ -1381,6 +1382,34 @@ def merge_the_two_zero_slot_answers(text):
                         "    return MLInterpolationSlotVerdictNoHardware;", 1)
 
 
+# The letterbox. A window is whatever shape the player dragged it to, and the picture
+# has to keep its own shape inside it; three places used to decide that for themselves.
+CONTENT_VIEWPORT = "[renderEncoder setViewport:MLViewportForContent(content)];"
+SCALER_OUTPUT = ("scalerDesc.outputWidth = content.width;" + chr(10)
+                 + "            scalerDesc.outputHeight = content.height;")
+LETTERBOX_CLEAR = ("passDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;" + chr(10)
+                   + "    passDescriptor.colorAttachments[0].clearColor ="
+                   " MTLClearColorMake(0.0, 0.0, 0.0, 1.0);")
+
+
+def stretch_the_picture_across_the_window(text):
+    once(text, CONTENT_VIEWPORT, "the blit's content viewport")
+    return text.replace(CONTENT_VIEWPORT, "", 1)
+
+
+def hand_the_scaler_the_drawable(text):
+    once(text, SCALER_OUTPUT, "MetalFX's content-sized output")
+    return text.replace(SCALER_OUTPUT,
+                        "scalerDesc.outputWidth = drawable.texture.width;" + chr(10)
+                        + "            scalerDesc.outputHeight = drawable.texture.height;", 1)
+
+
+def leave_the_bars_full_of_the_last_frame(text):
+    once(text, LETTERBOX_CLEAR, "the letterbox clear")
+    return text.replace(LETTERBOX_CLEAR,
+                        "passDescriptor.colorAttachments[0].loadAction = MTLLoadActionDontCare;", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-key-cancel", CAPTURE, drop_pending_cancel,
@@ -1400,6 +1429,14 @@ MUTATIONS = [
     ("interpolation-never-reasked", VIDEO_RENDERER, ask_the_engine_the_same_question_again,
      "a refused stream size is re-asked at the same refused size",
      VIDEO_GATE),
+    ("stretched-into-a-window", VIDEO_RENDERER, stretch_the_picture_across_the_window,
+     "a window of another shape stretches the stream instead of letterboxing it",
+     ASPECT_GATE),
+    ("scaler-told-to-stretch", VIDEO_RENDERER, hand_the_scaler_the_drawable,
+     "MetalFX is handed the drawable, so its output is already out of shape", ASPECT_GATE),
+    ("bars-keep-the-previous-frame", VIDEO_RENDERER, leave_the_bars_full_of_the_last_frame,
+     "the bars around a letterboxed picture keep whatever the drawable carried",
+     ASPECT_GATE),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
     ("drop-release", HID, drop_release, "keyUp guard no longer clears the record"),
     ("late-guard", HID, late_guard, "keyUp guard runs after the release is sent"),

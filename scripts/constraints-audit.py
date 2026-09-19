@@ -1198,6 +1198,14 @@ DRIVEN_BY = {
     "assertion-battery.py": "constraints-audit.py",
     "prepare-release.py": "release-gate.py",
     "shortcut-menu-key-tests.py": "constraints-audit.py",
+    # A gate that needs a real clang and a macOS SDK cannot run in the Ubuntu audits
+    # job, so it has to be invoked from a macOS step. Its own step would need a push
+    # credential carrying the `workflow` scope, which this one does not, so the aspect
+    # fit gate rides the neighbouring renderer harness -- which is a step on every
+    # macOS build -- and that is what is written down here. The rule this satisfies is
+    # the one that refuses a gate reachable only through an aggregate whose own step
+    # has quietly disappeared: follow this entry and you land on a step CI runs twice.
+    "aspect-fit-presentation-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.10-build1510] - 2026-09-19
+
+### Fixed
+
+- **A window of a different shape stretched the picture instead of letterboxing
+  it.** A 2560x1440 stream in a 16:10 window was drawn across the whole drawable, so
+  every face in it was wider than the stream made it, while every counter on screen
+  stayed truthful about a stretch nobody asked for. The metal view resizes with its
+  window on both axes, so the drawable is whatever shape the player dragged the
+  window into, and nothing anywhere compared that shape against the stream's. Three
+  places had each been deciding it alone, and fixing any one of them still leaves a
+  stretched picture: the blit's viewport, which is where the stretch happened;
+  MetalFX's output size, because a scaler handed the whole drawable writes pixels
+  that are already out of shape and a viewport cannot restore a shape the scaler
+  never had; and the Video Toolbox super resolution target, one step earlier still,
+  together with the enhancement decision that asks whether there is anything worth
+  enlarging -- measured against the drawable it can promise a scaler the letterbox
+  then makes pointless. One function now answers the shape and every consumer asks
+  it, including the warm-up, which used to prepare a session for the drawable's size
+  and then never use it, and the scaling evidence, so the size the overlay prints is
+  the size a scaler wrote rather than the size of the window. Where the two shapes
+  agree the answer is the whole surface: the proportional cases are asserted at six
+  source shapes and five multiples each, which is the promise that a stream already
+  fitting its screen changed nothing. The bars clear to black, because a drawable
+  under a letterbox belongs to no picture and left as `DontCare` it keeps the
+  previous frame in them. Two mutation expectations in the scaling evidence harness
+  moved with this and moved to the truth: a 1280x720 stream in a 3840x720 drawable
+  now reports the 1280x720 it fits to, instead of claiming a 3840-wide present that
+  was never made.
+
 ## [1.3.10-build1509] - 2026-09-19
 
 ### Fixed
