@@ -438,7 +438,7 @@ SCAN_HEALTH = "def scan_health(keys_found, tokens_present):\n"
 # AT_BLIND is the same pattern with the at-sign branch removed.
 AT_TOLERANT = chr(92) + "(?@?" + chr(34)
 AT_BLIND = chr(92) + "(?" + chr(34)
-IMPORTS = "import io, os, re, sys\n"
+IMPORTS = "import io, os, plistlib, re, sys\n"
 
 
 def blind_scan_health(text):
@@ -453,7 +453,7 @@ def at_blind_scan(text):
 
 def grep_scanned(text):
     once(text, IMPORTS, "localization imports")
-    return text.replace(IMPORTS, "import io, os, re, subprocess, sys\n", 1)
+    return text.replace(IMPORTS, "import io, os, plistlib, re, subprocess, sys\n", 1)
 
 
 
