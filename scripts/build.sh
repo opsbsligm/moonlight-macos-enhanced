@@ -50,6 +50,13 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
+# Xcode never writes the Info.plist language tables for this project, so without this a local
+# build would show a different permission prompt than a downloaded one, and the difference
+# would only ever be visible on someone else's machine. The install lives in the signing
+# script because that is the last moment the shipped bytes can still change; asking that
+# script for just this part needs no signing identity and no full release.
+"${SCRIPT_DIR}/codesign-bundle.sh" "$APP_PATH" --install-localizations-only
+
 echo "Build output: $APP_PATH"
 
 # Step 3: Package DMG
