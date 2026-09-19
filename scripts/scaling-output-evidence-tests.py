@@ -607,9 +607,28 @@ def run_device_redirection_policy():
           "the device redirection policy gate failed:\n" + chr(10).join(tail))
 
 
+def run_pointer_entry_policy():
+    """Whether a pointer sliding into the stream window is allowed to take it.
+
+    Not a scaling question either, and it rides here for the same two reasons as the
+    aspect-fit gate above: the decision is C called from Objective-C, so the harness needs
+    the macOS job's clang and SDK, and its own step needs the `workflow` scope this pushing
+    credential does not have. constraints-audit.py's DRIVEN_BY records the arrangement, and
+    the audit refuses the entry if the step stops invoking it.
+    """
+    ran = subprocess.run([sys.executable, "scripts/pointer-entry-takeover-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "a hover only takes the window when the player allowed it"
+          if ran.returncode == 0 else
+          "the pointer entry policy gate failed:\n" + chr(10).join(tail))
+
+
 def finish():
     run_aspect_fit()
     run_device_redirection_policy()
+    run_pointer_entry_policy()
 
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0

@@ -94,6 +94,7 @@ struct Settings: Encodable, Decodable {
   let freeMouseMotionMode: Int?
 
   let emulateGuide: Bool
+  let hoverActivatesStreamWindow: Bool?
   let appArtworkDimensions: CGSize?
   let dimNonHoveredArtwork: Bool
 
@@ -239,6 +240,7 @@ struct Settings: Encodable, Decodable {
       coreHIDMaxMouseReportRate: coreHIDMaxMouseReportRate,
       freeMouseMotionMode: freeMouseMotionMode,
       emulateGuide: emulateGuide,
+      hoverActivatesStreamWindow: hoverActivatesStreamWindow,
       appArtworkDimensions: appArtworkDimensions,
       dimNonHoveredArtwork: dimNonHoveredArtwork,
       quitAppAfterStream: quitAppAfterStream,
@@ -479,6 +481,7 @@ extension SettingsClass {
       freeMouseMotionMode: settings.freeMouseMotionMode,
 
       emulateGuide: settings.emulateGuide,
+      hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 

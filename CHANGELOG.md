@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A pointer moving into the stream window no longer has to take the window. Issues #21 and
+  #40 are one mechanism: the tracking area is installed with `NSTrackingActiveAlways`, so
+  `mouseEntered:` arrives while Moonlight is in the background, and the entry path made the
+  stream window key, which activates the application. The decision now lives in
+  `MLPointerEntryActionsForState` instead of five early returns inside an AppKit callback,
+  and the mouse panel carries a switch for it. The default is yes -- what every build has
+  done, and what a player who clicked in and stepped the pointer out to a second display
+  should keep. Turning it off gives #21 what it asked for: the window keeps tracking the
+  pointer and waits for a click. Gated by `scripts/pointer-entry-takeover-tests.py`, which
+  compiles the decision with a real clang, drives every input field on its own, compares
+  the C and Swift copies of the default that nothing else compares, and has to notice six
+  planted defects in the decision and one in the wiring.
+
 - The first layer of USB device redirection: a policy that refuses every device until an
   allow-list entry earns the yes, a host capability read that treats an unanswered
   question as a no, and an audit line that carries a digest of a serial number instead of

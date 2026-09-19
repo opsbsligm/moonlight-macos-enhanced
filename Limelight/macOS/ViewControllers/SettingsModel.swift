@@ -824,6 +824,15 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  /// Does a pointer sliding into the stream window get to take that window? The read
+  /// happens per event in MouseCapture, so turning this off takes effect on the next
+  /// hover rather than on the next connection.
+  @Published var hoverActivatesStreamWindow: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var appArtworkWidth: CGFloat? {
     didSet {
       guard !isLoading else { return }
@@ -1301,6 +1310,7 @@ class SettingsModel: ObservableObject {
       from: Self.defaultTouchscreenMode, in: Self.touchscreenModes)
 
     emulateGuide = Self.defaultEmulateGuide
+    hoverActivatesStreamWindow = Self.defaultHoverActivatesStreamWindow
     appArtworkWidth = Self.defaultAppArtworkWidth
     appArtworkHeight = Self.defaultAppArtworkHeight
     dimNonHoveredArtwork = Self.defaultDimNonHoveredArtwork

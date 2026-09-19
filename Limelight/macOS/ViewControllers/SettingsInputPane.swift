@@ -94,6 +94,14 @@ struct InputView: View {
 
       Divider()
 
+      ToggleCell(
+        title: "Pointer Enter Activates Stream",
+        hintKey: "Pointer Enter Activates Stream detail",
+        boolBinding: $settingsModel.hoverActivatesStreamWindow
+      )
+
+      Divider()
+
       PickerSettingRow(
         title: "Mouse Driver",
         content: {

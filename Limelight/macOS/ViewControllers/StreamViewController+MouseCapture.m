@@ -5,6 +5,7 @@
 
 #import "StreamViewController_Internal.h"
 #import "Moonlight-Swift.h"
+#import "PointerEntryPolicy.h"
 
 // ---------------------------------------------------------------------------
 // SIMPLIFIED REFACTOR (2026-08-02): Deferred Command Logic REMOVED.
@@ -2184,20 +2185,37 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 
     self.isMouseInsideView = YES;
     self.globalInactivePointerInsideStreamView = YES;
-    if (self.edgeMenuTemporaryReleaseActive) {
-        return;
-    }
-    if (self.pendingFreeMouseReentryEdge != MLFreeMouseExitEdgeNone &&
-        self.isRemoteDesktopMode &&
-        !self.isMouseCaptured) {
-        return;
-    }
-    if (self.isRemoteDesktopMode && !self.isMouseCaptured) {
+
+    // Whether a hover is allowed to take the window is decided outside AppKit, in
+    // MLPointerEntryActionsForState, so that the answer for a situation can be written
+    // down and re-run instead of reconstructed from five early returns in a callback.
+    // Issues #21 and #40 are the same mechanism seen from two sides, and both are the
+    // player's word for "I did not click here".
+    MLPointerEntryState state;
+    state.hoverActivatesWindow = [self hoverActivatesStreamWindowOnPointerEntry];
+    state.remoteDesktopMode = self.isRemoteDesktopMode;
+    state.mouseCaptured = self.isMouseCaptured;
+    state.edgeMenuTemporaryReleaseActive = self.edgeMenuTemporaryReleaseActive;
+    state.pendingReentryEdge = self.pendingFreeMouseReentryEdge != MLFreeMouseExitEdgeNone;
+
+    const MLPointerEntryAction actions = MLPointerEntryActionsForState(state);
+    if (actions & MLPointerEntryActionMakeWindowKey) {
         [self ensureStreamWindowKeyIfPossible];
+    }
+    if (actions & MLPointerEntryActionSyncRemoteCursor) {
         [self prepareCoreHIDVirtualCursorForSystemPointerSyncIfNeeded];
         [self syncRemoteCursorToMouseEvent:event clampToBounds:YES];
+    }
+    if (actions & MLPointerEntryActionRearmCapture) {
         [self rearmMouseCaptureIfPossibleWithReason:@"mouse-entered-view"];
     }
+}
+
+- (BOOL)hoverActivatesStreamWindowOnPointerEntry {
+    // The read carries its own default (see the pair of defaults the harness compares), so
+    // a host with no stored preference behaves like a fresh install instead of like a
+    // host whose preference was deleted.
+    return [SettingsClass hoverActivatesStreamWindowFor:self.app.host.uuid];
 }
 
 - (void)mouseExited:(NSEvent *)event {

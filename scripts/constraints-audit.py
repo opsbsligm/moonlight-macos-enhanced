@@ -1211,6 +1211,10 @@ DRIVEN_BY = {
     # `workflow` scope the pushing credential does not carry. The driver below is a step on
     # every macOS build, and it invokes this one.
     "device-redirection-policy-tests.py": "scaling-output-evidence-tests.py",
+    # Third gate with the same shape of reason: the pointer entry decision is C called from
+    # Objective-C, so its harness needs a macOS clang and SDK, and a step of its own needs
+    # the `workflow` scope the pushing credential does not carry.
+    "pointer-entry-takeover-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

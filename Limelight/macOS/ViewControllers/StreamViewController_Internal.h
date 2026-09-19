@@ -725,6 +725,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (BOOL)canCaptureMouseNow;
 - (NSString *)mouseCaptureBlockerReason;
 - (void)ensureStreamWindowKeyIfPossible;
+- (BOOL)hoverActivatesStreamWindowOnPointerEntry;
 - (void)refreshMouseMovedAcceptanceState;
 - (void)rearmMouseCaptureIfPossibleWithReason:(NSString *)reason;
 - (void)applyMouseModeNamed:(NSString *)newMode showNotification:(BOOL)showNotification;

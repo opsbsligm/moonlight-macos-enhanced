@@ -197,6 +197,7 @@ class SettingsClass: NSObject {
         "freeMouseMotionMode":
           settings.freeMouseMotionMode ?? FreeMouseMotionMode.defaultMode.rawValue,
         "emulateGuide": settings.emulateGuide,
+    "hoverActivatesStreamWindow": settings.hoverActivatesStreamWindow ?? SettingsModel.defaultHoverActivatesStreamWindow,
         "appArtworkDimensions": settings.appArtworkDimensions,
         "dimNonHoveredArtwork": settings.dimNonHoveredArtwork,
         "quitAppAfterStream": settings.quitAppAfterStream,
@@ -365,6 +366,7 @@ class SettingsClass: NSObject {
       freeMouseMotionMode: settings.freeMouseMotionMode,
 
       emulateGuide: settings.emulateGuide,
+      hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 
@@ -468,6 +470,7 @@ class SettingsClass: NSObject {
         coreHIDMaxMouseReportRate: updated.coreHIDMaxMouseReportRate,
         freeMouseMotionMode: updated.freeMouseMotionMode,
         emulateGuide: updated.emulateGuide,
+      hoverActivatesStreamWindow: updated.hoverActivatesStreamWindow,
         appArtworkDimensions: updated.appArtworkDimensions,
         dimNonHoveredArtwork: updated.dimNonHoveredArtwork,
         quitAppAfterStream: updated.quitAppAfterStream,
@@ -575,6 +578,7 @@ class SettingsClass: NSObject {
       freeMouseMotionMode: settings.freeMouseMotionMode,
 
       emulateGuide: settings.emulateGuide,
+      hoverActivatesStreamWindow: settings.emulateGuide,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 
@@ -1054,6 +1058,17 @@ class SettingsClass: NSObject {
   @objc static func videoFrameInterpolationRuntimeStatusDetailKey(for key: String) -> String {
     runtimeStatus(for: key, from: videoFrameInterpolationRuntimeStatusByHost)?.detailKey
       ?? "Video Frame Interpolation Runtime Detail Idle"
+  }
+
+  /// The hover switch with the shipping default applied, so a host that has never had a
+  /// preference stored behaves like a fresh install instead of like a broken one.
+  /// Keep this default in step with MLPointerEntryHoverActivatesWindowDefault(); the
+  /// harness compares the two precisely because nothing else does.
+  @objc static func hoverActivatesStreamWindow (for key: String) -> Bool {
+    if let settings = Settings.getSettings(for: key) {
+      return settings.hoverActivatesStreamWindow ?? SettingsModel.defaultHoverActivatesStreamWindow
+    }
+    return SettingsModel.defaultHoverActivatesStreamWindow
   }
 
   @objc static func mouseMode(for key: String) -> String {

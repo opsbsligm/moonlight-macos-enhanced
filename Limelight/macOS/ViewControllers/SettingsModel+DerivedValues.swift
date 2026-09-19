@@ -1053,6 +1053,9 @@ extension SettingsModel {
   static let defaultMouseDriver = MouseInputDriverStrategy.defaultStrategy.displayKey
   static let defaultCoreHIDMaxMouseReportRate = 1000
   static let defaultEmulateGuide = false
+  /// Keep in step with MLPointerEntryHoverActivatesWindowDefault() in PointerEntryPolicy.m.
+  /// Two defaults in two languages, compared by scripts/pointer-entry-takeover-tests.py.
+  static let defaultHoverActivatesStreamWindow = true
   static let defaultAppArtworkWidth: CGFloat? = nil
   static let defaultAppArtworkHeight: CGFloat? = nil
   static let defaultQuitAppAfterStream = false

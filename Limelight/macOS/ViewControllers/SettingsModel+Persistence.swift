@@ -192,6 +192,7 @@ extension SettingsModel {
     selectedRewrittenScrollMode = Self.defaultRewrittenScrollMode
 
     emulateGuide = Self.defaultEmulateGuide
+    hoverActivatesStreamWindow = Self.defaultHoverActivatesStreamWindow
     appArtworkWidth = Self.defaultAppArtworkWidth
     appArtworkHeight = Self.defaultAppArtworkHeight
     dimNonHoveredArtwork = Self.defaultDimNonHoveredArtwork
@@ -365,6 +366,7 @@ extension SettingsModel {
       ).displayKey
 
       emulateGuide = settings.emulateGuide
+      hoverActivatesStreamWindow = settings.hoverActivatesStreamWindow ?? Self.defaultHoverActivatesStreamWindow
 
       let appArtworkDimensions = loadNillableDimensionSetting(
         inputDimensions: settings.appArtworkDimensions)
@@ -739,6 +741,7 @@ extension SettingsModel {
       coreHIDMaxMouseReportRate: persistedCoreHIDMaxMouseReportRate,
       freeMouseMotionMode: persistedFreeMouseMotionMode,
       emulateGuide: emulateGuide,
+      hoverActivatesStreamWindow: hoverActivatesStreamWindow,
       appArtworkDimensions: appArtworkDimensions,
       dimNonHoveredArtwork: dimNonHoveredArtwork,
       quitAppAfterStream: quitAppAfterStream,
