@@ -20,7 +20,7 @@ the scan is demonstrably running. The self-test has no opt-out, because a gate
 whose proof can be switched off is not a gate: the tests call functions in this
 file and never invoke it again, so there is nothing to recurse.
 """
-import io, os, re, sys
+import io, os, plistlib, re, sys
 
 positional = [a for a in sys.argv[1:] if not a.startswith("--")]
 root = positional[0] if positional else "."
@@ -94,12 +94,43 @@ def info_plist_localization(files_by_directory):
     return problems
 
 
+def usage_description_problems(descriptions, en_meta, zh_meta):
+    # macOS shows a permission sentence from the plist, in the system language, so Chinese
+    # written into the plist is not a translation of anything: it is what an English system
+    # is made to display. The translation belongs in the Info.plist table beside that plist,
+    # and a sentence answered by one of those tables and not the other is the same one-sided
+    # drift the two main tables already refuse. A sentence no table answers stays English on
+    # every system, which is untranslated but honest, so it is not reported here.
+    problems = []
+    for key in sorted(descriptions):
+        if any(ord(character) > 127 for character in descriptions[key]):
+            problems.append("%s is written into the plist in a language other than the "
+                            "development region" % key)
+        if (key in en_meta) != (key in zh_meta):
+            problems.append("%s is answered by one Info.plist table and not the other" % key)
+    return problems
+
+
+def usage_descriptions(scan_root):
+    plist = os.path.join(scan_root, "Limelight", "macOS", "Supporting Files", "Info.plist")
+    if not os.path.exists(plist):
+        return {}
+    with open(plist, "rb") as handle:
+        values = plistlib.load(handle)
+    return {key: value for key, value in values.items()
+            if key.endswith("UsageDescription") and isinstance(value, str)}
+
+
 def info_plist_layout(scan_root):
     files = {}
     for directory, _, names in os.walk(os.path.join(scan_root, "Limelight")):
         files[directory] = set(names)
     return files
 
+
+INFO_PLIST = "Limelight/macOS/Supporting Files/Info.plist"
+INFO_META_EN = "Limelight/macOS/Supporting Files/en.lproj/InfoPlist.strings"
+INFO_META_ZH = "Limelight/macOS/Supporting Files/zh-Hans.lproj/InfoPlist.strings"
 
 EN_TABLE = "Limelight/macOS/en.lproj/Localizable.strings"
 ZH_TABLE = "Limelight/macOS/zh-Hans.lproj/Localizable.strings"
@@ -385,6 +416,20 @@ SYMMETRY_CASES = [
     ("a key only chinese declares", ["a"], ["a", "b"], ([], ["b"])),
 ]
 
+USAGE_CASES = [
+    ("an english plist sentence with both tables answering it",
+     {"NSMicrophoneUsageDescription": "Used to capture microphone audio."},
+     {"NSMicrophoneUsageDescription"}, {"NSMicrophoneUsageDescription"}, True),
+    ("a chinese sentence written into the plist itself",
+     {"NSLocalNetworkUsageDescription": "Moonlight需要访问本地网络。"},
+     {"NSLocalNetworkUsageDescription"}, {"NSLocalNetworkUsageDescription"}, False),
+    ("a permission translated on one side only",
+     {"NSMicrophoneUsageDescription": "Used to capture microphone audio."},
+     {"NSMicrophoneUsageDescription"}, set(), False),
+    ("a permission nobody translates stays english on every system",
+     {"NSCameraUsageDescription": "Used to capture video."}, set(), set(), True),
+]
+
 LOC_META_CASES = [
     ("a language folder beside the plist it localizes",
      {"/p": {"Info.plist"}, "/p/en.lproj": {"InfoPlist.strings"}}, True),
@@ -445,6 +490,14 @@ def self_test():
         ok = found == expected
         check(ok, "table symmetry %s %s" %
               ("reports" if ok else "got %s, expected %s for" % (found, expected), name))
+    for name, descriptions, en_meta, zh_meta, must_pass in USAGE_CASES:
+        found = usage_description_problems(descriptions, en_meta, zh_meta)
+        ok = bool(found) != must_pass
+        check(ok, "usage descriptions %s %s" %
+              ("accepts" if must_pass else "refuses", name) if ok else
+              "usage descriptions %s: %s for %s" %
+              ("missed" if not must_pass else "wrongly refused", found, name))
+
     for name, layout, must_pass in LOC_META_CASES:
         found = info_plist_localization(layout)
         ok = bool(found) != must_pass
@@ -519,6 +572,17 @@ for path, text in source_texts(root):
 check(not arity_problems, "every MLString call matches the macro the header defines"
       if not arity_problems else
       "MLString calls with the wrong number of arguments: %d" % len(arity_problems))
+
+descriptions = usage_descriptions(root)
+meta_en = set(strings_key_list(INFO_META_EN)) if os.path.exists(os.path.join(root, INFO_META_EN)) else set()
+meta_zh = set(strings_key_list(INFO_META_ZH)) if os.path.exists(os.path.join(root, INFO_META_ZH)) else set()
+usage_problems = usage_description_problems(descriptions, meta_en, meta_zh)
+for problem in usage_problems:
+    print("::error file=%s::%s" % (INFO_PLIST, problem))
+check(not usage_problems,
+      "%d permission sentences stay translatable rather than baked into one language"
+      % len(descriptions) if not usage_problems else
+      "permission prompts no language can be shown correctly: " + "; ".join(usage_problems))
 
 meta_problems = info_plist_localization(info_plist_layout(root))
 check(not meta_problems, "the Info.plist language files sit where a build will read them"

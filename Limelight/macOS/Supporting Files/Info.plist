@@ -40,7 +40,7 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 SkyHua and contributors</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Moonlight需要访问本地网络以发现并连接您的游戏主机。</string>
+	<string>Moonlight needs access to the local network to find and connect to your game host.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Used to capture microphone audio for streaming to the host.</string>
 	<key>NSInputMonitoringUsageDescription</key>

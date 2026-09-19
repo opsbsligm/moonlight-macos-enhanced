@@ -19,6 +19,7 @@ set -euo pipefail
 # part as what it is instead of letting it read as either success or failure.
 #
 # Usage: scripts/codesign-bundle.sh path/to/Moonlight.app
+#         scripts/codesign-bundle.sh path/to/Moonlight.app --install-localizations-only
 SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 
@@ -26,6 +27,51 @@ APP="${1:-}"
 if [[ -z "$APP" || ! -d "$APP" ]]; then
   echo "error: pass an .app bundle to sign; got '${APP:-<nothing>}'" >&2
   exit 1
+fi
+
+# What a user reads in a permission prompt comes from the bundle's Info.plist, and macOS
+# takes the translated sentence from Contents/Resources/<lang>.lproj/InfoPlist.strings. Xcode
+# does not produce that file in this project: with a hand-written Info.plist behind a
+# file-system-synchronized group, the source tables are read as nothing at all -- the build
+# setting named INFOSTRINGS_PATH only says where such a file would go, and an artifact pulled
+# off a green CI run carries neither the strings file nor a .loctable -- so every language
+# showed whatever sentence happened to be written into the plist, and two tidy translation
+# tables sat in the repository proving nothing. Installing them here, before the signature
+# seals the bundle, is what makes the shipped bytes agree with the repository.
+install_info_plist_localizations() {
+  local repo resources language installed=0 verified=0 table
+  repo="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+  resources="$APP/Contents/Resources"
+  while IFS= read -r table; do
+    language="$(basename "$(dirname "$table")")"
+    install -d "$resources/$language"
+    install -m 644 "$table" "$resources/$language/InfoPlist.strings"
+    installed=$((installed + 1))
+  done < <(find "$repo/Limelight/macOS/Supporting Files" -name InfoPlist.strings 2>/dev/null)
+  if [[ "$installed" -eq 0 ]]; then
+    echo "error: no InfoPlist.strings under $repo/Limelight/macOS/Supporting Files, so no" >&2
+    echo "       language can translate a permission prompt in $APP" >&2
+    exit 1
+  fi
+  # Reading back what the bundle now holds is the only evidence that the archive a user
+  # downloads carries the sentences, rather than the repository alone.
+  while IFS= read -r table; do
+    "$PLUTIL" -lint "$table" >/dev/null
+    verified=$((verified + 1))
+  done < <(find "$resources" -name InfoPlist.strings 2>/dev/null)
+  if [[ "$verified" -ne "$installed" ]]; then
+    echo "error: installed $installed Info.plist language table(s) but found $verified in the bundle" >&2
+    exit 1
+  fi
+  echo "installed $installed Info.plist language table(s) into $(basename "$APP")"
+}
+
+PLUTIL="$(command -v plutil || echo /usr/bin/plutil)"
+if [[ "${2:-}" == "--install-localizations-only" ]]; then
+  # The install is the part that can be checked without an identity or a full build, so a
+  # local run and a CI step can both ask for exactly it.
+  install_info_plist_localizations
+  exit 0
 fi
 
 CODESIGN="$(command -v codesign || echo /usr/bin/codesign)"
@@ -59,6 +105,8 @@ sign() {
   rm -f "$captured"
   echo "signed $(basename "$target")"
 }
+
+install_info_plist_localizations
 
 # Frameworks and plug-ins first: an outer signature seals the bytes of the inner
 # ones, so signing the app before its contents would seal a state that is about
