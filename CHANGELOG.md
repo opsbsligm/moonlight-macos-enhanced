@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The first layer of USB device redirection: a policy that refuses every device until an
+  allow-list entry earns the yes, a host capability read that treats an unanswered
+  question as a no, and an audit line that carries a digest of a serial number instead of
+  the serial number. Nothing here opens a device, loads a driver, or adds an entitlement:
+  `docs/usb-redirection-design.md` records why the protocol and the signing identity make
+  the device itself unreachable today, and what has to be true before it is. Gated by
+  `scripts/device-redirection-policy-tests.py`, which compiles the shipping answer with a
+  real clang and has to notice all eight planted defects.
+
 ## [1.3.10-build1510] - 2026-09-19
 
 ### Fixed

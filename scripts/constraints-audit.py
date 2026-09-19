@@ -1206,6 +1206,11 @@ DRIVEN_BY = {
     # the one that refuses a gate reachable only through an aggregate whose own step
     # has quietly disappeared: follow this entry and you land on a step CI runs twice.
     "aspect-fit-presentation-tests.py": "scaling-output-evidence-tests.py",
+    # The same argument, one gate later: the device redirection policy is Objective-C, so
+    # its harness needs the macOS job's clang and SDK, and its own step would need the
+    # `workflow` scope the pushing credential does not carry. The driver below is a step on
+    # every macOS build, and it invokes this one.
+    "device-redirection-policy-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

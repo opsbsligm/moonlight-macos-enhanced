@@ -183,6 +183,7 @@
 				Network/StreamingSessionManager.m,
 				Network/WakeOnLanManager.m,
 				Stream/Connection.m,
+				Stream/DeviceRedirectionPolicy.m,
 				Stream/RendererLayerContainer.m,
 				Stream/StreamConfiguration.m,
 				Stream/StreamManager.m,

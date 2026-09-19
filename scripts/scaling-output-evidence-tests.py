@@ -586,8 +586,30 @@ def run_aspect_fit():
           "the aspect-fit gate failed:\n" + chr(10).join(tail))
 
 
+def run_device_redirection_policy():
+    """The refusal that decides whether a USB device may be offered to a host at all.
+
+    Nothing here scales a frame, so the question is why it runs here: the policy is
+    Objective-C, so its gate needs a real clang and a macOS SDK, which the Ubuntu audits
+    job does not have, and giving it its own step needs a push credential with the
+    `workflow` scope, which this one does not. Riding a step every macOS build already
+    runs is the way to be executed by CI in the meantime, and constraints-audit.py's
+    DRIVEN_BY writes that down rather than letting the gate look covered while nothing on
+    a runner invokes it. The same reason holds for the aspect-fit gate above; both are
+    listed there, and both are checked against the step that actually runs them.
+    """
+    ran = subprocess.run([sys.executable, "scripts/device-redirection-policy-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "a device is refused unless a rule earns the yes"
+          if ran.returncode == 0 else
+          "the device redirection policy gate failed:\n" + chr(10).join(tail))
+
+
 def finish():
     run_aspect_fit()
+    run_device_redirection_policy()
 
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0
