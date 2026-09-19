@@ -29,7 +29,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/usb-redirection-design.md` records why the protocol and the signing identity make
   the device itself unreachable today, and what has to be true before it is. Gated by
   `scripts/device-redirection-policy-tests.py`, which compiles the shipping answer with a
-  real clang and has to notice all eight planted defects.
+  real clang and has to notice all nine planted defects.
+
+- The second layer, still without touching a device: reading the bus honestly.
+  `MLUSBDeviceIdentity` answers one question from the IORegistry properties any plain user
+  process can already read -- what may be *said* about a device that is plugged in -- and
+  needed no new entitlement and no driver extension to do it. Identifiers arrive as numbers
+  or as hex text under more than one key name; text that is not hex shaped stays `unread`
+  rather than becoming a decimal guess, because a vendor id that was misread is a device
+  offered against the wrong rule. A serial number is digested where it is read and never
+  stored, so no object this layer builds carries one, and the diagnostic line names the
+  device by that digest and states the refusal that applies to it. An interface whose
+  protocol byte never arrived is treated as a boot input rather than a harmless one: the
+  cost of that reading is a device nobody plugged in, and the cost of the other reading is
+  the keyboard of whoever did. What is deliberately missing is a user interface -- a list of
+  refused devices, shown while the host protocol still has no device channel and the signing
+  identity still cannot load a driver extension, advertises a feature that does not exist.
+  Gated by `scripts/usb-device-enumeration-tests.py`, which compiles the enumeration and the
+  Stage 0 policy as one translation unit and has to notice six planted defects: the serial
+  written out, the serial dropped so every device looks alike, an over-long string parsed as
+  an identifier, half a hex number believed, one protocol byte shared across two interfaces,
+  and a key name struck from the list. The fourth is why the gate also feeds it a four
+  character half-hex id: the length guard alone hides that defect from every longer input.
 
 ## [1.3.10-build1510] - 2026-09-19
 

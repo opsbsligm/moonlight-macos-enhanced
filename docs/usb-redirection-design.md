@@ -1,10 +1,13 @@
-# USB 设备重定向：可行性、架构与 CI 基线（Stage 0）
+# USB 设备重定向：可行性、架构与 CI 基线（Stage 0-1）
 
 > English summary: device-level USB redirection cannot be built on today's protocol.
 > `moonlight-common-c` carries HID *semantics* and no device channel; a driver extension
 > would have to be Developer ID signed and notarised, which this project's adhoc identity
 > cannot do. Stage 0 ships the part that must exist first and is testable today: a policy
-> engine that refuses by default, and a capability negotiation that cannot lie.
+> engine that refuses by default, and a capability negotiation that cannot lie. Stage 1 adds
+> the read side only: an IORegistry identity, an interface-class verdict, and a
+> diagnostic line that carries a digest instead of a serial number. There is no interface for
+> it yet, and section 6 says why that is deliberate.
 
 ## 1. 结论
 
@@ -14,6 +17,9 @@
    - macOS 侧的 DriverKit extension 必须 Developer ID 签名 + 公证，而本仓库产物是 adhoc 签名。
 2. **可以先建的是决策层**：谁能被交给哪台主机、以什么理由、留下什么记录。这一层一旦缺失，后面每一层都会在压力下"先放行再补审计"。
 3. Stage 0 已实现并进门禁：`Limelight/Stream/DeviceRedirectionPolicy.{h,m}` + `scripts/device-redirection-policy-tests.py`。它不打开任何设备、不加任何 entitlement、不发任何字节。
+4. **Stage 1 已实现并进门禁**：`Limelight/Stream/USBDeviceEnumeration.{h,m}` +
+   `scripts/usb-device-enumeration-tests.py`。它把"本机插着什么"读成一个可归因、可审计、可拒绝的身份，
+   并且**只到这一步**：不接 UI、不打开设备、不加 entitlement（可行性取证见 2.5，UI 的取舍见 6）。
 
 ## 2. 已核实的事实（写结论前先取证）
 
@@ -45,11 +51,24 @@
 - **本仓库可直接复核**：`uuyc.163.com` 首页功能列表为文件传输、高清画面、隐私防护、多屏协作、远程开机（WOL）、按键映射、Mac 被控、无线副屏 —— **没有 USB 设备重定向**；`parsec.app/features` 为键盘映射、手柄支持、手柄管理、屏幕共享、多端 —— **同样没有 USB 设备重定向**。也就是说，两个以"串流体验"为卖点的竞品走的是**语义输入**路线，与 moonlight 的模型一致。
 - **未在本仓库内验证**（结论不依赖它，仅作方向参考）：Citrix Workspace 与 ToDesk 的 USB/外设重定向能力，业界公开做法是"类别级重定向 + 主机侧虚拟设备驱动 + 管理端白名单策略"。本设计的**默认拒绝 + 显式白名单 + 类别门**取自这一类通行做法的安全含义，而非引用其具体配置项。
 
+### 2.5 IOKit 只读枚举的可行性（Stage 1 的前置取证）
+
+- 在 Command Line Tools 工具链下（未签名、无 entitlement 的普通用户进程）调用
+  `IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOUSBHostDevice"), &iterator)`
+  返回 `KERN_SUCCESS` 且 iterator 有效 → **读取本机 USB 设备的属性不需要新 entitlement，也不需要 DEXT**。
+  2.3 的签名前置挡住的是"打开并接管设备"，不是"看见它插着"。
+- 由此确定 Stage 1 的边界：枚举与归因是纯读取，可以今天做完并进门禁；任何"把设备交给主机"的动作仍留在 Stage 3。
+- **尚未取证的部分**：真机上 `IOUSBHostDevice` 节点的键名与取值形态（`USB Vendor ID` 是 NSData 还是 NSNumber、
+  `bInterfaceClass` 是否按接口以数组到达）。薄壳按候选键名读取，接受数值或不超过 4 位的十六进制文本两种形态，
+  **读不到就返回 nil**，由 Stage 0 的身份门按"身份不完整"拒绝；接口 protocol 字节缺失时按启动输入设备处理（见 4.10）。
+  真机核对完成后，这两处只允许收紧，不允许放宽。
+
+
 ## 3. 架构：分层交付，每层各自解锁下一层
 
 ```
 Stage 0  决策与协商（纯本地、零设备访问）        ← 已实现
-Stage 1  设备枚举可见性与诊断（只读，本机关）
+Stage 1  设备枚举可见性与诊断（只读，本机关）        ← 已实现（不含 UI）
 Stage 2  语义旁路（新消息类型 + 能力位，需主机契约）
 Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 ```
@@ -57,9 +76,11 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 | Stage | 内容 | 前置条件 | 交付物 | 主要风险 |
 |---|---|---|---|---|
 | 0 | 策略引擎 + 能力协商 + 审计串 | 无 | `DeviceRedirectionPolicy`、门禁 harness、本文档 | 逻辑黑洞（顺序/绕过）；以门禁变异覆盖对冲 |
-| 1 | 本机设备枚举、类别归因、"为什么被拒"的 UI | Stage 0；`IOKit` 只读枚举 | 设备面板 + 诊断文案（走本地化审计） | 枚举信息进入日志造成指纹聚合 → 只落摘要令牌 |
+| 1 | 本机设备枚举、类别归因、"为什么被拒"的诊断串 | Stage 0；`IOKit` 只读枚举（取证见 2.5） | **已交付**：`USBDeviceEnumeration`（身份 + 摘要令牌 + 诊断行）及其门禁。**未交付**：设备面板 UI | 枚举信息进入日志造成指纹聚合 → 序列号只在读取处摘要，对象上不保留序列号字段；UI 缺席是有意为之（见 6） |
 | 2 | 主机侧虚拟 HID/存储：新增 RTSP 协商项、新能力位、新消息类型 | 主机实现 + 上游协议共识 | 上游 PR + 双端兼容矩阵 | 与旧主机误协商 → 严格"未知即否"（Stage 0 已实现该读法） |
 | 3 | DriverKit 直通 | Developer ID 证书 + 公证 + 主机虚拟总线 + 安装/卸载生命周期 | DEXT + helper 生命周期 + 崩溃回退 | 权限提升面、热插拔竞态、驱动残留 |
+
+**为什么 Stage 1 不含 UI**：在主机协议没有设备通道（2.2）、签名身份装不了 DEXT（2.3）之前，一份"被拒绝设备列表"能告诉用户的只有一件事——"这功能存在，但你的设备不行"。它把系统层面的不可用伪装成用户的设备问题。所以本轮只交付能力层，UI 与 Stage 2 的主机契约同时解锁。
 
 **为什么不是先做 Stage 3 再补安全**：Stage 3 的失败模式是权限提升与设备劫持，属于不可回滚的那类；Stage 0 的失败模式是一个错误答复，属于可回滚的那类。顺序由此决定。
 
@@ -75,6 +96,8 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 8. **可重放**：策略不读 `NSUserDefaults`、不读时钟、不看当前插拔状态，全部依赖注入状态；同样的输入必须给同样的判决与同样的审计串（门禁断言）。
 9. **现有风险的处置**：`disable-library-validation` 是为第三方多媒体库保留的既有放宽。任何未来 helper/DEXT 都不得复用该放宽，且必须像 AWDL helper 一样用 `SMAuthorizedClients` 代码要求串绑定调用方。
 
+10. **读不到的字节按不利处置，读到的字节如实上报**：接口 protocol 字节缺失时 `isBootInputInterface` 返回 YES（宁可拒一个并不存在的设备，也不放行一个可能是启动键盘的设备）；标识符两半边的读取**互相独立**——VID 拼不出十六进制就报 `unread`，同时如实报告 PID 读到了什么。审计的意义是报告实际看见了什么，把"半边没读到"扩大成"什么都没读到"会让诊断说谎。两条都由门禁锁定：前者是 Stage 0 的第 9 个变异，后者是 Stage 1 里"逐字段独立"这一语义的守门断言。
+
 ## 5. CI 基线
 
 | 项 | 现状 |
@@ -82,15 +105,19 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 | 新门禁 | `scripts/device-redirection-policy-tests.py`：逐字抽取 shipping 头文件与实现 → 真 clang（`apple_toolchain.clang_and_sdk`）+ `-Wall -Werror` 编译 → 真值表 + 审计断言 |
 | 行为断言 | 33 条：Stage 0 出厂态、三门各自触发、唯一 allow、无规则/类别不符/规则被禁用/产品号不匹配、family 规则与非法规则、三类身份缺失、保留类别（含复合设备）、启动键盘两条顺序敏感断言、手柄非启动键盘、能力协商 8 种答复、审计脱敏 4 条、确定性 |
 | 结构断言 | 头文件只 import Foundation；实现只 import CommonCrypto 与自己；无 IOKit/DriverKit/Usb import；`.m` 内无 `NSLog`/`printf`；`Moonlight.entitlements` 未新增 usb/driverkit；类别门不可能先于保留类别门 |
-| 变异 | 8 个，全部被抓：默认改为放行、配对门移除、保留类别清空、本地输入门移除、两输入门交换顺序、产品号允许匹配任意规则、身份门退化为"全不可读才拦"、序列号写入日志 |
-| 构建纳入 | `Moonlight.xcodeproj` 的 `membershipExceptions` 已加入 `Stream/DeviceRedirectionPolicy.m`（`source-membership-audit.py` 通过：118 files / 126 entries / 3 documented exclusions） |
+| 变异 | 9 个，全部被抓：默认改为放行、配对门移除、保留类别清空、本地输入门移除、两输入门交换顺序、产品号允许匹配任意规则、身份门退化为"全不可读才拦"、未读到的 protocol 字节被当成无害、序列号写入日志 |
+| 构建纳入 | `Moonlight.xcodeproj` 的 `membershipExceptions` 已加入 `Stream/DeviceRedirectionPolicy.m`（`source-membership-audit.py` 通过：120 files / 128 entries / 3 documented exclusions） |
 | 由谁执行 | macOS 每个 build 的 `scaling-output-evidence-tests.py` step 调用本 gate；`constraints-audit.py` 的 `DRIVEN_BY` 记录了这条依赖并校验"driver 确实是 CI step 且确实调用它"。原因：该 gate 需要真 clang 与 macOS SDK，Ubuntu audits job 跑不了，而新增 step 需要带 `workflow` scope 的凭证，当前推送凭证没有 |
+| Stage 1 门禁 | `scripts/usb-device-enumeration-tests.py`：把 `USBDeviceEnumeration.m` 与 Stage 0 的 `DeviceRedirectionPolicy.m` 作为**同一翻译单元**用真 clang + `-Wall -Werror` 编译（摘要实现只有一份，不复刻第二套），输入是注入的 registry 属性字典，**不链接 IOKit** |
+| Stage 1 断言 | 16 条行为断言在编译出的二进制里执行（数值/十六进制文本/`0x` 前缀/无标识符/过长文本/半个十六进制/4 字符的半十六进制、候选键名、接口与 protocol 的三种配对、复合设备经枚举路径同样被拒、诊断行不含序列号与产品名、摘要令牌一对一）；另有 5 条静态断言（不链接 IOKit、除摘要外只 import 一个系统头、枚举自身无日志出口、读取路径不看产品名、`Moonlight.entitlements` 未新增 usb） |
+| Stage 1 变异 | 6 个，全部被抓：序列号写出、序列号丢弃使所有设备同形、超长文本仍按标识符解析、半个十六进制被采信、一个 protocol 字节摊给两个接口、候选键名被删一个。第 4 个只有 4 字符输入才能抓到——长度护栏会掩盖它，所以那条断言是补上的缺口，不是装饰 |
 
-**后续 gate（Stage 1 前完成）**：枚举脱敏 gate（禁止序列号/设备名进入日志）、本地化 gate（新诊断文案必须过 `l10n-audit.py`）、Stage 2 的协商 gate（未知能力位/缺字段/版本偏斜必须全部落 `host-unsupported`）。
 
-## 6. Stage 1 的解锁条件与今天不做的事
+**剩余 gate**：枚举脱敏（禁止序列号与设备名进入日志）已由 Stage 1 门禁覆盖；剩下的两处随各自的交付走——UI 落地时新诊断文案必须过 `l10n-audit.py`，Stage 2 的协商 gate 必须让未知能力位、缺字段、版本偏斜全部落`host-unsupported`。
 
-- 不做：设备枚举、IOKit 调用、任何 UI 开关、任何网络消息。原因不是"来不及"，而是这些都会扩大攻击面，而在主机侧能力存在之前，它们能带来的唯一变化是**用户以为这个功能可用**。
+## 6. Stage 1 已交付的边界，与 Stage 2/3 的解锁条件
+
+- Stage 1 的边界（本轮已按此交付）：做枚举、归因与诊断串；不做 UI、不做网络消息、不打开设备。理由见第 3 节末尾——主机与签名两个前置到位之前，一份被拒列表只会把系统层面的不可用伪装成用户的设备问题。枚举本身经 2.5 取证，不需要新 entitlement，因此它属于"能今天做完并锁进门禁"的那一类。
 - 解锁 Stage 2 需要主机契约：新能力位 + 新 RTSP 协商项 + 至少一个主机实现的 PR。在此之前，`hostAdvertisesDeviceRedirectionInServerInfo:` 永远返回否，这是事实而不是占位。
 - 解锁 Stage 3 需要：Developer ID 证书与公证流水线、DEXT 安装/卸载生命周期、主机虚拟设备组件、崩溃与热插拔回退策略。缺任一项时 Stage 3 的工时估算没有意义。
 
@@ -104,10 +131,10 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 | #40 ⌘Tab 后被抢回 | 与 #21 同一入口：⌘Tab 后鼠标掠过窗口即触发 `mouseEntered:`。另一条候选路径 `scheduleTransientKeyLossRecoveryWithReason:` 已排除 —— 其调用点要求 `shouldSuppressTransientKeyLossUncaptureForCode:` 为真，而该函数要求全屏 + 已捕获 + app 仍 active + 450ms 内有顶边点击，#40 的"自由模式 + 窗口化"不满足 | **随 #21 一并解决**（关闭开关后需点击一次） |
 | #42 鼠标模式自动切换 | 上游作者本人已在 issue 内回复：功能已内测实现、正在重构、可能在下一版本带来（comment 5399187926） | **不做**，与上游重复实现只会制造合并冲突 |
 | #45 手柄 Menu 长按开关 | 上游 PR 的前提"源版本已支持手柄 Menu 长按切换鼠标模式"在本 fork **不成立**：`toggleMouseMode` 仅两处调用（`StreamViewController+MouseCapture.m:2719`、`:3006`），均为键盘快捷键路径；全仓无手柄 Menu 长按手势 | 不是"加个开关"，而是"手势 + 开关"两件事；需要决策，暂不动 |
-| #47 Metal HDR 三点 | 三点**均未实现**：EDR 仍 `MIN(safePotential, 1.55f)`（`VideoDecoderRenderer.m:692`）；Auto 分支仍 `return MLHDRTransferModeHLG`（同文件 600 附近）；HDR→SDR 仍有硬编码曝光 `float exposure = hdrMode == 1 ? 0.82 : 1.08;` 及一组分支乘数（同文件 1073-1087） | 可整合，但属渲染主路径，风险最高：逐点对齐 + 每点一条门禁，不做笼统移植 |
+| #47 Metal HDR 三点 | 三点**均未实现**：EDR 仍 `MIN(safePotential, 1.55f)`（`VideoDecoderRenderer.m:692`）；Auto 分支仍 `return MLHDRTransferModeHLG`（同文件 600 附近）；HDR→SDR 仍有硬编码曝光 `float exposure = hdrMode == 1 ? 0.82 : 1.08;` 及一组分支乘数（同文件 1073-1087） | 可整合但属渲染主路径，风险最高。**本轮判定为取向分歧而非缺口**：本 fork 已有 Conservative/Balanced/Peak/Auto 的 EDR 策略族，这三点是上游作者自己的观感调参，不能替换现有默认，只能作为新增 tone-map 策略选项共存、默认保持现状；逐点对齐 + 每点一条门禁 |
 | #44 英文本地化覆盖 | 本仓库 `l10n-audit.py` 已保证中英表对称并通过；该 PR 的另一半（缺译时英文回落、两份 `InfoPlist.strings` 注册进工程）需按页面核对 | 部分已由本仓库机制覆盖，剩余部分需逐页核对 |
 | #32 剪贴板不同步 | 已实现：`StreamViewController.m` 剪贴板监视（0.25s 轮询、单图 4 MiB、FNV 去重、会话所有权）+ `clipboardSyncMode` 设置 + 双语文案；协议侧 `LiBindClipboardSession` / `LiRequestClipboardSnapshot` / `LiSendClipboardItem` 与 `LI_FF_CLIPBOARD_TEXT/IMAGE` 齐备 | 不是缺口 |
 | #23 ⌘ 当 Win 键 | 已实现为快捷键翻译模式：`Swap Left Ctrl ↔ Left Win`、`Windows Shortcuts + Left Ctrl ↔ Left Win`、`MoonlightClassic` | 不是缺口 |
 
-结论：不需要签名、公证或主机改动就能交付的项里，#21/#40 已完成，#42 由上游在做，#45 的前置不成立，剩下的真实缺口是 #47（渲染主路径，需逐点）与 #44 的剩余覆盖。
+结论：不需要签名、公证或主机改动就能交付的项里，#21/#40 已完成，#42 由上游在做，#45 的前置不成立，剩下的真实缺口是 #47（只能作为新增策略选项共存，不改默认）与 #44 的剩余覆盖。
 
