@@ -17,6 +17,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+
+
+
+
 /// One interface of a device. A USB device is a bundle of interfaces, and a policy
 /// that only looked at the device's first class code would let a composite device --
 /// a hub that is also a keyboard, a dock that is also a security key -- choose which
@@ -28,6 +32,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithMajorClass:(unsigned char)majorClass
                         minorClass:(unsigned char)minorClass
                      protocolClass:(unsigned char)protocolClass;
+/// An interface whose protocol byte was never read. The registry does not always carry it,
+/// and a reader that filled the gap with zero would be reporting "no boot protocol" as a
+/// fact learned from the device rather than as a guess of its own.
++ (instancetype)interfaceWithMajorClass:(unsigned char)majorClass
+                             minorClass:(unsigned char)minorClass
+                          protocolKnown:(BOOL)protocolKnown;
 /// A keyboard or a mouse the host would be able to drive before any driver loads. On
 /// the machine that is typing a passphrase these are the two classes that can take the
 /// machine over, so redirecting one is a different decision from redirecting a scanner.
@@ -89,6 +99,26 @@ typedef NS_ENUM(NSInteger, MLDeviceRedirectionDenial) {
     MLDeviceRedirectionDenialRuleDisabled = 8,
     MLDeviceRedirectionDenialNoRule = 9,
 };
+
+/// The one place a serial number becomes something safe to write down: a SHA-256 prefix,
+/// or "none" when there is nothing to digest. Stage 1 enumerates devices and has to say
+/// which one it means, so this is exported rather than duplicated -- two copies of a digest
+/// rule drift apart, and the drift is invisible until a log turns out to carry a serial.
+FOUNDATION_EXPORT NSString *MLUSBDeviceAuditToken(NSString *_Nullable serialNumber);
+
+/// The one spelling of each refusal, shared by the audit line and by anything Stage 1 shows
+/// a player. A second copy would drift, and a refusal whose name differs between the log and
+/// the screen is a support thread nobody can follow.
+FOUNDATION_EXPORT NSString *MLDeviceRedirectionDenialName(MLDeviceRedirectionDenial denial);
+
+/// How an identifier is written down when it may be missing. Both stages say "unread" for a
+/// nil, because a formatter that printed 0000 would make an unread id indistinguishable from
+/// a device that really reported the first sentinel value.
+FOUNDATION_EXPORT NSString *MLUSBIdentityName(NSNumber *_Nullable identity);
+
+/// The interface classes of a device, for a line about it.
+FOUNDATION_EXPORT NSString *MLUSBInterfaceClassNames(NSArray<MLUSBInterfaceDescriptor *> *interfaces);
+
 
 @interface MLDeviceRedirectionVerdict : NSObject
 @property(nonatomic, readonly) MLDeviceRedirectionOutcome outcome;

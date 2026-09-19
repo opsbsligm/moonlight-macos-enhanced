@@ -34,6 +34,10 @@ enum {
 static const unsigned short MLUSBIdentityUnread = 0x0000;
 static const unsigned short MLUSBIdentityUnknown = 0xFFFF;
 
+// The protocol byte that means "not read". 0 is a real protocol (no boot protocol), so
+// it cannot double as the absence of one.
+static const unsigned char MLUSBProtocolUnread = 0xFF;
+
 // The tag a host would answer in /serverinfo. Stage 0 reads it and nothing else: no host
 // answers it today, and the refusal it produces is the honest one.
 static NSString *const MLDeviceRedirectionServerInfoTag = @"usbRedirection";
@@ -55,7 +59,9 @@ static NSString *const MLDeviceRedirectionServerInfoTag = @"usbRedirection";
                        deviceToken:(NSString *)deviceToken;
 @end
 
-@implementation MLUSBInterfaceDescriptor
+@implementation MLUSBInterfaceDescriptor {
+    BOOL _protocolIsKnown;
+}
 - (instancetype)initWithMajorClass:(unsigned char)majorClass
                         minorClass:(unsigned char)minorClass
                      protocolClass:(unsigned char)protocolClass {
@@ -64,13 +70,30 @@ static NSString *const MLDeviceRedirectionServerInfoTag = @"usbRedirection";
         _majorClass = majorClass;
         _minorClass = minorClass;
         _protocolClass = protocolClass;
+        _protocolIsKnown = YES;
     }
     return self;
+}
+
++ (instancetype)interfaceWithMajorClass:(unsigned char)majorClass
+                             minorClass:(unsigned char)minorClass
+                          protocolKnown:(BOOL)protocolKnown {
+    MLUSBInterfaceDescriptor *interface = [[MLUSBInterfaceDescriptor alloc] initWithMajorClass:majorClass
+                                                                                    minorClass:minorClass
+                                                                                 protocolClass:protocolKnown ? 0 : MLUSBProtocolUnread];
+    interface->_protocolIsKnown = protocolKnown;
+    return interface;
 }
 
 - (BOOL)isBootInputInterface {
     if (self.majorClass != MLUSBClassHID) {
         return NO;
+    }
+    // An HID interface whose protocol byte was never read is treated as boot capable.
+    // Refusing on missing information costs somebody a device they have to enable; guessing
+    // zero would hand a keyboard to a host on the strength of a byte nobody read.
+    if (!_protocolIsKnown) {
+        return YES;
     }
     return self.protocolClass == MLHIDInterfaceProtocolKeyboard ||
            self.protocolClass == MLHIDInterfaceProtocolMouse;
@@ -132,7 +155,7 @@ static NSString *const MLDeviceRedirectionServerInfoTag = @"usbRedirection";
 }
 @end
 
-static NSString *MLDenialName(MLDeviceRedirectionDenial denial) {
+NSString *MLDeviceRedirectionDenialName(MLDeviceRedirectionDenial denial) {
     switch (denial) {
         case MLDeviceRedirectionDenialNone:
             return @"none";
@@ -161,11 +184,19 @@ static NSString *MLDenialName(MLDeviceRedirectionDenial denial) {
     return @"unclassified";
 }
 
-static NSString *MLIdentityName(NSNumber *identity) {
+NSString *MLUSBIdentityName(NSNumber *identity) {
     if (identity == nil) {
         return @"unread";
     }
     return [NSString stringWithFormat:@"%04x", (unsigned short)[identity unsignedShortValue]];
+}
+
+NSString *MLUSBInterfaceClassNames(NSArray<MLUSBInterfaceDescriptor *> *interfaces) {
+    NSMutableArray<NSString *> *classes = [NSMutableArray array];
+    for (MLUSBInterfaceDescriptor *interface in interfaces) {
+        [classes addObject:[NSString stringWithFormat:@"%02x", interface.majorClass]];
+    }
+    return classes.count ? [classes componentsJoinedByString:@" "] : @"none";
 }
 
 @implementation MLDeviceRedirectionVerdict
@@ -190,22 +221,18 @@ static NSString *MLIdentityName(NSNumber *identity) {
 }
 
 - (NSString *)auditLine {
-    NSMutableArray<NSString *> *classes = [NSMutableArray array];
-    for (MLUSBInterfaceDescriptor *interface in self.subjectInterfaces) {
-        [classes addObject:[NSString stringWithFormat:@"%02x", interface.majorClass]];
-    }
     return [NSString stringWithFormat:@"device redirection: %@ vid=%@ pid=%@ classes=%@ token=%@ reason=%@ rule=%ld",
                                       self.isAllowed ? @"allow" : @"deny",
-                                      MLIdentityName(self.subjectVendorID),
-                                      MLIdentityName(self.subjectProductID),
-                                      classes.count ? [classes componentsJoinedByString:@" "] : @"none",
+                                      MLUSBIdentityName(self.subjectVendorID),
+                                      MLUSBIdentityName(self.subjectProductID),
+                                      MLUSBInterfaceClassNames(self.subjectInterfaces),
                                       self.deviceToken.length ? self.deviceToken : @"none",
-                                      MLDenialName(self.denial),
+                                      MLDeviceRedirectionDenialName(self.denial),
                                       (long)self.ruleIndex];
 }
 @end
 
-static NSString *MLDeviceToken(NSString *serialNumber) {
+NSString *MLUSBDeviceAuditToken(NSString *serialNumber) {
     if (serialNumber.length == 0) {
         return @"none";
     }
@@ -292,7 +319,7 @@ static BOOL MLIdentityIsReadable(NSNumber *identity) {
 }
 
 - (MLDeviceRedirectionVerdict *)verdictForDevice:(MLUSBDeviceDescriptor *)device {
-    NSString *token = MLDeviceToken(device.serialNumber);
+    NSString *token = MLUSBDeviceAuditToken(device.serialNumber);
 
     // The order below is the order a reader has to be able to trust, and the harness
     // drives each gate on its own so no later gate can be reached while an earlier one is

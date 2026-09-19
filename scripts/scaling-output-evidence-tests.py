@@ -625,10 +625,29 @@ def run_pointer_entry_policy():
           "the pointer entry policy gate failed:\n" + chr(10).join(tail))
 
 
+def run_usb_device_enumeration():
+    """What the bus can honestly be read as before any device reaches a host.
+
+    The first stage of the same work as the policy gate above, so it rides here for the same
+    two reasons: reading a device identity is Objective-C, so the harness needs the macOS
+    job's clang and SDK, and a step of its own needs the `workflow` scope this pushing
+    credential does not carry. constraints-audit.py's DRIVEN_BY records the arrangement
+    rather than letting the gate look covered while no runner invokes it.
+    """
+    ran = subprocess.run([sys.executable, "scripts/usb-device-enumeration-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "a device on the bus is named by digest and never by serial"
+          if ran.returncode == 0 else
+          "the usb device enumeration gate failed:\n" + chr(10).join(tail))
+
+
 def finish():
     run_aspect_fit()
     run_device_redirection_policy()
     run_pointer_entry_policy()
+    run_usb_device_enumeration()
 
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0

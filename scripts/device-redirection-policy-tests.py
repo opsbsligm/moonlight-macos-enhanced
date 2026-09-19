@@ -16,7 +16,7 @@ is how a policy bug becomes a support thread.
 
 The gates have to fire in the written order, so each one is driven alone: a case that
 would end in the same refusal whichever gate fired proves nothing about which one did.
-Seven defects are then planted one at a time -- refuse by default inverted, the pairing
+Nine defects are then planted one at a time -- refuse by default inverted, the pairing
 gate removed, the reserved classes emptied, the local-input gate removed, the order of the
 two input gates swapped, product ids left to match any rule, and the serial number written
 into the log -- and each has to be caught. A mutation that does not even change the source
@@ -64,9 +64,9 @@ IDENTITY_GATE = (
     "    if (!MLIdentityIsReadable(device.vendorID) || !MLIdentityIsReadable(device.productID) ||\n"
     "        device.interfaces.count == 0) {\n"
 )
-LEAKABLE_LINE = "    NSString *token = MLDeviceToken(device.serialNumber);"
+LEAKABLE_LINE = "    NSString *token = MLUSBDeviceAuditToken(device.serialNumber);"
 LEAKED_LINE = (
-    "    NSString *token = [MLDeviceToken(device.serialNumber) isEqualToString:@\"none\"]"
+    "    NSString *token = [MLUSBDeviceAuditToken(device.serialNumber) isEqualToString:@\"none\"]"
     " ? @\"none\" : device.serialNumber;"
 )
 
@@ -159,6 +159,13 @@ static void expect_capability(const char *what, NSDictionary *serverInfo, BOOL w
 int main(void) {
     @autoreleasepool {
         NSArray *pad = @[iface(0x03, 0x00, 0x00)];
+        // The registry does not always carry the protocol byte. A reader that filled the
+        // gap with zero would be reporting a fact it never learned.
+        MLUSBInterfaceDescriptor *unreadProtocol =
+            [MLUSBInterfaceDescriptor interfaceWithMajorClass:0x03 minorClass:0x00 protocolKnown:NO];
+        NSArray *padWithUnreadProtocol = @[unreadProtocol];
+        check(unreadProtocol.isBootInputInterface,
+              "an HID interface with an unread protocol byte is not assumed harmless");
         NSArray *keyboard = @[iface(0x03, 0x01, 0x01)];
         NSArray *webcam = @[iface(0x0e, 0x00, 0x00)];
         NSArray *dock = @[iface(0x08, 0x06, 0x50), iface(0x0b, 0x00, 0x00)];
@@ -272,6 +279,13 @@ int main(void) {
                device(0x04d9, 0x0169, nil, keyboard), NO,
                MLDeviceRedirectionDenialLocalInputReserved, -1);
         expect("a gamepad is not a boot keyboard",
+               policy(YES, YES, padClass, NO, padRule), device(0x28de, 0x2202, nil, pad),
+               YES, MLDeviceRedirectionDenialNone, 0);
+        expect("a pad whose protocol byte was never read waits behind the input switch",
+               policy(YES, YES, padClass, NO, padRule),
+               device(0x28de, 0x2202, nil, padWithUnreadProtocol), NO,
+               MLDeviceRedirectionDenialLocalInputReserved, -1);
+        expect("a pad whose protocol byte was read is believed",
                policy(YES, YES, padClass, NO, padRule), device(0x28de, 0x2202, nil, pad),
                YES, MLDeviceRedirectionDenialNone, 0);
 
@@ -399,6 +413,11 @@ def main():
               mutated(rules, "the identity gate",
                       IDENTITY_GATE,
                       IDENTITY_GATE.replace("||", "&&")),
+              cc, sdk)
+    run_rules("an unread protocol byte is guessed as harmless",
+              mutated(rules, "the unread protocol byte",
+                      "if (!_protocolIsKnown) {\n        return YES;\n    }",
+                      "if (!_protocolIsKnown) {\n        return NO;\n    }"),
               cc, sdk)
     run_rules("the serial number is written into the log",
               mutated(rules, "the serial number leaks",

@@ -1215,6 +1215,10 @@ DRIVEN_BY = {
     # Objective-C, so its harness needs a macOS clang and SDK, and a step of its own needs
     # the `workflow` scope the pushing credential does not carry.
     "pointer-entry-takeover-tests.py": "scaling-output-evidence-tests.py",
+    # Fourth gate of the same shape, and the same two reasons: the enumeration reads a
+    # registry identity in Objective-C, so its harness needs the macOS clang and SDK, and a
+    # step of its own needs the `workflow` scope the pushing credential does not carry.
+    "usb-device-enumeration-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}
@@ -1229,13 +1233,25 @@ for driven, driver in sorted(DRIVEN_BY.items()):
                         encoding="utf-8").read().splitlines()
     driver_is_a_step = re.search(r"scripts/" + re.escape(driver),
                                  pipeline) is not None
-    driver_invokes_it = any(driven in line and INVOKES.search(line)
-                            for line in driver_lines)
+    # An invoked line is not the same thing as an invoked gate. Wiring the usb enumeration
+    # gate here produced exactly that: the subprocess.run sat inside a function the driver's
+    # finish() never called, every text check passed, and the only thing that caught it was
+    # reading the driver's own output for a line that never appeared. So the call is now
+    # followed up to the def that owns it, and that def has to be called somewhere too.
+    call_line = next((i for i, line in enumerate(driver_lines)
+                      if driven in line and INVOKES.search(line)), None)
+    owner = next((line[4:].split("(")[0].strip()
+                  for line in reversed(driver_lines[:call_line]) if line.startswith("def "))
+                 if call_line is not None else None)
+    owner_is_called = owner is not None and sum(
+        1 for line in driver_lines
+        if re.search(r"\b" + re.escape(owner) + r"\(", line)) >= 2
+    driver_invokes_it = call_line is not None and owner_is_called
     check(driver_is_a_step and driver_invokes_it,
           "%s is driven by %s, and that driver is a CI step" % (driven, driver)
           if driver_is_a_step and driver_invokes_it else
-          "%s claims %s as its driver, but that gate is not a CI step or no "
-          "longer invokes it" % (driven, driver))
+          "%s claims %s as its driver, but that gate is not a CI step, or the call "
+          "sits in a function nothing reaches" % (driven, driver))
 
 # --- a header has to be able to name the type it declares -----------------
 # GlassOverlayContainer.m compiled in its own harness while the app that owns it
