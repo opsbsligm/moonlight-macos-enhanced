@@ -11,5 +11,5 @@
 //
 // Both generators derive the number identically: git rev-list --count HEAD,
 // so a GUI build and a CI build of the same commit produce the same version.
-BUILD_NUMBER = 1508
+BUILD_NUMBER = 1509
 #include? "$(DERIVED_FILE_DIR)/GeneratedBuildNumber.xcconfig"

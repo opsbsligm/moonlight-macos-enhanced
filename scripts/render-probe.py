@@ -220,6 +220,23 @@ def verify(report, out_dir=None):
            "the page never finished fading in (alpha %r)" % alpha)
     expect(report.get("presentedAfterDismiss") is False, "the presenter still reports settings after dismiss")
     expect(report.get("overlayStillMountedAfterDismiss") is False, "the page is still mounted after dismiss")
+    # The presenter being asked to close, and the control on the page reaching the
+    # presenter, are different claims. The exit the player uses is the second one.
+    expect(report.get("backControlPressReachedPresenter") is True,
+           "the page never ran the closure the back control runs, so the control reaches nothing")
+    expect(report.get("presentedAfterBackControl") is False,
+           "pressing the back control left the page presented, so the control never reached "
+           "the presenter")
+    expect(report.get("mountedAfterBackControl") is False,
+           "pressing the back control left the page mounted in the window content")
+    # Handing the keyboard back is a claim only a window that can hold the keyboard
+    # can answer, so it is required where the probe window was key and reported as
+    # unanswerable everywhere else -- an offscreen probe window is never key.
+    expect(not (report.get("probeWindowIsKeyWindow") and report.get("focusOnPageAfterBackControl")),
+           "the page kept the keyboard after a close in a window that can hold one")
+    expect(report.get("titleAfterBackControl") == report.get("titleBeforePresent"),
+           "pressing the back control did not give the window title back (%r after %r)"
+           % (report.get("titleAfterBackControl"), report.get("titleBeforePresent")))
 
     pixels = report.get("settingsPagePixels") or {}
     stddev = pixels.get("stddev")
@@ -374,6 +391,10 @@ def self_test():
             good = {"windowsAddedByPresentingSettings": [], "viewsAddedToWindowContent": 1,
                     "overlayInsideWindowContent": True, "overlayAlpha": 1.0,
                     "presentedAfterDismiss": False, "overlayStillMountedAfterDismiss": False,
+                    "backControlPressReachedPresenter": True, "titleBeforePresent": "Moonlight",
+                    "presentedAfterBackControl": False, "mountedAfterBackControl": False,
+                    "focusOnPageAfterBackControl": False, "probeWindowIsKeyWindow": False,
+                    "titleAfterBackControl": "Moonlight",
                     "settingsPagePixels": {"stddev": 0.21, "distinctColours": 77},
                     "materialLayers": ["CABackdropLayer x4"]}
             good.update(sample_panes())
@@ -394,6 +415,15 @@ def self_test():
                 ("two pages stacked instead of one", lambda report: report.update({"viewsAddedToWindowContent": 2})),
                 ("the fade never finished", lambda report: report.update({"overlayAlpha": 0.0})),
                 ("dismiss left the page mounted", lambda report: report.update({"overlayStillMountedAfterDismiss": True})),
+                ("the back control presses on air", lambda report: report.update(
+                    {"presentedAfterBackControl": True, "mountedAfterBackControl": True,
+                     "focusOnPageAfterBackControl": True})),
+                ("the back control runs against a box nothing owns", lambda report: report.update(
+                    {"backControlPressReachedPresenter": False, "presentedAfterBackControl": True})),
+                ("closing by the back control keeps the window title", lambda report: report.update(
+                    {"titleAfterBackControl": "Settings"})),
+                ("the page keeps the keyboard in a window that can hold one", lambda report: report.update(
+                    {"probeWindowIsKeyWindow": True, "focusOnPageAfterBackControl": True})),
                 ("nothing was drawn", lambda report: report.update(
                     {"settingsPagePixels": {"stddev": 0.001, "distinctColours": 2}})),
                 ("no material is composited", lambda report: report.update({"materialLayers": []})),

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.10-build1509] - 2026-09-19
+
+### Fixed
+
+- **The settings page could not be left with its own back control.** The page
+  reports dismissal through a box it holds weakly, so a control inside the view can
+  name the presenter without the presenter handing out `self` before `super.init`
+  -- but nothing owned that box, so it was deallocated as `init` returned and every
+  press called through a nil. The back control and `Escape` did nothing; only
+  Command+W and the host window closing still worked, so the page was one a player
+  walks into and can only leave with a shortcut nobody reads. The presenter now owns
+  the box for as long as the page is up. The probe had closed the page by asking the
+  presenter directly, which proves the teardown and says nothing about the control,
+  so it passed on the shape that shipped. It now runs the very closure the back
+  control runs -- the code a press executes -- and refuses one that leaves the page
+  presented, still mounted, holding the keyboard, or holding the window title.
+  Whether the control is also visible to accessibility is reported rather than
+  asserted: SwiftUI publishes that tree only to an external client, so a runner
+  with no client attached answers empty, and the first version of this probe
+  refused a working page for exactly that reason. On its first run the new probe
+  found two flaws in itself: the title baseline was read after the presenter had
+  already renamed the window, so no close could ever match it, and the keyboard
+  hand-back was asserted on a window that is never key, where AppKit does not move
+  the first responder at all. Both are now read the way the claim means.
+
 ## [1.3.10-build1508] - 2026-09-18
 
 Post-release engineering audit of the v1.3.9-build19 tree. Every item below was

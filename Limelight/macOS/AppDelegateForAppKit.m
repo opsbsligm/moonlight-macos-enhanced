@@ -624,6 +624,29 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     report[name] = result;
 }
 
+// The back control is the exit a player actually presses, so the probe presses it
+// rather than only asking the presenter to close the page. SwiftUI vends the control
+// through the hosting view accessibility tree, which this process can read without any
+// system permission.
+static id<NSAccessibility> MLProbeFindBackControl(id<NSAccessibility> node, int depth) {
+    if (node == nil || depth > 24) {
+        return nil;
+    }
+    if ([[node accessibilityRole] isEqual:NSAccessibilityButtonRole]) {
+        NSString *label = [node accessibilityLabel];
+        if ([label isEqual:@"Back"] || [label isEqual:@"返回"]) {
+            return node;
+        }
+    }
+    for (id<NSAccessibility> child in [node accessibilityChildren]) {
+        id<NSAccessibility> found = MLProbeFindBackControl(child, depth + 1);
+        if (found) {
+            return found;
+        }
+    }
+    return nil;
+}
+
 static NSMutableDictionary *MLProbeReport = nil;
 static NSMutableArray<NSString *> *MLProbeFailures = nil;
 static NSString *MLProbeOutputDirectory = nil;
@@ -679,6 +702,9 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
 
     NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
     NSSet<NSView *> *subviewsBefore = [NSSet setWithArray:content.subviews];
+    // Taken before presenting: the presenter is about to rename the window, so a
+    // baseline read afterwards is the page own title, which no close can return to.
+    NSString *titleBeforePresent = window.title ?: @"";
 
     [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
     MLProbeSpin(1.0);
@@ -797,6 +823,46 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         if (stddev < 0.08 || distinct < 40) {
             refuse([NSString stringWithFormat:@"the settings page rendered as flat: stddev %.3f, %lu distinct colours",
                     stddev, (unsigned long)distinct]);
+        }
+
+        // Asking the presenter to close proves the teardown works. It does not prove the
+        // control on the page can reach the presenter, and those are different claims: the
+        // page holds the box that carries the action weakly, so only the presenter keeping
+        // that box alive makes the back control mean anything. With it unheld, the button
+        // and Escape both press on air while Command+W and the window closing still work.
+        // Press the control, then ask what came down with it.
+        // Whether the control is visible to accessibility is reported and not asserted:
+        // SwiftUI publishes that tree to an external client, so a runner with no client
+        // attached answers empty and the assertion would refuse a working page. What is
+        // asserted is the closure the control runs, which is the thing a press executes.
+        report[@"backControlVisibleToAccessibility"] = @(MLProbeFindBackControl((id<NSAccessibility>)overlay, 0) != nil);
+        BOOL backControlReached = [SettingsOverlayPresenter pressBackControlInWindow:window];
+        report[@"backControlPressReachedPresenter"] = @(backControlReached);
+        MLProbeSpin(0.6);
+        report[@"presentedAfterBackControl"] = @([SettingsOverlayPresenter isSettingsPresentedInWindow:window]);
+        report[@"mountedAfterBackControl"] = @([overlay isDescendantOf:content]);
+        report[@"focusOnPageAfterBackControl"] = @(window.firstResponder == overlay);
+        report[@"probeWindowIsKeyWindow"] = @(window.isKeyWindow);
+        report[@"titleBeforePresent"] = titleBeforePresent;
+        report[@"titleAfterBackControl"] = window.title ?: @"";
+        if (!backControlReached) {
+            refuse(@"the settings page was not presented when the back control was asked to run");
+        }
+        if ([SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+            refuse(@"running the back control closure left the page presented -- the closure reaches a box nothing owns");
+        }
+        if ([overlay isDescendantOf:content]) {
+            refuse(@"running the back control closure left the page mounted in the window content");
+        }
+        // Handing the keyboard back is only a claim a window that can hold the keyboard
+        // can answer. This probe window sits offscreen and is never key, and AppKit does not
+        // move the first responder of a window that is not key, so the claim is asserted
+        // only where the window can actually answer it.
+        if (window.isKeyWindow && window.firstResponder == overlay) {
+            refuse(@"running the back control closure left the keyboard on the page it just closed");
+        }
+        if (![window.title isEqualToString:titleBeforePresent]) {
+            refuse([NSString stringWithFormat:@"running the back control closure left the title %@ instead of %@", window.title ?: @"", titleBeforePresent]);
         }
 
         [SettingsOverlayPresenter dismissSettingsFromWindow:window];

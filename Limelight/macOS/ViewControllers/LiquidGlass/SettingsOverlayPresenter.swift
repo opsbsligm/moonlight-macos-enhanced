@@ -37,6 +37,21 @@ private final class DismissBox {
   private let window: NSWindow
   private let hostId: String?
   private let hosting: NSHostingController<LiquidGlassSettingsView>
+  /// The box the page reports dismissal through, held here on purpose.
+  ///
+  /// The view keeps the box weakly -- `onClose` closes over `[weak box]`, so a box
+  /// that nothing else owns is deallocated the moment `init` returns, and the back
+  /// control then calls through a nil and does nothing. Escape rides the same button,
+  /// so a page a player can walk into would only leave by Command+W or by the host
+  /// window closing. The box exists so the control can name the presenter without the
+  /// presenter handing out `self` before `super.init`; owning it is what makes that
+  /// name mean something for as long as the page is up.
+  private let dismissBox: DismissBox
+  /// The closure the page's back control runs, kept so the probe can run exactly
+  /// that closure. It closes over the box weakly, so on a build where nothing owns
+  /// the box the call does nothing -- which is why asking it is a different claim
+  /// from dismissing the page, and the claim the player depends on.
+  private let pageOnClose: () -> Void
   /// The page's model, held here so the page and anything measuring it look at one
   /// instance instead of two. See the note on `LiquidGlassSettingsView.settingsModel`.
   private let settingsModel: SettingsModel
@@ -86,6 +101,15 @@ private final class DismissBox {
   }
 #endif
 
+  /// Runs the closure the back control runs, so the probe presses what the player
+  /// presses instead of the teardown behind it.
+  @objc(pressBackControlInWindow:)
+  static func pressBackControl(in window: NSWindow?) -> Bool {
+    guard let window, let presenter = active[ObjectIdentifier(window)] else { return false }
+    presenter.pageOnClose()
+    return true
+  }
+
   @objc(dismissSettingsFromWindow:)
   static func dismiss(from window: NSWindow?) {
     guard let window else { return }
@@ -103,10 +127,13 @@ private final class DismissBox {
     self.hostId = hostId
 
     let box = DismissBox()
+    self.dismissBox = box
+    let pageOnClose: () -> Void = { [weak box] in box?.action() }
+    self.pageOnClose = pageOnClose
     self.settingsModel = SettingsModel()
     self.hosting = NSHostingController(
       rootView: LiquidGlassSettingsView(hostId: hostId,
-                                        onClose: { [weak box] in box?.action() },
+                                        onClose: pageOnClose,
                                         settingsModel: settingsModel)
     )
     super.init()
