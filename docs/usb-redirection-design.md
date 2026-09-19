@@ -96,18 +96,18 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 
 ## 7. 与 issue/PR 驱动的整合 backlog
 
-USB 重定向不是本期唯一缺口。下面每一项都先在本仓库里核对过实现状态，因为把已经实现的东西列为缺口，比漏列一项更糟：它会让人去重做，并且不再相信这张表。
+每一项都读过上游原文并在本仓库里核对过实现状态。把已实现的东西列为缺口，比漏列一项更糟：它会让人重做，并让这张表不再被相信。
 
-| 议题 | 核对到的现状 | 结论 |
+| 议题 | 核对到的现状（证据路径） | 结论 |
 |---|---|---|
-| #32 剪贴板不同步 | 已实现：`StreamViewController.m` 有剪贴板监视（0.25s 轮询、单图 4 MiB 上限、FNV 去重、会话所有权与启动宽限），设置项 `clipboardSyncMode`，中英双语文案含 Foundation 主机说明；协议侧 `LiBindClipboardSession` / `LiRequestClipboardSnapshot` / `LiSendClipboardItem` 与 `LI_FF_CLIPBOARD_TEXT/IMAGE` 齐备 | 不是缺口，无需重复实现 |
-| #23 ⌘ 当 Win 键 | 已实现为快捷键翻译模式：`Swap Left Ctrl ↔ Left Win`、`Windows Shortcuts + Left Ctrl ↔ Left Win`、`MoonlightClassic`（⌘→Ctrl、Control→Win） | 不是缺口，只需确认默认档与文案 |
-| #42 鼠标模式智能切换 | `mouseMode` 设置项与 200 余处相关实现存在（默认 `remote`），但未看到"按场景自动切换"的证据 | 待逐条核对，可能是"有多种模式"而非"会自动选" |
-| #47 Metal HDR 三点 | `EDR` / `PQ` / headroom 相关实现存在 83 处，本 fork 已有 HDR 策略族 | 需按 #47 的三点逐个对齐，不能笼统说已实现 |
-| #45 Menu 长按开关 | `Limelight/` 内 `holdMenu` / `longPressMenu` / `menuHold` 零命中；本地化仅有"长按修饰键释放鼠标" | 未实现 |
-| #21 悬停自动激活 | 仅有 `dimNonHoveredArtwork`（封面变暗）；`autoActivate` / `focusActivate` 零命中 | 未实现，且需默认关闭的显式开关 |
-| #40 ⌘Tab 被抢回 | 未核对 | 下一轮先取证再判断 |
-| #44 英文本地化覆盖 | `l10n-audit.py` 通过且中英表对称 | 覆盖机制已有，缺口需按具体页面核对 |
+| #21 悬停触发自动激活 | 根因确认：`StreamViewController+MouseCapture.m` 的 tracking area 带 `NSTrackingActiveAlways`（背景态仍收 `mouseEntered:`），入口路径调用 `ensureStreamWindowKeyIfPossible` → `activateIgnoringOtherApps:`。本轮已交付：判定收进 `MLPointerEntryActionsForState`（`Limelight/macOS/PointerEntryPolicy.{h,m}`），鼠标面板新增开关，默认为"是"（保持既有行为） | **本轮已解决**，`scripts/pointer-entry-takeover-tests.py` 把关 |
+| #40 ⌘Tab 后被抢回 | 与 #21 同一入口：⌘Tab 后鼠标掠过窗口即触发 `mouseEntered:`。另一条候选路径 `scheduleTransientKeyLossRecoveryWithReason:` 已排除 —— 其调用点要求 `shouldSuppressTransientKeyLossUncaptureForCode:` 为真，而该函数要求全屏 + 已捕获 + app 仍 active + 450ms 内有顶边点击，#40 的"自由模式 + 窗口化"不满足 | **随 #21 一并解决**（关闭开关后需点击一次） |
+| #42 鼠标模式自动切换 | 上游作者本人已在 issue 内回复：功能已内测实现、正在重构、可能在下一版本带来（comment 5399187926） | **不做**，与上游重复实现只会制造合并冲突 |
+| #45 手柄 Menu 长按开关 | 上游 PR 的前提"源版本已支持手柄 Menu 长按切换鼠标模式"在本 fork **不成立**：`toggleMouseMode` 仅两处调用（`StreamViewController+MouseCapture.m:2719`、`:3006`），均为键盘快捷键路径；全仓无手柄 Menu 长按手势 | 不是"加个开关"，而是"手势 + 开关"两件事；需要决策，暂不动 |
+| #47 Metal HDR 三点 | 三点**均未实现**：EDR 仍 `MIN(safePotential, 1.55f)`（`VideoDecoderRenderer.m:692`）；Auto 分支仍 `return MLHDRTransferModeHLG`（同文件 600 附近）；HDR→SDR 仍有硬编码曝光 `float exposure = hdrMode == 1 ? 0.82 : 1.08;` 及一组分支乘数（同文件 1073-1087） | 可整合，但属渲染主路径，风险最高：逐点对齐 + 每点一条门禁，不做笼统移植 |
+| #44 英文本地化覆盖 | 本仓库 `l10n-audit.py` 已保证中英表对称并通过；该 PR 的另一半（缺译时英文回落、两份 `InfoPlist.strings` 注册进工程）需按页面核对 | 部分已由本仓库机制覆盖，剩余部分需逐页核对 |
+| #32 剪贴板不同步 | 已实现：`StreamViewController.m` 剪贴板监视（0.25s 轮询、单图 4 MiB、FNV 去重、会话所有权）+ `clipboardSyncMode` 设置 + 双语文案；协议侧 `LiBindClipboardSession` / `LiRequestClipboardSnapshot` / `LiSendClipboardItem` 与 `LI_FF_CLIPBOARD_TEXT/IMAGE` 齐备 | 不是缺口 |
+| #23 ⌘ 当 Win 键 | 已实现为快捷键翻译模式：`Swap Left Ctrl ↔ Left Win`、`Windows Shortcuts + Left Ctrl ↔ Left Win`、`MoonlightClassic` | 不是缺口 |
 
-上游他人 PR 的未整合项同样在核对范围内：#47（Metal HDR）、#45（Menu 长按开关）、#44（本地化覆盖）。它们的共同点是都不需要签名、公证或主机侧改动，因此可以先于 USB 的任何一层交付。
+结论：不需要签名、公证或主机改动就能交付的项里，#21/#40 已完成，#42 由上游在做，#45 的前置不成立，剩下的真实缺口是 #47（渲染主路径，需逐点）与 #44 的剩余覆盖。
 
