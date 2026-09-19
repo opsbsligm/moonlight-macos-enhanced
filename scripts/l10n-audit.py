@@ -75,6 +75,32 @@ def table_symmetry(en_keys, zh_keys):
     return only_en, only_zh
 
 
+def info_plist_localization(files_by_directory):
+    # An InfoPlist.strings localizes the Info.plist that sits beside it and nothing else.
+    # Xcode reads it as that plist's language variant instead of copying it as a resource,
+    # so the same file parked somewhere else in the tree yields no artifact, breaks no build,
+    # and fails no gate: the permission sentences stay in English on a Chinese system while
+    # every table in this repository stays green. Both halves of that silence get refused --
+    # the file outside a language folder, and a language folder with no plist beside it.
+    problems = []
+    for directory in sorted(files_by_directory):
+        if "InfoPlist.strings" not in files_by_directory[directory]:
+            continue
+        parent, language = os.path.split(directory)
+        if not language.endswith(".lproj"):
+            problems.append("%s is not inside a language folder" % directory)
+        elif "Info.plist" not in files_by_directory[parent]:
+            problems.append("%s has no Info.plist beside it to localize" % language)
+    return problems
+
+
+def info_plist_layout(scan_root):
+    files = {}
+    for directory, _, names in os.walk(os.path.join(scan_root, "Limelight")):
+        files[directory] = set(names)
+    return files
+
+
 EN_TABLE = "Limelight/macOS/en.lproj/Localizable.strings"
 ZH_TABLE = "Limelight/macOS/zh-Hans.lproj/Localizable.strings"
 
@@ -359,6 +385,17 @@ SYMMETRY_CASES = [
     ("a key only chinese declares", ["a"], ["a", "b"], ([], ["b"])),
 ]
 
+LOC_META_CASES = [
+    ("a language folder beside the plist it localizes",
+     {"/p": {"Info.plist"}, "/p/en.lproj": {"InfoPlist.strings"}}, True),
+    ("a language folder with no plist beside it",
+     {"/p": set(), "/p/en.lproj": {"InfoPlist.strings"}}, False),
+    ("the file parked outside any language folder",
+     {"/p": {"Info.plist", "InfoPlist.strings"}}, False),
+    ("a localizable table anywhere is none of this rule",
+     {"/p": set(), "/p/en.lproj": {"Localizable.strings"}}, True),
+]
+
 # keys found, call tokens, whether the scan has to be refused.
 HEALTH_CASES = [
     (162, 439, False),
@@ -408,6 +445,14 @@ def self_test():
         ok = found == expected
         check(ok, "table symmetry %s %s" %
               ("reports" if ok else "got %s, expected %s for" % (found, expected), name))
+    for name, layout, must_pass in LOC_META_CASES:
+        found = info_plist_localization(layout)
+        ok = bool(found) != must_pass
+        check(ok, "info plist layout %s %s" %
+              ("accepts" if must_pass else "refuses", name) if ok else
+              "info plist layout %s: %s for %s" %
+              ("missed" if not must_pass else "wrongly refused", found, name))
+
 
 
 print("localization: %d english keys, %d chinese keys, %d keys referenced in code"
@@ -474,6 +519,11 @@ for path, text in source_texts(root):
 check(not arity_problems, "every MLString call matches the macro the header defines"
       if not arity_problems else
       "MLString calls with the wrong number of arguments: %d" % len(arity_problems))
+
+meta_problems = info_plist_localization(info_plist_layout(root))
+check(not meta_problems, "the Info.plist language files sit where a build will read them"
+      if not meta_problems else
+      "Info.plist localizations no build will ever use: " + ", ".join(meta_problems))
 
 # The scan and its health rule are the whole value of this audit, so they are
 # tested here rather than assumed: an audit that cannot tell a clean tree from a
