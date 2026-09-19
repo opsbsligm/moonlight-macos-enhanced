@@ -132,9 +132,9 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 | #42 鼠标模式自动切换 | 上游作者本人已在 issue 内回复：功能已内测实现、正在重构、可能在下一版本带来（comment 5399187926） | **不做**，与上游重复实现只会制造合并冲突 |
 | #45 手柄 Menu 长按开关 | 上游 PR 的前提"源版本已支持手柄 Menu 长按切换鼠标模式"在本 fork **不成立**：`toggleMouseMode` 仅两处调用（`StreamViewController+MouseCapture.m:2719`、`:3006`），均为键盘快捷键路径；全仓无手柄 Menu 长按手势 | 不是"加个开关"，而是"手势 + 开关"两件事；需要决策，暂不动 |
 | #47 Metal HDR 三点 | **本轮逐点分处**：① Auto→PQ 不改默认（显式 PQ 今天已是可选项，取向分歧不靠翻转默认解决）；② "Auto 用满显示器 headroom" 等价于既有 `Peak` EDR 策略，无需新增；③ "移除硬编码曝光" 已实现为 Tone Mapping Policy 的新档 `No Exposure Shift`（`MLHDRSdrExposureForPolicy` 对它返回 1.0），Auto／三个 Preserve／Reference 仍分别施加 0.82（PQ）与 1.08（其它），与改动前逐位一致；④ 上游删掉的传输色彩空间探测辅助函数在本 fork 仍被 Auto 判断使用，不适用 | 门禁 `scripts/hdr-sdr-exposure-tests.py`：真 clang 下 18 组 policy×transfer 断言 + 结构断言（常数只有一处、kernel 必须被传值、picker 与 C 枚举同集合）+ 7 个变异全抓 |
-| #44 英文本地化覆盖 | 本仓库 `l10n-audit.py` 已保证中英表对称并通过；该 PR 的另一半（缺译时英文回落、两份 `InfoPlist.strings` 注册进工程）需按页面核对 | 部分已由本仓库机制覆盖，剩余部分需逐页核对 |
+| #44 英文本地化覆盖 | **两处真实缺口已闭合**。(1) 主表侧的"缺译"不需要逐页人工核对：`l10n-audit.py` 要求源码请求的每个 key 在中英两表都存在且对称，少一个即失败，"系统语言无匹配时回落英文"由 CFBundle 的开发语言保证（`knownRegions` 以 en 居首）。(2) Info.plist 侧有两处错：`NSLocalNetworkUsageDescription` 以中文写死在 plist 里（英文系统只能显示中文），已改为开发语言、中文进语言表；而 `InfoPlist.strings` 从未进入 bundle——Xcode 在"手写 Info.plist + 文件系统同步组"配置下不产出该文件（日志里的 `INFOSTRINGS_PATH` 只是设置项而非产出步骤；从一次 green run 的 artifact 里既找不到 strings 也找不到 `.loctable`），因此上一轮"把语言表挪到 plist 旁边"并没有改变产物 | 现由 `scripts/codesign-bundle.sh` 在签名密封之前安装并回读计数校验（缺表即拒绝签名），`scripts/build.sh` 调用同一步以保持本地与发布一致；源侧三类缺陷由 `l10n-audit.py` 拒绝并自带用例 |
 | #32 剪贴板不同步 | 已实现：`StreamViewController.m` 剪贴板监视（0.25s 轮询、单图 4 MiB、FNV 去重、会话所有权）+ `clipboardSyncMode` 设置 + 双语文案；协议侧 `LiBindClipboardSession` / `LiRequestClipboardSnapshot` / `LiSendClipboardItem` 与 `LI_FF_CLIPBOARD_TEXT/IMAGE` 齐备 | 不是缺口 |
 | #23 ⌘ 当 Win 键 | 已实现为快捷键翻译模式：`Swap Left Ctrl ↔ Left Win`、`Windows Shortcuts + Left Ctrl ↔ Left Win`、`MoonlightClassic` | 不是缺口 |
 
-结论：不需要签名、公证或主机改动就能交付的项里，#21/#40 已完成，#42 由上游在做，#45 的前置不成立，#47 已按取向分歧逐点分处（见该行），剩下的真实缺口只有 #44 的剩余覆盖。
+结论：不需要签名、公证或主机改动就能交付的项里，#21/#40 已完成，#42 由上游在做，#45 的前置不成立，#47 已按取向分歧逐点分处，#44 的两处真实缺口已闭合。这张表里不再有"能直接交付却没做"的项；还能往前推的，都要先等到外部前置落地：协议的设备通道、主机的虚拟设备总线、Developer ID 与公证。
 

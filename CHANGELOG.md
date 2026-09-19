@@ -69,6 +69,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kernel no longer handed the value, a picker that lost a policy, and one policy meaning two
   different numbers in two languages.
 
+### Fixed
+
+- **Permission prompts reached users in a language nobody chose.** Two separate faults sat in
+  the same few sentences. The local network prompt was written into `Info.plist` in Chinese,
+  which is not a translation of anything but what an English system is therefore made to
+  display; it reads English there now -- the development region -- and the Chinese arrives as
+  a translation of that. And no prompt was ever translated at all, because nothing put the
+  language tables into the bundle: Xcode does not produce `InfoPlist.strings` for a
+  hand-written plist behind a file-system-synchronized group, and the `INFOSTRINGS_PATH` in a
+  build log only names where such a file would go. The proof was an artifact downloaded from a
+  green run, carrying neither the strings file nor a `.loctable`, which is also the reading
+  that an earlier commit here had to take back after it had moved those tables beside the
+  plist on the assumption that proximity was enough. `scripts/codesign-bundle.sh` installs the
+  tables before the signature seals the bundle, refuses to sign when the repository declares
+  no table to install, and counts what the bundle holds against what it installed;
+  `scripts/build.sh` asks that same step of the signing script, so a local build shows what a
+  download will show. `l10n-audit.py` refuses a sentence baked into the plist in a language
+  other than the development region, a sentence answered by one table and not the other, and a
+  language folder with no plist beside it -- each of the three tested against the case it
+  exists for.
+
 ## [1.3.10-build1510] - 2026-09-19
 
 ### Fixed
