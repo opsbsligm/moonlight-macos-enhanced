@@ -712,6 +712,7 @@
 "Preserve Highlights" = "保高光";
 "Preserve Midtones" = "保中间调";
 "Preserve Shadows" = "保暗部";
+"No Exposure Shift" = "不加曝光补偿";
 "MetalFX Spatial (Quality)" = "MetalFX 空间缩放（画质）";
 "MetalFX Spatial (Performance)" = "MetalFX 空间缩放（性能）";
 "Basic Scaling" = "基础缩放";

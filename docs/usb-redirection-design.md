@@ -131,10 +131,10 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 | #40 ⌘Tab 后被抢回 | 与 #21 同一入口：⌘Tab 后鼠标掠过窗口即触发 `mouseEntered:`。另一条候选路径 `scheduleTransientKeyLossRecoveryWithReason:` 已排除 —— 其调用点要求 `shouldSuppressTransientKeyLossUncaptureForCode:` 为真，而该函数要求全屏 + 已捕获 + app 仍 active + 450ms 内有顶边点击，#40 的"自由模式 + 窗口化"不满足 | **随 #21 一并解决**（关闭开关后需点击一次） |
 | #42 鼠标模式自动切换 | 上游作者本人已在 issue 内回复：功能已内测实现、正在重构、可能在下一版本带来（comment 5399187926） | **不做**，与上游重复实现只会制造合并冲突 |
 | #45 手柄 Menu 长按开关 | 上游 PR 的前提"源版本已支持手柄 Menu 长按切换鼠标模式"在本 fork **不成立**：`toggleMouseMode` 仅两处调用（`StreamViewController+MouseCapture.m:2719`、`:3006`），均为键盘快捷键路径；全仓无手柄 Menu 长按手势 | 不是"加个开关"，而是"手势 + 开关"两件事；需要决策，暂不动 |
-| #47 Metal HDR 三点 | 三点**均未实现**：EDR 仍 `MIN(safePotential, 1.55f)`（`VideoDecoderRenderer.m:692`）；Auto 分支仍 `return MLHDRTransferModeHLG`（同文件 600 附近）；HDR→SDR 仍有硬编码曝光 `float exposure = hdrMode == 1 ? 0.82 : 1.08;` 及一组分支乘数（同文件 1073-1087） | 可整合但属渲染主路径，风险最高。**本轮判定为取向分歧而非缺口**：本 fork 已有 Conservative/Balanced/Peak/Auto 的 EDR 策略族，这三点是上游作者自己的观感调参，不能替换现有默认，只能作为新增 tone-map 策略选项共存、默认保持现状；逐点对齐 + 每点一条门禁 |
+| #47 Metal HDR 三点 | **本轮逐点分处**：① Auto→PQ 不改默认（显式 PQ 今天已是可选项，取向分歧不靠翻转默认解决）；② "Auto 用满显示器 headroom" 等价于既有 `Peak` EDR 策略，无需新增；③ "移除硬编码曝光" 已实现为 Tone Mapping Policy 的新档 `No Exposure Shift`（`MLHDRSdrExposureForPolicy` 对它返回 1.0），Auto／三个 Preserve／Reference 仍分别施加 0.82（PQ）与 1.08（其它），与改动前逐位一致；④ 上游删掉的传输色彩空间探测辅助函数在本 fork 仍被 Auto 判断使用，不适用 | 门禁 `scripts/hdr-sdr-exposure-tests.py`：真 clang 下 18 组 policy×transfer 断言 + 结构断言（常数只有一处、kernel 必须被传值、picker 与 C 枚举同集合）+ 7 个变异全抓 |
 | #44 英文本地化覆盖 | 本仓库 `l10n-audit.py` 已保证中英表对称并通过；该 PR 的另一半（缺译时英文回落、两份 `InfoPlist.strings` 注册进工程）需按页面核对 | 部分已由本仓库机制覆盖，剩余部分需逐页核对 |
 | #32 剪贴板不同步 | 已实现：`StreamViewController.m` 剪贴板监视（0.25s 轮询、单图 4 MiB、FNV 去重、会话所有权）+ `clipboardSyncMode` 设置 + 双语文案；协议侧 `LiBindClipboardSession` / `LiRequestClipboardSnapshot` / `LiSendClipboardItem` 与 `LI_FF_CLIPBOARD_TEXT/IMAGE` 齐备 | 不是缺口 |
 | #23 ⌘ 当 Win 键 | 已实现为快捷键翻译模式：`Swap Left Ctrl ↔ Left Win`、`Windows Shortcuts + Left Ctrl ↔ Left Win`、`MoonlightClassic` | 不是缺口 |
 
-结论：不需要签名、公证或主机改动就能交付的项里，#21/#40 已完成，#42 由上游在做，#45 的前置不成立，剩下的真实缺口是 #47（只能作为新增策略选项共存，不改默认）与 #44 的剩余覆盖。
+结论：不需要签名、公证或主机改动就能交付的项里，#21/#40 已完成，#42 由上游在做，#45 的前置不成立，#47 已按取向分歧逐点分处（见该行），剩下的真实缺口只有 #44 的剩余覆盖。
 

@@ -52,6 +52,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a key name struck from the list. The fourth is why the gate also feeds it a four
   character half-hex id: the length guard alone hides that defect from every longer input.
 
+- HDR-to-SDR tone mapping gained the choice upstream PR #47 argued for, without any policy
+  changing the number it applies today. The overall exposure used to be a literal inside the
+  Metal source, where the only way to learn what a policy actually applied was to read the
+  shader and do the arithmetic. It is now `MLHDRSdrExposureForPolicy`, and the kernel is
+  handed the answer through a uniform component it never read before. The policy that answers
+  1.0 -- nothing shifted, reference white left to the transfer function and the metadata -- is
+  the new `No Exposure Shift` entry under Tone Mapping Policy. Auto, the three Preserve
+  policies and Reference keep 0.82 for PQ and 1.08 for everything else, which is exactly what
+  they applied before the constant moved. Two other asks from that pull request turned out to
+  be already answered rather than missing: an HDR stream can be told to use PQ explicitly
+  today, and `Peak` in EDR Strategy is the "use the headroom the display reports" behaviour.
+  Gated by `scripts/hdr-sdr-exposure-tests.py`, which compiles the answer with a real clang
+  across all eighteen policy-and-transfer pairs and has to notice seven planted defects: three
+  in the answer, four in the structure around it -- the constant back inside the shader, a
+  kernel no longer handed the value, a picker that lost a policy, and one policy meaning two
+  different numbers in two languages.
+
 ## [1.3.10-build1510] - 2026-09-19
 
 ### Fixed

@@ -643,11 +643,30 @@ def run_usb_device_enumeration():
           "the usb device enumeration gate failed:\n" + chr(10).join(tail))
 
 
+def run_hdr_sdr_exposure():
+    """The exposure each HDR-to-SDR policy applies, and where that number is allowed to live.
+
+    Not a scaling question either. It rides here for the same two reasons as the gates below
+    it: the answer is C inside the renderer, so its harness wants the macOS job's clang and
+    SDK, and a step of its own wants the `workflow` scope this pushing credential does not
+    carry. constraints-audit.py's DRIVEN_BY records it, and now also refuses an entry whose
+    call sits in a function the driver never reaches.
+    """
+    ran = subprocess.run([sys.executable, "scripts/hdr-sdr-exposure-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "every tone mapping policy states the exposure it applies"
+          if ran.returncode == 0 else
+          "the hdr sdr exposure gate failed:\n" + chr(10).join(tail))
+
+
 def finish():
     run_aspect_fit()
     run_device_redirection_policy()
     run_pointer_entry_policy()
     run_usb_device_enumeration()
+    run_hdr_sdr_exposure()
 
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0

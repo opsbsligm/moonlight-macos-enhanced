@@ -372,6 +372,7 @@ typedef NS_ENUM(NSInteger, MLHDRToneMappingPolicy) {
     MLHDRToneMappingPolicyPreserveMidtones = 2,
     MLHDRToneMappingPolicyPreserveShadows = 3,
     MLHDRToneMappingPolicyReference = 4,
+    MLHDRToneMappingPolicyNoExposureShift = 5,
 };
 
 typedef NS_ENUM(NSInteger, MLDisplaySyncMode) {
@@ -693,6 +694,22 @@ static float MLResolvedEDRHeadroomForStrategy(MLHDREDRStrategy strategy,
     }
 }
 
+/// The overall exposure the HDR-to-SDR tone map starts from.
+///
+/// This number used to live inside the Metal source, where nothing but a running stream
+/// could see it, and where "what does each policy actually apply" had no answer to point
+/// at. Upstream PR #47 argued the compensation should go away entirely; this fork ships a
+/// family of policies rather than one person's eye, so the removal arrives as a policy of
+/// its own and every default keeps the number it has always applied.
+static float MLHDRSdrExposureForPolicy(MLHDRToneMappingPolicy policy,
+                                       MLHDRTransferMode transferMode)
+{
+    if (policy == MLHDRToneMappingPolicyNoExposureShift) {
+        return 1.0f;
+    }
+    return transferMode == MLHDRTransferModePQ ? 0.82f : 1.08f;
+}
+
 static BOOL MLBoolForDisplaySyncMode(MLDisplaySyncMode mode, BOOL legacyVsync)
 {
     switch (mode) {
@@ -966,7 +983,7 @@ static MLYCbCrConversionParameters MLYCbCrConversionParametersForPixelFormat(OST
     };
     params.hdrControls = (vector_float4){
         (float)toneMappingPolicy,
-        0.0f,
+        MLHDRSdrExposureForPolicy(toneMappingPolicy, hdrTransferMode),
         0.0f,
         0.0f,
     };
@@ -1067,10 +1084,10 @@ static NSString *const kMetalShaderSource = @"#include <metal_stdlib>\n"
 "    const float e = 0.14;\n"
 "    return saturate((color * (a * color + b)) / (color * (c * color + d) + e));\n"
 "}\n"
-"float3 toneMapHdrToSdr(float3 rgb, uint hdrMode, float opticalOutputScale, uint tonePolicy, float4 hdrLuminance) {\n"
+"float3 toneMapHdrToSdr(float3 rgb, uint hdrMode, float opticalOutputScale, uint tonePolicy, float sdrExposure, float4 hdrLuminance) {\n"
 "    float3 linear = hdrLinearize(rgb, hdrMode, opticalOutputScale);\n"
 "    linear = bt2020ToRec709(linear);\n"
-"    float exposure = hdrMode == 1 ? 0.82 : 1.08;\n"
+"    float exposure = sdrExposure;\n"
 "    float minLuminance = max(hdrLuminance.x, 0.0001);\n"
 "    float maxLuminance = max(hdrLuminance.y, 100.0);\n"
 "    float maxAverageLuminance = clamp(hdrLuminance.z, minLuminance, maxLuminance);\n"
@@ -1100,13 +1117,13 @@ static NSString *const kMetalShaderSource = @"#include <metal_stdlib>\n"
 "    }\n"
 "    return rec709Encode(mapped);\n"
 "}\n"
-"float3 processHdr(float3 rgb, uint hdrMode, float opticalOutputScale, bool useEDR, uint tonePolicy, float4 hdrLuminance) {\n"
+"float3 processHdr(float3 rgb, uint hdrMode, float opticalOutputScale, bool useEDR, uint tonePolicy, float sdrExposure, float4 hdrLuminance) {\n"
 "    rgb = clamp(rgb, 0.0, 1.0);\n"
 "    if (hdrMode == 0) {\n"
 "        return rgb;\n"
 "    }\n"
 "    if (!useEDR && opticalOutputScale < 0.0) {\n"
-"        return toneMapHdrToSdr(rgb, hdrMode, -opticalOutputScale, tonePolicy, hdrLuminance);\n"
+"        return toneMapHdrToSdr(rgb, hdrMode, -opticalOutputScale, tonePolicy, sdrExposure, hdrLuminance);\n"
 "    }\n"
 "    if (useEDR) {\n"
 "        return hdrLinearize(rgb, hdrMode, opticalOutputScale);\n"
@@ -1134,6 +1151,7 @@ static NSString *const kMetalShaderSource = @"#include <metal_stdlib>\n"
 "                     params.hdrMetadata.y,\n"
 "                     params.hdrMetadata.z > 0.5,\n"
 "                     (uint)(params.hdrControls.x + 0.5),\n"
+"                     params.hdrControls.y,\n"
 "                     params.hdrLuminance);\n"
 "    textureRGB.write(float4(rgb, 1.0), gid);\n"
 "}\n";

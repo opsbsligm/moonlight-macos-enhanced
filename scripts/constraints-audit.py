@@ -1219,6 +1219,9 @@ DRIVEN_BY = {
     # registry identity in Objective-C, so its harness needs the macOS clang and SDK, and a
     # step of its own needs the `workflow` scope the pushing credential does not carry.
     "usb-device-enumeration-tests.py": "scaling-output-evidence-tests.py",
+    # Same shape again: the exposure answer is C inside the renderer, so its harness wants the
+    # macOS clang and SDK, and its own step wants the `workflow` scope this credential lacks.
+    "hdr-sdr-exposure-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

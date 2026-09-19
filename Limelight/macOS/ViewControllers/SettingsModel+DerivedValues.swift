@@ -812,6 +812,7 @@ extension SettingsModel {
     ("Preserve Midtones", 2),
     ("Preserve Shadows", 3),
     ("Reference", 4),
+    ("No Exposure Shift", 5),
   ]
   static var hdrToneMappingPolicies: [String] {
     hdrToneMappingPolicyOptions.map(\.title)
