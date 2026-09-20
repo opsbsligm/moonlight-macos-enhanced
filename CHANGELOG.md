@@ -94,6 +94,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   device redirection and not key mapping, and that is USB Stage 2. No behaviour changed, and
   every number in the document came out of the commands printed in its own last section.
 
+### Removed
+
+- Seven sentences that described settings which no longer exist: `Shortcut Translation Mode
+  Keep Mac detail` and its five siblings plus `MoonlightClassic`, left behind when
+  `KeyboardCompatibilityMode` was cut to a single case. They survived because nothing asks for
+  them, which is precisely why they were dangerous: `docs/input-mapping-benchmark.md` read
+  those rows and reported seven keyboard translation modes this fork does not have. Both
+  tables dropped them together (1029 keys became 1024 each), and §5.5 of that document now
+  records how a language table was mistaken for a feature list, so the mistake has a written
+  end rather than a corrected sentence.
+### Fixed
 - **Setting a custom resolution turned off a switch nobody had touched.** Three places in
   `SettingsObjCBridge.swift` rebuild the whole `Settings` value by hand -- read what is
   stored, spell all ninety-one fields out again, change one thing, persist -- and one of those
@@ -135,17 +146,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   English. Deleting either of the two new table entries, in either language, or renaming the
   option label without adding an entry, turns the audit red.
 
-### Removed
-
-- Seven sentences that described settings which no longer exist: `Shortcut Translation Mode
-  Keep Mac detail` and its five siblings plus `MoonlightClassic`, left behind when
-  `KeyboardCompatibilityMode` was cut to a single case. They survived because nothing asks for
-  them, which is precisely why they were dangerous: `docs/input-mapping-benchmark.md` read
-  those rows and reported seven keyboard translation modes this fork does not have. Both
-  tables dropped them together (1029 keys became 1024 each), and §5.5 of that document now
-  records how a language table was mistaken for a feature list, so the mistake has a written
-  end rather than a corrected sentence.
-### Fixed
 
 - **Permission prompts reached users in a language nobody chose.** Two separate faults sat in
   the same few sentences. The local network prompt was written into `Info.plist` in Chinese,
