@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The half of USB device redirection that a client cannot finish alone is now a document
+  another repository can say no to. `docs/usb-redirection-host-contract.md` states the
+  capability a host has to answer in `/serverinfo`, the session messages it is asking for,
+  and what each side has to prove before either calls the pair compatible. Everything it
+  rests on was read this round with the command printed beside it: the core submodule and
+  the upstream public header carry no USB symbol at all, Sunshine's `virtualhid_input.cpp`
+  and the one function that assembles `/serverinfo` are both real and named by file and
+  line, and a search of that host's issues for the feature returns nothing -- which is the
+  same answer upstream gave here. The proposal borrows the shape of the clipboard, because
+  `LiSendClipboardItem` is the existing proof that a new payload can ride the reliable
+  control channel and be chunked by the core. It also says plainly that the three new
+  symbols do not exist in either tree, and that the client keeps its capability read
+  unwired until a host can be observed answering it: wiring a check no one consumes,
+  against hosts that never send the field, would be code that cannot be tested even once.
+
 ## [1.3.10-build1529] - 2026-09-20
 
 
