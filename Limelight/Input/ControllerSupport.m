@@ -7,6 +7,7 @@
 //
 
 #import "ControllerSupport.h"
+#import "GamepadMenuGesture.h"
 #import "Controller.h"
 
 #import "OnScreenControls.h"
@@ -1111,44 +1112,47 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
         GCController *gcController = controller.gamepad;
         GCExtendedGamepad *gamepad = gcController.extendedGamepad;
         
-        // 1. Mouse Mode Toggle Logic: Long Press Start (Menu) for > 1.0s, triggered on RELEASE
-        BOOL startPressed = NO;
-        
+        // 1. Mouse Mode Toggle Logic: a Menu hold past the requirement, decided on release.
+        // The answer comes from MLGamepadMenuGestureToggles rather than a date compare in
+        // this callback, because issue #45 asked for a switch on a gesture that had none --
+        // and a gesture nobody could switch off was also a gesture nobody could replay.
+        // The MFi path here and the CoreHID path in HIDSupport.m now ask one function, so a
+        // single switch governs both and the boundary cannot drift between them.
+        BOOL menuPressed = NO;
+
         if (gamepad) {
             if (@available(iOS 13.0, tvOS 13.0, macOS 10.15, *)) {
-                startPressed = gamepad.buttonMenu.pressed;
+                menuPressed = gamepad.buttonMenu.pressed;
             }
         }
-        
-        if (startPressed) {
-            if (controller.startButtonDownTime == nil) {
-                controller.startButtonDownTime = [NSDate date];
-            }
-        } else {
-            // Start released
-            if (controller.startButtonDownTime != nil) {
-                // Check if it was held long enough
-                if ([controller.startButtonDownTime timeIntervalSinceNow] < -1.0) {
-                    // Toggle
-                    controller.isMouseMode = !controller.isMouseMode;
-                    
-                    // Notify delegate
-                    if ([self->_presenceDelegate respondsToSelector:@selector(mouseModeToggled:)]) {
-                        [self->_presenceDelegate mouseModeToggled:controller.isMouseMode];
-                    }
-                    
-                    // Rumble to indicate toggle
-                    [self rumble:controller.playerIndex lowFreqMotor:0xFFFF highFreqMotor:0xFFFF];
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                        [self rumble:controller.playerIndex lowFreqMotor:0 highFreqMotor:0];
-                    });
-                }
-                
-                // Reset
-                controller.startButtonDownTime = nil;
-            }
+
+        BOOL gestureEnabled = NO;
+        if ([self->_presenceDelegate respondsToSelector:@selector(gamepadMenuLongPressTogglesMouseModeEnabled)]) {
+            gestureEnabled = [self->_presenceDelegate gamepadMenuLongPressTogglesMouseModeEnabled];
         }
-        
+
+        MLGamepadMenuGesture gesture = controller.menuGesture;
+        const BOOL toggled = MLGamepadMenuGestureToggles(&gesture,
+                                                         menuPressed ? YES : NO,
+                                                         [NSDate date].timeIntervalSinceReferenceDate,
+                                                         gestureEnabled ? YES : NO,
+                                                         MLGamepadMenuLongPressRequiredSeconds);
+        controller.menuGesture = gesture;
+        if (toggled) {
+            controller.isMouseMode = !controller.isMouseMode;
+
+            // Notify delegate
+            if ([self->_presenceDelegate respondsToSelector:@selector(mouseModeToggled:)]) {
+                [self->_presenceDelegate mouseModeToggled:controller.isMouseMode];
+            }
+
+            // Rumble to indicate toggle
+            [self rumble:controller.playerIndex lowFreqMotor:0xFFFF highFreqMotor:0xFFFF];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self rumble:controller.playerIndex lowFreqMotor:0 highFreqMotor:0];
+            });
+        }
+
         // 2. Mouse Movement Logic
         if (controller.isMouseMode) {
             // Handing the pointer back to the Mac turns input forwarding off,

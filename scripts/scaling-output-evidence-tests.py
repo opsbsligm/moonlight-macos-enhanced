@@ -679,6 +679,23 @@ def run_settings_rebuild_passthrough():
           "the settings rebuild passthrough gate failed:\n" + chr(10).join(tail))
 
 
+def run_gamepad_menu_gesture():
+    """Ride the controller gesture gate on a macOS job, the way its siblings do.
+
+    The gate needs a real clang and a macOS SDK to compile the shipping decision, so it
+    cannot run in the Ubuntu audits job, and a step of its own would need the `workflow`
+    scope this pushing credential does not carry. constraints-audit.py's DRIVEN_BY records
+    the arrangement rather than letting a gate look covered while nothing invokes it.
+    """
+    ran = subprocess.run([sys.executable, "scripts/gamepad-menu-gesture-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "a long Menu hold changes mouse mode only when the player allowed it"
+          if ran.returncode == 0 else "the gamepad menu gesture gate failed:\n" + chr(10).join(tail))
+
+
+
 def finish():
     run_aspect_fit()
     run_device_redirection_policy()
@@ -686,6 +703,7 @@ def finish():
     run_usb_device_enumeration()
     run_hdr_sdr_exposure()
     run_settings_rebuild_passthrough()
+    run_gamepad_menu_gesture()
 
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0

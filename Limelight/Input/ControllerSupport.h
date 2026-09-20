@@ -16,6 +16,12 @@
 - (void)gamepadPresenceChanged;
 - (void)mousePresenceChanged;
 - (void)mouseModeToggled:(BOOL)enabled;
+@optional
+/// Whether holding Menu long enough may hand the pointer to the controller. Asked per
+/// sample, so a player who changes the setting gets it on the next press; asked of the
+/// delegate because this class is built from a stream configuration and never learns which
+/// host it is talking to, and the preference belongs to the host.
+- (BOOL)gamepadMenuLongPressTogglesMouseModeEnabled;
 
 @end
 

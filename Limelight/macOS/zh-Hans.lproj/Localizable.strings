@@ -784,6 +784,8 @@
 "Stream Shortcuts" = "串流快捷键";
 "Clipboard" = "剪贴板";
 "Clipboard Sync" = "剪贴板同步";
+"Gamepad Menu Long Press Toggles Mouse Mode" = "手柄 Menu 长按切换鼠标模式";
+"Gamepad Menu Long Press Toggles Mouse Mode detail" = "手柄长按 Menu 超过约一秒后松开，会把指针交给手柄模拟鼠标。若游戏需要这个长按动作，关闭后 Menu 仍作为普通按键发往主机，键盘上的鼠标模式快捷键不受影响。";
 "Pointer Enter Activates Stream" = "指针移入窗口时激活串流";
 "Pointer Enter Activates Stream detail" = "鼠标移入串流窗口时，把串流窗口带到前台（与本机此前所有版本的行为一致）。关闭后可继续在其他 Mac 应用工作：需要接管指针时，点击一次串流窗口即可。\n";"Clipboard Sync detail" = "当当前串流会话持有剪贴板同步控制权时，自动同步文本和单张图片。";
 "Clipboard Sync Foundation detail" = "此功能适用于 Foundation Sunshine 主机。受支持的主机会默认启用自动同步，不支持的主机会直接忽略。";

@@ -833,6 +833,15 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  /// Does holding the controller's Menu button hand the pointer to the controller? Off, the
+  /// button stays the game's own button, which is what a player holding it for an in-game
+  /// action asked for in issue #45. Read per sample, so it takes effect on the next press.
+  @Published var gamepadMenuLongPressTogglesMouseMode: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var appArtworkWidth: CGFloat? {
     didSet {
       guard !isLoading else { return }
@@ -1311,6 +1320,7 @@ class SettingsModel: ObservableObject {
 
     emulateGuide = Self.defaultEmulateGuide
     hoverActivatesStreamWindow = Self.defaultHoverActivatesStreamWindow
+    gamepadMenuLongPressTogglesMouseMode = Self.defaultGamepadMenuLongPressTogglesMouseMode
     appArtworkWidth = Self.defaultAppArtworkWidth
     appArtworkHeight = Self.defaultAppArtworkHeight
     dimNonHoveredArtwork = Self.defaultDimNonHoveredArtwork

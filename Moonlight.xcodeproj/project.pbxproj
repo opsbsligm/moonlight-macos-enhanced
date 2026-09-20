@@ -183,6 +183,7 @@
 				Network/StreamingSessionManager.m,
 				Network/WakeOnLanManager.m,
 				Stream/Connection.m,
+				Input/GamepadMenuGesture.m,
 				macOS/PointerEntryPolicy.m,
 				Stream/DeviceRedirectionPolicy.m,
 				Stream/USBDeviceEnumeration.m,

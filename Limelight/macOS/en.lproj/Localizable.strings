@@ -784,6 +784,8 @@
 "Stream Shortcuts" = "Stream Shortcuts";
 "Clipboard" = "Clipboard";
 "Clipboard Sync" = "Clipboard Sync";
+"Gamepad Menu Long Press Toggles Mouse Mode" = "Controller Menu Long Press Switches Mouse Mode";
+"Gamepad Menu Long Press Toggles Mouse Mode detail" = "Holding the controller's Menu button past a second and letting go hands the pointer over to the controller. Turn this off when a game needs that hold: Menu then keeps travelling to the host as the ordinary button it is, and the keyboard shortcut for mouse mode is untouched.";
 "Pointer Enter Activates Stream" = "Pointer Enter Activates Stream";
 "Pointer Enter Activates Stream detail" = "Brings the stream window to the front when the pointer moves into it, the way every build of this app has behaved until now. Turn it off to keep working in another Mac app: one click on the stream window is then enough to take the pointer back.\n";"Clipboard Sync detail" = "Automatically syncs text and one image while this stream owns clipboard sync.";
 "Clipboard Sync Foundation detail" = "Available for Foundation Sunshine hosts. Supported hosts default to Auto Sync, and unsupported hosts simply ignore it.";

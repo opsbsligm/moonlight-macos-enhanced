@@ -24,6 +24,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unwired until a host can be observed answering it: wiring a check no one consumes,
   against hosts that never send the field, would be code that cannot be tested even once.
 
+- A controller's Menu button can be handed back to the game. Holding it past a second and
+  letting go has flipped mouse mode for as long as this fork has had a controller, with a
+  rumble to mark it, and a player whose game needs that hold had no way to keep the button
+  -- issue #45. The switch is per host and defaults to on, which is the behaviour every
+  build until now, and it is read per press, so turning it off lands on the next hold
+  rather than the next connection. `scripts/gamepad-menu-gesture-tests.py` compiles the
+  decision with a real clang and drives it with samples rather than seconds: a release at
+  exactly one second stays the game's short press, a hold nobody released has not toggled,
+  one release cannot fire twice, a hold begun while the switch was off does not inherit a
+  timer, and a hold that straddles the switch coming back on does not bank the time it
+  spent off. Six planted defects have to be noticed, and one of them was the shape this
+  change's first draft actually had: the idle state was written as `-1.0 / 0.0`, which is
+  minus infinity rather than a NaN, so it compared, subtracted, and answered "still
+  holding" forever -- every release toggled. The sample table found it, and it needed a
+  case of its own before the frozen-timer mutation could be told apart from the fix.
+
+### Fixed
+
+- **One gesture kept two clocks, and a design document called it missing.** The Menu long
+  press was implemented twice, once per controller driver: a 16 ms timer in
+  `ControllerSupport.m` reading `gamepad.buttonMenu.pressed`, and
+  `updateButtonFlags:state:` in `HIDSupport.m` reading `PLAY_FLAG`. Each kept its own
+  `NSDate` on the shared `Controller` and each compared it against its own private `-1.0`,
+  which is how a boundary that has to mean one thing to a player ends up meaning two. Both
+  now ask `MLGamepadMenuGestureToggles`, so the requirement is one number in one file and
+  the switch is one preference read by both paths -- which is what the issue's "both input
+  paths read this switch" asked for. The same document had recorded this gesture as absent,
+  because it had looked only at where `toggleMouseMode` is called (the keyboard shortcut
+  path) and concluded there was no controller gesture at all. That row is corrected in
+  `docs/usb-redirection-design.md`, and it is worth saying why it mattered: a finished
+  feature written down as a gap makes someone rebuild it, and it takes the credibility of
+  every other row in that table with it.
+
 ## [1.3.10-build1529] - 2026-09-20
 
 

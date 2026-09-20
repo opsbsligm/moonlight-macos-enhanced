@@ -1057,6 +1057,9 @@ extension SettingsModel {
   /// Keep in step with MLPointerEntryHoverActivatesWindowDefault() in PointerEntryPolicy.m.
   /// Two defaults in two languages, compared by scripts/pointer-entry-takeover-tests.py.
   static let defaultHoverActivatesStreamWindow = true
+  /// Keep in step with MLGamepadMenuLongPressDefault() in GamepadMenuGesture.m.
+  /// Two defaults in two languages, compared by scripts/gamepad-menu-gesture-tests.py.
+  static let defaultGamepadMenuLongPressTogglesMouseMode = true
   static let defaultAppArtworkWidth: CGFloat? = nil
   static let defaultAppArtworkHeight: CGFloat? = nil
   static let defaultQuitAppAfterStream = false

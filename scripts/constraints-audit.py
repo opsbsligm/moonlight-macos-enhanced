@@ -1226,6 +1226,11 @@ DRIVEN_BY = {
     # a CI step, and a step needs the `workflow` scope the pushing credential does not carry,
     # so it rides the driver below it -- which is a step on every macOS build, and invokes it.
     "settings-rebuild-passthrough-tests.py": "scaling-output-evidence-tests.py",
+    # Fourth gate of the same shape: the gamepad Menu gesture is C compiled by a harness,
+    # so it needs the macOS job's clang and SDK, and a step of its own needs the `workflow`
+    # scope the pushing credential does not carry. The driver below is a step on every
+    # macOS build, and it invokes this one.
+    "gamepad-menu-gesture-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

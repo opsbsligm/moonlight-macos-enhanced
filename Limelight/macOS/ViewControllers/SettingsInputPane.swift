@@ -100,6 +100,12 @@ struct InputView: View {
         boolBinding: $settingsModel.hoverActivatesStreamWindow
       )
 
+      ToggleCell(
+        title: "Gamepad Menu Long Press Toggles Mouse Mode",
+        hintKey: "Gamepad Menu Long Press Toggles Mouse Mode detail",
+        boolBinding: $settingsModel.gamepadMenuLongPressTogglesMouseMode
+      )
+
       Divider()
 
       PickerSettingRow(

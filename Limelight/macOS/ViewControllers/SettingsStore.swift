@@ -95,6 +95,10 @@ struct Settings: Encodable, Decodable {
 
   let emulateGuide: Bool
   let hoverActivatesStreamWindow: Bool?
+  /// Whether holding Menu long enough may hand the pointer to the controller. Optional
+  /// like the hover switch beside it: an absent value is a player who never opened the
+  /// setting, which means the gesture is on, not that it is off.
+  let gamepadMenuLongPressTogglesMouseMode: Bool?
   let appArtworkDimensions: CGSize?
   let dimNonHoveredArtwork: Bool
 
@@ -241,6 +245,7 @@ struct Settings: Encodable, Decodable {
       freeMouseMotionMode: freeMouseMotionMode,
       emulateGuide: emulateGuide,
       hoverActivatesStreamWindow: hoverActivatesStreamWindow,
+      gamepadMenuLongPressTogglesMouseMode: gamepadMenuLongPressTogglesMouseMode,
       appArtworkDimensions: appArtworkDimensions,
       dimNonHoveredArtwork: dimNonHoveredArtwork,
       quitAppAfterStream: quitAppAfterStream,
@@ -482,6 +487,7 @@ extension SettingsClass {
 
       emulateGuide: settings.emulateGuide,
       hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
+      gamepadMenuLongPressTogglesMouseMode: settings.gamepadMenuLongPressTogglesMouseMode,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 

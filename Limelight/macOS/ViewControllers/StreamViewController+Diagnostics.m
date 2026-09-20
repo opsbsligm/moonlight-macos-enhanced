@@ -3076,6 +3076,14 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
 - (void)mousePresenceChanged {
 }
 
+- (BOOL)gamepadMenuLongPressTogglesMouseModeEnabled {
+    // The controller asks per sample, which is what makes the switch land on the next hold
+    // rather than the next connection. The read carries its own default, so a host with no
+    // stored preference behaves like a fresh install -- the gesture on -- instead of
+    // behaving like a host whose preference was deleted.
+    return [SettingsClass gamepadMenuLongPressTogglesMouseModeFor:self.app.host.uuid];
+}
+
 - (void)mouseModeToggled:(BOOL)enabled {
     dispatch_async(dispatch_get_main_queue(), ^{
         NSString *message = enabled ? @"🖱️ Mouse Mode On" : @"🎮 Mouse Mode Off";

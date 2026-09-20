@@ -6,6 +6,7 @@
 //  Copyright © 2019 Moonlight Game Streaming Project. All rights reserved.
 //
 
+#import "GamepadMenuGesture.h"
 #import "HapticContext.h"
 
 @import GameController;
@@ -31,6 +32,9 @@
 // Gamepad Mouse Emulation State
 @property(nonatomic) BOOL isMouseMode;
 @property(nonatomic) int lastMouseModeButtonFlags;
-@property(nonatomic, strong) NSDate *_Nullable startButtonDownTime;
+// How long the current Menu press has been held, in the shape MLGamepadMenuGestureToggles
+// reads. It replaces a stored NSDate: the gesture now needs "no press" to be a value the
+// function owns, so that a switch turned off mid-hold cannot leave a timer running.
+@property(nonatomic) MLGamepadMenuGesture menuGesture;
 
 @end

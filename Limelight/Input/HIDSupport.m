@@ -6,6 +6,7 @@
 //  Copyright © 2017 Moonlight Stream. All rights reserved.
 //
 #import "HIDSupport_Internal.h"
+#import "GamepadMenuGesture.h"
 #import "KeyboardMapResolver.h"
 
 #import <IOKit/hid/IOHIDElement.h>
@@ -2266,36 +2267,41 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 }
 
 
+- (BOOL)gamepadMenuLongPressTogglesMouseModeEnabled {
+    // Read per press rather than once at connect, so a player who turns the gesture off
+    // because a game needs the Menu key gets it on the very next hold. The read carries its
+    // own default, so a host with no stored preference behaves like a fresh install.
+    return [SettingsClass gamepadMenuLongPressTogglesMouseModeFor:self.host.uuid];
+}
+
 - (void)updateButtonFlags:(int)flag state:(BOOL)set {
-    // Mouse Mode Toggle Logic (Long Press Start)
+    // Mouse Mode Toggle Logic: the same gesture the MFi path runs, asked of the same
+    // function, so one switch and one timing boundary cover both controller drivers and
+    // neither can drift away from the other (issue #45).
     if (flag == PLAY_FLAG) {
-        if (set) {
-            if (self.controller.startButtonDownTime == nil) {
-                self.controller.startButtonDownTime = [NSDate date];
-            }
-        } else {
-            // Released
-            if (self.controller.startButtonDownTime != nil) {
-                if ([self.controller.startButtonDownTime timeIntervalSinceNow] < -1.0) {
-                    // Toggle
-                    self.controller.isMouseMode = !self.controller.isMouseMode;
-                    
-                    // Notify UI
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        [[NSNotificationCenter defaultCenter] postNotificationName:HIDMouseModeToggledNotification object:nil userInfo:@{@"enabled": @(self.controller.isMouseMode)}];
-                    });
-                    
-                    // Rumble
-                    [self rumbleLowFreqMotor:0xFFFF highFreqMotor:0xFFFF];
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                        [self rumbleLowFreqMotor:0 highFreqMotor:0];
-                    });
-                }
-                self.controller.startButtonDownTime = nil;
-            }
+        MLGamepadMenuGesture gesture = self.controller.menuGesture;
+        const BOOL toggled = MLGamepadMenuGestureToggles(&gesture,
+                                                         set ? YES : NO,
+                                                         [NSDate date].timeIntervalSinceReferenceDate,
+                                                         [self gamepadMenuLongPressTogglesMouseModeEnabled] ? YES : NO,
+                                                         MLGamepadMenuLongPressRequiredSeconds);
+        self.controller.menuGesture = gesture;
+        if (toggled) {
+            self.controller.isMouseMode = !self.controller.isMouseMode;
+
+            // Notify UI
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSNotificationCenter defaultCenter] postNotificationName:HIDMouseModeToggledNotification object:nil userInfo:@{@"enabled": @(self.controller.isMouseMode)}];
+            });
+
+            // Rumble
+            [self rumbleLowFreqMotor:0xFFFF highFreqMotor:0xFFFF];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self rumbleLowFreqMotor:0 highFreqMotor:0];
+            });
         }
     }
-    
+
     // Mouse Click Logic
     if (self.controller.isMouseMode) {
         if (flag == A_FLAG) {
