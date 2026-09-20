@@ -412,6 +412,24 @@ def untranslated_outlets(scan_root):
     return found
 
 
+# The Chinese branch of localize() must not answer with the key. `LanguageManager` reads
+# the English table last, so a missing Simplified Chinese entry shows the player a
+# sentence in the development language; answering with the key instead shows them the
+# source identifier. That difference is invisible to every other rule here -- the key is
+# in both tables, so coverage is satisfied -- which is why it is checked as a shape.
+CHINESE_BRANCH = re.compile(r'if useChinese \{(?P<body>.*?)\n    \}', re.S)
+
+
+def chinese_branch_answers_with_the_key(text):
+    for match in CHINESE_BRANCH.finditer(text):
+        if re.search(r'return\s+key\s*$', match.group("body"), re.M):
+            return True
+    return False
+
+
+LANGUAGE_MANAGER = "Limelight/macOS/Helpers/LanguageManager.swift"
+
+
 failures = []
 
 
@@ -702,6 +720,10 @@ check(all(outlets.get(path, 0) == allowed for path, allowed in UNTRANSLATED_OUTL
       "untranslated UI text drifted: %s" % ", ".join(
           "%s=%d/%d" % (path, count, UNTRANSLATED_OUTLETS.get(path, 0))
           for path, count in sorted(outlets.items())))
+
+check(not chinese_branch_answers_with_the_key(io.open(os.path.join(root, LANGUAGE_MANAGER),
+                                                     encoding="utf-8", errors="replace").read()),
+      "a missing Chinese entry falls back to the development language, never to the key")
 
 hidden_keys = []
 for path, text in source_texts(root):

@@ -196,13 +196,13 @@ static NSString *ExtractFirstMatch(NSString *input, NSString *pattern) {
 static NSString *ExtractErrorCode(NSString *line) {
     NSString *code = ExtractFirstMatch(line, @"Code=(-?\\d+)");
     if (code.length > 0) {
-        return [NSString stringWithFormat:@"错误码 %@", code];
+        return [NSString stringWithFormat:@"Error code %@", code];
     }
     code = ExtractFirstMatch(line, @"(-1001|-1004|-1005)");
     if (code.length > 0) {
-        return [NSString stringWithFormat:@"错误码 %@", code];
+        return [NSString stringWithFormat:@"Error code %@", code];
     }
-    return @"错误码未知";
+    return @"unknown error code";
 }
 
 static BOOL IsServerCertificateMismatchLine(NSString *line) {
@@ -263,7 +263,7 @@ static NSString *ExtractTargetEndpoint(NSString *line) {
     if (target.length > 0) {
         return target;
     }
-    return @"未知目标";
+    return @"unknown target";
 }
 
 static LoggerNoiseCategory DetectNoiseCategory(NSString *line) {
@@ -301,18 +301,37 @@ static LoggerNoiseCategory DetectNoiseCategory(NSString *line) {
 static NSString *NoiseCategoryDisplayName(LoggerNoiseCategory category) {
     switch (category) {
         case LoggerNoiseCategoryAppKitMenuInconsistency:
-            return @"AppKit 菜单噪音 / AppKit Menu Inconsistency";
+            return @"AppKit Menu Inconsistency";
         case LoggerNoiseCategoryNetworkStackNoise:
-            return @"系统网络噪音 / Network Stack Noise";
+            return @"Network Stack Noise";
         case LoggerNoiseCategorySystemTransportFallback:
-            return @"系统传输回退噪音 / System Transport Fallback";
+            return @"System Transport Fallback";
         case LoggerNoiseCategoryDiscoveryChatter:
-            return @"发现服务噪音 / Discovery Chatter";
+            return @"Discovery Chatter";
         case LoggerNoiseCategoryHostIdentityMismatch:
-            return @"主机身份不匹配 / Host Identity Mismatch";
+            return @"Host Identity Mismatch";
         default:
-            return @"系统噪音 / System Noise";
+            return @"System Noise";
     }
+}
+
+// The names a summary line can carry. The ASCII form is what this build writes; the
+// bilingual form with the full-width colon is what every build before this one wrote,
+// and a log a player saved last week is still the file they will paste into an issue
+// today. Dropping the old shape here would silently turn a saved summary line into an
+// ordinary line when the same file is opened again, so both are matched and the reason
+// is written where somebody will be tempted to delete one of them.
+static NSArray<NSString *> *NoiseSummaryNames(LoggerNoiseCategory category) {
+    return @[
+        NoiseCategoryDisplayName(category),
+        @{
+            @(LoggerNoiseCategoryAppKitMenuInconsistency): @"AppKit 菜单噪音 / AppKit Menu Inconsistency",
+            @(LoggerNoiseCategoryNetworkStackNoise): @"系统网络噪音 / Network Stack Noise",
+            @(LoggerNoiseCategorySystemTransportFallback): @"系统传输回退噪音 / System Transport Fallback",
+            @(LoggerNoiseCategoryDiscoveryChatter): @"发现服务噪音 / Discovery Chatter",
+            @(LoggerNoiseCategoryHostIdentityMismatch): @"主机身份不匹配 / Host Identity Mismatch",
+        }[@(category)] ?: @"系统噪音 / System Noise",
+    ];
 }
 
 static BOOL IsGeneratedCuratedNoiseSummaryLine(NSString *line) {
@@ -323,9 +342,14 @@ static BOOL IsGeneratedCuratedNoiseSummaryLine(NSString *line) {
     for (NSInteger category = LoggerNoiseCategoryAppKitMenuInconsistency;
          category <= LoggerNoiseCategoryHostIdentityMismatch;
          category++) {
-        NSString *prefix = [NSString stringWithFormat:@"%@ %@：", PRFX_WARN, NoiseCategoryDisplayName((LoggerNoiseCategory)category)];
-        if ([line hasPrefix:prefix]) {
-            return YES;
+        for (NSString *name in NoiseSummaryNames((LoggerNoiseCategory)category)) {
+            // The separator changed with the wording: the bilingual names were followed
+            // by a full-width colon, the ASCII ones are not going to carry one.
+            for (NSString *separator in @[ @":", @"：" ]) {
+                if ([line hasPrefix:[NSString stringWithFormat:@"%@ %@%@", PRFX_WARN, name, separator]]) {
+                    return YES;
+                }
+            }
         }
     }
 
@@ -366,18 +390,18 @@ static NSString *NoiseAggregationKey(NSString *line, LoggerNoiseCategory categor
     NSString *errorCode = ExtractErrorCode(line);
     NSString *target = ExtractTargetEndpoint(line);
     if ([line rangeOfString:@"Request failed with error" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-        return [NSString stringWithFormat:@"request-failed:%@", errorCode ?: @"错误码未知"];
+        return [NSString stringWithFormat:@"request-failed:%@", errorCode ?: @"unknown error code"];
     }
     if ([line rangeOfString:@"NSURLErrorDomain" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-        return [NSString stringWithFormat:@"nsurl:%@:%@", errorCode ?: @"错误码未知", target ?: @"未知目标"];
+        return [NSString stringWithFormat:@"nsurl:%@:%@", errorCode ?: @"unknown error code", target ?: @"unknown target"];
     }
     if ([line rangeOfString:@"Task <" options:NSCaseInsensitiveSearch].location != NSNotFound &&
         [line rangeOfString:@"finished with error" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-        return [NSString stringWithFormat:@"task-error:%@:%@", errorCode ?: @"错误码未知", target ?: @"未知目标"];
+        return [NSString stringWithFormat:@"task-error:%@:%@", errorCode ?: @"unknown error code", target ?: @"unknown target"];
     }
     if ([line rangeOfString:@"Connection " options:NSCaseInsensitiveSearch].location != NSNotFound &&
         [line rangeOfString:@"failed" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-        return [NSString stringWithFormat:@"conn-failed:%@:%@", errorCode ?: @"错误码未知", target ?: @"未知目标"];
+        return [NSString stringWithFormat:@"conn-failed:%@:%@", errorCode ?: @"unknown error code", target ?: @"unknown target"];
     }
 
     return [NSString stringWithFormat:@"noise:%ld:%@", (long)category, line];
@@ -541,13 +565,13 @@ static BOOL FlushOneCuratedNoiseBucketLocked(NSString *bucketKey, NSMutableDicti
     switch (category) {
         case LoggerNoiseCategoryDiscoveryChatter:
             if ([sampleLine rangeOfString:@"Resolved address:" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-                summary = [NSString stringWithFormat:@"%@：%.0f秒内 %ld 次（%@ 地址解析重复）",
+                summary = [NSString stringWithFormat:@"%@: in %.0fs, %ld occurrences (repeated address resolution: %@)",
                            NoiseCategoryDisplayName(category),
                            kNoiseAggregationWindowSec,
                            (long)count,
                            discoveryHost.length > 0 ? discoveryHost : @"unknown"];
             } else {
-                summary = [NSString stringWithFormat:@"%@：%.0f秒内 %ld 次（%@，%@）",
+                summary = [NSString stringWithFormat:@"%@: in %.0fs, %ld occurrences (%@, %@)",
                            NoiseCategoryDisplayName(category),
                            kNoiseAggregationWindowSec,
                            (long)count,
@@ -558,19 +582,19 @@ static BOOL FlushOneCuratedNoiseBucketLocked(NSString *bucketKey, NSMutableDicti
         case LoggerNoiseCategoryHostIdentityMismatch: {
             NSMutableArray<NSString *> *parts = [NSMutableArray array];
             if (certificateMismatchCount > 0) {
-                [parts addObject:[NSString stringWithFormat:@"证书不匹配 %ld 次", (long)certificateMismatchCount]];
+                [parts addObject:[NSString stringWithFormat:@"certificate mismatches: %ld", (long)certificateMismatchCount]];
             }
             if (incorrectHostCount > 0) {
-                [parts addObject:[NSString stringWithFormat:@"错误主机 %ld 次", (long)incorrectHostCount]];
+                [parts addObject:[NSString stringWithFormat:@"incorrect hosts: %ld", (long)incorrectHostCount]];
             }
             if (expectedHost.length > 0) {
-                [parts addObject:[NSString stringWithFormat:@"期望 %@", ShortHostIdentifier(expectedHost)]];
+                [parts addObject:[NSString stringWithFormat:@"expected %@", ShortHostIdentifier(expectedHost)]];
             }
             if (incorrectHost.length > 0) {
-                [parts addObject:[NSString stringWithFormat:@"收到 %@", ShortHostIdentifier(incorrectHost)]];
+                [parts addObject:[NSString stringWithFormat:@"received %@", ShortHostIdentifier(incorrectHost)]];
             }
-            NSString *detail = parts.count > 0 ? [parts componentsJoinedByString:@"，"] : @"主机身份校验失败";
-            summary = [NSString stringWithFormat:@"%@：%.0f秒内 %ld 次（%@）",
+            NSString *detail = parts.count > 0 ? [parts componentsJoinedByString:@", "] : @"host identity verification failed";
+            summary = [NSString stringWithFormat:@"%@: in %.0fs, %ld occurrences (%@)",
                        NoiseCategoryDisplayName(category),
                        kNoiseAggregationWindowSec,
                        (long)count,
@@ -578,12 +602,12 @@ static BOOL FlushOneCuratedNoiseBucketLocked(NSString *bucketKey, NSMutableDicti
             break;
         }
         default:
-            summary = [NSString stringWithFormat:@"%@：%.0f秒内 %ld 条（主因：%@，目标 %@）",
+            summary = [NSString stringWithFormat:@"%@: in %.0fs, %ld entries (primary cause: %@, target: %@)",
                        NoiseCategoryDisplayName(category),
                        kNoiseAggregationWindowSec,
                        (long)count,
-                       errorCode.length > 0 ? errorCode : @"错误码未知",
-                       target.length > 0 ? target : @"未知目标"];
+                       errorCode.length > 0 ? errorCode : @"unknown error code",
+                       target.length > 0 ? target : @"unknown target"];
             break;
     }
 

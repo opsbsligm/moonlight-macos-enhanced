@@ -1130,29 +1130,29 @@ final class AwdlHelperManager: NSObject, ObservableObject {
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else {
             return isSandboxedBuild
-                ? "没有收到管理员授权结果。当前这个构建的安全限制可能拦住了系统授权窗。"
-                : "没有收到管理员授权结果，请重试。"
+                ? LanguageManager.shared.localize("No administrator authorization response was received. This build's security restrictions may be blocking the system authorization dialog.")
+                : LanguageManager.shared.localize("No administrator authorization response was received. Please try again.")
         }
 
         if trimmedMessage.contains("(-128)") {
-            return "你已取消管理员授权。"
+            return LanguageManager.shared.localize("Administrator authorization was cancelled.")
         }
 
         if trimmedMessage.localizedCaseInsensitiveContains("timed out") {
-            return "管理员授权超时，请重试。"
+            return LanguageManager.shared.localize("Administrator authorization timed out. Please try again.")
         }
 
         if trimmedMessage.contains("(-60005)") {
             return isSandboxedBuild
-                ? "系统没有正常弹出管理员授权窗口。当前这个构建的安全限制可能拦住了这类请求。"
-                : "管理员授权没有完成，请确认当前账户有管理员权限后重试。"
+                ? LanguageManager.shared.localize("The system authorization dialog did not appear. This build's security restrictions may be blocking the request.")
+                : LanguageManager.shared.localize("Administrator authorization did not complete. Confirm that this account has administrator privileges and try again.")
         }
 
         if trimmedMessage.contains("(-10004)")
             || trimmedMessage.localizedCaseInsensitiveContains("not authorized")
             || trimmedMessage.localizedCaseInsensitiveContains("not permitted")
         {
-            return "系统拦截了管理员授权请求。"
+            return LanguageManager.shared.localize("The system blocked the administrator authorization request.")
         }
 
         return trimmedMessage

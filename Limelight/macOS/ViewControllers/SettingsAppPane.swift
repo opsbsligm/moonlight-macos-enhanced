@@ -1149,7 +1149,9 @@ private struct DebugLogLiveView: View {
 
   private func categoryFilterExportSummary() -> String {
     let selected = selectedCategoryDescriptors.map(\.displayName)
-    return selected.isEmpty ? "未筛选（显示全部） / No Filter (Showing All)" : selected.joined(separator: " | ")
+    return selected.isEmpty
+      ? LanguageManager.shared.localize("No Filter (Showing All)")
+      : selected.joined(separator: " | ")
   }
 
   private func scheduleSearchRefresh() {

@@ -1004,3 +1004,16 @@
 "Audio/Pipeline" = "Audio/Pipeline";
 "UI/Window" = "UI/Window";
 "System/Noise" = "System/Noise";
+
+/* UI strings that were Chinese-only in the source (issue #30/#44) */
+"Administrator authorization was cancelled." = "Administrator authorization was cancelled.";
+"Administrator authorization timed out. Please try again." = "Administrator authorization timed out. Please try again.";
+"The system blocked the administrator authorization request." = "The system blocked the administrator authorization request.";
+"Connection Failed" = "Connection Failed";
+
+/* the remaining Chinese-only prompts (issue #30/#44) */
+"No administrator authorization response was received. This build's security restrictions may be blocking the system authorization dialog." = "No administrator authorization response was received. This build's security restrictions may be blocking the system authorization dialog.";
+"No administrator authorization response was received. Please try again." = "No administrator authorization response was received. Please try again.";
+"The system authorization dialog did not appear. This build's security restrictions may be blocking the request." = "The system authorization dialog did not appear. This build's security restrictions may be blocking the request.";
+"Administrator authorization did not complete. Confirm that this account has administrator privileges and try again." = "Administrator authorization did not complete. Confirm that this account has administrator privileges and try again.";
+"No Filter (Showing All)" = "No Filter (Showing All)";

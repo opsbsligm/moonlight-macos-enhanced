@@ -74,7 +74,11 @@ public class LanguageManager: NSObject, ObservableObject {
     if useChinese {
       if let val = zhHans[key] { return val }
       if let val = localizedString(key, languageCode: "zh-Hans") { return val }
-      return key
+      // No `return key` here. Falling through is what makes an untranslated key read as
+      // the English sentence instead of as `No Filter (Showing All)`-shaped source text:
+      // English is the development language, and the table beside it answers every key
+      // this build asks for. A key that reaches the player is a bug the audit already
+      // refuses, so there is nothing left for the runtime to invent.
     }
 
     if let val = en[key] { return val }
