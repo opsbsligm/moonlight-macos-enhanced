@@ -1235,6 +1235,9 @@ DRIVEN_BY = {
     # can compile, so its harness runs where the toolchain is, and its own CI step would
     # need the `workflow` scope the pushing credential does not carry.
     "command-to-control-tests.py": "scaling-output-evidence-tests.py",
+    # Reads Swift and Objective-C text and needs no toolchain, but a gate still needs a CI
+    # step to run it, and a step needs the `workflow` scope this credential does not carry.
+    "sas-preset-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

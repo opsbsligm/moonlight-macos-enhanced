@@ -559,6 +559,17 @@ final class KeyboardTranslationProfile: NSObject {
     []
   }
 
+  /// The secure attention sequence, offered as a prefilled rule rather than as a new
+  /// mechanism. macOS does not swallow Ctrl+Alt+Forward Delete the way Windows swallows the
+  /// real thing, so the ordinary translation path already delivers it -- what a player lacked
+  /// was a way to find out. Control and Option with Forward Delete is the one chord no local
+  /// action claims (see StreamShortcutProfile.defaultShortcuts), and the gate reads both
+  /// sides of that sentence rather than trusting it.
+  @objc static func secureAttentionSequencePresetRule() -> KeyboardTranslationRule {
+    let chord = StreamShortcut(keyCode: kVK_ForwardDelete, modifierFlags: [.control, .option])
+    return KeyboardTranslationRule(trigger: chord, outputShortcut: chord)
+  }
+
   @objc static func normalizedRules(_ rules: [KeyboardTranslationRule]?) -> [KeyboardTranslationRule] {
     guard let rules else { return defaultRules() }
 

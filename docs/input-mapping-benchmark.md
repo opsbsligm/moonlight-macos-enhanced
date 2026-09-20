@@ -147,9 +147,16 @@ player can bind any chord to Control+Alt+Forward Delete and have it arrive on th
 That is verified as far as the editor's own constraints go; it has not been driven
 end-to-end on a real host from this document.
 
-So the finding is discoverability, not capability, and the fix is a preset in the rule
-editor -- not a new mechanism. It stays on the list below rather than becoming code in
-this round, because §5.1 holds: nothing on this axis is broken.
+So the finding is discoverability, not capability, and the fix became a preset in the rule
+editor rather than a new mechanism. `KeyboardTranslationProfile.secureAttentionSequencePresetRule`
+prefills Control+Option+Forward Delete as trigger and output, offered from an `Add Preset` menu; the
+sheet it opens still says "Add", and no local action's default chord claims that combination, which
+`sas-preset-tests.py` reads out of `StreamShortcutProfile.defaultShortcuts` instead of trusting this
+sentence. The packets are now asserted too: `keyboard-shortcut-modifier-tests.py` fires that chord
+through the shipping `sendSyntheticRemoteShortcut:` and expects Left Control and Left Alt around
+0x2E, released in reverse. Still not asserted anywhere: the effect on a real host's login screen,
+because there is no Windows desktop in the loop here. §5.1 holds either way -- nothing on this axis
+was broken, and what changed is that a player can now find the chord.
 
 ### 5.4 The real gap, and it is the one already in flight
 
@@ -239,6 +246,10 @@ grep -n 'usesKeyboardCommandToControlCompatibility' -A2 Limelight/Input/HIDSuppo
 grep -c 'KMR_RemoteMaskForPhysical(\|KMR_RemoteMaskForAppKitFlags(\|KMR_RemoteVKForPhysicalKeyCode(' \
   Limelight/Input/HIDSupport.m   # 0: every Command path asks the switch
 python3 scripts/command-to-control-tests.py .
+python3 scripts/sas-preset-tests.py .
+python3 scripts/keyboard-shortcut-modifier-tests.py   # scenario 15 is the preset on the wire
+grep -n 'kVK_ForwardDelete' Limelight/macOS/ViewControllers/SettingsShortcuts.swift
+grep -n '{kVK_ForwardDelete, 0x2E}' Limelight/Input/HIDSupport.m
 ```
 
 `a43313f` states the deletion in its own words:
@@ -266,7 +277,7 @@ into a mechanism claim without a source that states the mechanism.
 | Item | Status | Blocking decision |
 | --- | --- | --- |
 | USB Stage 2 -- open a device, and the entitlement/signing that permits it | open, tracked in `docs/usb-redirection-design.md` §7 | none yet; the protocol question in §2.4 of that document is still the gate |
-| Secure attention sequence preset in the rule editor | open, new in this document | needs a UI placement decision, not a mechanism |
+| Secure attention sequence preset in the rule editor | **delivered** -- an `Add Preset` menu item, no new mechanism; §5.3 | closed. The host-side effect on a real login screen is still unasserted, and says so |
 | Global capture-tier switch a la `TransparentKeyPassthrough` | **rejected** -- §5.2 | closed unless macOS starts delivering Cmd+Tab to a windowed app |
 | Command-becomes-Ctrl (ToDesk's preference) | **delivered** -- one per-host switch, default off, and no mode list brought back; §5.6 | closed. The picker above it still lists one mode, and that is recorded in §5.6 rather than fixed here |
 | Touch chord preset library (UU's 300+) | **not applicable** -- a macOS client has no touch surface to carry it | closed |

@@ -751,6 +751,9 @@
 "No Shortcut Translation Rules" = "还没有翻译规则";
 "No Shortcut Translation Rules detail" = "如果你希望某些 Mac 快捷键触发 Windows 快捷键，或直接触发 Moonlight 动作，可以在这里添加。";
 "Add Rule" = "添加规则";
+"Add Preset Rule" = "从预设新增";
+"Add Preset Rule help" = "直接用已确认可送达主机的组合创建规则，不必逐键试错。";
+"Secure Attention Sequence Rule" = "Ctrl + Alt + Delete（安全注意序列）";
 "Edit Rule" = "编辑";
 "Delete Rule" = "删除";
 "Save Rule" = "保存";

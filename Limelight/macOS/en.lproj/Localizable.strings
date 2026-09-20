@@ -751,6 +751,9 @@
 "No Shortcut Translation Rules" = "No translation rules yet";
 "No Shortcut Translation Rules detail" = "Add a rule if you want certain Mac shortcuts to trigger a Windows shortcut or a Moonlight action.";
 "Add Rule" = "Add Rule";
+"Add Preset Rule" = "Add Preset";
+"Add Preset Rule help" = "Start a rule from a chord that is already known to reach the host, instead of discovering one by trial.";
+"Secure Attention Sequence Rule" = "Ctrl + Alt + Delete (secure attention sequence)";
 "Edit Rule" = "Edit";
 "Delete Rule" = "Delete";
 "Save Rule" = "Save";

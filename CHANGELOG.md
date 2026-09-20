@@ -59,6 +59,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   desktop to type into; and with the switch on, no key sends the Windows key at all, which the
   setting's own text says rather than leaving the player to find.
 
+- The secure attention sequence has a button. `docs/input-mapping-benchmark.md` §5.3 had already
+  worked out that nothing was missing mechanically -- macOS does not intercept Ctrl+Alt+Del the
+  way Windows does, so an ordinary translation rule carrying Control, Option and Forward Delete
+  reaches the host -- and that the gap was that no player would ever think to write one. The rule
+  editor therefore gained an `Add Preset` menu whose one entry prefills exactly that rule, and no
+  new mechanism: the preset builds its chord once and hands the same value to the trigger and the
+  output, so the two cannot drift, and the sheet it opens still says "Add", because a player who
+  asked for a starting point is not editing anything. `scripts/keyboard-shortcut-modifier-tests.py`
+  gained a scenario that fires that chord through the shipping `sendSyntheticRemoteShortcut:` and
+  reads the packets the host would receive -- Left Control down, Left Alt down, 0x2E down and up,
+  released in reverse, with Control and Alt in the modifier byte -- and `scripts/sas-preset-tests.py`
+  pins the button to that chord, reads the local actions' own default chords to prove none of them
+  already claims Control+Option+Forward Delete, and refuses either half drifting: a preset built on
+  Delete instead of Forward Delete, a wire test moved to another key, a wording the table stopped
+  answering, a local action stepping onto the same chord, and a preset that opens as an edit. Six
+  planted shapes, all noticed. What remains unproven is stated in the document rather than here: no
+  Windows desktop was in the loop, so the packets are asserted and the effect on a real login
+  screen is not.
+
 ### Fixed
 
 - **One gesture kept two clocks, and a design document called it missing.** The Menu long

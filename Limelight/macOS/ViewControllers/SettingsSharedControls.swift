@@ -657,6 +657,15 @@ private struct ShortcutCaptureSheet: View {
 private struct KeyboardTranslationEditorRequest: Identifiable {
   let id = UUID()
   let rule: KeyboardTranslationRule?
+  /// A preset prefills a rule nobody has written yet. The sheet still has to say "Add": a
+  /// player who asked for a starting point and was offered "Edit" would look for a rule they
+  /// never saved.
+  let isPreset: Bool
+
+  init(rule: KeyboardTranslationRule?, isPreset: Bool = false) {
+    self.rule = rule
+    self.isPreset = isPreset
+  }
 }
 
 struct KeyboardTranslationRulesView: View {
@@ -686,6 +695,17 @@ struct KeyboardTranslationRulesView: View {
         Button(languageManager.localize("Add Rule")) {
           editingRequest = KeyboardTranslationEditorRequest(rule: nil)
         }
+
+        Menu {
+          Button(languageManager.localize("Secure Attention Sequence Rule")) {
+            editingRequest = KeyboardTranslationEditorRequest(
+              rule: KeyboardTranslationProfile.secureAttentionSequencePresetRule(),
+              isPreset: true)
+          }
+        } label: {
+          Text(languageManager.localize("Add Preset Rule"))
+        }
+        .help(languageManager.localize("Add Preset Rule help"))
       }
 
       if settingsModel.keyboardTranslationRules.isEmpty {
@@ -726,7 +746,8 @@ struct KeyboardTranslationRulesView: View {
     }
     .padding(.top, 2)
     .sheet(item: $editingRequest) { request in
-      KeyboardTranslationRuleEditorSheet(settingsModel: settingsModel, rule: request.rule)
+      KeyboardTranslationRuleEditorSheet(
+        settingsModel: settingsModel, rule: request.rule, isPreset: request.isPreset)
     }
   }
 }
@@ -790,6 +811,7 @@ private struct KeyboardTranslationRuleEditorSheet: View {
   @ObservedObject var languageManager = LanguageManager.shared
 
   let rule: KeyboardTranslationRule?
+  let isPreset: Bool
 
   @SwiftUI.State private var triggerShortcut: StreamShortcut
   @SwiftUI.State private var outputKindSelection: String
@@ -799,9 +821,10 @@ private struct KeyboardTranslationRuleEditorSheet: View {
   @SwiftUI.State private var eventMonitor: Any?
   @SwiftUI.State private var errorKey: String?
 
-  init(settingsModel: SettingsModel, rule: KeyboardTranslationRule?) {
+  init(settingsModel: SettingsModel, rule: KeyboardTranslationRule?, isPreset: Bool = false) {
     _settingsModel = ObservedObject(wrappedValue: settingsModel)
     self.rule = rule
+    self.isPreset = isPreset
 
     let defaultTrigger = StreamShortcut(keyCode: kVK_ANSI_W, modifierFlags: [.command])
     let defaultOutput = StreamShortcut(keyCode: kVK_F4, modifierFlags: [.option])
@@ -820,7 +843,7 @@ private struct KeyboardTranslationRuleEditorSheet: View {
   }
 
   private var titleKey: String {
-    rule == nil ? "Add Shortcut Translation Rule" : "Edit Shortcut Translation Rule"
+    (rule == nil || isPreset) ? "Add Shortcut Translation Rule" : "Edit Shortcut Translation Rule"
   }
 
   var body: some View {

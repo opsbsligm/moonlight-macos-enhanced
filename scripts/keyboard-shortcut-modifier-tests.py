@@ -225,7 +225,8 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
         _shouldSendInputEvents = YES;
         // Tab, W and Space, as the shipping table maps them (HIDSupport.m's own
         // KeyMapping table: 13 -> 'W', 48 -> 0x0F, 49 -> 0x20).
-        _mappings = @{ @48: @(0x0F), @13: @(0x57), @49: @(0x20) };
+        // Forward Delete is the preset's key, and it is in the shipping table.
+        _mappings = @{ @48: @(0x0F), @13: @(0x57), @49: @(0x20), @117: @(0x2E) };
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
         _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
     }
@@ -675,6 +676,25 @@ int main(void) {
         Expect("a Shift the finger never left is re-pressed before the key",
                want, Seq());
         ExpectAgreement("the sprint the player kept through recapture", k);
+
+        // 15. The secure attention sequence preset the rule editor offers: Control and
+        //     Option with Forward Delete, nothing held. Windows will not hand Ctrl+Alt+Del
+        //     to any application, so unlike every other chord this one only works if the
+        //     client builds the packets exactly -- which makes a Settings button that adds
+        //     a rule worth testing down to the wire rather than down to the form.
+        Reset(k);
+        [k sendSyntheticRemoteShortcut:
+            Rule(kVK_ForwardDelete, NSEventModifierFlagControl | NSEventModifierFlagOption)];
+        want = Exp();
+        Add(want, Ev(0xA2, YES, MODIFIER_CTRL | MODIFIER_ALT));
+        Add(want, Ev(0xA4, YES, MODIFIER_CTRL | MODIFIER_ALT));
+        Add(want, Ev(0x8000 | 0x2E, YES, MODIFIER_CTRL | MODIFIER_ALT));
+        Add(want, Ev(0x8000 | 0x2E, NO, MODIFIER_CTRL | MODIFIER_ALT));
+        Add(want, Ev(0xA4, NO, 0));
+        Add(want, Ev(0xA2, NO, 0));
+        Expect("the secure attention sequence preset arrives as Ctrl+Alt+Forward Delete",
+               want, Seq());
+        ExpectAgreement("the secure attention sequence preset", k);
 
         printf("%d scenario failure(s)\n", gFailures);
     }

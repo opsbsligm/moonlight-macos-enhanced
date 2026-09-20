@@ -711,6 +711,20 @@ def run_command_to_control():
           if ran.returncode == 0 else "the command-to-control gate failed:\n" + chr(10).join(tail))
 
 
+def run_sas_preset():
+    """Ride the secure-attention-sequence preset gate on the same step.
+
+    It reads Swift and Objective-C text and wants no toolchain, but a gate nobody invokes is
+    a gate that reads as covered. constraints-audit.py's DRIVEN_BY says who runs it.
+    """
+    ran = subprocess.run([sys.executable, "scripts/sas-preset-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "the button that offers Ctrl+Alt+Del offers the chord the host reads"
+          if ran.returncode == 0 else "the sas-preset gate failed:\n" + chr(10).join(tail))
+
+
 
 def finish():
     run_aspect_fit()
@@ -721,6 +735,7 @@ def finish():
     run_settings_rebuild_passthrough()
     run_gamepad_menu_gesture()
     run_command_to_control()
+    run_sas_preset()
 
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0
