@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.10-build1537] - 2026-09-20
+
+
 ### Added
 
 - The half of USB device redirection that a client cannot finish alone is now a document
