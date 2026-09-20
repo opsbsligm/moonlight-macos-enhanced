@@ -411,7 +411,6 @@ extension SettingsModel {
   static var physicalWheelModes: [String] = PhysicalWheelScrollMode.displayKeys
   static var rewrittenScrollModes: [String] = RewrittenScrollMode.displayKeys
   static var freeMouseMotionModes: [String] = FreeMouseMotionMode.displayKeys
-  static var keyboardCompatibilityModes: [String] = KeyboardCompatibilityMode.displayKeys
   static var coreHIDMaxMouseReportRates: [Int] = [1000, 2000, 4000, 8000, 500, 250, 125, 0]
   static var mouseModes: [String] = ["game", "remote"]
   static var touchscreenModes: [String] = ["Trackpad", "Touchscreen"]

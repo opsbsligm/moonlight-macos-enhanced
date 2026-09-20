@@ -84,6 +84,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A settings menu with one item was not a choice.** The keyboard panel kept a picker over
+  `KeyboardCompatibilityMode` after `a43313f` left that mode with a single case, so opening it
+  listed `Streaming Standard` and changed nothing. The row now states the mapping as text, which is
+  worth reading, and leaves the deciding to the Command switch underneath it, which is the only
+  thing there a player can actually decide. `scripts/command-to-control-tests.py` pins both
+  directions, because the tidier-looking wrong fix was right there: a row that shows nothing also
+  clears the menu, and asks the player to guess what the app does to their keys.
+
 - **One gesture kept two clocks, and a design document called it missing.** The Menu long
   press was implemented twice, once per controller driver: a 16 ms timer in
   `ControllerSupport.m` reading `gamepad.buttonMenu.pressed`, and

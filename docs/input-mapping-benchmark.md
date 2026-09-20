@@ -232,10 +232,16 @@ nothing -- and has to notice each.
 
 What it costs, stated where a player will read it: with the switch on, no key sends the Windows
 key. Nothing here invents a substitute chord, because a second "smart" mapping is the mechanism
-this module exists to have lost. Two claims stay out of the record: the switch has not been driven
-end-to-end against a real host, since there is no Windows desktop in the loop, and the picker above
-it in the same panel still lists one mode -- `Streaming Standard` -- which is honest about the
-table and useless as a choice. Removing it is a UI change of its own and did not belong in this one.
+this module exists to have lost. One claim stays out of the record: the switch has not been driven
+end-to-end against a real host, since there is no Windows desktop in the loop.
+
+The panel that shows the switch stopped making a claim of its own in the same round. It carried a
+menu over `KeyboardCompatibilityMode` after `a43313f` left that mode with one case, so opening it
+listed `Streaming Standard` and changed nothing -- a choice nobody can decide is how a settings page
+learns to be ignored. The mapping is now stated as the fact it is, and the Command switch below it
+is the one thing on that panel a player can decide. `command-to-control-tests.py` pins both halves,
+because the tidier-looking fix was available: a row that shows nothing is also a mutation, and the
+player is left to guess what the app does to their keys.
 
 ## 6. Re-running the evidence
 
@@ -286,5 +292,5 @@ into a mechanism claim without a source that states the mechanism.
 | USB Stage 2 -- open a device, and the entitlement/signing that permits it | open, tracked in `docs/usb-redirection-design.md` §7 | none yet; the protocol question in §2.4 of that document is still the gate |
 | Secure attention sequence preset in the rule editor | **delivered** -- an `Add Preset` menu item, no new mechanism; §5.3 | closed. The host-side effect on a real login screen is still unasserted, and says so |
 | Global capture-tier switch a la `TransparentKeyPassthrough` | **rejected** -- §5.2 | closed unless macOS starts delivering Cmd+Tab to a windowed app |
-| Command-becomes-Ctrl (ToDesk's preference) | **delivered** -- one per-host switch, default off, and no mode list brought back; §5.6 | closed. The picker above it still lists one mode, and that is recorded in §5.6 rather than fixed here |
+| Command-becomes-Ctrl (ToDesk's preference) | **delivered** -- one per-host switch, default off, and no mode list brought back; §5.6 | closed. The single-item picker above it now states the mapping instead of offering it, also gated |
 | Touch chord preset library (UU's 300+) | **not applicable** -- a macOS client has no touch surface to carry it | closed |

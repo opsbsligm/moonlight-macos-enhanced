@@ -339,12 +339,13 @@ struct InputView: View {
         title: "Keyboard Compatibility",
         detailKey: selectedKeyboardTranslationDetailKey,
         content: {
-          Picker("", selection: $settingsModel.selectedKeyboardCompatibilityMode) {
-            ForEach(SettingsModel.keyboardCompatibilityModes, id: \.self) { mode in
-              Text(languageManager.localize(mode))
-            }
-          }
-          .labelsHidden()
+          // Read-only, because there is one answer and it is the shipped one. A menu whose
+          // only item is the value already in force is not a choice, and a settings page full
+          // of fake choices is how players learn to stop reading it. The value still shows:
+          // what the keyboard does is worth stating, and the Command switch underneath it is
+          // the one control here a player can actually decide.
+          Text(languageManager.localize(settingsModel.selectedKeyboardCompatibilityMode))
+            .foregroundColor(.secondary)
         })
 
       Divider()

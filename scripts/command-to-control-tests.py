@@ -180,6 +180,21 @@ int main(void) {
 """
 
 
+def pane_findings(pane_text):
+    """One control on the keyboard panel, and no control whose only choice it is.
+
+    The panel shipped a menu over a mapping with one answer in it. Nothing lied, and nothing
+    could be learned from opening it either -- the row that follows is the one a player can
+    actually decide. Both halves are pinned: no fake choice, and no hiding of the answer.
+    """
+    out = []
+    if "selection: $settingsModel.selectedKeyboardCompatibilityMode" in pane_text:
+        out.append("the keyboard panel offers a menu whose only item is the value in force")
+    if "localize(settingsModel.selectedKeyboardCompatibilityMode)" not in pane_text:
+        out.append("the panel no longer states what the one keyboard mapping does")
+    return out
+
+
 def token_findings(shortcuts_text, controls_text):
     """What the Settings pane calls the key it is showing, and who has to agree with it.
 
@@ -266,6 +281,12 @@ def main():
     check("KMR_" not in read(CAPTURE),
           "the paths that decide what the Mac keeps for itself never consult the remote mapping")
 
+    # --- one control, and no control that cannot be decided -----------------
+    for message in pane_findings(read(PANE)):
+        check(False, message)
+    check(not pane_findings(read(PANE)),
+          "the keyboard panel shows one mapping as a fact and one switch as a choice")
+
     # --- what the pane calls the key it is showing --------------------------
     token_problems = token_findings(read(SHORTCUTS), read(CONTROLS))
     for message in token_problems:
@@ -321,6 +342,12 @@ def main():
                       "        out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftCommand, pref);",
                       "        out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftCommand, pref) | KMR_RemoteMaskForPhysical(KMR_Phys_LeftCommand);"), cc, sdk)
     for label, target, before, after in (
+            ("the single-item menu comes back", PANE,
+             "          Text(languageManager.localize(settingsModel.selectedKeyboardCompatibilityMode))",
+             "          Picker(\"\", selection: $settingsModel.selectedKeyboardCompatibilityMode) { Text(\"x\") }"),
+            ("the answer is stated nowhere", PANE,
+             "          Text(languageManager.localize(settingsModel.selectedKeyboardCompatibilityMode))",
+             "          EmptyView()"),
             ("the card keeps calling Command by the name the switch replaced", SHORTCUTS,
              "      if commandSendsControl {", "      if false {"),
             ("the card counts one key as two", SHORTCUTS,
@@ -332,9 +359,12 @@ def main():
         text = read(target)
         check(before in text, "%s: the source it mutates is still there" % label)
         mutated_texts = text.replace(before, after, 1)
-        other = read(CONTROLS) if target == SHORTCUTS else read(SHORTCUTS)
-        caught = token_findings(mutated_texts, other) if target == SHORTCUTS \
-            else token_findings(other, mutated_texts)
+        if target == PANE:
+            caught = pane_findings(mutated_texts)
+        else:
+            other = read(CONTROLS) if target == SHORTCUTS else read(SHORTCUTS)
+            caught = token_findings(mutated_texts, other) if target == SHORTCUTS \
+                else token_findings(other, mutated_texts)
         check(bool(caught), "the check still fails when %s" % label)
 
     run_rules("the shipping default quietly becomes Control",
