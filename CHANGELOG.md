@@ -166,6 +166,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   language folder with no plist beside it -- each of the three tested against the case it
   exists for.
 
+- **The release tool wrote a changelog heading the changelog audit refuses.** Preparing a
+  release was a two-command scramble that ended in a red build. `prepare-release.py
+  --apply` promoted the Unreleased heading to the version's own heading with no date on
+  it, while the changelog shape audit refuses a released section that lost its date, so
+  the tree that had just been told the release gate accepts it failed its own audit on
+  the one day it had to ship. The heading carries a date now, taken from the commit the
+  tag points at rather than the day somebody happened to run the tool -- the reading
+  every tag in this changelog already agrees with -- and `promote()` refuses to write
+  text of a shape the audit would reject, so an unusable date ends the command instead of
+  leaving a section to repair by hand. The rule is read out of
+  `scripts/constraints-audit.py` rather than copied beside it, and one fixture refuses a
+  rule that would accept an undated heading, which is what keeps two files that have to
+  agree from drifting apart while both stay green.
+
 
 ## [1.3.10-build1510] - 2026-09-19
 

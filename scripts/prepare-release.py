@@ -30,6 +30,16 @@ import argparse, contextlib, importlib.util, io, os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UNRELEASED = "## [Unreleased]"
 
+# The shape the repository audit requires of a released section: the version heading
+# with its date. It is spelled here as the one string scripts/constraints-audit.py
+# matches released headings with, and the self-test refuses a change that makes the two
+# texts differ. The reason to bind them is a promotion that wrote `## [version]` with no
+# date at all: the release tool reported the gate accepting the tag, the changelog audit
+# then answered "a released section lost its date", and the tree went red on the day it
+# had to ship. Writing the heading the audit accepts is the only report that is worth
+# making, so the constant is also the last thing promote() checks before it writes.
+RELEASED_HEADING = r"^## \[[\w.\-]+\] - \d{4}-\d{2}-\d{2}$"
+
 
 def load_gate():
     path = os.path.join(ROOT, "scripts", "release-gate.py")
@@ -61,10 +71,31 @@ def build_number(repo=ROOT):
     return int(value)
 
 
-def promote(text, version):
+def commit_date(repo=ROOT):
+    """Name the date of the commit this release describes, not the day the tool ran.
+
+    Every released section in this changelog carries the date of the commit its tag
+    points at, which is a fact about the tree rather than about the moment somebody
+    prepared the release: a promotion made the evening before a release, or the morning
+    after an amend, would otherwise print the wrong day and the audit's date-order rule
+    would not notice. A tree that cannot name HEAD's date gets an error, because a
+    guessed date is the same class of mistake as no date at all.
+    """
+    out = subprocess.run(["git", "log", "-1", "--format=%ad", "--date=short", "HEAD"],
+                         cwd=repo, capture_output=True, text=True)
+    value = out.stdout.strip()
+    if out.returncode != 0 or re.match(r"^\d{4}-\d{2}-\d{2}$", value) is None:
+        raise SystemExit("cannot name the date of HEAD for the release section: %s"
+                         % (out.stderr.strip() or "git log did not print a short date"))
+    return value
+
+
+def promote(text, version, date):
     """Give the Unreleased section the release's version and open a new one.
 
-    Returns None when the version already has its own section, because there is
+    The promoted heading carries the release date, because that is the shape every
+    other released section has and the shape the changelog audit insists on. Returns
+    None when the version already has its own section, because there is
     nothing to do and silently editing a second time would move a released entry.
     """
     gate = load_gate()
@@ -73,7 +104,14 @@ def promote(text, version):
     if text.count(UNRELEASED) != 1:
         raise SystemExit("expected exactly one %s heading, found %d"
                          % (UNRELEASED, text.count(UNRELEASED)))
-    return text.replace(UNRELEASED, "%s\n\n%s [%s]" % (UNRELEASED, "##", version), 1)
+    heading = "## [%s] - %s" % (version, date)
+    # Checked here rather than left to the audit, so the failure lands on the command
+    # that writes the text instead of on a build minutes later: a promotion that has
+    # to be undone by hand is the step that stalls a release.
+    if re.match(RELEASED_HEADING, heading) is None:
+        raise SystemExit("refusing to write %r, which is not the shape the changelog "
+                         "audit requires of a released section" % heading)
+    return text.replace(UNRELEASED, "%s\n\n%s\n" % (UNRELEASED, heading), 1)
 
 
 AMEND_HOWTO = ("Fix it with `git commit --amend`: BUILD_NUMBER is "
@@ -140,7 +178,7 @@ def run(args):
     # Promoting here is still the right edit even mid-loop: the section for the
     # current count is the one a tag needs, and the loop is the commit that carries
     # it, not the text. Refusing to write would leave no way out but a hand edit.
-    updated = promote(text, tag[1:])
+    updated = promote(text, tag[1:], args.release_date or commit_date())
     if not args.apply:
         print("run with --apply to promote the %s heading to [%s]" % (UNRELEASED, tag[1:]))
         return 1
@@ -165,6 +203,7 @@ def main():
     ap.add_argument("--project")
     ap.add_argument("--build-number", type=int)
     ap.add_argument("--tags")
+    ap.add_argument("--release-date")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
@@ -199,7 +238,8 @@ def self_test():
             with contextlib.redirect_stdout(captured):
                 rc = run(argparse.Namespace(tag=tag, changelog=changelog_path,
                                             project=project_path, build_number=build,
-                                            tags="", apply=apply))
+                                            tags="", apply=apply,
+                                            release_date="2020-01-02"))
             return (rc, open(changelog_path, encoding="utf-8").read(),
                     captured.getvalue())
 
@@ -207,7 +247,8 @@ def self_test():
         check(rc == 1 and text == unreleased_only,
               "a report run names the missing section without editing the file")
         rc, text, report = attempt("v1.3.9-build42", unreleased_only, apply=True)
-        check(rc == 0 and "## [1.3.9-build42]" in text and text.count(UNRELEASED) == 1,
+        check(rc == 0 and "## [1.3.9-build42] - 2020-01-02" in text
+              and text.count(UNRELEASED) == 1,
               "--apply promotes Unreleased and leaves a fresh Unreleased behind")
         # A cleared promotion used to end in "the gate accepts the tag", which is
         # true of the working tree and misleading about the commit. The next
@@ -219,8 +260,30 @@ def self_test():
               "a cleared promotion says to amend and why a new commit would undo it")
         check("accepts the tag\n" not in report,
               "the promotion report does not claim the tag is accepted as a verdict")
+        # The heading a promotion writes is only useful if it is the shape the
+        # repository audit reads. The rule is read out of constraints-audit.py rather
+        # than copied, because a copy drifts quietly: the promotion reported the gate
+        # accepting the tag while the changelog audit called the section it had just
+        # written "a released section [that] lost its date". The third check keeps the
+        # rule from passing by accepting anything, which is the shape of every green
+        # guard this repository has had to bury.
+        written = [line for line in text.splitlines() if line.startswith("## [1.3.9-build42]")]
+        check(len(written) == 1 and re.match(RELEASED_HEADING, written[0]) is not None,
+              "the promoted heading carries the date a released section must have")
+        audit_src = open(os.path.join(ROOT, "scripts", "constraints-audit.py"),
+                         encoding="utf-8").read()
+        check(RELEASED_HEADING in audit_src,
+              "the shape this writes is the shape constraints-audit.py matches, not a copy of it")
+        check(re.match(RELEASED_HEADING, "## [1.3.9-build42]") is None,
+              "the shape rule really refuses an undated heading, so the check above can fail")
+        try:
+            promote(unreleased_only, "1.3.9-build42", "yesterday")
+            check(False, "an unusable date is refused before any text is written")
+        except SystemExit:
+            check(True, "an unusable date is refused before any text is written")
+
         rc, text, report = attempt("v1.3.9-build42", text, apply=True)
-        check(rc == 0 and text.count("## [1.3.9-build42]") == 1,
+        check(rc == 0 and text.count("## [1.3.9-build42] - 2020-01-02") == 1,
               "running again has nothing to do and does not duplicate the entry")
         # The loop itself: one ordinary commit after a promotion leaves the tree
         # asking for build 43 while 42 sits in the changelog. That shape has to be
