@@ -4,18 +4,39 @@ import Foundation
 final class MLLogCategoryDescriptor: NSObject {
   let domainKey: String
   let categoryKey: String
-  let displayName: String
-  let badgeText: String
+  // Keys, not sentences. Issue #30: these two fields held the text itself -- the name
+  // written bilingually ("发现 / Discovery") and the badge Chinese-only ("发现") -- so the
+  // log panel's category menu and its badges showed Chinese on an English system, and
+  // there was nothing to translate, because no key ever reached a table.
+  let nameKey: String
+  let badgeKey: String
 
-  init(domainKey: String, categoryKey: String, displayName: String, badgeText: String) {
+  init(domainKey: String, categoryKey: String, nameKey: String, badgeKey: String) {
     self.domainKey = domainKey
     self.categoryKey = categoryKey
-    self.displayName = displayName
-    self.badgeText = badgeText
+    self.nameKey = nameKey
+    self.badgeKey = badgeKey
   }
 
+  var displayName: String { LanguageManager.shared.localize(nameKey) }
+
+  var badgeText: String { LanguageManager.shared.localize(badgeKey) }
+
+  // What the filter box matches against. The panel renders one language, so matching
+  // only what is on screen means an English player cannot find a category by its
+  // Chinese name and a Chinese player cannot find it by its English one. Every
+  // localization is searchable, plus the ASCII keys the log lines themselves carry,
+  // so the box answers the words a player happens to think in.
   var searchableText: String {
-    "\(displayName)\n\(badgeText)\n\(domainKey)\n\(categoryKey)"
+    var parts = [nameKey, badgeKey, domainKey, categoryKey]
+    for code in ["en", "zh-Hans"] {
+      for key in [nameKey, badgeKey] {
+        if let value = LanguageManager.shared.localizedString(key, languageCode: code) {
+          parts.append(value)
+        }
+      }
+    }
+    return parts.joined(separator: "\n")
   }
 
   var systemImageName: String {
@@ -88,146 +109,146 @@ final class MLLogCategoryClassifier: NSObject {
     "discovery": .init(
       domainKey: "discovery",
       categoryKey: "discovery",
-      displayName: "发现 / Discovery",
-      badgeText: "发现"
+      nameKey: "Discovery",
+      badgeKey: "Discovery"
     ),
     "discovery.mdns": .init(
       domainKey: "discovery",
       categoryKey: "discovery.mdns",
-      displayName: "发现 · mDNS / Discovery · mDNS",
-      badgeText: "发现/mDNS"
+      nameKey: "Discovery · mDNS",
+      badgeKey: "Discovery/mDNS"
     ),
     "network": .init(
       domainKey: "network",
       categoryKey: "network",
-      displayName: "网络 / Network",
-      badgeText: "网络"
+      nameKey: "Network",
+      badgeKey: "Network"
     ),
     "network.http": .init(
       domainKey: "network",
       categoryKey: "network.http",
-      displayName: "网络 · 请求 / Network · Request",
-      badgeText: "网络/请求"
+      nameKey: "Network · Request",
+      badgeKey: "Network/Request"
     ),
     "network.transport": .init(
       domainKey: "network",
       categoryKey: "network.transport",
-      displayName: "网络 · 传输 / Network · Transport",
-      badgeText: "网络/传输"
+      nameKey: "Network · Transport",
+      badgeKey: "Network/Transport"
     ),
     "network.tls": .init(
       domainKey: "network",
       categoryKey: "network.tls",
-      displayName: "网络 · TLS / Network · TLS",
-      badgeText: "网络/TLS"
+      nameKey: "Network · TLS",
+      badgeKey: "Network/TLS"
     ),
     "pairing": .init(
       domainKey: "pairing",
       categoryKey: "pairing",
-      displayName: "配对 / Pairing",
-      badgeText: "配对"
+      nameKey: "Pairing",
+      badgeKey: "Pairing"
     ),
     "pairing.identity": .init(
       domainKey: "pairing",
       categoryKey: "pairing.identity",
-      displayName: "配对 · 身份 / Pairing · Identity",
-      badgeText: "配对/身份"
+      nameKey: "Pairing · Identity",
+      badgeKey: "Pairing/Identity"
     ),
     "stream": .init(
       domainKey: "stream",
       categoryKey: "stream",
-      displayName: "串流 / Stream",
-      badgeText: "串流"
+      nameKey: "Stream",
+      badgeKey: "Stream"
     ),
     "stream.lifecycle": .init(
       domainKey: "stream",
       categoryKey: "stream.lifecycle",
-      displayName: "串流 · 生命周期 / Stream · Lifecycle",
-      badgeText: "串流/生命周期"
+      nameKey: "Stream · Lifecycle",
+      badgeKey: "Stream/Lifecycle"
     ),
     "input": .init(
       domainKey: "input",
       categoryKey: "input",
-      displayName: "输入 / Input",
-      badgeText: "输入"
+      nameKey: "Input",
+      badgeKey: "Input"
     ),
     "input.scroll": .init(
       domainKey: "input",
       categoryKey: "input.scroll",
-      displayName: "输入 · 滚轮 / Input · Scroll",
-      badgeText: "输入/滚轮"
+      nameKey: "Input · Scroll",
+      badgeKey: "Input/Scroll"
     ),
     "input.mouse": .init(
       domainKey: "input",
       categoryKey: "input.mouse",
-      displayName: "输入 · 鼠标 / Input · Mouse",
-      badgeText: "输入/鼠标"
+      nameKey: "Input · Mouse",
+      badgeKey: "Input/Mouse"
     ),
     "input.click": .init(
       domainKey: "input",
       categoryKey: "input.click",
-      displayName: "输入 · 点击 / Input · Click",
-      badgeText: "输入/点击"
+      nameKey: "Input · Click",
+      badgeKey: "Input/Click"
     ),
     "input.capture": .init(
       domainKey: "input",
       categoryKey: "input.capture",
-      displayName: "输入 · 捕获 / Input · Capture",
-      badgeText: "输入/捕获"
+      nameKey: "Input · Capture",
+      badgeKey: "Input/Capture"
     ),
     "video": .init(
       domainKey: "video",
       categoryKey: "video",
-      displayName: "视频 / Video",
-      badgeText: "视频"
+      nameKey: "Video",
+      badgeKey: "Video"
     ),
     "video.decoder": .init(
       domainKey: "video",
       categoryKey: "video.decoder",
-      displayName: "视频 · 解码 / Video · Decoder",
-      badgeText: "视频/解码"
+      nameKey: "Video · Decoder",
+      badgeKey: "Video/Decoder"
     ),
     "audio": .init(
       domainKey: "audio",
       categoryKey: "audio",
-      displayName: "音频 / Audio",
-      badgeText: "音频"
+      nameKey: "Audio",
+      badgeKey: "Audio"
     ),
     "audio.pipeline": .init(
       domainKey: "audio",
       categoryKey: "audio.pipeline",
-      displayName: "音频 · 管线 / Audio · Pipeline",
-      badgeText: "音频/管线"
+      nameKey: "Audio · Pipeline",
+      badgeKey: "Audio/Pipeline"
     ),
     "ui": .init(
       domainKey: "ui",
       categoryKey: "ui",
-      displayName: "界面 / UI",
-      badgeText: "界面"
+      nameKey: "UI",
+      badgeKey: "UI"
     ),
     "ui.window": .init(
       domainKey: "ui",
       categoryKey: "ui.window",
-      displayName: "界面 · 窗口 / UI · Window",
-      badgeText: "界面/窗口"
+      nameKey: "UI · Window",
+      badgeKey: "UI/Window"
     ),
     "system": .init(
       domainKey: "system",
       categoryKey: "system",
-      displayName: "系统 / System",
-      badgeText: "系统"
+      nameKey: "System",
+      badgeKey: "System"
     ),
     "system.noise": .init(
       domainKey: "system",
       categoryKey: "system.noise",
-      displayName: "系统 · 噪音 / System · Noise",
-      badgeText: "系统/噪音"
+      nameKey: "System · Noise",
+      badgeKey: "System/Noise"
     ),
     "other": .init(
       domainKey: "other",
       categoryKey: "other",
-      displayName: "其他 / Other",
-      badgeText: "其他"
+      nameKey: "Other",
+      badgeKey: "Other"
     ),
   ]
 

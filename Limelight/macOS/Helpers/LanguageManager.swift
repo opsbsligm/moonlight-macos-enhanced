@@ -45,7 +45,10 @@ public class LanguageManager: NSObject, ObservableObject {
     NotificationCenter.default.post(name: .init("LanguageChanged"), object: nil)
   }
 
-  private func localizedString(_ key: String, languageCode: String) -> String? {
+  // Not private: a caller that owns a key rather than a sentence needs the same
+  // per-language lookup to keep both languages searchable, which is how the log
+  // panel's filter box still answers a Chinese name while showing English.
+  func localizedString(_ key: String, languageCode: String) -> String? {
     guard let path = Bundle.main.path(forResource: languageCode, ofType: "lproj"),
       let bundle = Bundle(path: path)
     else {

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The debug log panel's category menu and badges now speak the system language.**
+  Issue #30 asked for English in the context menus and the logs; the reason there was none
+  is that these strings were never keys. `MLLogCategoryDescriptor` stored the text itself --
+  the name written bilingually (`发现 / Discovery`), the badge Chinese-only (`发现`) -- so an
+  English system had no key to look up and rendered what the source said. The descriptor now
+  stores `nameKey`/`badgeKey`, the two language tables answer them, and the name stops being
+  printed in both languages at once. The filter box was not left behind: it matches every
+  localization plus the ASCII keys the log lines carry, so an English player can still paste a
+  Chinese category name and find it. What this does not claim: the panel's rewritten log-line
+  titles (55 of them, e.g. `开始扫描主机`) are still Chinese-only, and are now recorded as
+  debt rather than left invisible.
+
 ### Fixed
 
 - **A permission prompt could be translated in the repository and untranslated in the
@@ -25,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot do on the ubuntu audit runner is mount anything: `verify_images` binds the bytes, and
   the mount stays a macOS-host assertion.
 
+- **A Chinese string written where a player reads it is now refused, and the debt that
+  remains is a number that has to shrink.** Issue #30's second half. The rule is about the
+  outlet, not the characters: `containsAny(line, ["正在连接"])` is data the parser compares
+  log lines against, and translating it breaks the match rather than the language, so 55 of
+  those literals in the same file are correctly left alone. What is refused is a Chinese
+  literal arriving at a named UI parameter (`title:`, `badgeText:`, `messageText:`, ...) or
+  inside `Text()`. `scripts/l10n-audit.py` also counts `nameKey:`/`badgeKey:` as localization
+  requests, which is the only reason the panel's new keys cannot silently stop being
+  answered -- without that, a table that stopped replying would print `Discovery · mDNS`
+  and report complete coverage. `UNTRANSLATED_OUTLETS` holds one ceiling per file and fails
+  in both directions: a file that grows past its own number, and a number that is still
+  sitting above what the tree now holds. Verified by breaking the tree three ways -- adding a
+  Chinese badge, lowering the recorded number without paying it, and deleting one table
+  entry -- each refused, then restored to `0 localization failures`.
 ## [1.3.10-build1537] - 2026-09-20
 
 

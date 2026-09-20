@@ -283,10 +283,20 @@ def keys_carried_by_names(text):
     return keys
 
 
+# A fourth shape, and the one issue #30 left behind: a descriptor that stores the key
+# where it used to store the sentence. Nothing about `nameKey: "Discovery"` looks like a
+# localization call, yet the value is looked up by exactly one, so a table that stops
+# answering it makes the panel print "Discovery · mDNS" -- English by accident -- with
+# this scan reporting complete coverage. Named outlets only: `filterKey:` and
+# `categoryKey:` in the same file carry log keys that must never be translated.
+KEY_ARGUMENT = re.compile(
+    r'\b(?:nameKey|badgeKey|titleKey|labelKey|textKey)\s*:\s*@?"((?:[^"\\\n]|\\.)+)"')
+
+
 def keys_in_source(text):
     """The keys one source file asks the localization layers for."""
     return {match.group(1) for match in CALL_PATTERN.finditer(text) if match.group(1)} \
-        | log_row_keys(text) | keys_carried_by_names(text)
+        | log_row_keys(text) | keys_carried_by_names(text) | set(KEY_ARGUMENT.findall(text))
 
 
 def unreadable_rows(text):
@@ -346,6 +356,62 @@ def scan_health(keys_found, tokens_present):
     return "no localization call site is in the tree, so this scan checked nothing"
 
 
+# Issue #30: the log panel rewrites English log lines into Chinese, and its category
+# menu and badges were written in Chinese too, so an English system showed Chinese
+# where the app had text and English where it had a key.
+#
+# The rule is deliberately about the *outlet*, not about the characters. Chinese inside
+# a log-matching pattern is data -- 55 literals in the parser are strings it compares
+# incoming log lines against, and translating one of those breaks the match rather than
+# the language. So only a literal arriving at a named UI parameter or inside Text() is
+# asked to be a key, which is the shape the panel actually uses to show a string.
+UI_OUTLET_NAMES = ("displayName", "badgeText", "title", "detail", "label", "placeholder",
+                   "badge", "messageText", "informativeText")
+UI_OUTLET = re.compile(r'\b(?:%s)\s*:\s*@?"((?:[^"\\\n]|\\.)+)"' % "|".join(UI_OUTLET_NAMES))
+TEXT_OUTLET = re.compile(r'\bText\(\s*@?"((?:[^"\\\n]|\\.)+)"')
+
+
+def is_chinese(text):
+    return any("\u4e00" <= character <= "\u9fff" for character in text)
+
+
+def chinese_at_outlets(text):
+    """Literals the code hands to a place a player reads, in one language only."""
+    return [match.group(1) for pattern in (UI_OUTLET, TEXT_OUTLET)
+            for match in pattern.finditer(text) if is_chinese(match.group(1))]
+
+
+# One entry per file, and the number is a ceiling rather than a statement. Every
+# Chinese string still written at an outlet is a translation nobody has done yet, and
+# the honest version of that is a list the next change has to shrink: the audit refuses
+# a file that grows past its own number and refuses to leave the number sitting above
+# what the tree now holds. That is the difference between a debt being recorded and a
+# debt being paid down -- issue #30's first commit moved 24 of these into tables, and a
+# plain "no Chinese literals anywhere" rule would have been switched off within a week.
+UNTRANSLATED_OUTLETS = {
+    "Limelight/macOS/ViewControllers/DebugLogParser.swift": 55,
+}
+
+
+def untranslated_outlets(scan_root):
+    """Per file, the Chinese literals still written where a player will read them."""
+    found = {}
+    for directory, _, names in os.walk(os.path.join(scan_root, "Limelight")):
+        for name in sorted(names):
+            if not name.endswith(SOURCE_SUFFIXES):
+                continue
+            path = os.path.join(directory, name)
+            relative = os.path.relpath(path, scan_root).replace(os.sep, "/")
+            counted = []
+            for line in io.open(path, encoding="utf-8", errors="replace").read().splitlines():
+                if re.match(r"^\s*(//|\*|/\*)", line):
+                    continue
+                counted += chinese_at_outlets(line)
+            if counted:
+                found[relative] = len(counted)
+    return found
+
+
 failures = []
 
 
@@ -365,6 +431,11 @@ FIXTURES = [
     ("MLString with an at-quoted key",
      'MLString(@"Mouse Mode On", @"Notification")', {"Mouse Mode On"}),
     ("a plain string is not a call", 'Text("not.a.call.site")', set()),
+    ("a descriptor that stores the key",
+     'nameKey: "Discovery \u00b7 mDNS",\n      badgeKey: "Discovery/mDNS"',
+     {"Discovery \u00b7 mDNS", "Discovery/mDNS"}),
+    ("a key that names a log category, not a sentence",
+     'categoryKey: "discovery.mdns", filterKey: "network"', set()),
 ]
 
 # Two shapes the capped pattern could not see. The long key is one the cap
@@ -544,6 +615,22 @@ def self_test():
               "usage descriptions %s: %s for %s" %
               ("missed" if not must_pass else "wrongly refused", found, name))
 
+    OUTLET_CASES = [
+        ("a badge written in Chinese", 'badgeText: "\u53d1\u73b0"', True),
+        ("a bilingual category name", 'displayName: "\u53d1\u73b0 / Discovery"', True),
+        ("a view literal", 'Text("\u4e32\u6d41")', True),
+        ("the same text behind a key", 'nameKey: "Discovery"', False),
+        ("Chinese inside a log pattern, which is data",
+         'containsAny(line, ["\u6b63\u5728\u8fde\u63a5"])', False),
+        ("a parameter that names a log category", 'categoryKey: "\u53d1\u73b0"', False),
+    ]
+    for name, source, must_fail in OUTLET_CASES:
+        found = bool(chinese_at_outlets(source))
+        ok = found == must_fail
+        check(ok, "outlet rule %s %s" %
+              ("refuses" if must_fail else "accepts", name) if ok else
+              "outlet rule %s for %s" % ("missed" if not found else "wrongly refused", name))
+
     for name, layout, must_pass in LOC_META_CASES:
         found = info_plist_localization(layout)
         ok = bool(found) != must_pass
@@ -594,6 +681,27 @@ check(not only_en and not only_zh,
       "the two language tables declare the same set of keys"
       if not (only_en or only_zh) else
       "asymmetric table keys: english-only %d, chinese-only %d" % (len(only_en), len(only_zh)))
+
+outlets = untranslated_outlets(root)
+for path, count in sorted(outlets.items()):
+    allowed = UNTRANSLATED_OUTLETS.get(path, 0)
+    if count > allowed:
+        print("::error file=%s::%d Chinese strings sit where a player reads them; "
+              "the recorded debt for this file is %d: %s"
+              % (path, count, allowed,
+                 "none of them are recorded yet" if not allowed else "raise nothing, localize them"))
+    elif count < allowed:
+        print("::error file=%s::UNTRANSLATED_OUTLETS says %d, the tree now holds %d; "
+              "a debt that is not lowered when it is paid stops meaning anything"
+              % (path, allowed, count))
+check(all(outlets.get(path, 0) == allowed for path, allowed in UNTRANSLATED_OUTLETS.items())
+      and not [path for path in outlets if path not in UNTRANSLATED_OUTLETS],
+      "no new untranslated text reaches a place a player reads, and no paid-down debt is left recorded"
+      if all(outlets.get(path, 0) == allowed for path, allowed in UNTRANSLATED_OUTLETS.items())
+      and not [path for path in outlets if path not in UNTRANSLATED_OUTLETS] else
+      "untranslated UI text drifted: %s" % ", ".join(
+          "%s=%d/%d" % (path, count, UNTRANSLATED_OUTLETS.get(path, 0))
+          for path, count in sorted(outlets.items())))
 
 hidden_keys = []
 for path, text in source_texts(root):
