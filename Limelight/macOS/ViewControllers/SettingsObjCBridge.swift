@@ -578,7 +578,7 @@ class SettingsClass: NSObject {
       freeMouseMotionMode: settings.freeMouseMotionMode,
 
       emulateGuide: settings.emulateGuide,
-      hoverActivatesStreamWindow: settings.emulateGuide,
+      hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 

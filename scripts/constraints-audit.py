@@ -1222,6 +1222,10 @@ DRIVEN_BY = {
     # Same shape again: the exposure answer is C inside the renderer, so its harness wants the
     # macOS clang and SDK, and its own step wants the `workflow` scope this credential lacks.
     "hdr-sdr-exposure-tests.py": "scaling-output-evidence-tests.py",
+    # Not the clang reason again: this gate reads Swift text and needs no toolchain. It needs
+    # a CI step, and a step needs the `workflow` scope the pushing credential does not carry,
+    # so it rides the driver below it -- which is a step on every macOS build, and invokes it.
+    "settings-rebuild-passthrough-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

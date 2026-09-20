@@ -661,12 +661,31 @@ def run_hdr_sdr_exposure():
           "the hdr sdr exposure gate failed:\n" + chr(10).join(tail))
 
 
+def run_settings_rebuild_passthrough():
+    """Whether each hand-copied settings rebuild carries the field its name asks for.
+
+    Not a scaling question, and not here for the clang reason the gates above it are: this one
+    reads Swift text and needs no toolchain at all. It rides this driver for the other half of
+    the reason -- a step of its own needs the `workflow` scope the pushing credential does not
+    carry -- and this driver is a step on every macOS build. constraints-audit.py's DRIVEN_BY
+    says so, and refuses an entry whose call sits in a function the driver never reaches.
+    """
+    ran = subprocess.run([sys.executable, "scripts/settings-rebuild-passthrough-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "every settings rebuild carries the field its own name asks for"
+          if ran.returncode == 0 else
+          "the settings rebuild passthrough gate failed:\n" + chr(10).join(tail))
+
+
 def finish():
     run_aspect_fit()
     run_device_redirection_policy()
     run_pointer_entry_policy()
     run_usb_device_enumeration()
     run_hdr_sdr_exposure()
+    run_settings_rebuild_passthrough()
 
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0

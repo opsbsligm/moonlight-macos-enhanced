@@ -94,6 +94,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   device redirection and not key mapping, and that is USB Stage 2. No behaviour changed, and
   every number in the document came out of the commands printed in its own last section.
 
+- **Setting a custom resolution turned off a switch nobody had touched.** Three places in
+  `SettingsObjCBridge.swift` rebuild the whole `Settings` value by hand -- read what is
+  stored, spell all ninety-one fields out again, change one thing, persist -- and one of those
+  ninety-one rows read a different field than it named: `hoverActivatesStreamWindow`
+  was being handed `settings.emulateGuide`, sitting directly under the `emulateGuide`
+  row it had been copied from. So choosing a custom resolution wrote the controller Guide
+  switch into the switch that decides whether a pointer entering the stream window may
+  activate it. Both default to on, which is why it survived review and survived CI: the fault
+  only surfaced for a player who had turned controller Guide emulation off, and for that
+  player it was silent -- one setting
+  changed by another setting, with no page to look at afterwards and nothing in the log. The
+  field is carried by its own name now. `scripts/settings-rebuild-passthrough-tests.py` reads
+  the three tables and refuses three kinds of fault: a row that hands a field some other
+  field's value, unless the rename is written down with a reason; a rename written down that
+  no row uses any more, because an unused exemption is a hole with a note beside it; and a
+  whole table that no longer matches its neighbours, since a dropped row is the same fault
+  arriving as the initialiser's default. It mispells the original row in the table that
+  actually shipped it, and in one that got it right, and drops a row, and invents a rename,
+  and registers one nothing uses, and has to turn red for all five and stay clean for the
+  tree. It promises three tables that agree; what it does not promise is that every field of
+  `Settings` is spelled -- a field that gains a default and disappears from all three tables
+  would still pass, and that limit is written where the code is. Needs no toolchain, so it
+  rides `scaling-output-evidence-tests.py`, which is a step on every macOS build, and
+  `constraints-audit.py` now refuses that entry if the driver stops reaching the call.
+
 ### Fixed
 
 - **Permission prompts reached users in a language nobody chose.** Two separate faults sat in
