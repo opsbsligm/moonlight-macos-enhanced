@@ -350,6 +350,14 @@ struct InputView: View {
       Divider()
 
       ToggleCell(
+        title: "Command Key Sends Control",
+        hintKey: "Command Key Sends Control detail",
+        boolBinding: $settingsModel.commandSendsControl
+      )
+
+      Divider()
+
+      ToggleCell(
         title: "Capture system keyboard shortcuts",
         boolBinding: $settingsModel.captureSystemShortcuts
       )

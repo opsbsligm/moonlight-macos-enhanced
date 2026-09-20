@@ -842,6 +842,18 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  /// Whether a physical Command key sends Control to the host instead of the Windows key.
+  /// Off keeps the mapping every build of this app has shipped and the one Parsec, UU Remote
+  /// and Steam Link use, because a player who came from those tools already has the muscle
+  /// memory for it. On is the keyboard a player coming from a VNC-style tool has, and a
+  /// translation rule cannot give them that: a rule names one chord, and Command-as-Control
+  /// has to hold for every chord. Read per event, so it takes effect on the next key.
+  @Published var commandSendsControl: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var appArtworkWidth: CGFloat? {
     didSet {
       guard !isLoading else { return }
@@ -1321,6 +1333,7 @@ class SettingsModel: ObservableObject {
     emulateGuide = Self.defaultEmulateGuide
     hoverActivatesStreamWindow = Self.defaultHoverActivatesStreamWindow
     gamepadMenuLongPressTogglesMouseMode = Self.defaultGamepadMenuLongPressTogglesMouseMode
+    commandSendsControl = Self.defaultCommandSendsControl
     appArtworkWidth = Self.defaultAppArtworkWidth
     appArtworkHeight = Self.defaultAppArtworkHeight
     dimNonHoveredArtwork = Self.defaultDimNonHoveredArtwork

@@ -210,9 +210,16 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 - (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event;
 - (void)releaseAllModifierKeys;
 - (void)releaseRemoteModifierKeysForUncapture;
+- (KMR_CommandPreference)commandKeyPreferenceForCurrentHost;
 @end
 
 @implementation MLModifiersUnderProbe
+- (KMR_CommandPreference)commandKeyPreferenceForCurrentHost {
+    // The probe plays the player who never opened the switch, so Command keeps meaning the
+    // Windows key and the shortcuts below stay the ones a report described. The switch's own
+    // two answers are pinned by command-to-control-tests.py.
+    return KMR_CommandPreferenceWin;
+}
 - (instancetype)init {
     if ((self = [super init])) {
         _shouldSendInputEvents = YES;

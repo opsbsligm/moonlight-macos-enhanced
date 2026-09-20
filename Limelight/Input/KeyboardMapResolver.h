@@ -89,20 +89,50 @@ typedef NS_ENUM(uint8_t, KMR_PhysicalModifier) {
     KMR_Phys_Count,
 };
 
+// What a physical Command key means on the host. The shipping answer is the Windows key,
+// which is the mapping this project chose on purpose (see the header above) and the answer
+// Parsec, UU Remote and Steam Link give. One player's next keyboard is the ToDesk-style
+// one, where Command is the Control key, and that player cannot get there with a
+// translation rule: a rule names one chord, and Command-as-Control has to hold for every
+// chord a player might press. So it is one switch, and it is off unless the player says so.
+//
+// This is NOT the old KeyboardCompatibilityMode list coming back. Nothing here chooses
+// between rival tables: the table below is still the only one, and the preference below
+// relabels one key inside it.
+typedef NS_ENUM(uint8_t, KMR_CommandPreference) {
+    KMR_CommandPreferenceWin     = 0,   // the shipping default
+    KMR_CommandPreferenceControl = 1,   // "my Command key is my Control key"
+};
+
+// The one default, spelled here so a caller that never asks still gets the Windows key.
+KMR_CommandPreference KMR_CommandPreferenceDefault(void);
+
 // Convert a macOS kVK_* keycode to KMR_PhysicalModifier.
 KMR_PhysicalModifier KMR_PhysicalFromKeyCode(unsigned short keyCode);
 
 // Core mapping functions (now simple, stateless).
+//
+// Every one of them takes the preference. A player who asked for Control must not get it
+// on the keys they type and the Windows key on the shortcuts they bind, so there is no
+// single-argument way to ask: the argument-free names below are the ones that answer for a
+// player who never opened the switch, and scripts/command-to-control-tests.py refuses a
+// keyboard path that calls one of them.
+KMR_RemoteModifierMask KMR_RemoteMaskForPhysicalWithCommandPreference(KMR_PhysicalModifier phys,
+                                                                      KMR_CommandPreference pref);
+unsigned short KMR_RemoteVKForPhysicalKeyCodeWithCommandPreference(unsigned short keyCode,
+                                                                   KMR_CommandPreference pref);
+KMR_RemoteModifierMask KMR_RemoteMaskForAppKitFlagsWithCommandPreference(NSEventModifierFlags appKitFlags,
+                                                                         KMR_CommandPreference pref);
+
+// The same three answers for the player who never touched the switch.
 KMR_RemoteModifierMask KMR_RemoteMaskForPhysical(KMR_PhysicalModifier phys);
 unsigned short KMR_RemoteVKForPhysicalKeyCode(unsigned short keyCode);
-
-// Convenience: Convert NSEventModifierFlags to remote mask.
 KMR_RemoteModifierMask KMR_RemoteMaskForAppKitFlags(NSEventModifierFlags appKitFlags);
 
 // ---------------------------------------------------------------------------
 // Diagnostic / self-report interface.
 // ---------------------------------------------------------------------------
-void KMR_LogActiveMapping(void);
+void KMR_LogActiveMapping(KMR_CommandPreference pref);
 const char *KMR_LabelForPhysical(KMR_PhysicalModifier phys);
 void KMR_FormatRemoteMask(KMR_RemoteModifierMask mask, char *buf, size_t bufLen);
 

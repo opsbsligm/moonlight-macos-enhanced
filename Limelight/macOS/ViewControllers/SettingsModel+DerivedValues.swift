@@ -1060,6 +1060,10 @@ extension SettingsModel {
   /// Keep in step with MLGamepadMenuLongPressDefault() in GamepadMenuGesture.m.
   /// Two defaults in two languages, compared by scripts/gamepad-menu-gesture-tests.py.
   static let defaultGamepadMenuLongPressTogglesMouseMode = true
+  /// Keep in step with KMR_CommandPreferenceDefault() in KeyboardMapResolver.m: Win there
+  /// means false here. Two defaults in two languages, compared by
+  /// scripts/command-to-control-tests.py.
+  static let defaultCommandSendsControl = false
   static let defaultAppArtworkWidth: CGFloat? = nil
   static let defaultAppArtworkHeight: CGFloat? = nil
   static let defaultQuitAppAfterStream = false

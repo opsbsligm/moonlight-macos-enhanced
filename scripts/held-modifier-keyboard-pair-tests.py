@@ -67,10 +67,16 @@ ENUMS = [
     (SOURCE, "typedef NS_OPTIONS(NSUInteger, HIDKeyboardRemoteModifierMask) {"),
     (RESOLVER_H, "typedef NS_ENUM(uint8_t, KMR_PhysicalModifier) {"),
     (RESOLVER_H, "enum {\n    KMR_Remote_LeftShift   = 1 << 0,"),
+    (RESOLVER_H, "typedef NS_ENUM(uint8_t, KMR_CommandPreference) {"),
 ]
 
 RESOLVER_TABLE = "static const uint8_t s_mapTable[KMR_Phys_Count] = {"
 RESOLVER_FUNC = "KMR_RemoteModifierMask KMR_RemoteMaskForPhysical("
+# The switch under Command is part of the mapping, not a caller's decoration: the probe has
+# to lift the same answer the app gives, or it would test a keyboard nobody ships.
+RESOLVER_PREF = "static KMR_RemoteModifierMask KMR_MaskForPhysicalPref("
+RESOLVER_PREF_ENTRY = "KMR_RemoteModifierMask KMR_RemoteMaskForPhysicalWithCommandPreference("
+RESOLVER_DEFAULT = "KMR_CommandPreference KMR_CommandPreferenceDefault("
 
 
 def read(path):
@@ -213,6 +219,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
 - (char)translatedModifierFlagsForEvent:(NSEvent *)event;
 - (char)translateKeyModifierWithEvent:(NSEvent *)event;
+- (KMR_CommandPreference)commandKeyPreferenceForCurrentHost;
 @end
 
 @implementation MLModifierPairProbe
@@ -226,6 +233,12 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
                        @56: @(0xA0), @60: @(0xA1) };
     }
     return self;
+}
+
+- (KMR_CommandPreference)commandKeyPreferenceForCurrentHost {
+    // This probe plays the player who never opened the switch, so Command keeps meaning the
+    // Windows key here. The switch's own two answers are pinned by command-to-control-tests.py.
+    return KMR_CommandPreferenceWin;
 }
 """
 
@@ -382,7 +395,10 @@ def declarations():
     parts.append(typedef_line(read(RESOLVER_H), "KMR_RemoteModifierMask"))
     resolver = read(RESOLVER)
     parts.append(resolver_table(resolver))
+    parts.append(static_function(resolver, RESOLVER_DEFAULT))
+    parts.append(static_function(resolver, RESOLVER_PREF))
     parts.append(static_function(resolver, RESOLVER_FUNC))
+    parts.append(static_function(resolver, RESOLVER_PREF_ENTRY))
     source = read(SOURCE)
     parts.extend(static_function(source, signature) for signature in STATICS)
     return "\n\n".join(parts) + "\n"

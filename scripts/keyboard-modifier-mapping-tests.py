@@ -212,8 +212,8 @@ def assemble(variant=None):
     elif variant == "flags-mix-sides":
         # Command answering with Alt is the other classic: a shortcut that also moves
         # the modifier the game is watching.
-        body = body.replace("out |= KMR_RemoteMaskForPhysical(KMR_Phys_LeftCommand);",
-                            "out |= KMR_RemoteMaskForPhysical(KMR_Phys_LeftOption);", 1)
+        body = body.replace("out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftCommand, pref);",
+                            "out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftOption, pref);", 1)
     elif variant is not None:
         raise SystemExit("unknown variant %r" % variant)
 

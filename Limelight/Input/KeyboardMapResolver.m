@@ -18,7 +18,6 @@
 //
 
 #import "KeyboardMapResolver.h"
-#import "HIDSupport_Internal.h"
 #import "../Utility/Logger.h"
 
 // ---------------------------------------------------------------------------
@@ -42,6 +41,12 @@ static const uint8_t s_mapTable[KMR_Phys_Count] = {
 // 2. Public entry points.
 // ---------------------------------------------------------------------------
 
+KMR_CommandPreference KMR_CommandPreferenceDefault(void) {
+    // The Windows key, because that is the mapping this project picked on purpose and
+    // the one a player arriving from Parsec, UU Remote or Steam Link already expects.
+    return KMR_CommandPreferenceWin;
+}
+
 KMR_PhysicalModifier KMR_PhysicalFromKeyCode(unsigned short keyCode) {
     switch (keyCode) {
         case kVK_Shift:       return KMR_Phys_LeftShift;
@@ -56,19 +61,43 @@ KMR_PhysicalModifier KMR_PhysicalFromKeyCode(unsigned short keyCode) {
     }
 }
 
-KMR_RemoteModifierMask KMR_RemoteMaskForPhysical(KMR_PhysicalModifier phys) {
+// The table answers once, and the preference relabels the two Windows bits inside that one
+// answer. Relabelling rather than OR-ing is the whole point: a Command press that sent both
+// Control and Win is the defect this file was rewritten to remove, and it stays removed for
+// the players who asked for Control as much as for the ones who did not.
+static KMR_RemoteModifierMask KMR_MaskForPhysicalPref(KMR_PhysicalModifier phys,
+                                                      KMR_CommandPreference pref) {
     if ((unsigned)phys >= KMR_Phys_Count) {
         return 0;
     }
-    return s_mapTable[phys];
+    KMR_RemoteModifierMask mask = s_mapTable[phys];
+    if (pref == KMR_CommandPreferenceControl) {
+        // Left stays left and right stays right: a game that reads the two Control keys
+        // apart must read them apart whether Command or Control carried the press.
+        if (mask == KMR_Remote_LeftMeta)  return KMR_Remote_LeftControl;
+        if (mask == KMR_Remote_RightMeta) return KMR_Remote_RightControl;
+    }
+    return mask;
 }
 
-unsigned short KMR_RemoteVKForPhysicalKeyCode(unsigned short keyCode) {
+KMR_RemoteModifierMask KMR_RemoteMaskForPhysicalWithCommandPreference(KMR_PhysicalModifier phys,
+                                                                      KMR_CommandPreference pref) {
+    return KMR_MaskForPhysicalPref(phys, pref);
+}
+
+KMR_RemoteModifierMask KMR_RemoteMaskForPhysical(KMR_PhysicalModifier phys) {
+    return KMR_MaskForPhysicalPref(phys, KMR_CommandPreferenceDefault());
+}
+
+unsigned short KMR_RemoteVKForPhysicalKeyCodeWithCommandPreference(unsigned short keyCode,
+                                                                  KMR_CommandPreference pref) {
     KMR_PhysicalModifier phys = KMR_PhysicalFromKeyCode(keyCode);
     if (phys == KMR_Phys_Count) {
         return 0;
     }
-    KMR_RemoteModifierMask mask = s_mapTable[phys];
+    // The same one answer as above. A keycode path that ignored the preference would send
+    // the Windows key for a shortcut while the key the player typed sent Control.
+    KMR_RemoteModifierMask mask = KMR_MaskForPhysicalPref(phys, pref);
     // Invert mask to VK code.
     switch (mask) {
         case KMR_Remote_LeftShift:   return KMR_VK_LSHIFT;
@@ -83,21 +112,36 @@ unsigned short KMR_RemoteVKForPhysicalKeyCode(unsigned short keyCode) {
     }
 }
 
-KMR_RemoteModifierMask KMR_RemoteMaskForAppKitFlags(NSEventModifierFlags appKitFlags) {
+unsigned short KMR_RemoteVKForPhysicalKeyCode(unsigned short keyCode) {
+    return KMR_RemoteVKForPhysicalKeyCodeWithCommandPreference(keyCode,
+                                                               KMR_CommandPreferenceDefault());
+}
+
+KMR_RemoteModifierMask KMR_RemoteMaskForAppKitFlagsWithCommandPreference(NSEventModifierFlags appKitFlags,
+                                                                         KMR_CommandPreference pref) {
     KMR_RemoteModifierMask out = 0;
     if (appKitFlags & NSEventModifierFlagShift) {
-        out |= KMR_RemoteMaskForPhysical(KMR_Phys_LeftShift);
+        out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftShift, pref);
     }
     if (appKitFlags & NSEventModifierFlagControl) {
-        out |= KMR_RemoteMaskForPhysical(KMR_Phys_LeftControl);
+        out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftControl, pref);
     }
     if (appKitFlags & NSEventModifierFlagOption) {
-        out |= KMR_RemoteMaskForPhysical(KMR_Phys_LeftOption);
+        out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftOption, pref);
     }
     if (appKitFlags & NSEventModifierFlagCommand) {
-        out |= KMR_RemoteMaskForPhysical(KMR_Phys_LeftCommand);
+        out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftCommand, pref);
     }
+    // Control and Command both held under the Control preference land on one bit. That is
+    // not a collision to resolve: the mask is what the host is told, and one bit already
+    // down stays down whichever key answered first, so letting either of them go leaves the
+    // other one held. Two bits here would make the release of one take the key away.
     return out;
+}
+
+KMR_RemoteModifierMask KMR_RemoteMaskForAppKitFlags(NSEventModifierFlags appKitFlags) {
+    return KMR_RemoteMaskForAppKitFlagsWithCommandPreference(appKitFlags,
+                                                             KMR_CommandPreferenceDefault());
 }
 
 // ---------------------------------------------------------------------------
@@ -156,14 +200,15 @@ void KMR_FormatRemoteMask(KMR_RemoteModifierMask mask, char *buf, size_t bufLen)
     }
 }
 
-void KMR_LogActiveMapping(void) {
+void KMR_LogActiveMapping(KMR_CommandPreference pref) {
     char maskBuf[32];
-    Log(LOG_I, @"[kbmap] ===== KeyboardMapResolver active mapping (Streaming Mode) =====");
+    Log(LOG_I, @"[kbmap] ===== KeyboardMapResolver active mapping (Streaming Mode, Command -> %s) =====",
+        pref == KMR_CommandPreferenceControl ? "Ctrl" : "Win");
     Log(LOG_I, @"[kbmap] %-8s  %-10s  %s", "Phys", "Keycode", "→ Remote Mask");
     Log(LOG_I, @"[kbmap] --------  ----------  ----------------------------");
     for (uint8_t p = 0; p < KMR_Phys_Count; p++) {
         KMR_PhysicalModifier phys = (KMR_PhysicalModifier)p;
-        KMR_RemoteModifierMask mask = s_mapTable[phys];
+        KMR_RemoteModifierMask mask = KMR_MaskForPhysicalPref(phys, pref);
         KMR_FormatRemoteMask(mask, maskBuf, sizeof(maskBuf));
 
         unsigned short kvk = 0;

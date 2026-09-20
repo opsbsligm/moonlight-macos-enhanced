@@ -199,6 +199,7 @@ class SettingsClass: NSObject {
         "emulateGuide": settings.emulateGuide,
     "hoverActivatesStreamWindow": settings.hoverActivatesStreamWindow ?? SettingsModel.defaultHoverActivatesStreamWindow,
     "gamepadMenuLongPressTogglesMouseMode": settings.gamepadMenuLongPressTogglesMouseMode ?? SettingsModel.defaultGamepadMenuLongPressTogglesMouseMode,
+    "commandSendsControl": settings.commandSendsControl ?? SettingsModel.defaultCommandSendsControl,
         "appArtworkDimensions": settings.appArtworkDimensions,
         "dimNonHoveredArtwork": settings.dimNonHoveredArtwork,
         "quitAppAfterStream": settings.quitAppAfterStream,
@@ -369,6 +370,7 @@ class SettingsClass: NSObject {
       emulateGuide: settings.emulateGuide,
       hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: settings.gamepadMenuLongPressTogglesMouseMode,
+      commandSendsControl: settings.commandSendsControl,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 
@@ -474,6 +476,7 @@ class SettingsClass: NSObject {
         emulateGuide: updated.emulateGuide,
       hoverActivatesStreamWindow: updated.hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: updated.gamepadMenuLongPressTogglesMouseMode,
+      commandSendsControl: updated.commandSendsControl,
         appArtworkDimensions: updated.appArtworkDimensions,
         dimNonHoveredArtwork: updated.dimNonHoveredArtwork,
         quitAppAfterStream: updated.quitAppAfterStream,
@@ -583,6 +586,7 @@ class SettingsClass: NSObject {
       emulateGuide: settings.emulateGuide,
       hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: settings.gamepadMenuLongPressTogglesMouseMode,
+      commandSendsControl: settings.commandSendsControl,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 
@@ -1068,6 +1072,14 @@ class SettingsClass: NSObject {
   /// preference stored behaves like a fresh install instead of like a broken one.
   /// Keep this default in step with MLPointerEntryHoverActivatesWindowDefault(); the
   /// harness compares the two precisely because nothing else does.
+  /// Asked by every keyboard path in HIDSupport before it maps a Command key, so one host
+  /// cannot answer Control for typed keys and Win for bound shortcuts.
+  @objc static func commandSendsControl (for key: String) -> Bool {
+    if let settings = Settings.getSettings(for: key) {
+      return settings.commandSendsControl ?? SettingsModel.defaultCommandSendsControl
+    }
+    return SettingsModel.defaultCommandSendsControl
+  }
   @objc static func gamepadMenuLongPressTogglesMouseMode (for key: String) -> Bool {
     if let settings = Settings.getSettings(for: key) {
       return settings.gamepadMenuLongPressTogglesMouseMode ?? SettingsModel.defaultGamepadMenuLongPressTogglesMouseMode

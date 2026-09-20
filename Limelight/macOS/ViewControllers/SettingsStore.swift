@@ -99,6 +99,10 @@ struct Settings: Encodable, Decodable {
   /// like the hover switch beside it: an absent value is a player who never opened the
   /// setting, which means the gesture is on, not that it is off.
   let gamepadMenuLongPressTogglesMouseMode: Bool?
+  /// Whether Command sends Control on this host. Optional like the switch above it: an
+  /// absent value is a player who never opened the setting, which means the Windows key,
+  /// not the Control key.
+  let commandSendsControl: Bool?
   let appArtworkDimensions: CGSize?
   let dimNonHoveredArtwork: Bool
 
@@ -246,6 +250,7 @@ struct Settings: Encodable, Decodable {
       emulateGuide: emulateGuide,
       hoverActivatesStreamWindow: hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: gamepadMenuLongPressTogglesMouseMode,
+      commandSendsControl: commandSendsControl,
       appArtworkDimensions: appArtworkDimensions,
       dimNonHoveredArtwork: dimNonHoveredArtwork,
       quitAppAfterStream: quitAppAfterStream,
@@ -488,6 +493,7 @@ extension SettingsClass {
       emulateGuide: settings.emulateGuide,
       hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: settings.gamepadMenuLongPressTogglesMouseMode,
+      commandSendsControl: settings.commandSendsControl,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 

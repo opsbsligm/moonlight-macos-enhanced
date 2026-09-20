@@ -40,6 +40,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holding" forever -- every release toggled. The sample table found it, and it needed a
   case of its own before the frozen-timer mutation could be told apart from the fix.
 
+- A player whose Copy and Paste habit is a Control habit can now keep it. `Command Key Sends
+  Control` is a per-host switch, off by default, that makes every Command chord arrive on the
+  host as Control. It was not built as a mode: `KeyboardCompatibilityMode` was reduced to one
+  case in `a43313f`, whose own commit message records the removal of all six legacy modes as a
+  breaking change, and `docs/input-mapping-benchmark.md` §5.5 is what that deletion cost in
+  over-claimed language rows. Nothing here resurrects a rival table -- the one table still
+  answers, and the preference relabels the two Windows bits inside its single answer, which is
+  why a Command press under the switch cannot send Control and Win at once. A translation rule
+  could not have carried this: a rule names one chord, and Command-as-Control has to hold for
+  every chord a player might press, including the rules they bound with Command. `scripts/command-to-control-tests.py`
+  compiles the mapping with a real clang and pins both answers across the mask, the keycode and
+  the AppKit-flags paths; seven planted defects have to be noticed, including the two half-mapped
+  shapes (the shortcut path still answering Win, the typed keys answering Ctrl) and the shape
+  where a release of one of two held Control keys takes the key away. The default is written
+  twice, in C and in Swift, and the gate is what compares them. Two things it does not claim:
+  the switch is unverified end-to-end against a real host, since nothing here has a Windows
+  desktop to type into; and with the switch on, no key sends the Windows key at all, which the
+  setting's own text says rather than leaving the player to find.
+
 ### Fixed
 
 - **One gesture kept two clocks, and a design document called it missing.** The Menu long

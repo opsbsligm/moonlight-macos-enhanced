@@ -194,6 +194,7 @@ extension SettingsModel {
     emulateGuide = Self.defaultEmulateGuide
     hoverActivatesStreamWindow = Self.defaultHoverActivatesStreamWindow
     gamepadMenuLongPressTogglesMouseMode = Self.defaultGamepadMenuLongPressTogglesMouseMode
+    commandSendsControl = Self.defaultCommandSendsControl
     appArtworkWidth = Self.defaultAppArtworkWidth
     appArtworkHeight = Self.defaultAppArtworkHeight
     dimNonHoveredArtwork = Self.defaultDimNonHoveredArtwork
@@ -369,6 +370,7 @@ extension SettingsModel {
       emulateGuide = settings.emulateGuide
       hoverActivatesStreamWindow = settings.hoverActivatesStreamWindow ?? Self.defaultHoverActivatesStreamWindow
       gamepadMenuLongPressTogglesMouseMode = settings.gamepadMenuLongPressTogglesMouseMode ?? Self.defaultGamepadMenuLongPressTogglesMouseMode
+      commandSendsControl = settings.commandSendsControl ?? Self.defaultCommandSendsControl
 
       let appArtworkDimensions = loadNillableDimensionSetting(
         inputDimensions: settings.appArtworkDimensions)
@@ -745,6 +747,7 @@ extension SettingsModel {
       emulateGuide: emulateGuide,
       hoverActivatesStreamWindow: hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: gamepadMenuLongPressTogglesMouseMode,
+      commandSendsControl: commandSendsControl,
       appArtworkDimensions: appArtworkDimensions,
       dimNonHoveredArtwork: dimNonHoveredArtwork,
       quitAppAfterStream: quitAppAfterStream,

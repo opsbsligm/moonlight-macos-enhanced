@@ -7,6 +7,7 @@
 //
 #import "HIDSupport.h"
 #import "Controller.h"
+#import "KeyboardMapResolver.h"
 #import "Ticks.h"
 #import "HIDSupportRumbleTypes.h"
 #import "MouseEmulation.h"
@@ -193,6 +194,11 @@
 - (BOOL)usesKeyboardCommandToControlCompatibility;
 - (BOOL)usesKeyboardLeftControlWinSwapCompatibility;
 - (BOOL)usesKeyboardShortcutTranslationCompatibility;
+/// What a physical Command key means on this host. The Windows key is the answer unless the
+/// player asked for Control, and every keyboard path asks: a host that sent Control for the
+/// keys a player types and Win for the shortcuts they bound would be a host with two
+/// keyboards. scripts/command-to-control-tests.py refuses a path that skips the question.
+- (KMR_CommandPreference)commandKeyPreferenceForCurrentHost;
 - (BOOL)usesKeyboardMoonlightClassicMapping;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
 - (BOOL)shouldApplyKeyboardShortcutTranslationForEvent:(NSEvent *)event;

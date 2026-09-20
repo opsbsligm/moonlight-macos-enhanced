@@ -365,13 +365,15 @@ static NSUInteger HIDSyntheticOwnedModifierMask(HIDSupport *support, NSUInteger 
 static NSUInteger HIDSyntheticRemoteModifierMaskForKeyCode(HIDSupport *support,
                                                            unsigned short keyCode,
                                                            BOOL preferShortcutTranslationCommandMapping) {
-    // SIMPLIFIED: Always use the standard streaming mapping.
-    // No more compatibility modes.
+    // The mapping is the standard one; only what Command means is the player's to choose.
+    // preferShortcutTranslationCommandMapping is a name the old compatibility modes left
+    // behind, and it no longer picks a mapping -- the preference below does.
     KMR_PhysicalModifier phys = KMR_PhysicalFromKeyCode(keyCode);
     if (phys == KMR_Phys_Count) {
         return 0;
     }
-    return (NSUInteger)KMR_RemoteMaskForPhysical(phys);
+    return (NSUInteger)KMR_RemoteMaskForPhysicalWithCommandPreference(
+        phys, [support commandKeyPreferenceForCurrentHost]);
 }
 
 static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
@@ -798,8 +800,9 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         // SIMPLIFIED: Print the active keyboard mapping matrix once at init.
         // In the new "Streaming Standard" mode, the mapping is fixed (Cmd->Win, etc.)
         // and does not depend on any compatibility flags.
-        KMR_LogActiveMapping();
-        Log(LOG_I, @"[kbmap] HIDSupport init: Mode = Streaming Standard (Cmd->Win, Ctrl->Ctrl, Option->Alt)");
+        KMR_LogActiveMapping([self commandKeyPreferenceForCurrentHost]);
+        Log(LOG_I, @"[kbmap] HIDSupport init: Mode = Streaming Standard (Cmd->%@, Ctrl->Ctrl, Option->Alt)",
+            [self commandKeyPreferenceForCurrentHost] == KMR_CommandPreferenceControl ? @"Ctrl" : @"Win");
 
         [self setupHidManager];
         
@@ -980,12 +983,18 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     };
 
     NSUInteger desired = 0;
+    KMR_CommandPreference commandPref = [self commandKeyPreferenceForCurrentHost];
     for (size_t i = 0; i < sizeof(kMap) / sizeof(kMap[0]); i++) {
         if ((physical & kMap[i].physMask) == 0) {
             continue;
         }
-        desired |= (NSUInteger)KMR_RemoteMaskForPhysical(kMap[i].physEnum);
+        desired |= (NSUInteger)KMR_RemoteMaskForPhysicalWithCommandPreference(kMap[i].physEnum,
+                                                                             commandPref);
     }
+    // Under the Control preference a player holding both Control and Command lands on one
+    // bit here rather than two. That is the behaviour to keep: the bit already went down
+    // when the first of the two arrived, so releasing either one leaves the other held,
+    // while a second bit would let the first release take the key away mid-chord.
     return desired;
 }
 
@@ -1315,7 +1324,8 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 - (void)sendSyntheticRemoteModifierTapForFlags:(NSEventModifierFlags)modifierFlags {
     // SIMPLIFIED: Use the standard streaming mapping.
     NSEventModifierFlags relevantFlags = [StreamShortcutProfile relevantModifierFlags:modifierFlags];
-    NSUInteger remoteModifierMask = (NSUInteger)KMR_RemoteMaskForAppKitFlags(relevantFlags);
+    NSUInteger remoteModifierMask = (NSUInteger)KMR_RemoteMaskForAppKitFlagsWithCommandPreference(
+        relevantFlags, [self commandKeyPreferenceForCurrentHost]);
     HIDDispatchSyntheticRemoteModifierTap(self, remoteModifierMask, "sendSyntheticRemoteModifierTapForFlags");
 }
 
@@ -1340,7 +1350,10 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 
     // SIMPLIFIED: Use the standard streaming mapping.
     NSEventModifierFlags modifierFlags = [StreamShortcutProfile relevantModifierFlags:shortcut.modifierFlags];
-    NSUInteger remoteModifierMask = (NSUInteger)KMR_RemoteMaskForAppKitFlags(modifierFlags);
+    // A rule the player bound with Command travels under the same preference as the keys
+    // they type. Flipping one path and not the other is the half-mapped keyboard.
+    NSUInteger remoteModifierMask = (NSUInteger)KMR_RemoteMaskForAppKitFlagsWithCommandPreference(
+        modifierFlags, [self commandKeyPreferenceForCurrentHost]);
 
     char translatedModifiers = HIDRemoteModifierFlagsToGenericFlags(remoteModifierMask);
     short translatedKeyCode = (short)(0x8000 | [mappedKey shortValue]);
@@ -1402,8 +1415,8 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     if (!HIDIsModifierKeyCode(keyCode)) {
         return 0;
     }
-    // SIMPLIFIED: Always use the standard streaming mapping.
-    return KMR_RemoteVKForPhysicalKeyCode(keyCode);
+    return KMR_RemoteVKForPhysicalKeyCodeWithCommandPreference(keyCode,
+                                                               [support commandKeyPreferenceForCurrentHost]);
 }
 
 - (short)translateKeyCodeWithEvent:(NSEvent *)event {
@@ -1428,6 +1441,15 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
 
 - (char)translateKeyModifierWithEvent:(NSEvent *)event {
     return [self translatedModifierFlagsForEvent:event];
+}
+
+- (KMR_CommandPreference)commandKeyPreferenceForCurrentHost {
+    // Read per event rather than once at connect, so a player who turns the switch over
+    // mid-session gets the new keyboard on the next key rather than the next session. The
+    // stored value is optional, so a host nobody opened the setting for answers the default.
+    NSString *hostUuid = self.host.uuid ?: @"";
+    return [SettingsClass commandSendsControlFor:hostUuid] ? KMR_CommandPreferenceControl
+                                                           : KMR_CommandPreferenceWin;
 }
 
 - (BOOL)useGCMouse {

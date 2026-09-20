@@ -184,6 +184,45 @@ never seen them; 384 referenced keys became 394, and two of those ten were genui
 unanswered in both languages until this round. The audit's own fixtures cover the two new
 shapes and refuse a third: a property that merely returns English is not a key.
 
+### 5.6 The one keyboard switch a rule cannot give, and what it costs
+
+ToDesk's default reads Command as Control, and §5.1 held that nothing on the mapping axis is
+broken, so this section is about the one thing that axis genuinely cannot reach.
+
+Two facts made it a real gap rather than a preference. The first is that the mapping is not
+choosable any more: `KeyboardCompatibilityMode` has one case, `KMR_PhysicalFromKeyCode` reads a
+static table, and `usesKeyboardCommandToControlCompatibility` returns `NO` with a comment saying
+the legacy mode is gone. The second is what a translation rule actually is.
+`sendSyntheticRemoteShortcut:` looks up one `StreamShortcut` -- a chord with one key code and a
+modifier set -- so a rule names one chord. Command-as-Control has to hold for every chord a
+player might press, including the rules they bound themselves, which is a set no player enumerates.
+
+`a43313f` is why this stayed a switch rather than becoming a mode. Its commit message lists
+"Removed all 6 legacy keyboard compatibility modes" under breaking changes, and it names the
+mapping it kept by reference to Parsec, UU Remote and Steam Link. That is a product decision, and
+§5.5 is the record of what this repository pays when a mode list exists that nothing implements.
+So nothing was resurrected: `KMR_CommandPreference` has two answers, the table still answers once,
+and the preference relabels the two Windows bits inside that answer -- which is also why a Command
+press under the switch cannot send Control and Win together, the shape this module was rewritten to
+remove. The default is `KMR_CommandPreferenceWin`, because the keyboard a player arriving from
+Parsec or UU Remote already has muscle memory for is the one this app ships.
+
+Consistency is the part that could silently rot, because Command reaches the host through five
+places in `HIDSupport.m`: the mask synced from real key events, the keycode a modifier event
+sends, the mask for a tap from AppKit flags, the mask for a bound rule, and the mapping dump in
+the log. All five now ask `commandKeyPreferenceForCurrentHost`, and
+`scripts/command-to-control-tests.py` refuses the three argument-free entry points inside the
+driver, so a sixth path added later takes the switch or the gate goes red. Two half-mapped shapes
+are planted and must be noticed: the shortcut path still answering Win, and the typed keys
+answering Ctrl.
+
+What it costs, stated where a player will read it: with the switch on, no key sends the Windows
+key. Nothing here invents a substitute chord, because a second "smart" mapping is the mechanism
+this module exists to have lost. Two claims stay out of the record: the switch has not been driven
+end-to-end against a real host, since there is no Windows desktop in the loop, and the picker above
+it in the same panel still lists one mode -- `Streaming Standard` -- which is honest about the
+table and useless as a choice. Removing it is a UI change of its own and did not belong in this one.
+
 ## 6. Re-running the evidence
 
 Our own surface:
@@ -196,6 +235,17 @@ sed -n '/supportedKeySymbols: \[Int: String\] = \[/,/^\s*\]$/p' \
 sed -n '/static func relevantModifierFlags/,/^  }/p' \
   Limelight/macOS/ViewControllers/SettingsShortcuts.swift   # .control .option .shift .command .function
 grep -n 'Shortcut Translation Mode .* detail' Limelight/macOS/en.lproj/Localizable.strings
+grep -n 'usesKeyboardCommandToControlCompatibility' -A2 Limelight/Input/HIDSupport.m   # returns NO
+grep -c 'KMR_RemoteMaskForPhysical(\|KMR_RemoteMaskForAppKitFlags(\|KMR_RemoteVKForPhysicalKeyCode(' \
+  Limelight/Input/HIDSupport.m   # 0: every Command path asks the switch
+python3 scripts/command-to-control-tests.py .
+```
+
+`a43313f` states the deletion in its own words:
+
+```sh
+git show a43313f --format='%B' --no-patch | sed -n '/Breaking changes/,/^$/p'
+```
 ```
 
 Upstream and Citrix, both fetched at 12:00 +08:00 on 2026-09-20 with HTTP 200:
@@ -218,5 +268,5 @@ into a mechanism claim without a source that states the mechanism.
 | USB Stage 2 -- open a device, and the entitlement/signing that permits it | open, tracked in `docs/usb-redirection-design.md` §7 | none yet; the protocol question in §2.4 of that document is still the gate |
 | Secure attention sequence preset in the rule editor | open, new in this document | needs a UI placement decision, not a mechanism |
 | Global capture-tier switch a la `TransparentKeyPassthrough` | **rejected** -- §5.2 | closed unless macOS starts delivering Cmd+Tab to a windowed app |
-| Command-becomes-Ctrl as a default (ToDesk's preference) | open -- a rule already does the job, and no switch does | needs a decision about which keyboard the defaults should serve; a picker whose only job is to flip one mapping is exactly the surface `KeyboardCompatibilityMode` was reduced away from |
+| Command-becomes-Ctrl (ToDesk's preference) | **delivered** -- one per-host switch, default off, and no mode list brought back; §5.6 | closed. The picker above it still lists one mode, and that is recorded in §5.6 rather than fixed here |
 | Touch chord preset library (UU's 300+) | **not applicable** -- a macOS client has no touch surface to carry it | closed |

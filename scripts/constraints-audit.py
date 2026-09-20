@@ -1231,6 +1231,10 @@ DRIVEN_BY = {
     # scope the pushing credential does not carry. The driver below is a step on every
     # macOS build, and it invokes this one.
     "gamepad-menu-gesture-tests.py": "scaling-output-evidence-tests.py",
+    # Same shape a fifth time: the Command mapping is Objective-C that only the macOS SDK
+    # can compile, so its harness runs where the toolchain is, and its own CI step would
+    # need the `workflow` scope the pushing credential does not carry.
+    "command-to-control-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}
