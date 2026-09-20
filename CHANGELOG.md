@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.10-build1544] - 2026-09-21
+
+
 ### Changed
 
 - **The debug log panel's category menu and badges now speak the system language.**
