@@ -777,14 +777,9 @@
 "Mac Shortcuts as Windows Shortcuts" = "Shortcut Translation (⌘ → Ctrl)";
 "⌘ as Ctrl + Custom Rules" = "⌘ as Ctrl + Custom Rules";
 "Windows Shortcuts + Left Ctrl ↔ Left Win" = "Windows Shortcuts + Left Ctrl ↔ Left Win";
-"Shortcut Translation Mode Keep Mac detail" = "Keeps Mac-style shortcuts unchanged. Use this if you do not want automatic remapping.";
-"Shortcut Translation Mode CommandToControl detail" = "Always sends ⌘ as Ctrl to the host, even when it is not part of a shortcut.";
-"Shortcut Translation Mode SwapLeftControlAndWin detail" = "Swaps the left Ctrl and left Win positions. Best if you want a Windows-like bottom-left layout.";
-"Shortcut Translation Mode CustomRules detail" = "Turns off global shortcut translation. Your custom rules below still keep working.";
-"Shortcut Translation Mode ShortcutTranslation detail" = "Translates common ⌘ shortcuts into Windows-style Ctrl shortcuts while keeping other keys unchanged.";
-"Shortcut Translation Mode Hybrid detail" = "Translates common ⌘ shortcuts like Windows shortcuts and also swaps the left Ctrl and left Win positions.";
 "Moonlight Classic Mapping" = "Moonlight Classic Mapping";
-"Shortcut Translation Mode MoonlightClassic detail" = "Maps ⌘ to Ctrl and Control to Win symmetrically. Mac shortcuts map directly to Windows shortcuts without triggering the Start menu.";
+"Keyboard Compatibility Streaming Standard detail" = "Direct macOS to Windows mapping. Cmd→Win, Ctrl→Ctrl, Option→Alt, Shift→Shift.";
+"Streaming Standard (Recommended)" = "Streaming Standard (Recommended)";
 "Reconnect Stream" = "Reconnect Stream";
 "Stream Shortcuts" = "Stream Shortcuts";
 "Clipboard" = "Clipboard";

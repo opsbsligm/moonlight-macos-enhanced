@@ -258,10 +258,35 @@ def source_texts(scan_root):
                 yield path, io.open(path, encoding="utf-8", errors="replace").read()
 
 
+# Two more ways a key reaches a table without ever appearing inside a call the scanner
+# reads: a computed property whose name ends in Key returns it, and an enum's displayKey
+# returns it. Both arrive at localize() as a variable, so the literal sits nowhere near a
+# call site. A setting's option label and its explanatory sentence reach the table exactly
+# this way, which is how one of each lost their entries and stayed green -- the picker asked
+# for a name no table answered, and the scan reported complete coverage.
+KEY_PROPERTY = re.compile(
+    r'var\s+\w*Key\s*:\s*String\s*\{[^{}]*?return\s+"((?:[^"\\]|\\.)+)"', re.S)
+DISPLAY_KEY_BODY = re.compile(r'var\s+displayKey\s*:\s*String\s*\{(.*?)\n\s*\}', re.S)
+
+
+def keys_carried_by_names(text):
+    """Keys a variable carries to localize(), where no call site shows them.
+
+    Deliberately narrow. A property whose body holds braces is skipped rather than guessed
+    at, because a scan that invents keys would fail a clean tree, and this audit has already
+    learned that a green tick from a scan checking nothing is worse than a red one. What it
+    does read are the two shapes the settings panes actually use.
+    """
+    keys = set(KEY_PROPERTY.findall(text))
+    for body in DISPLAY_KEY_BODY.findall(text):
+        keys |= set(re.findall(r'return\s+"((?:[^"\\]|\\.)+)"', body))
+    return keys
+
+
 def keys_in_source(text):
     """The keys one source file asks the localization layers for."""
     return {match.group(1) for match in CALL_PATTERN.finditer(text) if match.group(1)} \
-        | log_row_keys(text)
+        | log_row_keys(text) | keys_carried_by_names(text)
 
 
 def unreadable_rows(text):
@@ -352,6 +377,27 @@ FIXTURES += [
      'MLString(@"%s", nil)' % LONG_KEY, {LONG_KEY}),
     ("a key carrying an escaped quote",
      r'MLString(@"Say \"hi\" to the host", nil)', {r'Say \"hi\" to the host'}),
+]
+
+# The two shapes a call site never shows. The first is a setting's explanatory sentence, the
+# second the label of a picker's option. A property that merely returns English is not a key
+# and must not be scanned as one, or a clean tree starts failing for text never meant for a
+# table.
+FIXTURES += [
+    ("a key a *Key property returns",
+     'private var selectedKeyboardTranslationDetailKey: String {\n'
+     '    return "Keyboard Compatibility Streaming Standard detail"\n  }',
+     {"Keyboard Compatibility Streaming Standard detail"}),
+    ("an option label an enum displayKey returns",
+     'var displayKey: String {\n'
+     '    switch self {\n'
+     '    case .streamingStandard:\n'
+     '      return "Streaming Standard (Recommended)"\n'
+     '    }\n  }',
+     {"Streaming Standard (Recommended)"}),
+    ("a property that only returns English",
+     'private var titleText: String {\n    return "Some English sentence"\n  }',
+     set()),
 ]
 
 # A log row keeps its own shape: the level is not translatable and must not be asked

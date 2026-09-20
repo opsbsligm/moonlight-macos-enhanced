@@ -119,6 +119,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rides `scaling-output-evidence-tests.py`, which is a step on every macOS build, and
   `constraints-audit.py` now refuses that entry if the driver stops reaching the call.
 
+- **The keyboard page asked for two strings no language table had.** Both were invisible to
+  the audit that says localization is complete. The picker's option label reaches `localize()`
+  as a variable holding an enum's `displayKey`, and the explanatory sentence under it is the
+  return value of a computed property; neither literal sits inside a call, so the scan had
+  never seen either key, and the sentence had meanwhile been written *as* its own English key.
+  An English user could not tell the difference, because a missing key renders as itself and
+  in both cases the key happened to read as English. A Chinese user read two lines of English
+  inside a Chinese page, on the one setting that explains what their keyboard is going to do.
+  The property now returns a key and both tables answer it and the option label, which reads
+  流式标准（推荐） in Chinese. The scan now also reads keys a variable carries, in the two
+  shapes the settings panes actually use -- 384 referenced keys became 394 -- and it is
+  deliberately narrow there, because a scan that invents keys fails clean trees: its fixtures
+  cover a `*Key` property and an enum `displayKey`, and refuse a property that merely returns
+  English. Deleting either of the two new table entries, in either language, or renaming the
+  option label without adding an entry, turns the audit red.
+
+### Removed
+
+- Seven sentences that described settings which no longer exist: `Shortcut Translation Mode
+  Keep Mac detail` and its five siblings plus `MoonlightClassic`, left behind when
+  `KeyboardCompatibilityMode` was cut to a single case. They survived because nothing asks for
+  them, which is precisely why they were dangerous: `docs/input-mapping-benchmark.md` read
+  those rows and reported seven keyboard translation modes this fork does not have. Both
+  tables dropped them together (1029 keys became 1024 each), and §5.5 of that document now
+  records how a language table was mistaken for a feature list, so the mistake has a written
+  end rather than a corrected sentence.
 ### Fixed
 
 - **Permission prompts reached users in a language nobody chose.** Two separate faults sat in
@@ -139,6 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other than the development region, a sentence answered by one table and not the other, and a
   language folder with no plist beside it -- each of the three tested against the case it
   exists for.
+
 
 ## [1.3.10-build1510] - 2026-09-19
 

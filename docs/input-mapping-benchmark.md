@@ -39,7 +39,7 @@ table. This is the list the comparison is made against.
 
 | Axis | What ships here | Where |
 | --- | --- | --- |
-| Modifier / shortcut translation | Seven modes: `Keep Mac`, `CommandToControl`, `SwapLeftControlAndWin`, `CustomRules`, `ShortcutTranslation`, `Hybrid`, `MoonlightClassic` (Command to Ctrl, Control to Win, symmetric both sides) | `keyboardCompatibilityMode`, `shortcutTranslationMode`; strings at `Localizable.strings:780-787` |
+| Modifier translation | One fixed mapping and no user-facing choice of one: Command to Win, Control to Ctrl, Option to Alt, Shift to Shift | `KeyboardMapResolver.m`'s `s_mapTable`, whose own comment reads "This is the ONLY place that defines modifier mapping"; `KeyboardCompatibilityMode` carries the single case `streamingStandard` (`SettingsModel+DerivedValues.swift:179`) |
 | Per-shortcut ownership | Unlimited user rules: record a Mac chord, choose output = **Remote Shortcut** (any key from a 97-entry key table with any of Control/Option/Shift/Command/Function) or **Moonlight Action** (10 actions, incl. `releaseMouseCapture`, `disconnectStream`, `openControlCenter`) | `KeyboardTranslationOutputKind`, `KeyboardTranslationRule`, `StreamShortcutProfile.orderedActions` |
 | Escape hatch while captured | Ten named actions, plus `performClose` preserving a local shortcut rather than forwarding it | `StreamShortcutProfile.orderedActions`, `handleKeyboardTranslationForCurrentCloseEventAllowingLocalAction:` |
 | Local/remote key pairing | `keyboardSuppressedKeyDownKeyCodes` -- a key the host never saw go down must not be seen coming up | `HIDSupport.m` `keyUp:` |
@@ -65,10 +65,10 @@ behaviour is bad. `n/e` means not evidenced.
 
 | Axis | This fork | moonlight-qt (verified upstream) | Citrix (verified upstream) | ToDesk (advertised only) | UU Remote (advertised only) | Parsec |
 | --- | --- | --- | --- | --- | --- | --- |
-| Modifier / layout translation | 7 modes | none | none | yes | n/e | n/e |
+| Modifier / layout translation | one fixed mapping (Command to Win) | none | none | yes (Command to Ctrl) | n/e | n/e |
 | Per-shortcut custom ownership | unlimited rules, any key x any modifier, output to host chord *or* to a local action | none | a hotkey table: each entry binds a remote action to a chord drawn from `(none)/Alt/Ctrl/Shift` x `(none)/F1-F12/minus/plus/star/tab` -- 4 x 17 | chord relay for Alt+Tab class | 300+ preset schemes (touch to PC) | n/e |
 | Capture tier switch | no equivalent (see §5.2) | none | `TransparentKeyPassthrough` = Local / Remote / FullScreenOnly, with the Windows key given its own instance of it | n/e | n/e | n/e |
-| Windows-key treated as its own class | yes, via `SwapLeftControlAndWin` and the MoonlightClassic pair | none | yes (`Part_Keyboard_Windows_Key`) | n/e | n/e | n/e |
+| Windows-key treated as its own class | no choice to make. Mac Command *is* Win, so the Windows key is always reachable and never separable from Command | none | yes (`Part_Keyboard_Windows_Key`) | n/e | n/e | n/e |
 | Secure attention sequence (Ctrl+Alt+Del) | reachable, no dedicated entry (see §5.3) | n/e | its own policy item | n/e | n/e | n/e |
 | Pointer modes | absolute, relative, free, plus 2 driver strategies | absolute on/off | n/e | n/e | n/e | n/e |
 | Pointer scaling | linear 0.25--3.0, sub-pixel carry | none | n/e | mouse acceleration | n/e | n/e |
@@ -93,8 +93,11 @@ backgroundGamepad, reverseScrollDirection, swapFaceButtons, multiController` (`k
 is power, `muteOnFocusLoss` is audio, which is the honest reading of the list rather than a
 generous one). The point is that it is enumerable rather than summarised: not one of the 25
 names a key, a modifier, a shortcut, or a capture tier. Everything this fork has
-on the keyboard axis -- seven translation modes, a 97-key x 5-modifier rule editor, and
-suppressed-key pairing -- is work this repository added. Citrix's hotkey table
+on the keyboard axis -- a 97-key x 5-modifier rule editor, ten named actions, and
+suppressed-key pairing -- is work this repository added. The picker that once advertised
+`MoonlightClassic` and four other mappings no longer offers a choice: `KeyboardCompatibilityMode`
+has one case, and the sentences for the deleted modes were still sitting in both language
+tables, which is how this document came to report seven modes it could not point at (§5.5). Citrix's hotkey table
 (`Policy_Keyboard_Hotkeys`) is the same shape as our rule editor and strictly narrower
 than it. An administrator binds eleven fixed remote actions -- `Alt_Backtab`, `Alt_Tab`,
 `Close_Remote_Application`, `Ctrl_Alt`, `Ctrl_Alt_Del`, `Ctrl_Esc`, `Ctrl_Shift_Esc`,
@@ -103,8 +106,14 @@ one chord built from a modifier enum (`(none)/Alt/Ctrl/Shift`) crossed with a ke
 where our editor records any chord and offers any of 97 keys against five modifiers. The
 eleven ids are listed because that is what the file contains; the human-readable labels in
 this ADMX copy are `$(string.unknown_164)` placeholders, so no wording is quoted from it.
-ToDesk's headline keyboard feature, Command becoming Ctrl, is our `MoonlightClassic` mode,
-which additionally maps Control to Win symmetrically.
+ToDesk's headline keyboard feature, Command becoming Ctrl, is **not** something this fork
+ships. Its mapping is the opposite preference: Command goes to Win, which is the
+Parsec-style choice its own code comment names. A player can still get Command-becomes-Ctrl
+today -- the rule editor records `Command+W` and emits `Control+W`, and
+`sendSyntheticRemoteShortcut:` sends exactly the modifiers the rule names -- but each
+shortcut is one rule the player wrote, not a switch they flipped. That is a discoverability gap and a difference of opinion about defaults, not a missing
+mechanism, and it is the one thing on this page where a competitor's default serves a Mac
+keyboard better than ours does.
 
 Decision: **the keyboard axis needs no code work.** Not "no work I want to do" -- the
 competitor evidence for a gap is empty, and the one place a competitor is ahead is a
@@ -151,6 +160,30 @@ merged, and the device itself stays unreachable until the protocol and signing q
 in its §2.4 are answered. Input mapping is done; the peripheral axis is the open one, and
 this benchmark is what proves it is the right place to spend the next round.
 
+### 5.5 What this document got wrong when it was written, and what fixed it
+
+The first version of this page reported seven keyboard translation modes and named
+`shortcutTranslationMode` among the settings behind them. Both claims were wrong, and the way
+they were wrong is worth writing down, because the mechanism of the error is available to
+anyone who reads this repository.
+
+`Localizable.strings` still carried seven sentences named `Shortcut Translation Mode <mode>
+detail`. Sentences in a language table are evidence that somebody meant to ship a thing; they
+are not evidence that a thing ships. `KeyboardCompatibilityMode` had already been reduced to
+one case, its own comment saying the other five were "removed completely", and the identifier
+`shortcutTranslationMode` does not exist anywhere in the tree. The table said a mode had a
+description; the code said there was no mode.
+
+Two repairs, both checkable. The seven sentences are gone from both tables (1029 keys per
+language became 1024), so the next reader cannot be shown a mode that was deleted. And the
+hole that let them live -- and let a picker's option label and its explanatory sentence lose
+their table entries while the audit printed complete coverage -- is closed: `l10n-audit.py`
+now reads keys carried by a variable, which is how both a `*Key` computed property and an
+enum's `displayKey` reach `localize()`. Neither literal sits inside a call, so the scan had
+never seen them; 384 referenced keys became 394, and two of those ten were genuinely
+unanswered in both languages until this round. The audit's own fixtures cover the two new
+shapes and refuse a third: a property that merely returns English is not a key.
+
 ## 6. Re-running the evidence
 
 Our own surface:
@@ -185,4 +218,5 @@ into a mechanism claim without a source that states the mechanism.
 | USB Stage 2 -- open a device, and the entitlement/signing that permits it | open, tracked in `docs/usb-redirection-design.md` §7 | none yet; the protocol question in §2.4 of that document is still the gate |
 | Secure attention sequence preset in the rule editor | open, new in this document | needs a UI placement decision, not a mechanism |
 | Global capture-tier switch a la `TransparentKeyPassthrough` | **rejected** -- §5.2 | closed unless macOS starts delivering Cmd+Tab to a windowed app |
+| Command-becomes-Ctrl as a default (ToDesk's preference) | open -- a rule already does the job, and no switch does | needs a decision about which keyboard the defaults should serve; a picker whose only job is to flip one mapping is exactly the surface `KeyboardCompatibilityMode` was reduced away from |
 | Touch chord preset library (UU's 300+) | **not applicable** -- a macOS client has no touch surface to carry it | closed |
