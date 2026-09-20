@@ -859,7 +859,7 @@ RESOLVER_H = os.path.join(root, "Limelight", "Input", "KeyboardMapResolver.h")
 
 RIGHT_COMMAND_ROW = "    KMR_Remote_RightMeta,   // KMR_Phys_RightCommand"
 LWIN_DECL = "    KMR_VK_LWIN     = 0x5B,"
-FLAGS_COMMAND = "        out |= KMR_RemoteMaskForPhysical(KMR_Phys_LeftCommand);"
+FLAGS_COMMAND = "        out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftCommand, pref);"
 
 
 def right_command_sends_the_left_win(text):
@@ -876,7 +876,7 @@ def a_virtual_key_one_digit_off(text):
 def the_flags_path_asks_for_the_right_hand(text):
     """NSEvent flags do not say which side went down, so this invents an answer."""
     return once(text, FLAGS_COMMAND, "the flags path Command line").replace(
-        FLAGS_COMMAND, "        out |= KMR_RemoteMaskForPhysical(KMR_Phys_RightCommand);", 1)
+        FLAGS_COMMAND, "        out |= KMR_MaskForPhysicalPref(KMR_Phys_RightCommand, pref);", 1)
 
 
 HIDDEN_LOG_ROW = 'MLLogRow(@"WARN", @"Log", @"Repeated log lines suppressed")'
