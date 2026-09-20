@@ -17,6 +17,13 @@ second, Info.plist answers the third, and the .sha256 sidecar lets the release
 job -- which runs on ubuntu and cannot mount anything -- prove that the bytes it
 is publishing are the bytes that were built.
 
+A fourth question arrived with issue #44: whether the sentences a permission
+prompt shows are translated in the build a user downloads. The tables are
+installed by codesign-bundle.sh and read back from the bundle it signs, but the
+image is packaged after that, and the universal merge writes over Resources -- so
+the audit now requires the shipped image to carry every table the repository
+holds, entry for entry.
+
 The self-test builds its own images rather than trusting a fixture: a good one
 has to pass, one without a drop target has to be rejected, a build number that
 disagrees has to be rejected, and appended bytes have to be caught twice, once
@@ -28,6 +35,48 @@ HDIUTIL = shutil.which("hdiutil") or "/usr/bin/hdiutil"
 APP_NAME = "Moonlight.app"
 BINARY = os.path.join("Contents", "MacOS", "Moonlight")
 INFO = os.path.join("Contents", "Info.plist")
+RESOURCES = os.path.join("Contents", "Resources")
+
+# Where the repository keeps the tables that translate a permission prompt, and the
+# rule by which the shipped copy is judged. codesign-bundle.sh installs these tables
+# and reads them back from the bundle it is about to seal, which proves the bundle at
+# signing time. The image is what a user downloads, and the steps between the two --
+# the universal merge overwriting Resources, create-dmg's staging, any future
+# re-pack -- can lose them with every job still green. The audit compares the shipped
+# tables against the repository's own, so a translation that exists only in git is
+# refused rather than announced.
+SOURCE_LPROJ_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 "Limelight", "macOS", "Supporting Files")
+LOCALIZED_INFO = "InfoPlist.strings"
+
+# A .strings table is the old-style plist, which plistlib does not read. Parsing the
+# entries here rather than shelling out to plutil keeps the rule checkable on a host
+# that has neither the tool nor the language.
+ENTRY = re.compile(r'^\s*"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"\s*;', re.M)
+ESCAPES = {r'\"': '"', r"\n": "\n", r"\\": "\\", r"\t": "\t"}
+
+
+def unescape(text):
+    for raw, decoded in ESCAPES.items():
+        text = text.replace(raw, decoded)
+    return text
+
+
+def parse_strings(text):
+    """The key/value pairs of an old-style .strings table."""
+    return {unescape(key): unescape(value) for key, value in ENTRY.findall(text)}
+
+
+def read_tables(directory):
+    """Every <lang>.lproj/InfoPlist.strings under a directory, keyed by language."""
+    tables = {}
+    for base, _, files in os.walk(directory):
+        if LOCALIZED_INFO not in files:
+            continue
+        language = os.path.basename(base)
+        with open(os.path.join(base, LOCALIZED_INFO), "rb") as handle:
+            tables[language] = parse_strings(handle.read().decode("utf-8"))
+    return tables
 
 
 def sha256_of(path, chunk=1 << 20):
@@ -135,7 +184,58 @@ class Mounted:
         shutil.rmtree(os.path.dirname(self.point), ignore_errors=True)
 
 
-def inspect(image, version=None, build=None):
+def localization_findings(app, info, tables):
+    """Require the shipped image to carry every translated sentence the repository has.
+
+    Three ways this rots, and each is a different failure: a table missing means the
+    user reads the sentence baked into Info.plist in a language they did not choose; a
+    table that differs from the source means the image and the repository tell two
+    stories; a table for a language no source provides means a stale one survived a
+    rename. The last one matters more than it looks: an empty or stale table still
+    satisfies a gate that only counts files.
+
+    Every key Info.plist asks a prompt to translate has to appear in every table. That
+    is the shape of issue #44 -- one sentence left in Chinese inside the English plist,
+    so an English system had nothing to fall back to but the source text.
+    """
+    problems = []
+    if not tables:
+        return ["no %s table under %s, so nothing can be required of the image"
+                % (LOCALIZED_INFO, SOURCE_LPROJ_ROOT)]
+    shipped = read_tables(os.path.join(app, RESOURCES))
+    for language in sorted(tables):
+        want = tables[language]
+        got = shipped.get(language)
+        if got is None:
+            problems.append("%s carries no table for %s, so that language shows the "
+                            "sentence written into Info.plist instead of its own"
+                            % (APP_NAME, language))
+            continue
+        missing = sorted(set(want) - set(got))
+        changed = sorted(key for key in set(want) & set(got) if want[key] != got[key])
+        if missing:
+            problems.append("the image's table for %s is missing %s, which the "
+                            "repository translates" % (language, ", ".join(missing)))
+        if changed:
+            problems.append("the image's table for %s is not the table the repository "
+                            "holds for %s" % (language, ", ".join(changed)))
+    for language in sorted(set(shipped) - set(tables)):
+        problems.append("the image carries a table for %s with none behind it in the "
+                        "repository, so it is stale by construction" % language)
+    prompts = sorted(key for key in info if key.endswith("UsageDescription"))
+    for key in prompts:
+        for language, table in sorted(shipped.items()):
+            if not table.get(key):
+                problems.append("the prompt for %s has no entry in %s, so that language "
+                                "reads the plist's own sentence" % (key, language))
+    if not problems:
+        print("ok localized prompts %s (%s)"
+              % (", ".join(sorted(shipped)),
+                 ", ".join(prompts) if prompts else "no UsageDescription keys"))
+    return problems
+
+
+def inspect(image, version=None, build=None, tables=None):
     """Require the shape every installer needs, and report what is inside it."""
     problems = []
     with Mounted(image) as point:
@@ -171,6 +271,8 @@ def inspect(image, version=None, build=None):
                     print("ok bundle %s version %s build %s"
                           % (APP_NAME, info.get("CFBundleShortVersionString"),
                              info.get("CFBundleVersion")))
+                if tables is not None:
+                    problems += localization_findings(app, info, tables)
         # The link is the install gesture. An image made by the bare
         # `hdiutil create` fallback holds the app and nothing else: there is no
         # drop target, and no line in the build log says the package changed shape.
@@ -190,7 +292,17 @@ def inspect(image, version=None, build=None):
                          % image + "\n  ".join(problems))
 
 
-def build_image(staging, image, with_link):
+def write_tables(directory, tables):
+    """Write old-style tables for a fixture, in the shape the audit has to read back."""
+    for language, entries in tables.items():
+        folder = os.path.join(directory, language)
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, LOCALIZED_INFO), "w", encoding="utf-8") as handle:
+            handle.write("\n".join('"%s" = "%s";' % (key, value)
+                                    for key, value in sorted(entries.items())) + "\n")
+
+
+def build_image(staging, image, with_link, localizations=None, info=None):
     """Make a throwaway image for the self-test, with or without the drop target."""
     shutil.rmtree(staging, ignore_errors=True)
     os.makedirs(os.path.join(staging, APP_NAME, "Contents", "MacOS"))
@@ -198,11 +310,16 @@ def build_image(staging, image, with_link):
     with open(binary, "w") as handle:
         handle.write("#!/bin/sh\necho self-test\n")
     os.chmod(binary, 0o755)
+    bundle_info = {"CFBundleIdentifier": "std.skyhua.MoonlightMac2",
+                   "CFBundleName": "Moonlight",
+                   "CFBundleShortVersionString": "9.9.9",
+                   "CFBundleVersion": "1"}
+    if info:
+        bundle_info.update(info)
     with open(os.path.join(staging, APP_NAME, INFO), "wb") as handle:
-        plistlib.dump({"CFBundleIdentifier": "std.skyhua.MoonlightMac2",
-                       "CFBundleName": "Moonlight",
-                       "CFBundleShortVersionString": "9.9.9",
-                       "CFBundleVersion": "1"}, handle)
+        plistlib.dump(bundle_info, handle)
+    if localizations:
+        write_tables(os.path.join(staging, APP_NAME, RESOURCES), localizations)
     if with_link:
         os.symlink("/Applications", os.path.join(staging, "Applications"))
     result = subprocess.run([HDIUTIL, "create", "-volname", "self-test",
@@ -248,10 +365,20 @@ def self_test():
                          "run. The checksum half is --self-test-checksums, which needs no "
                          "toolchain at all." % HDIUTIL)
     workspace = tempfile.mkdtemp(prefix="dmg-audit-selftest-")
+    # The fixture stands in for the repository: two source tables, and an Info.plist
+    # that asks one prompt to be translated. Expectations are read from the fixture
+    # rather than written twice, so the self-test cannot drift from the rule.
+    tables = {"en.lproj": {"NSMicrophoneUsageDescription": "Used to capture audio"},
+              "zh-Hans.lproj": {"NSMicrophoneUsageDescription": "\u7528\u4e8e\u91c7\u96c6\u97f3\u9891"}}
+    source = os.path.join(workspace, "source-tables")
+    write_tables(source, tables)
+    expected = read_tables(source)
+    prompt = {"NSMicrophoneUsageDescription": "Used to capture audio"}
     try:
         good = os.path.join(workspace, "Moonlight-Enhanced.dmg")
-        build_image(os.path.join(workspace, "staged-good"), good, with_link=True)
-        inspect(good, version="9.9.9", build="1")
+        build_image(os.path.join(workspace, "staged-good"), good, with_link=True,
+                    localizations=tables, info=prompt)
+        inspect(good, version="9.9.9", build="1", tables=expected)
         hdiutil_verify(good)
         sidecar = write_checksum(good)
         verify_checksums([sidecar], [workspace])
@@ -265,6 +392,43 @@ def self_test():
         # The build number a tag announces versus the one inside the image.
         expect_rejection("an image whose build number disagrees",
                          lambda: inspect(good, version="9.9.9", build="2"))
+
+        # The translation that lives in the repository but never reached the download.
+        one_language = dict(tables)
+        one_language.pop("zh-Hans.lproj")
+        thin = os.path.join(workspace, "no-second-table.dmg")
+        build_image(os.path.join(workspace, "staged-thin"), thin, with_link=True,
+                    localizations=one_language, info=prompt)
+        expect_rejection("an image that lost one language's prompt table",
+                         lambda: inspect(thin, version="9.9.9", build="1", tables=expected))
+
+        drifted = {"en.lproj": {"NSMicrophoneUsageDescription": "Used for something else"},
+                   "zh-Hans.lproj": tables["zh-Hans.lproj"]}
+        stale = os.path.join(workspace, "drifted-tables.dmg")
+        build_image(os.path.join(workspace, "staged-drift"), stale, with_link=True,
+                    localizations=drifted, info=prompt)
+        expect_rejection("an image whose table is not the repository's",
+                         lambda: inspect(stale, version="9.9.9", build="1", tables=expected))
+
+        extra = dict(tables)
+        extra["fr.lproj"] = {"NSMicrophoneUsageDescription": "stub"}
+        orphan = os.path.join(workspace, "orphan-table.dmg")
+        build_image(os.path.join(workspace, "staged-orphan"), orphan, with_link=True,
+                    localizations=extra, info=prompt)
+        expect_rejection("an image carrying a table no source provides",
+                         lambda: inspect(orphan, version="9.9.9", build="1", tables=expected))
+
+        empty = {"en.lproj": {}, "zh-Hans.lproj": tables["zh-Hans.lproj"]}
+        silent = os.path.join(workspace, "empty-table.dmg")
+        build_image(os.path.join(workspace, "staged-empty"), silent, with_link=True,
+                    localizations=empty, info=prompt)
+        expect_rejection("an image whose English table translates no prompt",
+                         lambda: inspect(silent, version="9.9.9", build="1", tables=expected))
+
+        none = os.path.join(workspace, "no-tables.dmg")
+        build_image(os.path.join(workspace, "staged-none"), none, with_link=True, info=prompt)
+        expect_rejection("an image with no prompt tables at all",
+                         lambda: inspect(none, version="9.9.9", build="1", tables=expected))
 
         # Append a byte: both answers have to change, the image's and the sidecar's.
         with open(good, "ab") as handle:
@@ -326,6 +490,9 @@ def main():
                         help="directory to search for --verify-checksums (repeatable)")
     parser.add_argument("--skip-image-check", action="store_true",
                         help="hash only, for a host that cannot mount an HFS+ image")
+    parser.add_argument("--localizations-from", default=SOURCE_LPROJ_ROOT,
+                        metavar="DIR", help="directory whose <lang>.lproj tables the "
+                                            "image has to carry (default: this repository's)")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--self-test-checksums", action="store_true")
     args = parser.parse_args()
@@ -346,7 +513,8 @@ def main():
             raise SystemExit("error: %s does not exist, so it was never packaged" % image)
         if not args.skip_image_check:
             hdiutil_verify(image)
-            inspect(image, version=args.version, build=args.build)
+            inspect(image, version=args.version, build=args.build,
+                    tables=read_tables(args.localizations_from))
         if args.write_checksums:
             print("wrote %s" % write_checksum(image))
 

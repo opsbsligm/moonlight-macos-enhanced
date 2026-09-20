@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A permission prompt could be translated in the repository and untranslated in the
+  download.** Issue #44's fix installed the `InfoPlist.strings` tables and read them back --
+  from the bundle being signed, which proves the bundle at signing time. The image is
+  packaged after that, the universal merge writes over `Contents/Resources`, and every job
+  stayed green while a table went missing, because the image audit asked about the drop
+  target, the version, and the checksum, and never about localization. `scripts/dmg-audit.py`
+  now compares the tables inside the image entry by entry against the repository's own: a
+  language missing, a table whose text is not the source's, a table for a language no source
+  provides, and a table that translates none of the prompts the `Info.plist` declares are each
+  rejected, and the self-test has to see all six shapes. The published
+  `v1.3.10-build1537` universal image passes it -- build 1537, both tables, all three
+  `UsageDescription` keys translated in both -- so the sentence a user reads in a prompt is
+  now verified in the file a user downloads rather than two steps earlier. What the rule still
+  cannot do on the ubuntu audit runner is mount anything: `verify_images` binds the bytes, and
+  the mount stays a macOS-host assertion.
+
 ## [1.3.10-build1537] - 2026-09-20
 
 
