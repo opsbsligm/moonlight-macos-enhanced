@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.10-build1529] - 2026-09-20
+
+
 ### Added
 
 - A pointer moving into the stream window no longer has to take the window. Issues #21 and
