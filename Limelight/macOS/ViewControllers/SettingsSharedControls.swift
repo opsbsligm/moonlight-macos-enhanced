@@ -734,6 +734,7 @@ struct KeyboardTranslationRulesView: View {
           ForEach(settingsModel.keyboardTranslationRules) { rule in
             KeyboardTranslationRuleCard(
               rule: rule,
+              commandSendsControl: settingsModel.commandSendsControl,
               onEdit: {
                 editingRequest = KeyboardTranslationEditorRequest(rule: rule)
               },
@@ -755,6 +756,9 @@ struct KeyboardTranslationRulesView: View {
 private struct KeyboardTranslationRuleCard: View {
   @ObservedObject var languageManager = LanguageManager.shared
   let rule: KeyboardTranslationRule
+  /// Whether Command travels as Control to this host. The card names the keys the host
+  /// receives, so it has to read the same switch the keyboard reads.
+  let commandSendsControl: Bool
   let onEdit: () -> Void
   let onDelete: () -> Void
 
@@ -768,7 +772,9 @@ private struct KeyboardTranslationRuleCard: View {
           .foregroundColor(.secondary)
 
         if rule.outputKind == .remoteShortcut, let outputShortcut = rule.outputShortcut {
-          ShortcutTokenRowView(tokens: KeyboardTranslationProfile.displayTokens(forRemoteOutput: outputShortcut))
+          ShortcutTokenRowView(
+            tokens: KeyboardTranslationProfile.displayTokens(
+              forRemoteOutput: outputShortcut, commandSendsControl: commandSendsControl))
         } else {
           Text(languageManager.localize(KeyboardTranslationProfile.localActionTitleKey(for: rule.localAction ?? KeyboardTranslationProfile.localActionDisconnectStream)))
             .font(.callout.weight(.medium))
@@ -886,7 +892,9 @@ private struct KeyboardTranslationRuleEditorSheet: View {
         } label: {
           editorCaptureRow(
             title: "Remote Shortcut",
-            tokens: KeyboardTranslationProfile.displayTokens(forRemoteOutput: remoteOutputShortcut),
+            tokens: KeyboardTranslationProfile.displayTokens(
+              forRemoteOutput: remoteOutputShortcut,
+              commandSendsControl: settingsModel.commandSendsControl),
             isCapturing: captureTarget == .output)
         }
         .buttonStyle(.plain)

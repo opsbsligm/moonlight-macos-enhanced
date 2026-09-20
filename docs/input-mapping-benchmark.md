@@ -223,6 +223,13 @@ driver, so a sixth path added later takes the switch or the gate goes red. Two h
 are planted and must be noticed: the shortcut path still answering Win, and the typed keys
 answering Ctrl.
 
+A switch that renames a key has to rename it in the mirror as well. The rule cards name what the
+host receives, so `remoteDisplayTokens` takes the same preference: a rule whose output was bound
+with Command reads Ctrl rather than Win once the switch is on, and Control and Command are counted
+as the one bit the host is told about. `command-to-control-tests.py` plants the three ways that
+agreement breaks -- the branch ignoring the switch, the two keys counted twice, the card asking for
+nothing -- and has to notice each.
+
 What it costs, stated where a player will read it: with the switch on, no key sends the Windows
 key. Nothing here invents a substitute chord, because a second "smart" mapping is the mechanism
 this module exists to have lost. Two claims stay out of the record: the switch has not been driven

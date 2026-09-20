@@ -57,7 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   twice, in C and in Swift, and the gate is what compares them. Two things it does not claim:
   the switch is unverified end-to-end against a real host, since nothing here has a Windows
   desktop to type into; and with the switch on, no key sends the Windows key at all, which the
-  setting's own text says rather than leaving the player to find.
+  setting's own text says rather than leaving the player to find. The pane names the key the same
+  way now: `remoteDisplayTokens` takes the switch, so a rule whose output was bound with Command
+  reads Ctrl on its card once the switch is on, with Control and Command counted as the one bit the
+  host is told about. The three ways that agreement could rot -- the branch ignoring the switch,
+  the two keys counted twice, the card asking for nothing -- are planted for the gate to notice.
 
 - The secure attention sequence has a button. `docs/input-mapping-benchmark.md` §5.3 had already
   worked out that nothing was missing mechanically -- macOS does not intercept Ctrl+Alt+Del the

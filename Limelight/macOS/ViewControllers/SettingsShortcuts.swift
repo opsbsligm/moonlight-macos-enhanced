@@ -410,11 +410,13 @@ final class StreamShortcutProfile: NSObject {
     supportedKeySymbols[keyCode]
   }
 
-  @objc static func remoteDisplayTokens(for shortcut: StreamShortcut) -> [String] {
+  @objc static func remoteDisplayTokens(for shortcut: StreamShortcut,
+                                        commandSendsControl: Bool = false) -> [String] {
     var tokens: [String] = []
     let modifiers = relevantModifierFlags(shortcut.modifierFlags)
+    let controlHeld = modifiers.contains(.control)
 
-    if modifiers.contains(.control) {
+    if controlHeld {
       tokens.append("Ctrl")
     }
     if modifiers.contains(.option) {
@@ -424,7 +426,18 @@ final class StreamShortcutProfile: NSObject {
       tokens.append("Shift")
     }
     if modifiers.contains(.command) {
-      tokens.append("Win")
+      // These tokens name what the host receives, so they owe the player the same answer the
+      // keyboard gives: a rule bound with Command arrives as Control once that switch is on,
+      // and a card still reading "Win" would name a key the host never gets. Control and
+      // Command are one bit to the host under that switch -- the same one bit the keyboard
+      // path sends -- so one token is the honest count rather than two.
+      if commandSendsControl {
+        if !controlHeld {
+          tokens.insert("Ctrl", at: 0)
+        }
+      } else {
+        tokens.append("Win")
+      }
     }
     if modifiers.contains(.function) {
       tokens.append("Fn")
@@ -640,8 +653,10 @@ final class KeyboardTranslationProfile: NSObject {
     StreamShortcutProfile.displayTokens(for: shortcut)
   }
 
-  @objc static func displayTokens(forRemoteOutput shortcut: StreamShortcut) -> [String] {
-    StreamShortcutProfile.remoteDisplayTokens(for: shortcut)
+  @objc static func displayTokens(forRemoteOutput shortcut: StreamShortcut,
+                                  commandSendsControl: Bool = false) -> [String] {
+    StreamShortcutProfile.remoteDisplayTokens(for: shortcut,
+                                              commandSendsControl: commandSendsControl)
   }
 
   @objc static func validationErrorKey(

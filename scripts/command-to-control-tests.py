@@ -29,6 +29,8 @@ CAPTURE = "Limelight/macOS/ViewControllers/StreamViewController+MouseCapture.m"
 DERIVED = "Limelight/macOS/ViewControllers/SettingsModel+DerivedValues.swift"
 BRIDGE = "Limelight/macOS/ViewControllers/SettingsObjCBridge.swift"
 PANE = "Limelight/macOS/ViewControllers/SettingsInputPane.swift"
+SHORTCUTS = "Limelight/macOS/ViewControllers/SettingsShortcuts.swift"
+CONTROLS = "Limelight/macOS/ViewControllers/SettingsSharedControls.swift"
 PBX = "Moonlight.xcodeproj/project.pbxproj"
 EN = "Limelight/macOS/en.lproj/Localizable.strings"
 ZH = "Limelight/macOS/zh-Hans.lproj/Localizable.strings"
@@ -178,6 +180,35 @@ int main(void) {
 """
 
 
+def token_findings(shortcuts_text, controls_text):
+    """What the Settings pane calls the key it is showing, and who has to agree with it.
+
+    A switch that changes what a key means has to change what the pane names it, or the card
+    describing a rule lies about the packets it sends. These are text checks, so a defect can
+    be planted and read back through the same function.
+    """
+    out = []
+    block = re.search(r"static func remoteDisplayTokens\(for shortcut: StreamShortcut,"
+                      r"(.*?)\n  \}", shortcuts_text, re.S)
+    branch = re.search(r"if modifiers\.contains\(\.command\) \{(.*?)\n    \}",
+                       block.group(1) if block else "", re.S)
+    if block is None or "commandSendsControl: Bool = false" not in block.group(1):
+        out.append("the list of keys a rule shows does not take the switch")
+    if branch is None or "if commandSendsControl" not in branch.group(1) or \
+            'tokens.append("Win")' not in branch.group(1):
+        out.append("the Command token does not answer Ctrl when the switch is on and Win when it is not")
+    elif "if !controlHeld" not in branch.group(1):
+        out.append("the two keys that are one bit to the host are counted twice on screen")
+    for needle, why in (
+            ("forRemoteOutput: outputShortcut, commandSendsControl: commandSendsControl",
+             "a saved rule card stops naming the switch it reads"),
+            ("forRemoteOutput: remoteOutputShortcut,\n              commandSendsControl: settingsModel.commandSendsControl",
+             "the editor's preview stops naming the switch it reads")):
+        if needle not in controls_text:
+            out.append(why)
+    return out
+
+
 def compiled(source, work, name, cc, sdk):
     path = os.path.join(work, name + ".m")
     open(path, "w", encoding="utf-8").write(source)
@@ -235,6 +266,13 @@ def main():
     check("KMR_" not in read(CAPTURE),
           "the paths that decide what the Mac keeps for itself never consult the remote mapping")
 
+    # --- what the pane calls the key it is showing --------------------------
+    token_problems = token_findings(read(SHORTCUTS), read(CONTROLS))
+    for message in token_problems:
+        check(False, message)
+    check(not token_problems,
+          "the pane names the Command key the way the switch says it travels")
+
     # --- one default, spelled twice ------------------------------------------
     body = re.search(r"KMR_CommandPreference KMR_CommandPreferenceDefault\(void\) \{(.*?)\n\}",
                      read(IMPL), re.S)
@@ -282,6 +320,23 @@ def main():
               mutated(rules, "a Command press that sends both keys",
                       "        out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftCommand, pref);",
                       "        out |= KMR_MaskForPhysicalPref(KMR_Phys_LeftCommand, pref) | KMR_RemoteMaskForPhysical(KMR_Phys_LeftCommand);"), cc, sdk)
+    for label, target, before, after in (
+            ("the card keeps calling Command by the name the switch replaced", SHORTCUTS,
+             "      if commandSendsControl {", "      if false {"),
+            ("the card counts one key as two", SHORTCUTS,
+             "        if !controlHeld {", "        if true {"),
+            ("a saved rule card asks for nothing", CONTROLS,
+             "forRemoteOutput: outputShortcut, commandSendsControl: commandSendsControl",
+             "forRemoteOutput: outputShortcut"),
+    ):
+        text = read(target)
+        check(before in text, "%s: the source it mutates is still there" % label)
+        mutated_texts = text.replace(before, after, 1)
+        other = read(CONTROLS) if target == SHORTCUTS else read(SHORTCUTS)
+        caught = token_findings(mutated_texts, other) if target == SHORTCUTS \
+            else token_findings(other, mutated_texts)
+        check(bool(caught), "the check still fails when %s" % label)
+
     run_rules("the shipping default quietly becomes Control",
               mutated(rules, "the default",
                       "    return KMR_CommandPreferenceWin;\n}",
