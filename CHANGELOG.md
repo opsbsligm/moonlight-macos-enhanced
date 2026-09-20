@@ -195,6 +195,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   curated notes is not an ancestor of the August release, whose tree has no
   release-notes directory at all, while the three releases since it each carry one.
 
+- **A release step that only the person releasing could know about.** The `BUILD_NUMBER`
+  fallback in `Limelight/Version.xcconfig` exists for a source tarball with no git history
+  to count, and its own comment says it is moved by hand on release tags. Every
+  release tag agrees with that comment -- `v1.3.9-build19` carries 19, and
+  `v1.3.10-build1508`, `1509` and `1510` each carry their own number -- and nothing
+  checked it, so a release made without that edit ships an installable package whose
+  tarball rebuild reports the previous release's build. The preparation report names
+  it beside the changelog section and the release body, so the three edits a release
+  commit owes arrive together instead of one of them arriving as a surprise in the
+  About box. Two fixtures hold it: a baseline left behind the tag, and an xcconfig
+  with no baseline to move at all.
+
 
 ## [1.3.10-build1510] - 2026-09-19
 

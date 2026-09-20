@@ -45,6 +45,11 @@ RELEASED_HEADING = r"^## \[[\w.\-]+\] - \d{4}-\d{2}-\d{2}$"
 # missing one is cheap to fix.
 NOTES_DIR = os.path.join(ROOT, ".github", "release-notes")
 
+# The fallback build number, which lives in an xcconfig because a source tarball has no
+# git history to count. It is named here so the preparation report can say which number
+# the release commit has to write into it.
+VERSION_XCCONFIG = os.path.join(ROOT, "Limelight", "Version.xcconfig")
+
 
 def load_gate():
     path = os.path.join(ROOT, "scripts", "release-gate.py")
@@ -88,6 +93,27 @@ def missing_notes(tag, notes_dir=NOTES_DIR):
     """
     path = os.path.join(notes_dir, "%s.md" % tag)
     return None if os.path.exists(path) else path
+
+
+def baseline_step(xcconfig_text, build):
+    """Name the fallback build number the release commit still owes, or return None.
+
+    `Version.xcconfig` carries the BUILD_NUMBER a build falls back to when git is
+    unavailable, and every release tag this repository has made moved it to its own
+    number -- 1.3.9-build19 carries 19, and 1508, 1509 and 1510 each carry their own. No
+    gate checks the edit, so a release prepared without it publishes installable images
+    whose tarball rebuild reports the previous release's number, which is the kind of
+    wrong identity that has no fix once people installed it.
+    """
+    match = re.search(r"^BUILD_NUMBER = (\d+)$", xcconfig_text, re.M)
+    if match is None:
+        return ("Limelight/Version.xcconfig carries no baseline BUILD_NUMBER for this "
+                "release to move")
+    if int(match.group(1)) == build:
+        return None
+    return ("the baseline BUILD_NUMBER in Limelight/Version.xcconfig says %s, while this "
+            "tag ships %d: every release tag here moved it to its own number"
+                % (match.group(1), build))
 
 
 def commit_date(repo=ROOT):
@@ -184,13 +210,18 @@ def run(args):
     print("this commit builds %s (MARKETING_VERSION %s, BUILD_NUMBER %d)" % (tag, declared, build))
     notes_dir = args.release_notes_dir or NOTES_DIR
     missing = missing_notes(tag, notes_dir)
+    xcconfig_path = args.version_xcconfig or VERSION_XCCONFIG
+    with open(xcconfig_path, encoding="utf-8") as handle:
+        baseline = baseline_step(handle.read(), build)
+    if baseline:
+        print("the release commit still owes an edit: %s" % baseline)
     # Reported ahead of the gate's own verdict, because these two failures used to
     # arrive in the opposite order: the changelog cleared, the report said nothing else
     # was owed, and the publish step then died on a file no earlier command had named.
     if missing:
         print("the release body is hand-written and missing: %s" % missing)
     if not reasons:
-        if missing:
+        if missing or baseline:
             print("the gate accepts the tag; publishing still fails until those notes exist")
             return 1
         print("the gate accepts it: nothing to prepare")
@@ -206,6 +237,9 @@ def run(args):
         return 1
     if missing:
         print("write %s before the tag: the gate cannot prepare it for you" % missing)
+    if baseline:
+        print("move the baseline in %s before the tag: the gate cannot do it for you"
+              % xcconfig_path)
     # Promoting here is still the right edit even mid-loop: the section for the
     # current count is the one a tag needs, and the loop is the commit that carries
     # it, not the text. Refusing to write would leave no way out but a hand edit.
@@ -223,7 +257,7 @@ def run(args):
           "there." % tag[1:])
     print("Do not commit that as a new commit. %s" % AMEND_HOWTO)
     print("Re-run prepare-release.py after the amend to confirm it still accepts %s." % tag)
-    if missing:
+    if missing or baseline:
         return 1
     return 0
 
@@ -238,6 +272,7 @@ def main():
     ap.add_argument("--tags")
     ap.add_argument("--release-date")
     ap.add_argument("--release-notes-dir")
+    ap.add_argument("--version-xcconfig")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
@@ -263,10 +298,12 @@ def self_test():
         open(project_path, "w", encoding="utf-8").write("MARKETING_VERSION = 1.3.9;")
         changelog_path = os.path.join(tmp, "CHANGELOG.md")
 
+        xcconfig_path = os.path.join(tmp, "Version.xcconfig")
+
         notes_dir = os.path.join(tmp, "release-notes")
         os.makedirs(notes_dir, exist_ok=True)
 
-        def attempt(tag, changelog, build=42, apply=False, notes=True):
+        def attempt(tag, changelog, build=42, apply=False, notes=True, baseline="ok"):
             open(changelog_path, "w", encoding="utf-8").write(changelog)
             # The publish step reads a hand-written body named for this exact tag, so a
             # fixture either supplies that file or withholds it on purpose: leaving the
@@ -274,6 +311,15 @@ def self_test():
             # which is how a rule that cannot be satisfied gets mistaken for a passing one.
             for stale in os.listdir(notes_dir):
                 os.remove(os.path.join(notes_dir, stale))
+            # The xcconfig fallback has to carry this release's own number, so a case
+            # about something else cannot be read as that rule always firing: "ok" writes
+            # the number that matches, "stale" writes one behind it, "missing" writes no
+            # baseline at all.
+            with open(xcconfig_path, "w", encoding="utf-8") as handle:
+                if baseline == "ok":
+                    handle.write("BUILD_NUMBER = %d\n" % build)
+                elif baseline == "stale":
+                    handle.write("BUILD_NUMBER = %d\n" % (build - 1))
             if notes:
                 open(os.path.join(notes_dir, tag + ".md"), "w",
                      encoding="utf-8").write("notes")
@@ -286,7 +332,8 @@ def self_test():
                                             project=project_path, build_number=build,
                                             tags="", apply=apply,
                                             release_date="2020-01-02",
-                                            release_notes_dir=notes_dir))
+                                            release_notes_dir=notes_dir,
+                                            version_xcconfig=xcconfig_path))
             return (rc, open(changelog_path, encoding="utf-8").read(),
                     captured.getvalue())
 
@@ -344,8 +391,19 @@ def self_test():
         check(rc == 1 and "publishing still fails" in report,
               "a tag the gate accepts is still held while its notes are missing")
         rc, text, report = attempt("v1.3.9-build42", shipped)
-        check(rc == 0 and "missing" not in report,
-              "a release with its section and its notes reports nothing owed")
+        check(rc == 0 and "Version.xcconfig" not in report,
+              "a release with its section, notes and baseline reports nothing owed")
+
+        # The third step a release owes and no gate watches: the fallback build number
+        # in the xcconfig, which every release tag here moved to its own value. A report
+        # that named the changelog and the notes only would still leave a tarball build
+        # of the shipped commit reporting the previous release's number.
+        rc, text, report = attempt("v1.3.9-build42", shipped, baseline="stale")
+        check(rc == 1 and "Version.xcconfig says 41" in report,
+              "a fallback build number left behind by the release is named")
+        rc, text, report = attempt("v1.3.9-build42", shipped, baseline="missing")
+        check(rc == 1 and "no baseline BUILD_NUMBER" in report,
+              "an xcconfig with no fallback to move is named as its own problem")
 
         rc, text, report = attempt("v1.3.9-build42", text, apply=True)
         check(rc == 0 and text.count("## [1.3.9-build42] - 2020-01-02") == 1,
