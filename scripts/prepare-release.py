@@ -40,6 +40,11 @@ UNRELEASED = "## [Unreleased]"
 # making, so the constant is also the last thing promote() checks before it writes.
 RELEASED_HEADING = r"^## \[[\w.\-]+\] - \d{4}-\d{2}-\d{2}$"
 
+# The directory the publish step reads its release body from. Naming it here lets the
+# preparation report point at the file before a tag exists, which is the only moment a
+# missing one is cheap to fix.
+NOTES_DIR = os.path.join(ROOT, ".github", "release-notes")
+
 
 def load_gate():
     path = os.path.join(ROOT, "scripts", "release-gate.py")
@@ -69,6 +74,20 @@ def build_number(repo=ROOT):
     if not value.isdigit():
         raise SystemExit("build-number.sh --print did not print a number: %r" % out.stdout)
     return int(value)
+
+
+def missing_notes(tag, notes_dir=NOTES_DIR):
+    """Name the hand-written release body the publish step demands, or return None.
+
+    The release notes are not generated from the changelog: `build_release_body.py`
+    reads `.github/release-notes/<tag>.md` and exits the job when that file is absent,
+    so a tree that answers every rule release-gate.py knows about still fails the one
+    step that publishes -- and learns it after the matrix built and downloaded three
+    DMGs. Naming it from the preparation report moves the failure from the release to
+    the preparation, where it costs nothing.
+    """
+    path = os.path.join(notes_dir, "%s.md" % tag)
+    return None if os.path.exists(path) else path
 
 
 def commit_date(repo=ROOT):
@@ -163,7 +182,17 @@ def evaluate(args):
 def run(args):
     tag, declared, build, text, reasons = evaluate(args)
     print("this commit builds %s (MARKETING_VERSION %s, BUILD_NUMBER %d)" % (tag, declared, build))
+    notes_dir = args.release_notes_dir or NOTES_DIR
+    missing = missing_notes(tag, notes_dir)
+    # Reported ahead of the gate's own verdict, because these two failures used to
+    # arrive in the opposite order: the changelog cleared, the report said nothing else
+    # was owed, and the publish step then died on a file no earlier command had named.
+    if missing:
+        print("the release body is hand-written and missing: %s" % missing)
     if not reasons:
+        if missing:
+            print("the gate accepts the tag; publishing still fails until those notes exist")
+            return 1
         print("the gate accepts it: nothing to prepare")
         return 0
     for reason in reasons:
@@ -175,6 +204,8 @@ def run(args):
     if [reason for reason in reasons if "CHANGELOG.md has no" not in reason]:
         print("only the changelog can be prepared automatically; fix the rest first")
         return 1
+    if missing:
+        print("write %s before the tag: the gate cannot prepare it for you" % missing)
     # Promoting here is still the right edit even mid-loop: the section for the
     # current count is the one a tag needs, and the loop is the commit that carries
     # it, not the text. Refusing to write would leave no way out but a hand edit.
@@ -192,6 +223,8 @@ def run(args):
           "there." % tag[1:])
     print("Do not commit that as a new commit. %s" % AMEND_HOWTO)
     print("Re-run prepare-release.py after the amend to confirm it still accepts %s." % tag)
+    if missing:
+        return 1
     return 0
 
 
@@ -204,6 +237,7 @@ def main():
     ap.add_argument("--build-number", type=int)
     ap.add_argument("--tags")
     ap.add_argument("--release-date")
+    ap.add_argument("--release-notes-dir")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
@@ -229,8 +263,20 @@ def self_test():
         open(project_path, "w", encoding="utf-8").write("MARKETING_VERSION = 1.3.9;")
         changelog_path = os.path.join(tmp, "CHANGELOG.md")
 
-        def attempt(tag, changelog, build=42, apply=False):
+        notes_dir = os.path.join(tmp, "release-notes")
+        os.makedirs(notes_dir, exist_ok=True)
+
+        def attempt(tag, changelog, build=42, apply=False, notes=True):
             open(changelog_path, "w", encoding="utf-8").write(changelog)
+            # The publish step reads a hand-written body named for this exact tag, so a
+            # fixture either supplies that file or withholds it on purpose: leaving the
+            # directory unspecified would make every case report the same missing file,
+            # which is how a rule that cannot be satisfied gets mistaken for a passing one.
+            for stale in os.listdir(notes_dir):
+                os.remove(os.path.join(notes_dir, stale))
+            if notes:
+                open(os.path.join(notes_dir, tag + ".md"), "w",
+                     encoding="utf-8").write("notes")
             # The report the script prints is what a release engineer reads, so the
             # fixtures read it too: a fix that only lives in prose still has to be
             # the prose that is actually printed.
@@ -239,7 +285,8 @@ def self_test():
                 rc = run(argparse.Namespace(tag=tag, changelog=changelog_path,
                                             project=project_path, build_number=build,
                                             tags="", apply=apply,
-                                            release_date="2020-01-02"))
+                                            release_date="2020-01-02",
+                                            release_notes_dir=notes_dir))
             return (rc, open(changelog_path, encoding="utf-8").read(),
                     captured.getvalue())
 
@@ -281,6 +328,24 @@ def self_test():
             check(False, "an unusable date is refused before any text is written")
         except SystemExit:
             check(True, "an unusable date is refused before any text is written")
+
+        # The other half of the release procedure, which the gate cannot see. The
+        # publish step builds its body from .github/release-notes/<tag>.md and exits
+        # without it, so a report that cleared the changelog and said nothing about the
+        # notes sent somebody to tag a release that dies once three DMGs are built.
+        rc, text, report = attempt("v1.3.9-build42", unreleased_only, notes=False)
+        check(rc == 1 and "release-notes/v1.3.9-build42.md" in report,
+              "a release whose hand-written body is missing is named before the tag exists")
+        rc, text, report = attempt("v1.3.9-build42", unreleased_only, notes=False, apply=True)
+        check(rc == 1 and "release-notes/v1.3.9-build42.md" in report,
+              "--apply does not report a prepared release that cannot publish yet")
+        shipped = "%s\n\n## [1.3.9-build42] - 2020-01-02\n\n- shipped\n" % UNRELEASED
+        rc, text, report = attempt("v1.3.9-build42", shipped, notes=False)
+        check(rc == 1 and "publishing still fails" in report,
+              "a tag the gate accepts is still held while its notes are missing")
+        rc, text, report = attempt("v1.3.9-build42", shipped)
+        check(rc == 0 and "missing" not in report,
+              "a release with its section and its notes reports nothing owed")
 
         rc, text, report = attempt("v1.3.9-build42", text, apply=True)
         check(rc == 0 and text.count("## [1.3.9-build42] - 2020-01-02") == 1,

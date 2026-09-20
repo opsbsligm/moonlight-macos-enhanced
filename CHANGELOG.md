@@ -180,6 +180,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule that would accept an undated heading, which is what keeps two files that have to
   agree from drifting apart while both stay green.
 
+- **The release preparation reported a release that could not be published.** Preparing
+  a release looked like two commands, and the second one cleared a step the first had
+  never looked at. The publish step does not write its notes from the changelog:
+  `build_release_body.py` reads `.github/release-notes/<tag>.md` and exits the job when
+  that file is absent, so a tree answering every rule `release-gate.py` knows about
+  still died after three DMGs had been built and downloaded. `prepare-release.py` names
+  the file in its report -- before the tag exists, which is the only moment writing it
+  is cheap -- and `--apply` no longer calls a release prepared while its body is
+  missing. Four fixtures hold the shape: the missing body named by path, a promotion
+  that stays incomplete while it is missing, a tag the gate accepts that publishing
+  still holds, and the both-present case that has to stay quiet. The rule belongs to
+  this line of history rather than to the whole repository: the commit that requires
+  curated notes is not an ancestor of the August release, whose tree has no
+  release-notes directory at all, while the three releases since it each carry one.
+
 
 ## [1.3.10-build1510] - 2026-09-19
 
