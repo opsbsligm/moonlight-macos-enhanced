@@ -2,11 +2,13 @@
 
 <div align="center">
 
-[![Build](https://github.com/skyhua0224/moonlight-macos-enhanced/actions/workflows/build.yml/badge.svg)](https://github.com/skyhua0224/moonlight-macos-enhanced/actions/workflows/build.yml) [![Release](https://img.shields.io/github/v/release/skyhua0224/moonlight-macos-enhanced?include_prereleases)](https://github.com/skyhua0224/moonlight-macos-enhanced/releases) [![Downloads](https://img.shields.io/github/downloads/skyhua0224/moonlight-macos-enhanced/total)](https://github.com/skyhua0224/moonlight-macos-enhanced/releases) [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-Native-orange.svg)]() [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE.txt)
+[![Build](https://github.com/opsbsligm/moonlight-macos-enhanced/actions/workflows/build.yml/badge.svg)](https://github.com/opsbsligm/moonlight-macos-enhanced/actions/workflows/build.yml) [![Release](https://img.shields.io/github/v/release/opsbsligm/moonlight-macos-enhanced)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest) [![Downloads](https://img.shields.io/github/downloads/opsbsligm/moonlight-macos-enhanced/total)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases) [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-Native-orange.svg)]() [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE.txt)
 
 **Native Moonlight macOS / Moonlight for macOS Client**
 
 `Moonlight macOS Enhanced` is a native macOS streaming client for Sunshine, Foundation Sunshine, and compatible GameStream hosts. It is built with AppKit / SwiftUI and continuously tuned for both Apple Silicon and Intel Macs.
+
+This repository is a fork of [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) that publishes its own signed images and gates every one of them; see [What this fork verifies](#-what-this-fork-verifies) for what that means in practice.
 
 [简体中文](README.md) | English
 
@@ -72,9 +74,32 @@
 
 ## 📦 Downloads
 
-- Get the latest build from [Releases](https://github.com/skyhua0224/moonlight-macos-enhanced/releases)
-- Each release provides `universal`, `arm64`, and `x86_64` packages
+- Get the latest build from [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest)
+- Each release provides `universal`, `arm64`, and `x86_64` packages, each with its own `sha256`
 - If you are not sure which one to choose, start with `universal`
+
+## 🧪 What this fork verifies
+
+Every push and pull request runs the gates in `scripts/`. What makes them more than a green
+ribbon is that each gate has to prove it can fail: a gate ships with a self-test that plants
+several shapes it is supposed to refuse, and a gate that catches none of them is reported as
+broken rather than as passing.
+
+| Gate | What it holds |
+|------|---------------|
+| `release-gate.py` | The publish switch: tag, version and changelog all describing one tree |
+| `dmg-audit.py` | The image a user downloads -- architecture, version, checksum, and the localisation tables inside it |
+| `compile-audit.py` | Every source file type-checks against every supported SDK (49/49 today) |
+| `constraints-audit.py` | The behavioural battery (108/108 planted defects caught today) |
+| `l10n-audit.py` | Table coverage, table symmetry, untranslated text at a UI outlet, and log bodies written in a spoken language |
+| `workflow-audit.py`, `source-membership-audit.py` | Whether the workflow really runs, and whether any source file was silently left out of the build |
+
+## 📚 Design notes
+
+- [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md) -- keyboard and mouse mapping compared against Parsec, UU Remote, Citrix and moonlight-qt
+- [`docs/usb-redirection-design.md`](docs/usb-redirection-design.md) and [`docs/usb-redirection-host-contract.md`](docs/usb-redirection-host-contract.md) -- device redirection, and what a host would have to agree to
+- [`docs/upstream-issue-status.md`](docs/upstream-issue-status.md) -- every open upstream issue, and what this branch can actually say about it
+- [`CHANGELOG.md`](CHANGELOG.md) -- per release, with the root cause rather than the conclusion
 
 ## 📸 Screenshots
 
