@@ -9,7 +9,7 @@
 "Profile:" = "配置文件:";
 
 /* Stream Settings */
-"Resolution and FPS" = "分辨率与帧率";
+"Resolution and FPS" = "分辨率和 FPS";
 "Resolution" = "分辨率";
 "Match Display" = "跟随屏幕";
 "Custom" = "自定义";
@@ -17,15 +17,15 @@
 "Frame Rate" = "帧率";
 "FPS" = "帧率";
 "Custom FPS" = "自定义帧率";
-"Bitrate" = "比特率";
+"Bitrate" = "视频比特率";
 
 /* Video Settings */
 "Video" = "视频";
-"Video Codec" = "视频编码";
+"Video Codec" = "视频编解码器";
 "Streaming Style" = "串流风格";
 "Streaming Style detail" = "先选整体风格：更低延迟、均衡或更顺滑画面。";
 "Timing" = "时序";
-"Compatibility & Troubleshooting" = "兼容性";
+"Compatibility & Troubleshooting" = "兼容与排障";
 "Compatibility" = "兼容性";
 "Video Codec H264 detail" = "兼容性最好。";
 "Video Codec H265 detail" = "适合大多数场景。";
@@ -35,10 +35,10 @@
 "Video Codec AV1 YUV444 fallback detail" = "开启 YUV 4:4:4 时不会使用 AV1。";
 "Video Codec AV1 YUV444 ready detail" = "当主机广播兼容的 AV1 配置时，可以协商到 AV1 4:4:4。";
 "AV1" = "AV1";
-"HDR" = "HDR";
+"HDR" = "HDR (高动态范围)";
 "Enable YUV 4:4:4" = "启用 YUV 4:4:4";
 "YUV 4:4:4 hint" = "需要主机端支持。可能增加延迟。";
-"Frame Pacing" = "帧率平滑";
+"Frame Pacing" = "帧速调节";
 "Lowest Latency" = "更低延迟";
 "Smoothest Video" = "更顺滑画面";
 
@@ -56,14 +56,14 @@
 "OK" = "好";
 
 /* Remote Overrides */
-"Remote overrides hint" = "这些选项仅影响主机端渲染/编码模式。大多数情况下保持关闭即可。";
+"Remote overrides hint" = "强制被控端按该值渲染。";
 
 /* Bitrate */
 "Target Bitrate" = "目标码率";
 "Auto bitrate hint" = "自动码率会根据分辨率与帧率计算；启用 YUV 4:4:4 可能提高目标码率。";
 
 /* Input Settings */
-"Controller" = "手柄";
+"Controller" = "手柄设置";
 "Multi-Controller Mode" = "多手柄模式";
 "Single" = "单人";
 "Auto" = "自动";
@@ -71,7 +71,7 @@
 "Auto Address Switched Message" = "%@ 已从 %@ 切换到 %@（延迟 %.0fms → %.0fms）。";
 "Rumble Controller" = "手柄震动";
 "Buttons" = "按键";
-"Swap A/B and X/Y Buttons" = "交换 A/B 和 X/Y 键";
+"Swap A/B and X/Y Buttons" = "交换手柄的 A/B 和 X/Y 按钮";
 "Emulate Guide Button" = "模拟 Guide 键（Start + Select）";
 "Drivers" = "驱动";
 "Controller Driver" = "手柄驱动";
@@ -168,10 +168,10 @@
 
 /* App Settings */
 "Behaviour" = "行为";
-"Automatically Fullscreen Stream Window" = "自动全屏串流窗口";
-"Visuals" = "视觉";
+"Automatically Fullscreen Stream Window" = "进入串流时默认全屏";
+"Visuals" = "界面";
 "Advanced" = "高级";
-"Dim Non-Hovered Apps" = "未悬停应用变暗";
+"Dim Non-Hovered Apps" = "调暗未选中应用封面";
 "Custom Artwork Dimensions" = "自定义封面尺寸";
 
 /* Legacy Settings */
@@ -225,7 +225,7 @@
 "AWDL Helper Failed" = "授权失败";
 "AWDL Helper Last Error %@" = "上次失败：%@";
 "Stream-Only AWDL Stability Helper" = "减少 AirDrop / 接力导致的卡顿";
-"Stream-Only AWDL Stability Helper hint" = "只建议在 Wi‑Fi 下出现规律性卡顿时使用。";
+"Stream-Only AWDL Stability Helper hint" = "只建议在 Wi-Fi 下出现规律性卡顿时使用。";
 "Stream-Only AWDL Stability Helper detail" = "串流时会临时关闭 AWDL，用于处理 AirDrop / 接力相关的规律性卡顿。";
 "Reset Hosts" = "清空主机列表";
 "Reset Hosts detail" = "只删除已保存的主机记录。";
@@ -237,15 +237,15 @@
 "Current Timing" = "当前时序";
 "Compatibility Guidance" = "兼容性指引";
 "Review Compatibility Guidance" = "查看兼容性指引";
-"Compatibility Guidance hint" = "首次开启前，请先查看这里的 Wi‑Fi、信道、AWDL 风险与时序建议。";
+"Compatibility Guidance hint" = "首次开启前，请先查看这里的 Wi-Fi、信道、AWDL 风险与时序建议。";
 "AWDL Helper Guidance Title" = "AWDL 稳定性辅助";
 "Why This Needs Confirmation" = "这是什么";
-"AWDL Helper Guidance intro" = "这个选项只适合一种情况：在 Wi‑Fi 下规律性卡顿，关闭 AirDrop 或接力后明显改善。";
+"AWDL Helper Guidance intro" = "这个选项只适合一种情况：在 Wi-Fi 下规律性卡顿，关闭 AirDrop 或接力后明显改善。";
 "Recommended Network Setup" = "建议先试这些";
 "Recommended Timing Setup" = "如果还是卡";
 "What This Helper Will Do" = "打开后会怎样";
 "AWDL Helper Guidance network bullet 1" = "能用网线就优先用网线。";
-"AWDL Helper Guidance network bullet 2" = "如果走 Wi‑Fi，尽量用单独的 5 GHz 网络；149+ 信道通常更稳。";
+"AWDL Helper Guidance network bullet 2" = "如果走 Wi-Fi，尽量用单独的 5 GHz 网络；149+ 信道通常更稳。";
 "AWDL Helper Guidance network bullet 3" = "先试着关闭 AirDrop、接力和 AirPlay 接收器。";
 "AWDL Helper Guidance timing bullet 1" = "先试试“画面延迟与操作”里的预设。";
 "AWDL Helper Guidance timing bullet 2" = "尽量让显示器刷新率和串流帧率更接近。";
@@ -266,7 +266,7 @@
 "Cancel" = "取消";
 "Add" = "添加";
 "Wake" = "唤醒";
-"Close and Quit App" = "关闭并退出应用";
+"Close and Quit App" = "断开并退出应用";
 "Quit App" = "退出应用";
 "Disconnect from Stream" = "断开串流";
 "Pointer & Scroll Tuning" = "指针与滚动调节";
@@ -298,7 +298,7 @@
 "Hide App" = "隐藏应用";
 
 /* Host Settings */
-"Quit App After Stream" = "结束串流后退出应用";
+"Quit App After Stream" = "流传输结束后退出程序";
 
 /* Input Settings */
 "Mouse" = "鼠标";
@@ -348,8 +348,8 @@
 "Active Address" = "活动地址";
 "UUID" = "UUID";
 "Pair Name" = "配对名称";
-"Local Address" = "局域网地址";
-"External Address" = "公网地址";
+"Local Address" = "本地地址";
+"External Address" = "外部地址";
 "IPv6 Address" = "IPv6 地址";
 "Manual Address" = "手动地址";
 "MAC Address" = "MAC 地址";
@@ -438,15 +438,15 @@
 "Apollo users usually get steadier pacing from Display Mode Override or a virtual / headless display that matches the stream FPS." = "如果你在使用 Apollo，通常可以通过 Display Mode Override，或使用与串流帧率匹配的虚拟显示 / 无头显示，来获得更稳定的节奏表现。";
 "Foundation Sunshine users should try refresh remap, VRR, or a matched virtual display when cadence looks uneven." = "如果你在使用 Foundation Sunshine，当画面节奏不均匀时，建议优先尝试刷新率映射、VRR，或与串流帧率匹配的虚拟显示。";
 "Sunshine users often get steadier frame pacing from a virtual display or a host display mode that matches the stream FPS." = "如果你在使用 Sunshine，通常使用虚拟显示，或让主机显示模式与串流帧率匹配，会得到更稳定的帧节奏。";
-"Wi-Fi is currently on 2.4 GHz (channel %d), which is especially sensitive to AirDrop / AWDL coexistence and jitter." = "当前 Wi‑Fi 处于 2.4 GHz（信道 %d），这类链路对 AirDrop / AWDL 共存和抖动尤其敏感。";
-"Wi-Fi is currently on 5 GHz channel %d. If AirDrop / Handoff is active, AWDL-related jitter is more likely to show up here than on 149+ channels." = "当前 Wi‑Fi 处于 5 GHz 信道 %d；如果 AirDrop / 接力仍然开启，这里比 149+ 信道更容易暴露出 AWDL 相关抖动。";
+"Wi-Fi is currently on 2.4 GHz (channel %d), which is especially sensitive to AirDrop / AWDL coexistence and jitter." = "当前 Wi-Fi 处于 2.4 GHz（信道 %d），这类链路对 AirDrop / AWDL 共存和抖动尤其敏感。";
+"Wi-Fi is currently on 5 GHz channel %d. If AirDrop / Handoff is active, AWDL-related jitter is more likely to show up here than on 149+ channels." = "当前 Wi-Fi 处于 5 GHz 信道 %d；如果 AirDrop / 接力仍然开启，这里比 149+ 信道更容易暴露出 AWDL 相关抖动。";
 "Matched" = "已匹配";
 "Even %dx cadence" = "%d 倍整比匹配";
 "Display Ceiling" = "受显示器上限限制";
 "Fractional Mismatch" = "小数刷新率失配";
 "Uneven Cadence" = "节奏不均匀";
-"Wi-Fi" = "Wi‑Fi";
-"Wi-Fi (channel unavailable)" = "Wi‑Fi（信道不可用）";
+"Wi-Fi" = "Wi-Fi";
+"Wi-Fi (channel unavailable)" = "Wi-Fi（信道不可用）";
 
 /* Main Menu & Toolbar */
 "About Moonlight macOS Enhanced" = "关于 Moonlight macOS Enhanced";
@@ -713,8 +713,8 @@
 "Preserve Midtones" = "保中间调";
 "Preserve Shadows" = "保暗部";
 "No Exposure Shift" = "不加曝光补偿";
-"MetalFX Spatial (Quality)" = "MetalFX 空间缩放（画质）";
-"MetalFX Spatial (Performance)" = "MetalFX 空间缩放（性能）";
+"MetalFX Spatial (Quality)" = "MetalFX（画质）";
+"MetalFX Spatial (Performance)" = "MetalFX（性能）";
 "Basic Scaling" = "基础缩放";
 "HDR Display" = "HDR 显示";
 "HDR Display detail" = "根据当前显示器的 EDR 余量和广色域能力判断。";
@@ -743,7 +743,7 @@
 "AWDL Helper Admin Prompt Only" = "仅管理员弹窗";
 "Permissions" = "权限";
 "Continue" = "继续";
-"Welcome AWDL detail" = "可选。它会在串流期间管理 AWDL 接口，帮助 Wi‑Fi 串流更稳定。";
+"Welcome AWDL detail" = "可选。它会在串流期间管理 AWDL 接口，帮助 Wi-Fi 串流更稳定。";
 "Keyboard Compatibility" = "快捷键翻译";
 "Keyboard Compatibility detail" = "上面控制全局翻译方式；下面的自定义规则始终生效。";
 "Shortcut Translation Rules" = "快捷键翻译规则";
@@ -946,7 +946,7 @@
 /* Application name, shown as the window title */
 
 /* Compact rows the log browser shows: a category, then one sentence */
-"System" = "系统";
+"System" = "系统默认";
 "Discovery" = "发现";
 "Log" = "日志";
 "Network stack" = "网络栈";
@@ -1073,3 +1073,145 @@
 "Window entered fullscreen" = "窗口已进入全屏";
 "Window left fullscreen" = "窗口已退出全屏";
 "mDNS resolved a known host" = "mDNS 发现已知主机";
+
+/* Everything the app asks a table for lives here. The inline dictionaries in
+   LanguageManager used to carry 227 of these keys, and because localize() asked them
+   first, three things followed: 21 Chinese and 6 English rows in these tables were text
+   no user ever saw; the shipped-image audit only reads this file, so 131 sentences were
+   the one part of the localisation never verified in the file a user downloads; and the
+   log panel's filter box indexes this file while the UI showed the dictionary, so a
+   player could copy a word off the screen and not find it. The dictionaries are empty
+   now, l10n-audit refuses to let them hold a key again, and every row here is the text
+   the app rendered before this move -- except `Disconnect Alert` and `YUV 4:4:4 hint`, where the row that never took effect
+   is the row that is right. */
+"General" = "通用";
+"Language" = "语言";
+"Global" = "全局";
+"Global (Default)" = "全局（默认）";
+"Scope: Global" = "当前作用范围：全局";
+"Scope: Profile (%@)" = "当前作用范围：配置文件（%@）";
+"Match Display Resolution hint" = "会自动匹配当前屏幕尺寸。";
+"Resolution Scale" = "分辨率缩放";
+"Resolution Scale Ratio" = "缩放比例";
+"Resolution & Scaling" = "分辨率与缩放";
+"Resolution Scale hint" = "降低分辨率以节省带宽。";
+"Upscaling" = "超分与缩放";
+"Scale vs Upscaling hint" = "分辨率缩放用于节省带宽；超分与缩放用于提升客户端重建细节。";
+"AI enhancement recommended hint" = "在低于原生分辨率或较低码率下更容易看出效果。";
+"Resolution Scale + Upscaling hint" = "提示：降低主机渲染比例，再交给客户端超分，通常能在同等带宽下保留更清晰的画面。";
+"MetalFX requires macOS 13 or later." = "需要 macOS 13+。";
+"Auto Adjust Bitrate" = "自动调整码率";
+"Ignore Aspect Ratio" = "忽略宽高比限制";
+"Show Local Cursor" = "显示本地光标";
+"Mouse and Cursor" = "鼠标与光标";
+"Locked Mouse" = "锁定鼠标";
+"Control Center" = "控制中心";
+"Locked Mouse hint" = "将鼠标锁定在串流窗口内，更适合游戏和镜头控制。";
+"Free Mouse hint" = "更方便切回 macOS 应用和其他显示器，更适合桌面远控。";
+"Current: %@" = "当前：%@";
+"Switched to %@" = "已切换到%@";
+"Remote Resolution" = "主机渲染分辨率";
+"Remote Resolution Value" = "主机渲染分辨率";
+"Remote Custom Resolution" = "主机自定义渲染分辨率";
+"Remote FPS" = "主机渲染帧率";
+"Remote FPS Value" = "主机渲染帧率";
+"Remote Custom FPS" = "主机自定义渲染帧率";
+"Remote overrides apply to the host render mode only." = "仅影响被控端渲染/编码。";
+"Enable Remote Resolution/FPS to override the /launch mode parameter." = "需开启远程分辨率/帧率才会覆盖启动参数（/launch mode）。";
+"Audio Configuration" = "音频配置";
+"Stereo" = "立体声";
+"5.1 surround sound" = "5.1 环绕声";
+"7.1 surround sound" = "7.1 环绕声";
+"7.1.4 surround sound" = "7.1.4 环绕声";
+"Sound Mode" = "音效模式";
+"Audio Enhancement" = "音效增强";
+"Listening Device" = "聆听设备";
+"Headphones" = "耳机";
+"Speakers" = "音箱";
+"EQ Detail" = "均衡器精度";
+"12-Band" = "12 段";
+"24-Band" = "24 段";
+"EQ Preset" = "EQ 预设";
+"Immersive Gaming" = "游戏沉浸";
+"Dialogue Clarity" = "对白清晰";
+"Bass Boost" = "低频增强";
+"Reverb" = "混响";
+"Harman Inspired" = "哈曼灵感";
+"Music Warmth" = "音乐暖感";
+"Vocal Presence" = "人声临场";
+"Air & Detail" = "空气感与细节";
+"Closest to the stream itself with only light tonal shaping." = "最接近原始串流本身，只做很轻的音色修饰。";
+"Wider positional cues with a little extra ambience for games." = "为游戏拉开方位感，并加入少量环境氛围。";
+"Pushes voices and lead detail forward while trimming boominess." = "把人声和主体细节往前推，同时收掉一点浑浊低频。";
+"Adds fuller low end for music and cinematic impact without going too muddy." = "补足低频量感，更适合音乐和电影，同时尽量避免发闷。";
+"A tasteful bass shelf and upper-mid lift inspired by popular headphone targets." = "参考常见耳机目标曲线，加入克制的低频棚架和上中频提亮。";
+"Smoother low mids and gentler highs for relaxed long-session listening." = "让低中频更顺滑、高频更柔和，更适合长时间听音。";
+"Lifts vocals and lead instruments for clearer mids and cleaner focus." = "强化人声和主旋律存在感，让中频更清楚、结像更集中。";
+"Opens up treble sparkle and perceived detail with a lighter low end." = "提升高频空气感和细节感，同时把低频收得更轻一些。";
+"Spatial Intensity" = "空间强度";
+"Soundstage Width" = "音场宽度";
+"EQ" = "均衡器";
+"Multi-channel device detected. Use Default for true 5.1/7.1/7.1.4 playback, or Audio Enhancement for headphone/stereo virtualization." = "检测到多通道输出设备。想保留真实 5.1/7.1/7.1.4 请使用默认；想给耳机或立体声音箱做增强处理请使用音效增强。";
+"V-Sync" = "垂直同步";
+"Performance Overlay" = "显示性能统计";
+"Performance Overlay (⌃⌥S)" = "显示性能统计（⌃⌥S）";
+"Show Connection Warnings" = "显示连接质量警告";
+"Unlock max bitrate (1000 Mbps)" = "解锁最高码率（最高 1000 Mbps）";
+"Gamepad Mouse Emulation" = "手柄模拟鼠标";
+"Optimize mouse for remote desktop" = "优化远程桌面鼠标 (绝对位置)";
+"Absolute Mouse Mode hint" = "建议配合远控模式使用。游戏模式或部分鼠标驱动会自动回退为相对移动，避免光标卡死。";
+"Pointer Speed" = "指针速度";
+"Pointer Speed hint" = "调整相对鼠标 / 触控板速度；绝对鼠标模式不受这个选项影响。";
+"Swap Left and Right Mouse Buttons" = "交换鼠标左右键";
+"Reverse Mouse Scrolling Direction" = "反转鼠标滚动方向";
+"Frame updates paused" = "画面暂时没有更新";
+"No new video frame has arrived for 15 seconds." = "已经连续 15 秒没有收到新画面。";
+"No new frame has arrived for a while." = "已经有一会儿没有收到新画面了。";
+"Manual mode won't change your resolution, frame rate, codec, or chroma automatically." = "当前是手动设置模式，我们不会自动帮你改分辨率、帧率、编码或色彩格式。";
+"You can keep waiting, reconnect manually, or apply a recommended profile." = "你可以继续等待、手动重连，或直接套用推荐档位。";
+"You can keep waiting or reconnect manually." = "你可以继续等待，或手动重连。";
+"Default Display Mode" = "默认显示模式";
+"Windowed" = "窗口模式";
+"Fullscreen" = "全屏模式";
+"Borderless Windowed" = "无边框窗口";
+"Capture system keyboard shortcuts" = "捕获系统快捷键";
+"Shortcut Reference" = "串流快捷键";
+"Stream shortcut note" = "这里就是串流快捷键总表。断开选项、直接断开、退出应用等都能在这里改。";
+"Change Shortcut" = "更改快捷键";
+"Press shortcut to record" = "现在直接按下你想使用的新快捷键。";
+"Shortcut capture note" = "按 Esc 可取消。大多数动作建议使用两个修饰键；断开选项和退出应用也支持单修饰键组合。";
+"Restore Default Shortcut" = "恢复默认";
+"Shortcut requires two modifiers" = "自定义串流快捷键至少要使用两个修饰键。";
+"Shortcut must include regular key" = "这个动作需要“修饰键 + 普通按键”的组合。";
+"Shortcut modifiers only required" = "释放鼠标捕获仅支持纯修饰键快捷键。";
+"Shortcut key unsupported" = "这里暂时只支持字母键和数字键。";
+"Shortcut already in use" = "这个快捷键已经被其他功能占用了。";
+"Shortcut reserved by system" = "这个快捷键被 macOS 或 Moonlight 内建动作保留，不能用于自定义。";
+"Shortcut reserved by gameplay keys" = "Shift 在游戏中本身就是动作键（奔跑、瞄准）。只用 Shift 加移动键时，Moonlight 会在游玩过程中把这个键从游戏里抢走。请再加上 Control、Option 或 Command。";
+"Release mouse capture" = "释放鼠标捕获";
+"Toggle performance overlay" = "切换性能浮窗";
+"Toggle mouse mode" = "切换鼠标模式";
+"Toggle fullscreen control ball" = "切换全屏悬浮球";
+"Open control center" = "打开控制中心";
+"Open control center (fullscreen / borderless only)" = "打开控制中心（仅全屏 / 无边框）";
+"Toggle borderless / windowed (advanced)" = "无边框 / 窗口切换（高级）";
+"Open Control Center: %@" = "打开控制中心：%@";
+"Release mouse: %@" = "释放鼠标：%@";
+"Basic Info" = "基本信息";
+"System Info" = "系统";
+"Running Game" = "运行游戏";
+"Latency" = "延迟";
+"Computers" = "计算机";
+"Streaming Active" = "串流进行中";
+"Host: %@" = "主机: %@";
+"App: %@" = "应用: %@";
+"Connected" = "已连接";
+"Show Stream Window" = "显示串流窗口";
+"Disconnect" = "断开连接";
+"%@ is Offline" = "%@ 离线";
+"Sending Wake-on-LAN packets..." = "正在发送网络唤醒数据包...";
+"This computer is currently offline or sleeping." = "此计算机当前离线或休眠。";
+"Waking..." = "正在唤醒...";
+"Wake Host" = "唤醒主机";
+"Refresh Status" = "刷新状态";
+"Back to Computers" = "返回计算机列表";

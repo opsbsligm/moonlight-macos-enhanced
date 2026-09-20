@@ -45,6 +45,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   panel to photograph on this machine -- `swift-typecheck.py` and `l10n-audit.py` are the evidence
   here, not a picture.
 
+- **The app had two localisation tables per language and asked the older one first.**
+  `LanguageManager` carried two Swift dictionaries answering 227 keys, and `localize()` consulted
+  them before the tables in the bundle. Three things followed, none of them visible from either
+  layer on its own. 21 Chinese and 6 English rows in `Localizable.strings` were text no user ever
+  read, because the dictionary answered first -- including `Disconnect Alert`, whose dead row was
+  the actual question and whose live row was the key, so the disconnect dialog greeted the user
+  with `Disconnect Alert` instead of asking anything. 131 keys existed only in the dictionaries,
+  which put them outside `scripts/dmg-audit.py`: that audit compares the tables **inside the
+  released image** against the repository, so those sentences were the one part of the
+  localisation never verified in the file a user downloads. And the log panel's filter box indexes
+  the `.strings` tables while the UI showed the dictionary, so a player could copy a phrase off
+  the screen, paste it into the box, and be told there was nothing. The dictionaries are deleted
+  (the file is 613 lines shorter), `LanguageManager` asks one table, and the move was checked by
+  replaying the old lookup order against the new one for all 1123 keys in both languages: **three
+  rows change what a user reads**, and all three are rows where the text that could never take
+  effect is the text that is right -- the disconnect question in both languages, and the Chinese
+  hint for YUV 4:4:4, which credited the graphics card for something the host provides. Four
+  rules keep the shape: the dictionaries may not come back, a Chinese row must say Chinese unless
+  it is a name or token a player searches verbatim (sixteen of those are named), both tables must
+  answer a format string with the same placeholders `String(format:)` is handed, and no row may
+  hide a lookalike character -- the last one paying off on arrival, because nine Chinese rows
+  wrote `Wi-Fi` with a non-breaking hyphen, so copying it off the screen produced a string no
+  search box or log file matches the ASCII word against. Twelve self-test cases cover the four.
+- **One bundle per language instead of one per lookup.** `localizedString(_:languageCode:)` built a
+  `Bundle(path:)` on every call, and the log panel calls it for every key in every language to
+  build a search index it rebuilds per log line: a few thousand rows on screen meant tens of
+  thousands of bundle allocations for answers that cannot change while the process runs. The
+  bundles are resolved once per language now.
 ### Fixed
 
 - **A log line stopped arriving in the language of the machine that wrote it.** Five log strings

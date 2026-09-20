@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Report localization keys that the UI can ask for but no layer can answer.
 
-A key is satisfied when either the inline table in LanguageManager or the
-matching .strings table has an entry, because localize() consults the table
-first and the bundle second. Keys missing from both render as the raw key.
+There is one table per language: the .strings file in the bundle. LanguageManager
+used to carry two Swift dictionaries as well, consulted first, which made a
+hundred rows of the shipped tables dead text and put another hundred outside the
+shipped-image audit entirely. Those dictionaries are deleted and a rule refuses
+them coming back, so a key missing here is a key that renders as itself.
 
 The scan of the sources is done here, in Python, on purpose. It used to be a
 `grep -rhoE` whose pattern contained a (?: group: BSD grep on macOS accepted it
@@ -28,12 +30,6 @@ root = positional[0] if positional else "."
 lm_path = os.path.join(root, "Limelight/macOS/Helpers/LanguageManager.swift")
 lm = io.open(lm_path, encoding="utf-8").read()
 
-def inline_table(name):
-    m = re.search(r"private let %s: \[String: String\] = \[(.*?)\n  \]" % name, lm, re.S)
-    if not m:
-        raise SystemExit("cannot locate inline table %r" % name)
-    return set(re.findall(r'^\s*"((?:[^"\\]|\\.)+)"\s*:', m.group(1), re.M))
-
 KEY_LINE = re.compile(r'^"((?:[^"\\]|\\.)+)"\s*=', re.M)
 
 
@@ -42,6 +38,14 @@ def strings_key_list(path):
     if not os.path.exists(path):
         return []
     return KEY_LINE.findall(io.open(path, encoding="utf-8").read())
+
+
+def strings_values(path):
+    """Every key and value a .strings table declares, in the file's own escaping."""
+    if not os.path.exists(path):
+        return {}
+    return dict(re.findall(r'^"((?:[^"\\]|\\.)+)"\s*=\s*"((?:[^"\\]|\\.)*)"\s*;',
+                           io.open(path, encoding="utf-8").read(), re.M))
 
 
 def strings_table(path):
@@ -140,8 +144,7 @@ ZH_TABLE = "Limelight/macOS/zh-Hans.lproj/Localizable.strings"
 raw_en = strings_key_list(os.path.join(root, EN_TABLE))
 raw_zh = strings_key_list(os.path.join(root, ZH_TABLE))
 
-en = inline_table("en") | set(raw_en)
-zh = inline_table("zhHans") | set(raw_zh)
+en, zh = set(raw_en), set(raw_zh)
 
 # The optional @ is not decoration: NSLocalizedString and MLString are ObjC macros
 # over the same lookup, and every one of their 153 call sites passes an @"..."
@@ -436,6 +439,82 @@ def log_bodies_in_a_spoken_language(text):
     return bad
 
 
+# One table per language, in the bundle, and nowhere else.
+#
+# LanguageManager carried two Swift dictionaries answering 227 keys, and localize() asked
+# them first. That made 21 Chinese and 6 English rows in the .strings tables text no user
+# ever saw; it left 131 sentences as the one part of the localisation that
+# scripts/dmg-audit.py never read, because the image audit reads the tables inside the
+# image and this file is not one of them; and it meant the log panel's filter box -- which
+# indexes the .strings tables -- indexed sentences the UI never showed, so a player could
+# copy a phrase off the screen and not find it. The dictionaries are deleted. This refuses
+# them coming back, because the bug was the second table, not its contents.
+INLINE_DICTIONARY = re.compile(r"private let (?:en|zhHans):\s*\[String:\s*String\]")
+
+
+def inline_dictionaries(text):
+    """Dictionaries that would answer keys ahead of the shipped tables."""
+    return INLINE_DICTIONARY.findall(text)
+
+
+# A row in the Chinese table that says no Chinese is one of two things: a proper noun or a
+# token a player searches for verbatim, or a translation nobody did. The tree holds sixteen
+# of the first and none of the second, and the difference is invisible from the outside --
+# both read as English -- so the sixteen are named and anything else is refused. A missing
+# translation that looks like a product name is exactly how a key reaches a screen.
+TRANSLATED_BY_CHOICE = {
+    "%@: %@", "1% Low", "AV1", "CoreHID", "GameController", "Geforce Experience", "HID",
+    "HLG", "MFI", "MFi", "MetalFX", "Moonlight", "NSURLError %@", "PQ", "UUID", "Wi-Fi",
+}
+
+
+def chinese_rows_that_answer_in_english(rows):
+    """Chinese rows whose value a Chinese player cannot read as Chinese."""
+    return sorted(key for key, value in rows.items()
+                  if not is_chinese(value) and key not in TRANSLATED_BY_CHOICE)
+
+
+# Both tables have to answer a format string with the same placeholders. `String(format:)`
+# is how the log panel fills in an error code or a retry count, and a table that drops the
+# `%@` reads as a sentence with the number missing while the one that adds a second one
+# hands a format string more arguments than it asks for.
+PLACEHOLDER = re.compile(r"%(?:\d+\$)?(?:lld|llu|llx|ld|lu|lx|lf|ls|[@dDuUiIsSfFxXqEecgGn%])")
+
+
+def placeholder_mismatches(en_rows, zh_rows):
+    """Keys the two languages answer with different format specifiers."""
+    found = []
+    for key, value in en_rows.items():
+        other = zh_rows.get(key)
+        if other is None:
+            continue
+        mine, theirs = sorted(PLACEHOLDER.findall(value)), sorted(PLACEHOLDER.findall(other))
+        if mine != theirs:
+            found.append("%s: english %s, chinese %s" % (key[:48], mine, theirs))
+    return found
+
+
+# Characters that look like another one. Nine Chinese rows wrote `Wi-Fi` with a
+# non-breaking hyphen, so a player who copied the phrase got a string that no search box,
+# log file or issue thread matches the ASCII word against -- and nobody could tell by
+# looking. NBSP, soft hyphens and zero-width joins are the same bug in another costume.
+LOOKALIKES = {u"\u00a0": "no-break space", u"\u2011": "non-breaking hyphen",
+              u"\u200b": "zero-width space", u"\u2060": "word joiner",
+              u"\ufeff": "byte order mark", u"\u00ad": "soft hyphen",
+              u"\u3000": "ideographic space"}
+
+
+def lookalike_characters(tables):
+    """Rows whose text hides a character that reads as a plainer one."""
+    found = []
+    for name, rows in tables:
+        for key, value in sorted(rows.items()):
+            for char, label in LOOKALIKES.items():
+                if char in value or char in key:
+                    found.append("%s: %s in %s" % (name, label, key[:48]))
+    return found
+
+
 # One entry per file, and the number is a ceiling rather than a statement. Every
 # Chinese string still written at an outlet is a translation nobody has done yet, and
 # the honest version of that is a list the next change has to shrink: the audit refuses
@@ -721,6 +800,57 @@ def self_test():
          "Limelight/macOS/ViewControllers/SettingsStreamPane.swift",
          'FormCell(title: "General") { }', set()),
     ]
+    INLINE_CASES = [
+        ("a dictionary that came back",
+         'class X {\n  private let en: [String: String] = [\n    "Stream": "Stream",\n  ]\n}', True),
+        ("the file as it ships, with no dictionary", 'public func localize(_ key: String) -> String { }', False),
+    ]
+    for name, source, must_fail in INLINE_CASES:
+        found = bool(inline_dictionaries(source))
+        ok = found == must_fail
+        check(ok, "inline table rule %s %s" %
+              ("refuses" if must_fail else "accepts", name) if ok else
+              "inline table rule %s for %s" % ("missed" if not found else "wrongly refused", name))
+
+    CHOICE_CASES = [
+        ("an unregistered English answer", {"Resolution": "Resolution"}, True),
+        ("a name a player searches verbatim", {"MetalFX": "MetalFX"}, False),
+        ("a row that does say Chinese", {"Resolution": "\u5206\u8fa8\u7387"}, False),
+    ]
+    for name, rows, must_fail in CHOICE_CASES:
+        found = bool(chinese_rows_that_answer_in_english(rows))
+        ok = found == must_fail
+        check(ok, "translated-by-choice rule %s %s" %
+              ("refuses" if must_fail else "accepts", name) if ok else
+              "translated-by-choice rule %s for %s" % ("missed" if not found else "wrongly refused", name))
+
+    PH_CASES = [
+        ("a Chinese row that dropped the placeholder",
+         {"Error code %@": "Error code %@"}, {"Error code %@": "\u9519\u8bef\u7801"}, True),
+        ("both rows carrying the placeholder",
+         {"Error code %@": "Error code %@"}, {"Error code %@": "\u9519\u8bef\u7801 %@"}, False),
+        ("a literal percent the other side reads as an argument",
+         {"Done 100%@": "Done 100%@"}, {"Done 100%@": "\u5b8c\u6210 100%%"}, True),
+    ]
+    for name, e, z, must_fail in PH_CASES:
+        found = bool(placeholder_mismatches(e, z))
+        ok = found == must_fail
+        check(ok, "placeholder rule %s %s" %
+              ("refuses" if must_fail else "accepts", name) if ok else
+              "placeholder rule %s for %s" % ("missed" if not found else "wrongly refused", name))
+
+    LOOKALIKE_CASES = [
+        ("a non-breaking hyphen in Wi-Fi", {"Wi-Fi": "Wi\u2011Fi"}, True),
+        ("an ordinary hyphen", {"Wi-Fi": "Wi-Fi"}, False),
+        ("a no-break space", {"Resolution": "\u5206\u8fa8\u7387\u00a0\u8bbe\u7f6e"}, True),
+    ]
+    for name, rows, must_fail in LOOKALIKE_CASES:
+        found = bool(lookalike_characters([("table", rows)]))
+        ok = found == must_fail
+        check(ok, "lookalike rule %s %s" %
+              ("refuses" if must_fail else "accepts", name) if ok else
+              "lookalike rule %s for %s" % ("missed" if not found else "wrongly refused", name))
+
     LOG_BODY_CASES = [
         ("a Chinese sentence written into a log", 'Log(LOG_E, @"\u8fde\u63a5\u5931\u8d25");', True),
         ("an ASCII log line", 'Log(LOG_E, @"connection failed");', False),
@@ -823,6 +953,29 @@ check(not log_bodies,
       "a log body is written as data, which is what lets the parser match it and a maintainer read it"
       if not log_bodies else
       "a log body was written in a language instead of as data: %s" % ", ".join(log_bodies[:8]))
+
+check(not inline_dictionaries(lm),
+      "one table per language, in the bundle: the second one used to shadow it and the image audit")
+
+zh_rows = strings_values(os.path.join(root, "Limelight/macOS/zh-Hans.lproj/Localizable.strings"))
+en_rows = strings_values(os.path.join(root, "Limelight/macOS/en.lproj/Localizable.strings"))
+check(not chinese_rows_that_answer_in_english(zh_rows),
+      "a Chinese row says Chinese, unless the row is a name or token a player searches verbatim"
+      if not chinese_rows_that_answer_in_english(zh_rows) else
+      "Chinese rows that answer in English, unregistered: %s"
+      % ", ".join(chinese_rows_that_answer_in_english(zh_rows)[:8]))
+
+check(not placeholder_mismatches(en_rows, zh_rows),
+      "both tables answer a format string with the same placeholders, which is what String(format:) needs"
+      if not placeholder_mismatches(en_rows, zh_rows) else
+      "format placeholders differ between the tables: %s"
+      % " | ".join(placeholder_mismatches(en_rows, zh_rows)[:4]))
+
+check(not lookalike_characters([("chinese table", zh_rows), ("english table", en_rows)]),
+      "no row hides a character that reads as a plainer one, which is what copying text off screen needs"
+      if not lookalike_characters([("chinese table", zh_rows), ("english table", en_rows)]) else
+      "lookalike characters in the tables: %s"
+      % ", ".join(lookalike_characters([("chinese table", zh_rows), ("english table", en_rows)])[:6]))
 
 check(not chinese_branch_answers_with_the_key(io.open(os.path.join(root, LANGUAGE_MANAGER),
                                                      encoding="utf-8", errors="replace").read()),

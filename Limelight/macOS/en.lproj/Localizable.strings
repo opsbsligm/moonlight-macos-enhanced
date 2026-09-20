@@ -25,7 +25,7 @@
 "Streaming Style" = "Streaming Style";
 "Streaming Style detail" = "Pick the overall feel first: lower latency, balanced, or smoother video.";
 "Timing" = "Timing";
-"Compatibility & Troubleshooting" = "Compatibility";
+"Compatibility & Troubleshooting" = "Compatibility & Troubleshooting";
 "Compatibility" = "Compatibility";
 "Video Codec H264 detail" = "Best compatibility.";
 "Video Codec H265 detail" = "Good for most setups.";
@@ -56,7 +56,7 @@
 "OK" = "OK";
 
 /* Remote Overrides */
-"Remote overrides hint" = "These options only affect the host-side rendering/encoding mode. Leave them off for most cases.";
+"Remote overrides hint" = "Forces the host to render at this value.";
 
 /* Bitrate */
 "Target Bitrate" = "Target Bitrate";
@@ -713,8 +713,8 @@
 "Preserve Midtones" = "Preserve Midtones";
 "Preserve Shadows" = "Preserve Shadows";
 "No Exposure Shift" = "No Exposure Shift";
-"MetalFX Spatial (Quality)" = "MetalFX Spatial (Quality)";
-"MetalFX Spatial (Performance)" = "MetalFX Spatial (Performance)";
+"MetalFX Spatial (Quality)" = "MetalFX (Quality)";
+"MetalFX Spatial (Performance)" = "MetalFX (Performance)";
 "Basic Scaling" = "Basic Scaling";
 "HDR Display" = "HDR Display";
 "HDR Display detail" = "Based on the current display's EDR headroom and wide-gamut capability.";
@@ -946,7 +946,7 @@
 /* Application name, shown as the window title */
 
 /* Compact rows the log browser shows: a category, then one sentence */
-"System" = "System";
+"System" = "System (Default)";
 "Discovery" = "Discovery";
 "Log" = "Log";
 "Network stack" = "Network stack";
@@ -1073,3 +1073,145 @@
 "Window entered fullscreen" = "Window entered fullscreen";
 "Window left fullscreen" = "Window left fullscreen";
 "mDNS resolved a known host" = "mDNS resolved a known host";
+
+/* Everything the app asks a table for lives here. The inline dictionaries in
+   LanguageManager used to carry 227 of these keys, and because localize() asked them
+   first, three things followed: 21 Chinese and 6 English rows in these tables were text
+   no user ever saw; the shipped-image audit only reads this file, so 131 sentences were
+   the one part of the localisation never verified in the file a user downloads; and the
+   log panel's filter box indexes this file while the UI showed the dictionary, so a
+   player could copy a word off the screen and not find it. The dictionaries are empty
+   now, l10n-audit refuses to let them hold a key again, and every row here is the text
+   the app rendered before this move -- except `Disconnect Alert` and `YUV 4:4:4 hint`, where the row that never took effect
+   is the row that is right. */
+"General" = "General";
+"Language" = "Language";
+"Global" = "Global";
+"Global (Default)" = "Global (Default)";
+"Scope: Global" = "Scope: Global";
+"Scope: Profile (%@)" = "Scope: Profile (%@)";
+"Match Display Resolution hint" = "Automatically matches the current screen size.";
+"Resolution Scale" = "Resolution Scale";
+"Resolution Scale Ratio" = "Resolution Scale Ratio";
+"Resolution & Scaling" = "Resolution & Scaling";
+"Resolution Scale hint" = "Reduces resolution to save bandwidth.";
+"Upscaling" = "Upscaling";
+"Scale vs Upscaling hint" = "Resolution Scale saves bandwidth. Upscaling improves reconstructed detail on the client.";
+"AI enhancement recommended hint" = "Most useful when streaming below native resolution or at lower bitrate.";
+"Resolution Scale + Upscaling hint" = "Tip: Lower host scale plus client upscaling can keep the image clearer at the same bandwidth.";
+"MetalFX requires macOS 13 or later." = "Requires macOS 13+.";
+"Auto Adjust Bitrate" = "Auto Adjust Bitrate";
+"Ignore Aspect Ratio" = "Ignore Aspect Ratio";
+"Show Local Cursor" = "Show Local Cursor";
+"Mouse and Cursor" = "Mouse & Cursor";
+"Locked Mouse" = "Locked Mouse";
+"Control Center" = "Control Center";
+"Locked Mouse hint" = "Keeps the mouse locked to the stream. Best for games and camera control.";
+"Free Mouse hint" = "Lets you switch back to macOS apps and displays more naturally. Best for desktop use.";
+"Current: %@" = "Current: %@";
+"Switched to %@" = "Switched to %@";
+"Remote Resolution" = "Host Render Resolution";
+"Remote Resolution Value" = "Host Render Resolution";
+"Remote Custom Resolution" = "Host Custom Render Resolution";
+"Remote FPS" = "Host Render FPS";
+"Remote FPS Value" = "Host Render FPS";
+"Remote Custom FPS" = "Host Custom Render FPS";
+"Remote overrides apply to the host render mode only." = "Remote overrides apply to the host render mode only.";
+"Enable Remote Resolution/FPS to override the /launch mode parameter." = "Enable Remote Resolution/FPS to override the /launch mode parameter.";
+"Audio Configuration" = "Audio Configuration";
+"Stereo" = "Stereo";
+"5.1 surround sound" = "5.1 surround sound";
+"7.1 surround sound" = "7.1 surround sound";
+"7.1.4 surround sound" = "7.1.4 surround sound";
+"Sound Mode" = "Sound Mode";
+"Audio Enhancement" = "Audio Enhancement";
+"Listening Device" = "Listening Device";
+"Headphones" = "Headphones";
+"Speakers" = "Speakers";
+"EQ Detail" = "EQ Detail";
+"12-Band" = "12-Band";
+"24-Band" = "24-Band";
+"EQ Preset" = "EQ Preset";
+"Immersive Gaming" = "Immersive Gaming";
+"Dialogue Clarity" = "Dialogue Clarity";
+"Bass Boost" = "Bass Boost";
+"Reverb" = "Reverb";
+"Harman Inspired" = "Harman Inspired";
+"Music Warmth" = "Music Warmth";
+"Vocal Presence" = "Vocal Presence";
+"Air & Detail" = "Air & Detail";
+"Closest to the stream itself with only light tonal shaping." = "Closest to the stream itself with only light tonal shaping.";
+"Wider positional cues with a little extra ambience for games." = "Wider positional cues with a little extra ambience for games.";
+"Pushes voices and lead detail forward while trimming boominess." = "Pushes voices and lead detail forward while trimming boominess.";
+"Adds fuller low end for music and cinematic impact without going too muddy." = "Adds fuller low end for music and cinematic impact without going too muddy.";
+"A tasteful bass shelf and upper-mid lift inspired by popular headphone targets." = "A tasteful bass shelf and upper-mid lift inspired by popular headphone targets.";
+"Smoother low mids and gentler highs for relaxed long-session listening." = "Smoother low mids and gentler highs for relaxed long-session listening.";
+"Lifts vocals and lead instruments for clearer mids and cleaner focus." = "Lifts vocals and lead instruments for clearer mids and cleaner focus.";
+"Opens up treble sparkle and perceived detail with a lighter low end." = "Opens up treble sparkle and perceived detail with a lighter low end.";
+"Spatial Intensity" = "Spatial Intensity";
+"Soundstage Width" = "Soundstage Width";
+"EQ" = "EQ";
+"Multi-channel device detected. Use Default for true 5.1/7.1/7.1.4 playback, or Audio Enhancement for headphone/stereo virtualization." = "Multi-channel device detected. Use Default for true 5.1/7.1/7.1.4 playback, or Audio Enhancement for headphone/stereo virtualization.";
+"V-Sync" = "V-Sync";
+"Performance Overlay" = "Performance Overlay";
+"Performance Overlay (⌃⌥S)" = "Performance Overlay (⌃⌥S)";
+"Show Connection Warnings" = "Show Connection Warnings";
+"Unlock max bitrate (1000 Mbps)" = "Unlock max bitrate (1000 Mbps)";
+"Gamepad Mouse Emulation" = "Gamepad Mouse Emulation";
+"Capture system keyboard shortcuts" = "Capture system keyboard shortcuts";
+"Shortcut Reference" = "Stream Shortcuts";
+"Stream shortcut note" = "These are your stream shortcuts. You can change the disconnect dialog, direct disconnect, quit, and more here.";
+"Change Shortcut" = "Change Shortcut";
+"Press shortcut to record" = "Press the shortcut you want to use now.";
+"Shortcut capture note" = "Press Esc to cancel. Most actions use two modifiers. Disconnect options and quit can also use one.";
+"Restore Default Shortcut" = "Restore Default";
+"Shortcut requires two modifiers" = "Use at least two modifier keys for custom stream shortcuts.";
+"Shortcut must include regular key" = "This action requires modifiers plus a regular key.";
+"Shortcut modifiers only required" = "Release mouse capture only supports modifier-only shortcuts.";
+"Shortcut key unsupported" = "Only letter and number keys are supported here.";
+"Shortcut already in use" = "That shortcut is already assigned elsewhere.";
+"Shortcut reserved by system" = "That shortcut is reserved by macOS or a built-in Moonlight action.";
+"Shortcut reserved by gameplay keys" = "Shift is a game action key (sprint, aim), so Moonlight would take Shift plus a movement key away from the game while you play. Add Control, Option or Command.";
+"Release mouse capture" = "Release mouse capture";
+"Toggle performance overlay" = "Toggle performance overlay";
+"Toggle mouse mode" = "Toggle mouse mode";
+"Toggle fullscreen control ball" = "Toggle fullscreen control ball";
+"Open control center" = "Open control center";
+"Open control center (fullscreen / borderless only)" = "Open control center (fullscreen / borderless only)";
+"Toggle borderless / windowed (advanced)" = "Toggle borderless / windowed (advanced)";
+"Open Control Center: %@" = "Open Control Center: %@";
+"Release mouse: %@" = "Release mouse: %@";
+"Optimize mouse for remote desktop" = "Optimize mouse for remote desktop";
+"Absolute Mouse Mode hint" = "Best used in Remote Desktop mode. Game mode and some mouse drivers fall back to relative movement to avoid pointer lockups.";
+"Pointer Speed" = "Pointer Speed";
+"Pointer Speed hint" = "Adjusts relative mouse / trackpad speed. Doesn't affect absolute mouse mode.";
+"Swap Left and Right Mouse Buttons" = "Swap Left and Right Mouse Buttons";
+"Reverse Mouse Scrolling Direction" = "Reverse Mouse Scrolling Direction";
+"Frame updates paused" = "Frame updates paused";
+"No new video frame has arrived for 15 seconds." = "No new video frame has arrived for 15 seconds.";
+"No new frame has arrived for a while." = "No new frame has arrived for a while.";
+"Manual mode won't change your resolution, frame rate, codec, or chroma automatically." = "Manual mode won't change your resolution, frame rate, codec, or chroma automatically.";
+"You can keep waiting, reconnect manually, or apply a recommended profile." = "You can keep waiting, reconnect manually, or apply a recommended profile.";
+"You can keep waiting or reconnect manually." = "You can keep waiting or reconnect manually.";
+"Default Display Mode" = "Default Display Mode";
+"Windowed" = "Windowed";
+"Fullscreen" = "Fullscreen";
+"Borderless Windowed" = "Borderless Windowed";
+"Basic Info" = "Basic Info";
+"System Info" = "System";
+"Running Game" = "Running Game";
+"Latency" = "Latency";
+"Computers" = "Computers";
+"Streaming Active" = "Streaming Active";
+"Host: %@" = "Host: %@";
+"App: %@" = "App: %@";
+"Connected" = "Connected";
+"Show Stream Window" = "Show Stream Window";
+"Disconnect" = "Disconnect";
+"%@ is Offline" = "%@ is Offline";
+"Sending Wake-on-LAN packets..." = "Sending Wake-on-LAN packets...";
+"This computer is currently offline or sleeping." = "This computer is currently offline or sleeping.";
+"Waking..." = "Waking...";
+"Wake Host" = "Wake Host";
+"Refresh Status" = "Refresh Status";
+"Back to Computers" = "Back to Computers";
