@@ -32,7 +32,8 @@ ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
 HEADER = "Limelight/macOS/ViewControllers/StreamViewController_Internal.h"
 CALLSITE = "Limelight/macOS/ViewControllers/StreamViewController+MouseCapture.m"
 VALIDATOR = "Limelight/macOS/ViewControllers/SettingsShortcuts.swift"
-L10N = "Limelight/macOS/Helpers/LanguageManager.swift"
+EN_TABLE = "Limelight/macOS/en.lproj/Localizable.strings"
+ZH_TABLE = "Limelight/macOS/zh-Hans.lproj/Localizable.strings"
 GUARD = "MLShortcutUsesGameplayOnlyModifiers"
 SWIFT_GUARD = "shortcutUsesGameplayOnlyModifiers"
 ERROR_KEY = "Shortcut reserved by gameplay keys"
@@ -48,6 +49,13 @@ def check(ok, message):
     print("%-4s %s" % ("ok" if ok else "FAIL", message))
     if not ok:
         failures.append(message)
+
+
+def string_entry(table, key):
+    """The value a .strings table gives a key, or None when it holds no entry."""
+    pattern = r'^"%s"\s*=\s*"((?:[^"\\]|\\.)*)"\s*;' % re.escape(key)
+    match = re.search(pattern, table, re.M)
+    return None if match is None else match.group(1)
 
 
 def read(rel):
@@ -239,7 +247,8 @@ def main():
     header = read(HEADER)
     callsite = read(CALLSITE)
     swift = read(VALIDATOR)
-    l10n = read(L10N)
+    en_table = read(EN_TABLE)
+    zh_table = read(ZH_TABLE)
 
     objc_guard = inline_function(header, GUARD)
     swift_guard = swift_function(swift, SWIFT_GUARD)
@@ -265,8 +274,14 @@ def main():
           and ERROR_KEY in validators[0],
           "the settings form refuses the same shape the runtime refuses, and says why")
     check(ERROR_KEY in swift, "the refusal says why in a localized key")
-    check(l10n.count('"%s"' % ERROR_KEY) == 2,
-          "%s has wording in both languages" % ERROR_KEY)
+    # One table per language: the .strings file the bundle actually loads. The
+    # wording used to live in two Swift dictionaries inside LanguageManager, so a
+    # gate that kept reading that file would have waved a build through on the very
+    # day the dictionaries were deleted. Ask the table the app reads instead.
+    for label, table in (("English", en_table), ("Chinese", zh_table)):
+        value = string_entry(table, ERROR_KEY)
+        check(value is not None and value != "",
+              "%s has %s wording in the table the app loads" % (ERROR_KEY, label))
 
     cc, sdk = apple_toolchain.clang_and_sdk("gameplay modifier model")
     pair = apple_toolchain.swiftc_and_sdk("gameplay modifier model")

@@ -48,6 +48,101 @@ def strings_values(path):
                            io.open(path, encoding="utf-8").read(), re.M))
 
 
+def string_entries(text):
+    """Every entry a .strings table declares, with the two lines it spans.
+
+    A .strings table is an OpenStep plist. Nothing in it requires one entry per
+    line, and a string literal may carry a real newline, so both "two entries on one
+    line" and "one entry across three lines" are legal to CoreFoundation. The audit's
+    own reader is line anchored, so an entry that does not begin a line, or does not
+    end one, is invisible to every rule below: coverage, symmetry and placeholders
+    would all wave it through, which is how `Clipboard Sync detail` sat in the en
+    table uncounted while the app translated it correctly. Parsing the table the way
+    the parser does makes the two views comparable.
+    """
+    entries = []
+    i, n, line = 0, len(text), 1
+
+    def skip_string():
+        """Walk past a string literal opened at i, returning its body and end line."""
+        nonlocal i, line
+        i += 1
+        start = i
+        while i < n and text[i] != '"':
+            if text[i] == "\\":
+                i += 2
+            else:
+                if text[i] == "\n":
+                    line += 1
+                i += 1
+        return text[start:i], line
+
+    while i < n:
+        char = text[i]
+        if char == "\n":
+            i += 1
+            line += 1
+            continue
+        if char in " \t\r":
+            i += 1
+            continue
+        if text.startswith("//", i):
+            i = text.find("\n", i)
+            i = n if i < 0 else i
+            continue
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            if end < 0:
+                break
+            line += text.count("\n", i, end + 2)
+            i = end + 2
+            continue
+        if char != '"':
+            break
+        start_line = line
+        key, _ = skip_string()
+        i += 1
+        while i < n and text[i] in " \t\r\n":
+            line += text[i] == "\n"
+            i += 1
+        if i >= n or text[i] != "=":
+            break
+        i += 1
+        while i < n and text[i] in " \t\r\n":
+            line += text[i] == "\n"
+            i += 1
+        if i >= n or text[i] != '"':
+            break
+        _, value_end_line = skip_string()
+        i += 1
+        while i < n and text[i] in " \t\r\n":
+            line += text[i] == "\n"
+            i += 1
+        if i < n and text[i] == ";":
+            i += 1
+        entries.append((key, start_line, value_end_line))
+    return entries
+
+
+def entries_the_line_scan_cannot_see(text):
+    """Entries the parser reads that a line-anchored scan of the same text does not.
+
+    Either shape is enough to hide one: the entry that shares a line with the one
+    above it never matches `^"key" =`, and the entry whose value carries a real
+    newline is only half inside any line.
+    """
+    anchored = {text.count("\n", 0, m.start()) + 1 for m in KEY_LINE.finditer(text)}
+    hidden, claimed = [], set()
+    for key, start, end in string_entries(text):
+        # `^` matches once per line at most, so the first entry of a line is the only
+        # one an anchored scan can reach, and only when it really begins the line.
+        if end != start or start not in anchored or start in claimed:
+            hidden.append((key, start, end))
+        else:
+            claimed.add(start)
+    return hidden
+
+
 def strings_table(path):
     return set(strings_key_list(path))
 
@@ -683,6 +778,18 @@ DUPLICATE_CASES = [
     ("a key three times", ['"a" = "1";', '"a" = "2";', '"a" = "3";'], [("a", 3)]),
 ]
 
+# The shape that hides an entry from the audit: one entry riding on the line of the
+# entry above it, and one entry whose value carries a real newline.
+ENTRY_SHAPE_CASES = [
+    ("one entry per line", ['"a" = "1";', '"b" = "2";'], []),
+    ("the second entry rides on the first line",
+     ['"a" = "1";"b" = "2";'], ["b"]),
+    ("a value that carries a real newline",
+     ['"a" = "one', 'two";'], ["a"]),
+    ("a comment line, which is not an entry",
+     ['// "a" = "1";', '"b" = "2";'], []),
+]
+
 SYMMETRY_CASES = [
     ("identical tables", ["a", "b"], ["a", "b"], ([], [])),
     ("a key only english declares", ["a", "b"], ["a"], (["b"], [])),
@@ -758,6 +865,15 @@ def self_test():
         ok = found == expected
         check(ok, "duplicate key check %s %s" %
               ("reports" if ok else "got %s, expected %s for" % (found, expected), name))
+    for name, table_lines, expected in ENTRY_SHAPE_CASES:
+        found = [key for key, _, _ in
+                 entries_the_line_scan_cannot_see("\n".join(table_lines))]
+        ok = found == expected
+        check(ok, "entry shape %s %s" %
+              ("refuses" if expected else "accepts", name) if ok else
+              "entry shape %s for %s (got %s)" %
+              ("missed" if expected else "wrongly refused", name, found))
+
     for name, en_names, zh_names, expected in SYMMETRY_CASES:
         found = table_symmetry(en_names, zh_names)
         ok = found == expected
@@ -900,6 +1016,28 @@ check(not missing_zh and not missing_en,
       "localization coverage is complete on both sides"
       if not (missing_zh or missing_en) else
       "unanswered localization keys: chinese %d, english %d" % (len(missing_zh), len(missing_en)))
+
+# Before any rule reads a table, the audit and CoreFoundation have to be looking at
+# the same number of entries. `Clipboard Sync detail` was in the en table the whole
+# time, and translated correctly at runtime, while every rule above this one scored a
+# table it had silently lost a row from.
+for label, table in (("en", EN_TABLE), ("zh-Hans", ZH_TABLE)):
+    path = os.path.join(root, table)
+    text = io.open(path, encoding="utf-8").read()
+    hidden = entries_the_line_scan_cannot_see(text)
+    for key, start, end in hidden:
+        print("::error file=%s::line %d carries an entry the line-anchored rules below cannot see: %s"
+              % (table, start, key))
+    check(not hidden, "every entry in the %s table is visible to the line-anchored rules" % label
+          if not hidden else "%d entries in the %s table are invisible to its own rules"
+          % (len(hidden), label))
+    parsed = string_entries(text)
+    scanned = len(KEY_LINE.findall(text))
+    check(len(parsed) == scanned,
+          "the %s table parses into the same %d entries its rules read" % (label, scanned)
+          if len(parsed) == scanned else
+          "the %s table parses into %d entries while its rules read %d"
+          % (label, len(parsed), scanned))
 
 dup_en = duplicate_keys(raw_en)
 dup_zh = duplicate_keys(raw_zh)

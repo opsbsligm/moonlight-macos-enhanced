@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A gate that read the file it was auditing, and went red when that file stopped
+  existing.** `gameplay-modifier-tests.py` asked for the reserved-shortcut wording
+  inside `LanguageManager.swift`, which is where the sentence lived until the tables
+  became the only carrier. Deleting the two dictionaries left the wording exactly
+  where the app reads it -- one entry in each `.strings` table -- and left the gate
+  counting a file that no longer holds it, so the arm64 and x86_64 builds failed on
+  a message about wording that was present. The gate now reads both tables and asks
+  each one for a non-empty value, which is what the app will actually find. Proof it
+  has teeth rather than merely being green: with the key deleted from a copy of the
+  English table, the gate reports the missing English wording and fails.
+  `LanguageManager.swift` was the last gate still pointing at a deleted carrier;
+  the whole `scripts/` tree was swept for the pattern and nothing else matched.
+
+- **Two entries shared one line, and every rule in the localization audit was
+  scoring a table with a row missing.** The audit reads a `.strings` table with a
+  line-anchored pattern, which is correct for a table written one entry per line and
+  silently wrong for any other layout: an entry that begins after a `;"` on the line
+  above it never matches `^"key" =`, and an entry whose value carries a real newline
+  is only half inside any line. Both shapes are legal OpenStep plist, and
+  CoreFoundation reads them without complaint. `Clipboard Sync detail` was written on
+  the same line as the entry before it, in both tables, line 795 in each. It
+  translated correctly at runtime and was invisible to coverage, symmetry,
+  placeholder and duplicate checks alike -- an entry no rule was watching, so a
+  rename or a one-sided edit to it would have passed CI. The line is split in both
+  tables, with the parsed tables compared key by key before and after to show that
+  not one string changed. Two checks now keep the two views of the file together: the
+  table is parsed entry by entry the way OpenStep does it, and every entry has to be
+  one the line-anchored rules can actually reach, while the entry count from that
+  parse has to equal the count the rules read. The parse is asserted rather than
+  trusted -- a second entry riding on a line and a value carrying a real newline both
+  have to be reported, while an ordinary table and a commented-out row both have to
+  pass. The planted case caught a first draft of the check that treated any entry
+  starting on an anchored line as visible, which is precisely the mistake the check
+  exists to prevent. The cross-check first reached for `plutil`, and the constraint
+  battery refused it: a rule that only answers on a macOS host fails the same way the
+  `grep` it replaced did, by going quiet somewhere else, so the table is read here
+  with no helper at all.
+
+
 ## [1.3.10-build1544] - 2026-09-21
 
 
