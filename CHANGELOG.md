@@ -69,6 +69,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kernel no longer handed the value, a picker that lost a policy, and one policy meaning two
   different numbers in two languages.
 
+- A benchmark for the one surface nobody had benchmarked. Every claim this project makes
+  about input has been checked against itself: seventeen gates say what our keyboard does,
+  and none of them says whether anyone else does it better. `docs/input-mapping-benchmark.md`
+  reads five other clients and records which tier each sentence earns -- readable here,
+  fetched upstream, advertised by a vendor, or not evidenced at all -- because the
+  alternative to that discipline is a document that says Parsec does it well. Parsec turned
+  out to be unbenchmarkable: its documentation answers 403, its archive came back empty, and
+  it has no public repository, so the document says so instead of guessing. What the reading
+  found is that the keyboard axis is not behind. Upstream's streaming preferences are
+  twenty-five booleans, enumerable in one command, and not one of the twenty-five names a
+  key, a modifier or a shortcut; Citrix's much-copied hotkey table binds eleven fixed remote
+  actions to a chord drawn from four modifiers crossed with seventeen keys, where this fork
+  records any chord against ninety-seven keys; the Command-becomes-Ctrl feature ToDesk
+  advertises is what `MoonlightClassic` already does, plus the symmetric Control-to-Win
+  half. Two things came out of it anyway, because a benchmark that only confirms you are
+  fine was not worth the hour. Citrix's per-hotkey entries are bindings and not ownership --
+  the ADMX keeps the two mechanisms apart, the capture tier is a separate value, and its
+  Windows-key instance is the reason that axis exists on Windows and cannot exist here. And
+  the secure attention sequence has no preset, though it needs none of the machinery Citrix
+  reserves for it, because macOS does not intercept Control-Alt-Delete: the rule editor's own
+  table already carries Forward Delete and accepts the two modifiers. The gap that survived
+  is the one already being worked. ToDesk sells tablet and 3D-mouse passthrough, which is
+  device redirection and not key mapping, and that is USB Stage 2. No behaviour changed, and
+  every number in the document came out of the commands printed in its own last section.
+
 ### Fixed
 
 - **Permission prompts reached users in a language nobody chose.** Two separate faults sat in
