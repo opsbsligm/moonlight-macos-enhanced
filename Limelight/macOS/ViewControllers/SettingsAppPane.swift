@@ -892,7 +892,7 @@ private struct DebugLogRowView: View {
   private var primaryText: String {
     switch mode {
     case .defaultLog:
-      return entry.defaultTitle.isEmpty ? (entry.message.isEmpty ? entry.rawLine : entry.message) : entry.defaultTitle
+      return entry.displayTitle.isEmpty ? (entry.message.isEmpty ? entry.rawLine : entry.message) : entry.displayTitle
     case .raw:
       return entry.rawLine
     }
@@ -901,7 +901,7 @@ private struct DebugLogRowView: View {
   private var secondaryText: String? {
     switch mode {
     case .defaultLog:
-      guard let detail = entry.defaultDetail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty else {
+      guard let detail = entry.displayDetail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty else {
         return nil
       }
       return detail == primaryText ? nil : detail
@@ -1588,11 +1588,11 @@ private struct DebugLogEntryDetailView: View {
         Text(LanguageManager.shared.localize("Default View"))
           .font(.caption)
           .foregroundColor(.secondary)
-        Text(entry.defaultTitle)
+        Text(entry.displayTitle)
           .font(.system(size: 13, weight: .medium))
           .textSelection(.enabled)
           .frame(maxWidth: .infinity, alignment: .leading)
-        if let detail = entry.defaultDetail, !detail.isEmpty {
+        if let detail = entry.displayDetail, !detail.isEmpty {
           Text(detail)
             .font(.system(size: 12, design: .monospaced))
             .foregroundColor(.secondary)

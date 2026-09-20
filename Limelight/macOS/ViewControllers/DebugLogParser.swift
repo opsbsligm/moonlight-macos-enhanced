@@ -701,6 +701,18 @@ struct DebugLogEntry: Identifiable {
   let noiseCategory: DebugNoiseCategory?
   let isNoiseSummary: Bool
 
+  // Keys, not sentences (issue #30). The parser used to build both halves in Chinese, so an
+  // English system read Chinese in the panel and a Chinese system that switched languages
+  // after a scan kept seeing the language of the parse. A row is parsed once and rendered
+  // on every rebuild, so the translation belongs here: an unknown key -- a raw log line, a
+  // host name -- answers with itself, which is what the panel showed before.
+  var displayTitle: String { LanguageManager.shared.localize(defaultTitle) }
+
+  var displayDetail: String? {
+    guard let defaultDetail else { return nil }
+    return LanguageManager.shared.localize(defaultDetail)
+  }
+
   var searchableText: String {
     searchIndex
   }
@@ -1075,178 +1087,178 @@ enum DebugLogParser {
     switch category.categoryKey {
     case "discovery.mdns":
       if normalized == "starting discovery" {
-        return .init(title: "开始扫描主机", detail: "准备探测已知主机和局域网广播服务")
+        return .init(title: "Starting host scan", detail: "Preparing to probe known hosts and LAN broadcast services")
       }
       if normalized == "starting mdns discovery" {
-        return .init(title: "开始 mDNS 发现", detail: nil)
+        return .init(title: "Starting mDNS discovery", detail: nil)
       }
       if normalized == "stopping discovery" {
-        return .init(title: "停止扫描主机", detail: nil)
+        return .init(title: "Stopping host scan", detail: nil)
       }
       if normalized == "stopping mdns discovery" {
-        return .init(title: "停止 mDNS 发现", detail: nil)
+        return .init(title: "Stopping mDNS discovery", detail: nil)
       }
       if normalized == "updating hosts..." {
-        return .init(title: "正在更新主机列表", detail: nil)
+        return .init(title: "Updating the host list", detail: nil)
       }
       if let host = firstCapture(in: message, pattern: #"Found new host:\s*(.+)$"#) {
-        return .init(title: "发现新主机", detail: host)
+        return .init(title: "New host discovered", detail: host)
       }
       if let host = firstCapture(in: message, pattern: #"Found existing host through MDNS:\s*(.+)$"#) {
-        return .init(title: "mDNS 发现已知主机", detail: host)
+        return .init(title: "mDNS resolved a known host", detail: host)
       }
       if let captures = captures(in: message, pattern: #"Resolved address:\s*([^\s]+)\s*->\s*(.+)$"#), captures.count >= 2 {
-        return .init(title: "解析到主机地址", detail: "\(captures[0]) → \(captures[1])")
+        return .init(title: "Resolved a host address", detail: "\(captures[0]) -> \(captures[1])")
       }
       if let captures = captures(in: message, pattern: #"Discovery summary for\s+([^:]+):\s*(.+)$"#), captures.count >= 2 {
-        return .init(title: "主机探测结果", detail: "\(captures[0])：\(captures[1])")
+        return .init(title: "Host probe result", detail: "\(captures[0]) -> \(captures[1])")
       }
       if let host = firstCapture(in: message, pattern: #"Found service:\s+.+\.\s([^ ]+)\s+-?\d+$"#) {
-        return .init(title: "发现广播服务", detail: host)
+        return .init(title: "Broadcast service discovered", detail: host)
       }
       return .init(title: cleaned, detail: nil)
 
     case "pairing.identity":
       if normalized.contains("server certificate mismatch") {
-        return .init(title: "服务器证书与已保存身份不匹配", detail: "这通常表示访问到了错误主机，或主机证书已经变化")
+        return .init(title: "Server certificate does not match the saved identity", detail: "This usually means the wrong host was reached, or the host certificate changed")
       }
       if normalized.contains("client certificate imported in memory without keychain access") {
-        return .init(title: "客户端证书已导入内存", detail: "本次连接不会写入钥匙串")
+        return .init(title: "Client certificate imported into memory", detail: "This connection will not be written to the Keychain")
       }
       if let captures = captures(in: message, pattern: #"incorrect host:\s*([^\s]+)\s+expected:\s*([^\s]+)"#), captures.count >= 2 {
         let actual = DebugLogNoiseClassifier.shortHostIdentity(captures[0]) ?? captures[0]
         let expected = DebugLogNoiseClassifier.shortHostIdentity(captures[1]) ?? captures[1]
-        return .init(title: "收到身份不匹配的主机响应", detail: "实际 \(actual) · 期望 \(expected)")
+        return .init(title: "Host responded with a mismatched identity", detail: String(format: LanguageManager.shared.localize("Actual %@, expected %@"), actual, expected))
       }
       return .init(title: cleaned, detail: nil)
 
     case "network.tls":
       if let code = firstCapture(in: message, pattern: #"error\s+(-?\d+)"#) ?? firstCapture(in: message, pattern: #"Code=(-?\d+)"#) {
-        return .init(title: "TLS / 证书握手失败", detail: "错误码 \(code)")
+        return .init(title: "TLS / certificate handshake failed", detail: String(format: LanguageManager.shared.localize("Error code %@"), code))
       }
-      return .init(title: "TLS / 证书验证失败", detail: cleaned)
+      return .init(title: "TLS / certificate verification failed", detail: cleaned)
 
     case "network.http", "network.transport":
       if let code = firstCapture(in: message, pattern: #"Request failed with error\s+(-?\d+)"#) {
-        return .init(title: friendlyNetworkFailureTitle(for: code), detail: "错误码 \(code)")
+        return .init(title: friendlyNetworkFailureTitle(for: code), detail: String(format: LanguageManager.shared.localize("Error code %@"), code))
       }
       if normalized.contains("app list successfully retreived") || normalized.contains("app list successfully retrieved") {
         let tries = firstCapture(in: message, pattern: #"took\s+(\d+)\s+tries"#) ?? "0"
-        return .init(title: "应用列表获取成功", detail: "重试次数 \(tries)")
+        return .init(title: "App list retrieved", detail: String(format: LanguageManager.shared.localize("Took %@ tries"), tries))
       }
       if normalized.contains("stun failed to get wan address") {
         let code = firstCapture(in: message, pattern: #":\s*(-?\d+)$"#) ?? "unknown"
-        return .init(title: "STUN 获取公网地址失败", detail: "错误码 \(code)")
+        return .init(title: "STUN failed to get the WAN address", detail: String(format: LanguageManager.shared.localize("Error code %@"), code))
       }
       if normalized.contains("requesting:") && normalized.contains("/resume?") {
-        return .init(title: "正在请求恢复串流会话", detail: nil)
+        return .init(title: "Requesting a stream session resume", detail: nil)
       }
       if normalized.contains("received response:") {
-        return .init(title: "收到主机响应", detail: nil)
+        return .init(title: "Host response received", detail: nil)
       }
       if normalized.contains("making request:") {
-        return .init(title: "正在发送主机请求", detail: nil)
+        return .init(title: "Sending a host request", detail: nil)
       }
       return .init(title: cleaned, detail: nil)
 
     case "stream.lifecycle":
       if normalized.contains("stream target selection:") {
         let active = value(forKey: "active", in: message)
-        return .init(title: "已选择串流目标", detail: active)
+        return .init(title: "Stream target selected", detail: active)
       }
       if normalized.contains("stream target classification:") {
         let reason = value(forKey: "reason", in: message)
-        return .init(title: "已完成串流路径判定", detail: reason)
+        return .init(title: "Stream path decision completed", detail: reason)
       }
       if let detail = suffix(in: cleaned, after: "Stream risk assessment:") {
-        return .init(title: "串流规格评估", detail: detail)
+        return .init(title: "Stream spec evaluation", detail: detail)
       }
       if let detail = suffix(in: cleaned, after: "Recommended fallback:") {
-        return .init(title: "建议的回退配置", detail: detail)
+        return .init(title: "Suggested fallback configuration", detail: detail)
       }
       if let detail = suffix(in: cleaned, after: "Stream timing config:") {
-        return .init(title: "已应用串流时序配置", detail: detail)
+        return .init(title: "Stream timing configuration applied", detail: detail)
       }
       if normalized.contains("listartconnectionctx") {
-        return .init(title: "开始建立串流连接", detail: nil)
+        return .init(title: "Starting the stream connection", detail: nil)
       }
       if normalized.contains("clconnectionstarted") || normalized.contains("connectionstarted") {
-        return .init(title: "串流连接已启动", detail: cleaned)
+        return .init(title: "Stream connection started", detail: cleaned)
       }
       if normalized.contains("input stream established") {
-        return .init(title: "输入链路已建立", detail: nil)
+        return .init(title: "Input link established", detail: nil)
       }
       if normalized.contains("performclose invoked") {
-        return .init(title: "用户请求关闭串流窗口", detail: nil)
+        return .init(title: "The user asked to close the stream window", detail: nil)
       }
       if normalized.contains("disconnect requested") {
-        return .init(title: "收到断开串流请求", detail: cleaned)
+        return .init(title: "Stream disconnect requested", detail: cleaned)
       }
       if normalized.contains("stream stop took") {
-        return .init(title: "串流停止完成", detail: cleaned)
+        return .init(title: "Stream stopped", detail: cleaned)
       }
       if normalized.contains("input summary") {
-        return .init(title: "输入统计摘要", detail: suffixAfterFirstColon(in: cleaned) ?? cleaned)
+        return .init(title: "Input statistics summary", detail: suffixAfterFirstColon(in: cleaned) ?? cleaned)
       }
       return .init(title: cleaned, detail: nil)
 
     case "input.scroll":
       if normalized.contains("scroll-trace start") {
-        return .init(title: "滚轮输入开始", detail: cleaned)
+        return .init(title: "Scroll input started", detail: cleaned)
       }
       if normalized.contains("scroll-trace render") {
-        return .init(title: "滚轮效果已显示", detail: cleaned)
+        return .init(title: "Scroll effect shown", detail: cleaned)
       }
       return .init(title: cleaned, detail: nil)
 
     case "input.mouse":
       if normalized.contains("absolute pos=") {
-        return .init(title: "发送绝对鼠标位置", detail: cleaned)
+        return .init(title: "Sending an absolute pointer position", detail: cleaned)
       }
       if normalized.contains("relative raw=") {
-        return .init(title: "发送相对鼠标位移", detail: cleaned)
+        return .init(title: "Sending a relative pointer delta", detail: cleaned)
       }
       return .init(title: cleaned, detail: nil)
 
     case "input.click":
-      return .init(title: "鼠标点击事件", detail: cleaned)
+      return .init(title: "Pointer click event", detail: cleaned)
 
     case "input.capture":
       if let reason = value(forKey: "reason", in: message) {
-        return .init(title: "鼠标捕获状态变化", detail: reason)
+        return .init(title: "Pointer capture state changed", detail: reason)
       }
-      return .init(title: "鼠标捕获状态变化", detail: cleaned)
+      return .init(title: "Pointer capture state changed", detail: cleaned)
 
     case "video.decoder":
       if normalized.contains("got sps") || normalized.contains("got pps") {
-        return .init(title: "视频流参数已更新", detail: cleaned)
+        return .init(title: "Video stream parameters updated", detail: cleaned)
       }
       if normalized.contains("constructing new h264 format description") {
-        return .init(title: "重建 H.264 解码格式", detail: nil)
+        return .init(title: "Rebuilding the H.264 decode format", detail: nil)
       }
       if normalized.contains("renderer pacing target updated") {
-        return .init(title: "渲染节奏目标已更新", detail: cleaned)
+        return .init(title: "Render pacing target updated", detail: cleaned)
       }
       return .init(title: cleaned, detail: nil)
 
     case "audio.pipeline":
       if normalized.contains("microphone disabled in settings") {
-        return .init(title: "麦克风已在设置中关闭", detail: nil)
+        return .init(title: "The microphone is switched off in settings", detail: nil)
       }
       if normalized.contains("microphone setting:") {
-        return .init(title: "麦克风配置已下发", detail: cleaned)
+        return .init(title: "Microphone configuration applied", detail: cleaned)
       }
       return .init(title: cleaned, detail: nil)
 
     case "ui.window":
       if normalized.contains("startup display mode requesting fullscreen toggle") {
-        return .init(title: "请求切换到全屏", detail: nil)
+        return .init(title: "Requesting fullscreen", detail: nil)
       }
       if normalized.contains("window-did-enter-fullscreen") {
-        return .init(title: "窗口已进入全屏", detail: nil)
+        return .init(title: "Window entered fullscreen", detail: nil)
       }
       if normalized.contains("window-did-exit-fullscreen") {
-        return .init(title: "窗口已退出全屏", detail: nil)
+        return .init(title: "Window left fullscreen", detail: nil)
       }
       return .init(title: cleaned, detail: nil)
 
@@ -1269,17 +1281,17 @@ enum DebugLogParser {
   private static func friendlyNetworkFailureTitle(for code: String) -> String {
     switch code {
     case "-1202":
-      return "证书校验失败，准备回退"
+      return "Certificate verification failed, falling back"
     case "-1200":
-      return "TLS 安全连接失败，准备回退"
+      return "TLS connection failed, falling back"
     case "-1001":
-      return "请求超时，准备回退"
+      return "Request timed out, falling back"
     case "-1004":
-      return "无法连接服务器，准备回退"
+      return "Could not reach the server, falling back"
     case "-1005":
-      return "网络连接中断"
+      return "Network connection dropped"
     default:
-      return "网络请求失败，准备回退"
+      return "Network request failed, falling back"
     }
   }
 
@@ -1331,7 +1343,17 @@ enum DebugLogParser {
     message: String,
     rawLine: String
   ) -> String {
-    "\(category.searchableText)\n\(defaultTitle)\n\(defaultDetail ?? "")\n\(message)\n\(rawLine)".lowercased()
+    var parts = [category.searchableText, defaultTitle, defaultDetail ?? "", message, rawLine]
+    // The row shows one language; the filter box has to answer the other one too, so every
+    // table's value for a key is searchable, which is how a category name already works.
+    for code in ["en", "zh-Hans"] {
+      for key in [defaultTitle, defaultDetail ?? ""] where !key.isEmpty {
+        if let value = LanguageManager.shared.localizedString(key, languageCode: code) {
+          parts.append(value)
+        }
+      }
+    }
+    return parts.joined(separator: "\n").lowercased()
   }
 
   private static func makeStableID(

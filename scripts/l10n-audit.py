@@ -293,6 +293,25 @@ KEY_ARGUMENT = re.compile(
     r'\b(?:nameKey|badgeKey|titleKey|labelKey|textKey)\s*:\s*@?"((?:[^"\\\n]|\\.)+)"')
 
 
+# A fifth shape, and the one that paid off the last of the log panel's translation debt:
+# the parser hands `title:` and `detail:` a key and SettingsAppPane localises it where the
+# row renders. No call site sits near those literals, so a key no table answers would read
+# as source text in both languages and this scan would report complete coverage.
+# Scoped to the one file that works that way: `FormCell(title:)` localises inside its own
+# initialiser, and reading every `title:` in the settings panes would only duplicate the
+# call scanner that already covers them. A literal carrying an escape -- an interpolated
+# host name, a code -- is data rather than a key, so it is left out.
+LOG_PRESENTATION_ARGUMENT = re.compile(r'\b(?:title|detail)\s*:\s*@?"((?:[^"\\\n]|\\.)+)"')
+LOG_PRESENTATION_FILES = ("Limelight/macOS/ViewControllers/DebugLogParser.swift",)
+
+
+def keys_handed_to_a_row(relative_path, text):
+    """The key literals a log row carries to the view that translates them."""
+    if relative_path not in LOG_PRESENTATION_FILES:
+        return set()
+    return {key for key in LOG_PRESENTATION_ARGUMENT.findall(text) if "\\" not in key}
+
+
 def keys_in_source(text):
     """The keys one source file asks the localization layers for."""
     return {match.group(1) for match in CALL_PATTERN.finditer(text) if match.group(1)} \
@@ -330,8 +349,9 @@ def unreadable_rows(text):
 
 def referenced_keys(scan_root):
     used = set()
-    for _, text in source_texts(scan_root):
-        used |= keys_in_source(text)
+    for path, text in source_texts(scan_root):
+        relative = os.path.relpath(path, scan_root).replace(os.sep, "/")
+        used |= keys_in_source(text) | keys_handed_to_a_row(relative, text)
     return used
 
 
@@ -381,6 +401,41 @@ def chinese_at_outlets(text):
             for match in pattern.finditer(text) if is_chinese(match.group(1))]
 
 
+# A log body is data rather than UI: DebugLogParser matches on it, NoiseSummaryNames folds
+# repeats of it, and a Chinese user who files an issue pastes it to a maintainer. Translating
+# it therefore breaks the match and the report at the same time, and PR #44 asked for exactly
+# that. The tree was cleaned of the last five of these (`Help -> 诊断连接问题` in three
+# discovery errors, which also named a menu item that reads differently in each language), and
+# this is what keeps them out.
+#
+# CJK rather than "non-ASCII" on purpose: an em dash or an arrow in an English log line is
+# typography, it arrives from the source rather than from a language table, and a rule that
+# refused it would be a rule this repo has no intention of enforcing.
+LOG_CALLS = ("Log(", "LogTagv(", "NSLog(")
+
+
+def log_bodies_in_a_spoken_language(text):
+    """Literals a log call prints in a language rather than as data."""
+    bad = []
+    for token in LOG_CALLS:
+        index = text.find(token)
+        while index >= 0:
+            after = index + len(token)
+            index = text.find(token, after)
+            if text[:after - len(token)].rstrip().endswith("#define"):
+                continue  # the macro definition, whose parameters are not bodies
+            for argument in top_level_arguments(text, after):
+                for literal in STRING_LITERAL.findall(argument):
+                    # A sentence behind a translation call is a key, and keys are the
+                    # tables' business; this rule is about text printed as it was written.
+                    if any(token in argument for token in CALL_TOKENS) and "String(" not in argument:
+                        continue
+                    if is_chinese(literal) or any("\u3000" <= char <= "\u303f"
+                                                 or "\uff00" <= char <= "\uffef" for char in literal):
+                        bad.append("line %d: %s" % (text.count("\n", 0, after) + 1, literal[:40]))
+    return bad
+
+
 # One entry per file, and the number is a ceiling rather than a statement. Every
 # Chinese string still written at an outlet is a translation nobody has done yet, and
 # the honest version of that is a list the next change has to shrink: the audit refuses
@@ -388,9 +443,13 @@ def chinese_at_outlets(text):
 # what the tree now holds. That is the difference between a debt being recorded and a
 # debt being paid down -- issue #30's first commit moved 24 of these into tables, and a
 # plain "no Chinese literals anywhere" rule would have been switched off within a week.
-UNTRANSLATED_OUTLETS = {
-    "Limelight/macOS/ViewControllers/DebugLogParser.swift": 55,
-}
+# Empty, and it has to stay that way. The 55 this recorded were the log panel's titles and
+# details, which the parser wrote in Chinese; they are keys now, so every literal that
+# reaches a place a player reads is either a table key or a view literal in the development
+# language. The dictionary is kept rather than deleted because the check below reads it: a
+# file listed here is a debt somebody decided to carry, and carrying none is the rule.
+UNTRANSLATED_OUTLETS = {}
+
 
 
 def untranslated_outlets(scan_root):
@@ -649,6 +708,39 @@ def self_test():
               ("refuses" if must_fail else "accepts", name) if ok else
               "outlet rule %s for %s" % ("missed" if not found else "wrongly refused", name))
 
+    POINTS_CASES = [
+        ("a row title held as a key", LOG_PRESENTATION_FILES[0],
+         'return .init(title: "Stream stopped", detail: cleaned)', {"Stream stopped"}),
+        ("a row detail held as a key", LOG_PRESENTATION_FILES[0],
+         'return .init(title: "Stream stopped", detail: "App list retrieved")',
+         {"Stream stopped", "App list retrieved"}),
+        ("a row title assembled from captured data", LOG_PRESENTATION_FILES[0],
+         'return .init(title: "Resolved a host address", detail: "\\(captures[0]) -> \\(captures[1])")',
+         {"Resolved a host address"}),
+        ("the same title in a pane that localises inside its own cell",
+         "Limelight/macOS/ViewControllers/SettingsStreamPane.swift",
+         'FormCell(title: "General") { }', set()),
+    ]
+    LOG_BODY_CASES = [
+        ("a Chinese sentence written into a log", 'Log(LOG_E, @"\u8fde\u63a5\u5931\u8d25");', True),
+        ("an ASCII log line", 'Log(LOG_E, @"connection failed");', False),
+        ("a sentence behind a translation call", 'Log(LOG_E, MLString(@"Connection Failed", nil));', False),
+        ("a macro definition, whose parameters are not bodies",
+         '#define Log(level, fmt, ...) LogTagv(level, @"", fmt, ##__VA_ARGS__)', False),
+    ]
+    for name, source, must_fail in LOG_BODY_CASES:
+        found = bool(log_bodies_in_a_spoken_language(source))
+        ok = found == must_fail
+        check(ok, "log body rule %s %s" %
+              ("refuses" if must_fail else "accepts", name) if ok else
+              "log body rule %s for %s" % ("missed" if not found else "wrongly refused", name))
+
+    for name, path, source, expected in POINTS_CASES:
+        found = keys_handed_to_a_row(path, source)
+        ok = found == expected
+        check(ok, "row key scan %s %s" %
+              ("finds" if ok else "got %s, expected %s for" % (sorted(found), sorted(expected)), name))
+
     for name, layout, must_pass in LOC_META_CASES:
         found = info_plist_localization(layout)
         ok = bool(found) != must_pass
@@ -720,6 +812,17 @@ check(all(outlets.get(path, 0) == allowed for path, allowed in UNTRANSLATED_OUTL
       "untranslated UI text drifted: %s" % ", ".join(
           "%s=%d/%d" % (path, count, UNTRANSLATED_OUTLETS.get(path, 0))
           for path, count in sorted(outlets.items())))
+
+log_bodies = []
+for path, text in source_texts(root):
+    if not any(token in text for token in LOG_CALLS):
+        continue
+    log_bodies += ["%s %s" % (os.path.basename(path), offender)
+                   for offender in log_bodies_in_a_spoken_language(text)]
+check(not log_bodies,
+      "a log body is written as data, which is what lets the parser match it and a maintainer read it"
+      if not log_bodies else
+      "a log body was written in a language instead of as data: %s" % ", ".join(log_bodies[:8]))
 
 check(not chinese_branch_answers_with_the_key(io.open(os.path.join(root, LANGUAGE_MANAGER),
                                                      encoding="utf-8", errors="replace").read()),

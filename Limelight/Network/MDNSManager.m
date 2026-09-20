@@ -265,7 +265,7 @@ static NSString* NV_SERVICE_TYPE = @"_nvstream._tcp";
 - (void)netServiceBrowser:(NSNetServiceBrowser *)aNetServiceBrowser didNotSearch:(NSDictionary *)errorDict {
     NSNumber *code = errorDict[NSNetServicesErrorCode];
     NSString *domain = errorDict[NSNetServicesErrorDomain];
-    Log(LOG_E, @"[MDNS] BROWSE FAILED. This almost always means LocalNetwork permission was DENIED in System Settings. Run Help → 诊断连接问题 for full details. (domain=%@ code=%@ dict=%@)",
+    Log(LOG_E, @"[MDNS] BROWSE FAILED. This almost always means LocalNetwork permission was DENIED in System Settings. Run Help > Diagnose Connection Problems for full details. (domain=%@ code=%@ dict=%@)",
         domain ?: @"(null)", code ?: @"(null)", errorDict);
 
     // We'll schedule a retry in startSearchTimerCallback, but after 3 consecutive
@@ -273,7 +273,7 @@ static NSString* NV_SERVICE_TYPE = @"_nvstream._tcp";
     // for discovery to "just work".
     searchAttempts++;
     if (searchAttempts >= 3 && services.count == 0) {
-        Log(LOG_E, @"[MDNS] ⚠️ 3 browse attempts with ZERO hosts found. Open System Settings → Privacy & Security → Local Network and make sure Moonlight is TURNED ON. If no entry exists: click + button, or run Help → 诊断连接问题 from the menu.");
+        Log(LOG_E, @"[MDNS] 3 browse attempts with ZERO hosts found. Open System Settings → Privacy & Security → Local Network and make sure Moonlight is TURNED ON. If no entry exists: click + button, or run Help > Diagnose Connection Problems from the menu.");
     }
 }
 

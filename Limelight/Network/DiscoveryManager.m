@@ -453,7 +453,7 @@ static BOOL MoonlightShouldAutoDiscoverNewHosts(void) {
             Log(LOG_W, @"[Discovery] ⚠️ 15s SUMMARY: hosts-in-queue=%lu, online=%lu. "
                 @"If this is unexpected: (1) Verify LocalNetwork is ON in System Settings "
                 @"→ Privacy & Security → Local Network. (2) Click + and add the host by IP "
-                @"directly. (3) Run Help → 诊断连接问题 to capture a full diagnostic report.",
+                @"directly. (3) Run Help > Diagnose Connection Problems to capture a full diagnostic report.",
                 (unsigned long)total, (unsigned long)online);
         } else {
             Log(LOG_I, @"[Discovery] 15s SUMMARY: hosts-in-queue=%lu, online=%lu. OK.",

@@ -17,12 +17,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stores `nameKey`/`badgeKey`, the two language tables answer them, and the name stops being
   printed in both languages at once. The filter box was not left behind: it matches every
   localization plus the ASCII keys the log lines carry, so an English player can still paste a
-  Chinese category name and find it. What this does not claim: the panel's rewritten log-line
-  titles (55 of them, e.g. `开始扫描主机`) are still Chinese-only, and are now recorded as
-  debt rather than left invisible.
+  Chinese category name and find it. What this recorded rather than claimed:
+  the panel's rewritten log-line titles were left Chinese-only and became a number instead of
+  an invisible assumption. The first Changed entry below is that number reaching zero.
+
+- **The log panel's own sentences became keys, and the recorded debt reached zero.** Issue #30's
+  second half was the sentences the panel writes itself: 55 Chinese literals arrived at `title:`
+  and `detail:` inside `DebugLogParser`, so a Chinese system read its log in Chinese and an
+  English system read the same panel as half Chinese titles over half raw English lines. They are
+  58 keys now -- three of them `String(format:)` templates, because `Error code %@` is a sentence
+  with a number in it while `\(captures[0]) -> \(captures[1])` is not a sentence at all -- and the
+  row translates them where it renders. `displayTitle` and `displayDetail` live on the entry and
+  `localize()` is not in the parser, because a row is parsed once and drawn again after a language
+  change, which is the moment a title translated at parse time starts being wrong. The filter box
+  kept up: every table's value for a key joins the search index, so the box answers a Chinese
+  category name while the row shows English. Two gate changes carry the weight rather than the
+  edit. The key collector reads a fifth shape -- a literal handed to `title:` or `detail:` in that
+  one file, escapes excepted because an interpolated host name is data -- so a key no table
+  answers fails coverage instead of sitting in the panel as source text forever, which is what
+  `keys_handed_to_a_row` and its four self-test cases exist for. And `UNTRANSLATED_OUTLETS` is
+  empty, kept as an empty dictionary because the check below it is written to read one: a file in
+  that dictionary is a debt somebody chose to carry, and carrying none is the rule now. What this
+  does not claim: no screenshot of the panel in two languages, because there is no build of the
+  panel to photograph on this machine -- `swift-typecheck.py` and `l10n-audit.py` are the evidence
+  here, not a picture.
 
 ### Fixed
 
+- **A log line stopped arriving in the language of the machine that wrote it.** Five log strings
+  ended with `Help → 诊断连接问题`, which names a menu item whose English title is
+  `Diagnose Connection Problems…`: an English system was told to open an item that does not
+  exist there, and a log body written in Chinese is text `DebugLogParser` and `NoiseSummaryNames`
+  would have to match in two languages forever. PR #44 asked for exactly this kind of translation
+  inside `Logger.m`, and the answer given there was that a log body is data; these five were the
+  rest of that answer. `l10n-audit.py` now refuses a log call whose literal is written in CJK --
+  the macro definition exempted, since its parameters are not bodies, and a sentence behind
+  `MLString()` exempted, since a key belongs to the tables -- with the self-test required to see
+  all three shapes. CJK rather than non-ASCII on purpose: an em dash in an English log line is
+  typography, and a rule that refused it would be one nobody intends to enforce.
 - **A permission prompt could be translated in the repository and untranslated in the
   download.** Issue #44's fix installed the `InfoPlist.strings` tables and read them back --
   from the bundle being signed, which proves the bundle at signing time. The image is

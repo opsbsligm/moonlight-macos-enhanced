@@ -1126,7 +1126,7 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 // 2. LocalNetwork permission MUST be actively triggered by a real network action (Bonjour/UDP won't pop dialog otherwise)
 // 3. No double-popups: welcome window OR permission guide, never both at the same time
 // 4. All permission operations are NON-DESTRUCTIVE on normal launch. tccutil reset = opt-in only.
-// 5. Full diagnostics: any connection issue → "Help → 诊断连接问题" gives a complete report.
+// 5. Full diagnostics: any connection issue → "Help > Diagnose Connection Problems" gives a complete report.
 
 - (void)scheduleConnectionHealthCheck {
     self.didAttemptPermissionRepair = NO;
