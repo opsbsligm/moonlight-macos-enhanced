@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/local-gates.sh`, so a local sweep means the whole list.** The red build
+  above was green locally: six gates had been run by hand, and the one that failed was
+  not among them. The tree carries forty-odd gates now, so the list is read out of
+  `build.yml` rather than remembered -- a gate added to CI runs here next time, with no
+  one having to recall it. Gates that need something only a runner has (an xcodebuild
+  log, derived data, a built `.app`, a tag or a matrix arch the checkout does not carry)
+  are named and counted as skipped, never run with an empty argument: a local sweep that
+  reports a failure the tree does not have is worse than one that admits a gap. Folded
+  steps are unfolded before they are read, which is what turned up two invocations whose
+  flags live on the following line. `--all` runs the full constraint battery;
+  `--list` prints the commands it found.
+
 ### Fixed
 
 - **A gate that read the file it was auditing, and went red when that file stopped
