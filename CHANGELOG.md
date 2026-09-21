@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The rename had a second half nobody had done.** A bundle's binary is named after
+  the product as well, and three consumers had `Contents/MacOS/Moonlight` written into
+  them -- the render probe, the DMG audit and the integration test -- so the probe failed
+  on the runner looking for a file the build no longer produces. Each now asks the bundle
+  which binary it points at (`CFBundleExecutable`), because the bundle is the thing that
+  launches it. The same run also caught a single `nullable` annotation added to a header
+  that carries none: one annotation is enough to turn on
+  `-Wnullability-completeness` for the whole file, which arrived as 360 new analyzer
+  findings and a red analyzer job. It is gone, and a local `xcodebuild analyze` now
+  confirms zero new findings before a push instead of eight minutes after one.
 - **The product rename broke every build from a clean derived data path.** A
   Swift generated header is named `$(PRODUCT_NAME)-Swift.h` by default, so
   naming the bundle `MoonlightEnhanced.app` silently renamed the header to

@@ -283,7 +283,8 @@ def run(app, out, timeout):
     home = os.path.join(out, "home")
     shutil.rmtree(home, ignore_errors=True)
     os.makedirs(home)
-    binary = os.path.join(app, "Contents", "MacOS", "Moonlight")
+    binary = os.path.join(app, "Contents", "MacOS",
+                                   project_identity.bundle_executable(app))
     if not os.path.exists(binary):
         print("FAIL no executable at %s" % binary)
         return None

@@ -128,6 +128,32 @@ check(imported_headers == {GENERATED_SWIFT_HEADER},
       if imported_headers == {GENERATED_SWIFT_HEADER}
       else "sources import %s" % sorted(imported_headers))
 
+# The same rename missed the second half of itself: a bundle's binary is named after the
+# product too, and three consumers had `Contents/MacOS/Moonlight` written into them, so the
+# render probe failed on the runner looking for a file the build no longer produces. Every
+# one of them now asks the bundle, because the bundle is the thing that launches the binary.
+BINARY_SPELLINGS = subprocess.run(
+    ["grep", "-rn", "--include=*.py", "--include=*.sh", "--include=*.yml",
+     "-e", 'Contents", "MacOS", "Moonlight"', "-e", 'Contents/MacOS/Moonlight"',
+     "--", "scripts", ".github"],
+    capture_output=True, text=True, cwd=root).stdout.splitlines()
+# Two files may hold these spellings: this one, because a gate that cannot name what it
+# refuses cannot refuse it, and the battery, because a mutation has to be able to write the
+# mistake back. Everything else is a consumer, and a consumer is what broke.
+REFEREES = ("scripts/constraints-audit.py:", "scripts/assertion-battery.py:")
+BINARY_SPELLINGS = [line for line in BINARY_SPELLINGS
+                    if not line.startswith(REFEREES)]
+check(not BINARY_SPELLINGS,
+      "no consumer spells a bundle's binary name, because the product name moves without it"
+      if not BINARY_SPELLINGS else "the binary name is written out in: %s"
+      % "; ".join(line.split(":")[0] for line in BINARY_SPELLINGS))
+
+for reader, needle in (("scripts/render-probe.py", "bundle_executable"),
+                       ("scripts/dmg-audit.py", "bundle_executable"),
+                       ("scripts/integration-test.sh", "CFBundleExecutable")):
+    check(needle in open(os.path.join(root, reader), encoding="utf-8").read(),
+          "%s asks the bundle which binary it points at" % reader)
+
 # The reader itself is a gate: its refusal is the half that protects issue 41, and a
 # refusal that no local command runs is discovered on a runner eight minutes later.
 identity = subprocess.run([sys.executable,

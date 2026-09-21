@@ -56,6 +56,7 @@ WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
 VIDEO_RULES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                       "SettingsModel+VideoPageRules.swift")
 PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
+RENDER_PROBE = os.path.join(root, "scripts", "render-probe.py")
 VIDEO_RENDERER = os.path.join(root, "Limelight", "Stream", "VideoDecoderRenderer.m")
 NAVIGATION = os.path.join(root, "Limelight", "macOS", "Views", "NavigatableAlertView.m")
 RENDER_PROBE = os.path.join(root, "scripts", "render-probe.py")
@@ -217,6 +218,16 @@ def replace_nth(text, needle, repl, position, where):
 
 
 HEADER_PIN = '\t\t\t\tSWIFT_OBJC_INTERFACE_HEADER_NAME = "Moonlight-Swift.h";\n'
+
+
+PROBE_BINARY_READ = ('    binary = os.path.join(app, "Contents", "MacOS",\n'
+                     '                                   '
+                     'project_identity.bundle_executable(app))')
+
+
+def spell_the_binary_name_again(text):
+    return once(text, PROBE_BINARY_READ, "the probe's read of the bundle").replace(
+        PROBE_BINARY_READ, '    binary = os.path.join(app, "Contents", "MacOS", "Moonlight")', 1)
 
 
 def drift_the_pinned_header_name(text):
@@ -1732,6 +1743,9 @@ MUTATIONS = [
      AUDIT_GATE),
     ("generated-header-pin-dropped", PBXPROJ, drop_the_pinned_header_name,
      "the pin disappears, so a clean derived data path dies in twenty-four seconds",
+     AUDIT_GATE),
+    ("binary-name-spelled-into-a-consumer", RENDER_PROBE, spell_the_binary_name_again,
+     "the probe looks for a binary the product rename stopped producing (issue 41's tail)",
      AUDIT_GATE),
 ]
 

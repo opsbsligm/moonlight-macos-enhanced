@@ -16,6 +16,7 @@ Usage: project_identity.py [--print] [--self-test]
 Exit 0 with the name on stdout, or a refusal explaining which decision is missing.
 """
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -26,6 +27,25 @@ PROJECT = os.path.join(ROOT, "Moonlight.xcodeproj", "project.pbxproj")
 # The name the Qt client installs under. Two bundles with this name in /Applications is not
 # a cosmetic clash: the second install replaces the first app's bundle under the same path.
 QT_BUNDLE_NAME = "Moonlight"
+
+
+def bundle_executable(app_bundle):
+    """The binary name the bundle itself declares.
+
+    PRODUCT_NAME decides this today, so spelling it in a consumer looks harmless and then
+    breaks the day somebody changes the product name and only the bundle moves. This is the
+    second place the rename got half-applied for exactly that reason: the probe looked for
+    `Contents/MacOS/Moonlight` inside a bundle whose binary had moved.
+    """
+    path = os.path.join(app_bundle, "Contents", "Info.plist")
+    try:
+        with open(path, "rb") as handle:
+            declared = plistlib.load(handle).get("CFBundleExecutable")
+    except OSError as error:
+        raise SystemExit("project identity: cannot read %s (%s)" % (path, error))
+    if not declared:
+        raise SystemExit("project identity: %s declares no CFBundleExecutable" % path)
+    return declared
 
 
 def product_name(project=PROJECT):

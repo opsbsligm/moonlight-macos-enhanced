@@ -180,7 +180,10 @@
 // Which sender the settings status line is currently crediting, if any. The line claims
 // who is moving the pointer, so only the code that actually hands motion to the host may
 // write it, and nil means the line is not crediting anyone.
-@property (nonatomic, copy, nullable) NSString *lastReportedRelativeMotionSource;
+// No nullability annotation here on purpose. This header carries none, and one
+// annotation is enough to switch on -Wnullability-completeness for every pointer in
+// the file: the CI analyzer reported 360 new findings from the single word nullable.
+@property (nonatomic, copy) NSString *lastReportedRelativeMotionSource;
 // The emulated pointer keeps its own debt, separate from the mouse's: a stick held a
 // little off centre asks for one and eight tenths pixels a frame, and the residue is
 // what makes the cursor travel at the rate the settings promise instead of the two

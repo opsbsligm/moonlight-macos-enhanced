@@ -45,8 +45,19 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
+# The bundle says which binary it launches, and this script used to spell a name instead:
+# two checks said `Moonlight` while the process check below said ${APP_NAME}, so the script
+# agreed with itself only as long as nobody renamed anything. One read of the bundle ends
+# that, and it is the same read every other consumer now makes.
+EXECUTABLE="$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" \
+  "$APP_PATH/Contents/Info.plist" 2>/dev/null)"
+if [[ -z "$EXECUTABLE" ]]; then
+  echo "FAIL: $APP_PATH declares no CFBundleExecutable, so nothing here can name its binary"
+  exit 1
+fi
+
 echo "1. Bundle structure"
-assert_exists "$APP_PATH/Contents/MacOS/Moonlight" "Executable exists"
+assert_exists "$APP_PATH/Contents/MacOS/$EXECUTABLE" "Executable exists"
 assert_exists "$APP_PATH/Contents/Info.plist" "Info.plist exists"
 assert_exists "$APP_PATH/Contents/Resources" "Resources directory exists"
 assert_exists "$APP_PATH/Contents/Frameworks" "Frameworks directory exists"
@@ -74,7 +85,7 @@ echo "  Info: $SIGN_IDENTITY"
 
 echo ""
 echo "4. Executable architecture"
-ARCH=$(file "$APP_PATH/Contents/MacOS/Moonlight" 2>/dev/null)
+ARCH=$(file "$APP_PATH/Contents/MacOS/$EXECUTABLE" 2>/dev/null)
 echo "  Info: $ARCH"
 if echo "$ARCH" | grep -q "Mach-O"; then
   echo "  PASS: Valid Mach-O binary"
@@ -89,10 +100,10 @@ echo "5. Launch test (5 second smoke test)"
 open -n "$APP_PATH" 2>/dev/null
 sleep 5
 
-if pgrep -f "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" >/dev/null 2>&1; then
+if pgrep -f "${APP_NAME}.app/Contents/MacOS/${EXECUTABLE}" >/dev/null 2>&1; then
   echo "  PASS: App launched and running"
   PASS=$((PASS + 1))
-  pkill -f "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" 2>/dev/null || true
+  pkill -f "${APP_NAME}.app/Contents/MacOS/${EXECUTABLE}" 2>/dev/null || true
   sleep 1
 else
   echo "  FAIL: App did not stay running"

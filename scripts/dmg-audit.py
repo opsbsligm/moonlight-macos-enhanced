@@ -39,7 +39,7 @@ import project_identity
 # here rather than writing "Moonlight.app" is what makes a rename a one-place change, and
 # what refuses to certify an image that would replace the Qt client's bundle (issue 41).
 APP_NAME = project_identity.product_name() + ".app"
-BINARY = os.path.join("Contents", "MacOS", "Moonlight")
+MACOS_DIR = os.path.join("Contents", "MacOS")
 INFO = os.path.join("Contents", "Info.plist")
 RESOURCES = os.path.join("Contents", "Resources")
 
@@ -250,9 +250,11 @@ def inspect(image, version=None, build=None, tables=None):
         if APP_NAME not in root:
             problems.append("%s is not at the root of the image; the root holds %s"
                             % (APP_NAME, ", ".join(sorted(root)) or "nothing"))
-        elif not os.path.isfile(os.path.join(app, BINARY)):
-            problems.append("%s has no %s, so nothing in the image launches"
-                            % (APP_NAME, BINARY))
+        elif not os.path.isfile(os.path.join(app, MACOS_DIR,
+                                             project_identity.bundle_executable(app))):
+            problems.append("%s has no %s/%s, so nothing in the image launches"
+                            % (APP_NAME, MACOS_DIR,
+                               project_identity.bundle_executable(app)))
         else:
             plist = os.path.join(app, INFO)
             if not os.path.isfile(plist):
@@ -311,13 +313,17 @@ def write_tables(directory, tables):
 def build_image(staging, image, with_link, localizations=None, info=None):
     """Make a throwaway image for the self-test, with or without the drop target."""
     shutil.rmtree(staging, ignore_errors=True)
-    os.makedirs(os.path.join(staging, APP_NAME, "Contents", "MacOS"))
-    binary = os.path.join(staging, APP_NAME, BINARY)
+    # The self-test bundle has to answer the same question the audit asks -- which binary
+    # does this bundle point at -- so it declares one instead of assuming a spelling.
+    executable = project_identity.product_name()
+    os.makedirs(os.path.join(staging, APP_NAME, MACOS_DIR))
+    binary = os.path.join(staging, APP_NAME, MACOS_DIR, executable)
     with open(binary, "w") as handle:
         handle.write("#!/bin/sh\necho self-test\n")
     os.chmod(binary, 0o755)
     bundle_info = {"CFBundleIdentifier": "std.skyhua.MoonlightMac2",
-                   "CFBundleName": "Moonlight",
+                   "CFBundleExecutable": executable,
+                   "CFBundleName": executable,
                    "CFBundleShortVersionString": "9.9.9",
                    "CFBundleVersion": "1"}
     if info:
