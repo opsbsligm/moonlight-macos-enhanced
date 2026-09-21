@@ -53,6 +53,13 @@ NS_ASSUME_NONNULL_BEGIN
 /// them resolves to the default, and a report that showed only the default could not tell
 /// "chosen" from "never configured".
 @property (nonatomic) NSInteger mouseStrategyStoredValue;
+/// The mode the pointer is in, and whether the absolute path took the session. Both decide
+/// how every number below reads: in locked mode the cursor association is off and the
+/// relative senders are the only thing that can move the host's pointer, while an absolute
+/// session never sends a relative packet at all -- and a report that says `relative dispatches
+/// 0` about that second case is describing a working client.
+@property (nonatomic, copy, nullable) NSString *pointerMode;
+@property (nonatomic) BOOL absolutePointerPathActive;
 @property (nonatomic) BOOL coreHIDAllowedByStrategy;
 @property (nonatomic) BOOL coreHIDWantedToStart;
 @property (nonatomic) BOOL coreHIDDeliveredMovement;

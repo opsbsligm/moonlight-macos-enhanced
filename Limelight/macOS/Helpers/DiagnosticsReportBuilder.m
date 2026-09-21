@@ -194,6 +194,10 @@ static NSString *ReportYesNo(BOOL value) {
         ? [NSString stringWithFormat:@"%ld", (long)summary.mouseStrategyStoredValue]
         : @"none";
     [lines addObject:[NSString stringWithFormat:
+                      @"pointer mode: %@ | absolute pointer path active: %@",
+                      summary.pointerMode.length > 0 ? summary.pointerMode : @"unknown",
+                      ReportYesNo(summary.absolutePointerPathActive)]];
+    [lines addObject:[NSString stringWithFormat:
                       @"mouse driver: %@ (stored value: %@, corehid allowed by strategy: %@)",
                       summary.mouseStrategyName.length > 0 ? summary.mouseStrategyName : @"unknown",
                       stored,

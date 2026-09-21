@@ -19,6 +19,8 @@
     copy.streamEndReason = self.streamEndReason;
     copy.mouseStrategyName = self.mouseStrategyName;
     copy.mouseStrategyStoredValue = self.mouseStrategyStoredValue;
+    copy.pointerMode = self.pointerMode;
+    copy.absolutePointerPathActive = self.absolutePointerPathActive;
     copy.coreHIDAllowedByStrategy = self.coreHIDAllowedByStrategy;
     copy.coreHIDWantedToStart = self.coreHIDWantedToStart;
     copy.coreHIDDeliveredMovement = self.coreHIDDeliveredMovement;
@@ -109,6 +111,7 @@
     _summary.lastMotionSource = nil;
     _summary.lastMotionSourceAt = nil;
     _summary.coreHIDWantedToStart = NO;
+    _summary.absolutePointerPathActive = NO;
     _summary.coreHIDDeliveredMovement = NO;
     _summary.coreHIDFailedAtRuntime = NO;
     _summary.coreHIDFailureReason = nil;

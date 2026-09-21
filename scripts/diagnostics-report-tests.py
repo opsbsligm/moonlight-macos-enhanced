@@ -180,6 +180,8 @@ int main(void) {
         uncollected.mouseStrategyName = @"automatic";
         uncollected.mouseStrategyStoredValue = 3;
         uncollected.coreHIDAllowedByStrategy = YES;
+        uncollected.pointerMode = @"remote";
+        uncollected.absolutePointerPathActive = YES;
         uncollected.lastMotionSource = @"coreHIDMouse";
         uncollected.lastMotionSourceAt = [now dateByAddingTimeInterval:-3];
         NSString *withoutCounters = [[DiagnosticsReportBuilder
@@ -198,6 +200,9 @@ int main(void) {
               "it is recorded by the sender rather than by the logging switch");
         check([withoutCounters rangeOfString:@"mouse driver: automatic (stored value: 3"].location != NSNotFound,
               "the strategy is printed with the value stored for it");
+        check([withoutCounters rangeOfString:@"pointer mode: remote | absolute pointer path active: yes"].location != NSNotFound,
+              "the mode the pointer was in is printed without the switch, because it is the "
+              "thing that decides whether a zero below it means anything at all");
 
         InputDiagnosticsSummary *collecting = [uncollected copy];
         collecting.collectionEnabledForLastStream = YES;

@@ -23,7 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the host and how long ago; and, with `Input Diagnostics` on, arrived versus dispatched
   versus suppressed counts, raw versus sent deltas, capture and rearm counters with their top
   reasons, and the packets that reached the host counted per sender, with the relative and
-  absolute paths kept apart. The sender line, the strategy and the CoreHID answers are recorded
+  absolute paths kept apart. The mode the pointer was in and whether the absolute path took the
+  session ride along without the switch, because they decide what a zero in those counters
+  means: an absolute session sends no relative packet at all, so the two lines are the
+  difference between a working client and a frozen pointer. The sender line, the strategy and the CoreHID answers are recorded
   by the code that produces them rather than by the logging switch, so they survive a session
   that ran without it -- and a session that ran without it says so instead of printing zeros,
   because zeros there read as a pointer that never moved when the truth is that nobody counted.

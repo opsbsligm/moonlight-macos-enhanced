@@ -1533,10 +1533,17 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     NSString *hostUuid = self.host.uuid ?: @"";
     NSNumber *storedValue = [SettingsClass persistedMouseDriverRawValueFor:hostUuid];
     BOOL allowedByStrategy = self.useCoreHIDMouse;
+    NSString *pointerMode = [SettingsClass mouseModeFor:hostUuid];
+    BOOL absolutePath = [self shouldUseAbsolutePointerPathForCurrentConfiguration];
     [[InputDiagnosticsLedger sharedLedger] updateSummary:^(InputDiagnosticsSummary *summary) {
         summary.mouseStrategyName = [SettingsClass mouseDriverStrategyNameFor:hostUuid];
         summary.mouseStrategyStoredValue = storedValue != nil ? storedValue.integerValue : -1;
         summary.coreHIDAllowedByStrategy = allowedByStrategy;
+        // Read from the same accessors the branches read, for the same reason the strategy is:
+        // the absolute path is what makes a zero in the relative counters mean nothing, and a
+        // report that inferred it from the settings label would be guessing again.
+        summary.pointerMode = pointerMode;
+        summary.absolutePointerPathActive = absolutePath;
     }];
 }
 
