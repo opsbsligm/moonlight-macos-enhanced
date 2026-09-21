@@ -15,11 +15,14 @@
 @implementation DiagnosticsReportSection
 
 + (instancetype)sectionWithTitle:(NSString *)title lines:(NSArray<NSString *> *)lines {
+    // No `if (section != nil)` guard around the assignments. ARC hands back a nonnull
+    // object from `alloc`/`init`, so the guard could not take its other branch, and the
+    // static analyzer used that branch as the one path on which a method the header
+    // promises nonnull returns nil. Assigning unconditionally leaves it nothing to
+    // prove, and leaves the reader one branch that cannot happen.
     DiagnosticsReportSection *section = [[self alloc] init];
-    if (section != nil) {
-        section.title = [title copy] ?: @"";
-        section.lines = [lines copy] ?: @[];
-    }
+    section.title = [title copy] ?: @"";
+    section.lines = [lines copy] ?: @[];
     return section;
 }
 
