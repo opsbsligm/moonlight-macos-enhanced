@@ -155,3 +155,108 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 
 结论：不需要签名、公证或主机改动就能交付的项里，#21/#40 已完成，#42 由上游在做，#45 的前置不成立，#47 已按取向分歧逐点分处，#44 的两处真实缺口已闭合。这张表里不再有"能直接交付却没做"的项；还能往前推的，都要先等到外部前置落地：协议的设备通道、主机的虚拟设备总线、Developer ID 与公证。
 
+
+## 8. 附：2.5 那次取证的复现程序
+
+2.5 的每个数字都来自下面这个程序的一次运行。它不写任何东西、不打开任何设备、不需要 entitlement，
+所以任何一台 Mac 上 30 秒就能复核或推翻那张表——包括推翻之后该怎么改。
+
+```bash
+clang -Wall -Wextra -framework IOKit -framework CoreFoundation -o /tmp/usbprobe /tmp/usbprobe.c
+/tmp/usbprobe        # 打印每个节点上被查键的实际类型与值形状
+```
+
+```c
+// Read-only IORegistry probe: what keys and value shapes does the real kernel
+// publish for USB devices and interfaces? No device is opened, no entitlement used.
+#include <IOKit/IOKitLib.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <stdio.h>
+#include <string.h>
+
+static void dumpValue(CFTypeRef v) {
+    if (!v) { printf("nil"); return; }
+    CFTypeID t = CFGetTypeID(v);
+    if (t == CFDataGetTypeID()) {
+        CFDataRef d = (CFDataRef)v; CFIndex n = CFDataGetLength(d);
+        const UInt8 *b = CFDataGetBytePtr(d);
+        printf("DATA len=%ld hex=", (long)n);
+        for (CFIndex i = 0; i < n && i < 8; i++) printf("%02x", b[i]);
+    } else if (t == CFNumberGetTypeID()) {
+        CFNumberRef n = (CFNumberRef)v; long long ll = 0;
+        CFNumberGetValue(n, kCFNumberLongLongType, &ll);
+        char buf[64] = {0};
+        CFStringRef desc = CFCopyDescription(n);
+        CFStringGetCString(desc, buf, sizeof buf, kCFStringEncodingUTF8);
+        CFRelease(desc);
+        printf("NUMBER aslong=%lld desc=%s", ll, buf);
+    } else if (t == CFStringGetTypeID()) {
+        char buf[128] = {0};
+        CFStringGetCString((CFStringRef)v, buf, sizeof buf, kCFStringEncodingUTF8);
+        printf("STRING len=%ld \"%s\"", (long)CFStringGetLength((CFStringRef)v), buf);
+    } else if (t == CFArrayGetTypeID()) {
+        CFArrayRef a = (CFArrayRef)v; CFIndex n = CFArrayGetCount(a);
+        printf("ARRAY count=%ld elems=", (long)n);
+        for (CFIndex i = 0; i < n && i < 4; i++) { dumpValue(CFArrayGetValueAtIndex(a, i)); printf(" | "); }
+    } else if (t == CFBooleanGetTypeID()) {
+        printf("BOOL %s", CFBooleanGetValue((CFBooleanRef)v) ? "true" : "false");
+    } else {
+        CFStringRef d = CFCopyDescription(v); char buf[80] = {0};
+        CFStringGetCString(d, buf, sizeof buf, kCFStringEncodingUTF8); CFRelease(d);
+        printf("OTHER typeID=%lu %s", (unsigned long)t, buf);
+    }
+}
+
+static void walk(const char *cls) {
+    printf("\n===== %s =====\n", cls);
+    CFMutableDictionaryRef m = IOServiceMatching(cls);
+    io_iterator_t it = {0};
+    kern_return_t kr = IOServiceGetMatchingServices(kIOMainPortDefault, m, &it);
+    printf("IOServiceGetMatchingServices kr=0x%x\n", kr);
+    if (kr != KERN_SUCCESS) return;
+    io_service_t s; int seen = 0;
+    static const char *want[] = {
+        "USB Vendor ID", "idVendor", "USB_Vendor_ID", "USB Product ID", "idProduct",
+        "USB_Product_ID", "USB SerialNumber", "serialNumber", "bInterfaceClass",
+        "bInterfaceSubClass", "bInterfaceProtocol", "interfaceClasses",
+        "interfaceProtocols", "USB Product Name", "Product Name", "bDeviceProtocol",
+        "bDeviceClass", "bNumDevices", "USB Address", NULL
+    };
+    while ((s = IOIteratorNext(it)) && seen < 8) {
+        seen++;
+        CFMutableDictionaryRef props = NULL;
+        if (IORegistryEntryCreateCFProperties(s, &props, kCFAllocatorDefault, 0) != KERN_SUCCESS || !props) {
+            printf("- entry %d: properties unreadable\n", seen); IOObjectRelease(s); continue;
+        }
+        char name[128] = {0};
+        io_name_t regname = {0};
+        if (IORegistryEntryGetName(s, regname) == KERN_SUCCESS) snprintf(name, sizeof name, "%s", regname);
+        printf("- entry %d (%s) has keys:", seen, name);
+        for (int i = 0; want[i]; i++) {
+            CFStringRef k = CFStringCreateWithCString(NULL, want[i], kCFStringEncodingUTF8);
+            CFTypeRef v = CFDictionaryGetValue(props, k);
+            CFRelease(k);
+            if (!v) continue;
+            printf(" | %s -> ", want[i]);
+            dumpValue(v);
+        }
+        printf("\n");
+        CFRelease(props);
+        IOObjectRelease(s);
+    }
+    if (!seen) printf("(no matching services on this machine)\n");
+    IOObjectRelease(it);
+}
+
+int main(void) {
+    walk("IOUSBHostDevice");
+    walk("IOUSBHostInterface");
+    walk("IOUSBDevice");
+    walk("IOUSBInterface");
+    return 0;
+}
+```
+
+运行环境写进 2.5：`sw_vers -productVersion` 在那台机器上是 `27.2`；被查的键就是代码里那三组候选键
+加上 `bInterfaceSubClass`、`bDeviceClass`、`bDeviceProtocol`、`USB Address` 与 `USB Product Name`，
+每类匹配各取前 8 个节点。
