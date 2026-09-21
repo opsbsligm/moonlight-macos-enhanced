@@ -245,7 +245,7 @@ Then add, if you can:
 For input / wheel / mouse bugs, it is especially helpful to include:
 - The log exported from `Settings → App → Debug Log`
 - Whether you used **Free Mouse** or **Locked Mouse**
-- Whether the active path was **Automatic / CoreHID / HID / MFI**
+- Which path the settings status line names. It credits a sender -- CoreHID, AppKit, GameController or the absolute pointer path -- only after that path has delivered motion, and says `CoreHID stopped` with a reason when nothing has.
 
 ## 🤝 Contributing
 
