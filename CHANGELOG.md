@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-build1574] - 2026-09-22
+
+
+### Added
+
+- **The `input` block now says which pointer mode it is describing before it prints a single
+  number.** `relative dispatches 0` has two opposite readings: an absolute-pointer session
+  sends no relative packet at all, so that report describes a client working as configured,
+  while a locked-mode session with no relative dispatches is the failure issue 24 is about.
+  The digits are identical, so a reader in an issue thread cannot tell the two apart. The
+  block prints `pointer mode` and `absolute pointer path active` ahead of the counters, and
+  neither waits for the `Input Diagnostics` switch: like the strategy and the CoreHID answers,
+  they are written by the code that decides them rather than inferred from the row a settings
+  page displays. That also collects the one measurement issue 24 still owed -- whether
+  `NSEvent.deltaX` still reports motion while the system's cursor association is off -- on the
+  reporter's own machine. A locked `pointer mode`, a non-zero `pointer events` count and a
+  non-zero `relative motion` count answer it; zero deltas against non-zero events say the fix
+  is a delta source that does not read cursor position, not another sentence in a document.
+
+### Maintenance
+
+- **The report harness now says how many checks it ran, and refuses a case list below a
+  floor.** The v1.5.0 notes quoted a check count taken from the harness' own printed output,
+  which is the tail of the driver transcript rather than its case list, so that number was
+  wrong from the start and nothing would have noticed it going on being wrong. The compiled
+  binary now prints how many assertions it executed and the harness rejects a case list
+  shorter than a floor, because a test whose cases were quietly deleted keeps reporting
+  success -- only the number notices. Release notes say what a run proves instead of quoting a
+  count that drifts, and the published v1.5.0 body was corrected from the same file.
+
 ## [1.5.0-build1570] - 2026-09-22
 
 
@@ -23,10 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the host and how long ago; and, with `Input Diagnostics` on, arrived versus dispatched
   versus suppressed counts, raw versus sent deltas, capture and rearm counters with their top
   reasons, and the packets that reached the host counted per sender, with the relative and
-  absolute paths kept apart. The mode the pointer was in and whether the absolute path took the
-  session ride along without the switch, because they decide what a zero in those counters
-  means: an absolute session sends no relative packet at all, so the two lines are the
-  difference between a working client and a frozen pointer. The sender line, the strategy and the CoreHID answers are recorded
+  absolute paths kept apart. The sender line, the strategy and the CoreHID answers are recorded
   by the code that produces them rather than by the logging switch, so they survive a session
   that ran without it -- and a session that ran without it says so instead of printing zeros,
   because zeros there read as a pointer that never moved when the truth is that nobody counted.
