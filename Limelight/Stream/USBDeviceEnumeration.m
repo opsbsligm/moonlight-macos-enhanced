@@ -166,21 +166,56 @@ static NSArray<MLUSBInterfaceDescriptor *> *MLInterfacesFromProperties(
 }
 @end
 
-MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryProperties(NSDictionary<NSString *, id> *properties) {
-    NSNumber *vendorID = MLIdentifierFromKeys(properties, MLVendorKeys());
-    NSNumber *productID = MLIdentifierFromKeys(properties, MLProductKeys());
-    NSString *serialNumber = nil;
+static NSString *MLSerialNumberFromProperties(NSDictionary<NSString *, id> *properties) {
     for (NSString *key in MLSerialKeys()) {
         id candidate = properties[key];
         if ([candidate isKindOfClass:[NSString class]] && [(NSString *)candidate length] > 0) {
-            serialNumber = candidate;
-            break;
+            return candidate;
         }
     }
+    return nil;
+}
+
+/// The one place an identity gets built, so there is one digest call, one set of identifier
+/// keys and one interface reading -- not two that can drift apart once the bus changes shape.
+MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryNodes(
+    NSArray<NSDictionary<NSString *, id> *> *nodes) {
+    NSNumber *vendorID = nil;
+    NSNumber *productID = nil;
+    NSString *serialNumber = nil;
+    NSMutableArray<MLUSBInterfaceDescriptor *> *interfaces = [NSMutableArray array];
+
+    for (NSDictionary<NSString *, id> *node in nodes) {
+        // Each identifier half is taken once, from the first node that spells it. The measured
+        // bus publishes idVendor and idProduct on the interface objects as well, so a caller
+        // that walked only the interface nodes still names the device instead of being forced
+        // to refuse something it can see.
+        if (vendorID == nil) {
+            vendorID = MLIdentifierFromKeys(node, MLVendorKeys());
+        }
+        if (productID == nil) {
+            productID = MLIdentifierFromKeys(node, MLProductKeys());
+        }
+        if (serialNumber == nil) {
+            serialNumber = MLSerialNumberFromProperties(node);
+        }
+        // The union, in the order the registry gave, duplicates included. This is where a
+        // composite device stops being two devices: the storage face and the smart-card face
+        // end up on one descriptor, so the reserved-class gate sees the smart card and refuses
+        // the whole thing rather than allowing the half that was looked at first.
+        [interfaces addObjectsFromArray:MLInterfacesFromProperties(node)];
+    }
+
     // Digested here, not later. The serial number exists in this function's locals and
     // nowhere else, so there is no object that can be logged with it inside.
     return [[MLUSBDeviceIdentity alloc] initWithVendorID:vendorID
                                                productID:productID
-                                              interfaces:MLInterfacesFromProperties(properties)
+                                              interfaces:interfaces
                                               auditToken:MLUSBDeviceAuditToken(serialNumber)];
+}
+
+MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryProperties(NSDictionary<NSString *, id> *properties) {
+    // One node is the degenerate case of a device laid out as nodes, so it is expressed as
+    // that rather than as a second reading of the same keys.
+    return MLUSBDeviceIdentityFromRegistryNodes(properties == nil ? @[] : @[ properties ]);
 }

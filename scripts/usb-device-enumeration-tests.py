@@ -14,10 +14,18 @@ byte never arrived is marked unread rather than given a zero, because a zero is 
 protocol answer and the policy would believe it.
 
 The header and the implementation are compiled whole, together with the Stage 0 policy they
-depend on, and driven with devices that do not exist. Six defects are planted one at a time:
-the serial written out instead of digested, the serial dropped so every device looks alike,
-the hex length bound removed, half-parsed text believed, a protocol byte matched to the wrong
-interface, and a key-name list shortened.
+depend on, and driven with devices that do not exist. The node-shaped fixtures are not
+invented: they were read off the IORegistry on macOS 27.2 (docs/usb-redirection-design.md 2.5
+records what that measurement said, including the two assumptions it overturned), so the
+shipping parser is asserted against the shape the kernel hands over rather than a tidier one.
+
+Defects are planted one at a time and every one has to be caught -- the serial written out
+instead of digested, the serial dropped so every device looks alike, the hex length bound
+removed, half-parsed text believed, a protocol byte matched to the wrong interface, a key-name
+list shortened, an aggregation that stops at the first registry node, an aggregation that only
+reads identifiers off the device node, and one that collapses duplicate interfaces. How many
+behavioural cases the compiled binary ran is its own report, and the run is refused if that
+count falls below a floor.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -25,6 +33,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import apple_toolchain
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
+
+# The floor the compiled driver's own case count has to clear. It is a floor and not the
+# count itself, because the count the binary prints is the truth and this number only notices
+# a case list that got shorter.
+MIN_DRIVER_CHECKS = 20
 POLICY_H = "Limelight/Stream/DeviceRedirectionPolicy.h"
 POLICY_M = "Limelight/Stream/DeviceRedirectionPolicy.m"
 ENUM_H = "Limelight/Stream/USBDeviceEnumeration.h"
@@ -69,10 +82,17 @@ DRIVER = r"""
 @@RULES@@
 
 static int failures = 0;
+static int checks_run = 0;
 
 static void check(BOOL ok, const char *what) {
+    checks_run++;
     if (!ok) failures++;
     printf("%-4s %s\n", ok ? "ok" : "FAIL", what);
+}
+
+// expect_identity reports through printf rather than check(), so it counts itself.
+static void count_a_check(void) {
+    checks_run++;
 }
 
 static NSDictionary *device(id vendor, id product, id serial, id classes, id protocols,
@@ -87,6 +107,35 @@ static NSDictionary *device(id vendor, id product, id serial, id classes, id pro
     return props;
 }
 
+// The node shapes below were read off the registry rather than imagined: on macOS 27.2, for
+// every device attached at the time, identifiers arrived as numbers under the io-kit short
+// keys, each interface got its own node carrying one class byte and one protocol byte, no
+// device published a serial number, and every node published a product name.
+static NSDictionary *measured_device_node(unsigned short vid, unsigned short pid, id name) {
+    NSMutableDictionary *node = [NSMutableDictionary dictionary];
+    node[@"idVendor"] = @(vid);
+    node[@"idProduct"] = @(pid);
+    node[@"bDeviceClass"] = @0;
+    node[@"bDeviceProtocol"] = @0;
+    node[@"USB Address"] = @3;
+    if (name) node[@"USB Product Name"] = name;
+    return node;
+}
+
+static NSDictionary *measured_interface_node(unsigned short vid, unsigned short pid,
+                                             unsigned char interfaceClass,
+                                             unsigned char subclass,
+                                             unsigned char protocol, id name) {
+    NSMutableDictionary *node = [NSMutableDictionary dictionary];
+    node[@"idVendor"] = @(vid);
+    node[@"idProduct"] = @(pid);
+    node[@"bInterfaceClass"] = @(interfaceClass);
+    node[@"bInterfaceSubClass"] = @(subclass);
+    node[@"bInterfaceProtocol"] = @(protocol);
+    if (name) node[@"USB Product Name"] = name;
+    return node;
+}
+
 // Each half of the identifier is read on its own: a vendor id the registry never
 // spelled is reported as unread, and the product id that did arrive stays honest.
 static void expect_identity(const char *what, NSDictionary *props, unsigned short wantVid,
@@ -97,6 +146,7 @@ static void expect_identity(const char *what, NSDictionary *props, unsigned shor
     BOOL ok = gotVid == vidReadable && gotPid == pidReadable &&
               (!vidReadable || identity.vendorID.unsignedShortValue == wantVid) &&
               (!pidReadable || identity.productID.unsignedShortValue == wantPid);
+    count_a_check();
     if (!ok) failures++;
     printf("%-4s %-46s -> vid=%s pid=%s\n", ok ? "ok" : "FAIL", what,
            identity.vendorID ? identity.vendorID.stringValue.UTF8String : "unread",
@@ -145,6 +195,78 @@ int main(void) {
               mismatched.interfaces[1].isBootInputInterface,
               "one protocol byte is not shared out to two interfaces");
 
+        // The bus as it was measured, not as a single dictionary.
+        NSArray *dongle = @[ measured_device_node(0x0c45, 0xff1c, @"HS USB Dongle"),
+                             measured_interface_node(0x0c45, 0xff1c, 0x03, 0x01, 0x01, @"HS USB Dongle"),
+                             measured_interface_node(0x0c45, 0xff1c, 0x03, 0x01, 0x02, @"HS USB Dongle"),
+                             measured_interface_node(0x0c45, 0xff1c, 0x03, 0x00, 0x00, @"HS USB Dongle") ];
+        MLUSBDeviceIdentity *hub = MLUSBDeviceIdentityFromRegistryNodes(dongle);
+        check(hub.vendorID.unsignedShortValue == 0x0c45 &&
+              hub.productID.unsignedShortValue == 0xff1c &&
+              hub.interfaces.count == 3 &&
+              hub.interfaces[0].isBootInputInterface &&
+              hub.interfaces[1].isBootInputInterface &&
+              !hub.interfaces[2].isBootInputInterface,
+              "a device split across four registry nodes comes back as one device with three interfaces");
+        check([hub.auditToken isEqual:@"none"],
+              "a device the registry gave no serial for says none, which is what the bus actually did");
+        check([[hub diagnosticLineForVerdict:nil]
+               rangeOfString:@"HS USB Dongle"].location == NSNotFound,
+              "the product name the registry publishes on every node stays out of the line");
+
+        // Only the interface nodes: identifiers are published there too, so walking the
+        // interfaces must not come back with a device the policy has to refuse as anonymous.
+        MLUSBDeviceIdentity *fromInterfacesOnly =
+            MLUSBDeviceIdentityFromRegistryNodes(@[ dongle[1], dongle[2], dongle[3] ]);
+        check(fromInterfacesOnly.vendorID.unsignedShortValue == 0x0c45 &&
+              fromInterfacesOnly.productID.unsignedShortValue == 0xff1c &&
+              fromInterfacesOnly.interfaces.count == 3,
+              "the interface nodes alone still identify the device they belong to");
+
+        // Duplicates survive aggregation: two identical interface nodes is a fact about the
+        // bus, and a set would quietly report one interface where the registry said two.
+        MLUSBDeviceIdentity *twice = MLUSBDeviceIdentityFromRegistryNodes(
+            @[ measured_interface_node(0x0c45, 0xff1c, 0x03, 0x01, 0x00, nil),
+               measured_interface_node(0x0c45, 0xff1c, 0x03, 0x01, 0x00, nil) ]);
+        check(twice.interfaces.count == 2,
+              "two identical interface nodes are not collapsed into one");
+
+        // The composite device the reserved-class rule was written for. It does not arrive as
+        // an array of classes; it arrives as separate nodes, so an aggregation that stopped at
+        // the first one would show the policy a storage device and allow the dock.
+        MLDeviceRedirectionPolicy *dockPolicy =
+            [[MLDeviceRedirectionPolicy alloc] initWithFeatureEnabled:YES
+                                                        hostIsPaired:YES
+                                         hostSupportsDeviceRedirection:YES
+                                             allowedInterfaceClasses:[NSSet setWithObject:@(0x08)]
+                                            localInputDevicesAllowed:NO
+                                                               rules:@[[MLDeviceRedirectionRule ruleForVendorID:0x17ef
+                                                                                                     productID:0x304f
+                                                                                                       enabled:YES]]];
+        NSDictionary *dockBody = measured_device_node(0x17ef, 0x304f, @"Thunderbolt Dock");
+        NSDictionary *dockStorage = measured_interface_node(0x17ef, 0x304f, 0x08, 0x06, 0x50,
+                                                           @"Thunderbolt Dock");
+        NSDictionary *dockCard = measured_interface_node(0x17ef, 0x304f, 0x0b, 0x00, 0x00,
+                                                         @"Thunderbolt Dock");
+        MLDeviceRedirectionVerdict *splitVerdict =
+            [dockPolicy verdictForDevice:[MLUSBDeviceIdentityFromRegistryNodes(
+                @[ dockBody, dockStorage, dockCard ]) descriptor]];
+        MLDeviceRedirectionVerdict *reversedVerdict =
+            [dockPolicy verdictForDevice:[MLUSBDeviceIdentityFromRegistryNodes(
+                @[ dockBody, dockCard, dockStorage ]) descriptor]];
+        MLDeviceRedirectionVerdict *firstFaceOnly =
+            [dockPolicy verdictForDevice:[MLUSBDeviceIdentityFromRegistryNodes(
+                @[ dockBody, dockStorage ]) descriptor]];
+        check(splitVerdict.denial == MLDeviceRedirectionDenialClassReserved &&
+              reversedVerdict.denial == MLDeviceRedirectionDenialClassReserved &&
+              firstFaceOnly.isAllowed,
+              "a dock arrives as separate nodes and is refused whichever face is looked at first");
+
+        MLUSBDeviceIdentity *noNodes = MLUSBDeviceIdentityFromRegistryNodes(@[]);
+        check(noNodes.vendorID == nil && noNodes.productID == nil &&
+              noNodes.interfaces.count == 0 && [noNodes.auditToken isEqual:@"none"],
+              "no nodes is an unreadable device, not an empty one");
+
         // What may be said about a device.
         MLUSBDeviceIdentity *dock = MLUSBDeviceIdentityFromRegistryProperties(
             device(@0x17ef, @0x304f, @"S3CR3T-SERIAL", @[@0x08, @0x0b], nil, @"Thunderbolt Dock"));
@@ -181,7 +303,7 @@ int main(void) {
               same.auditToken.length == 8 && [blank.auditToken isEqual:@"none"],
               "one serial is one token, two serials are two, and no serial says none");
 
-        printf("%s\n", failures ? "RUN FAILED" : "RUN PASSED");
+        printf("%s (%d checks)\n", failures ? "RUN FAILED" : "RUN PASSED", checks_run);
         return failures ? 1 : 0;
     }
 }
@@ -207,9 +329,17 @@ def run_rules(label, rules, cc, sdk, expect_pass=False):
             check(False, "%s: %s" % (label, log))
             return
         if expect_pass:
-            check(code == 0 and out is not None and "RUN PASSED" in out,
-                  "the shipping enumeration reads and speaks correctly"
-                  if code == 0 else "the shipping enumeration failed a case:%s" % out)
+            passed = code == 0 and out is not None and "RUN PASSED" in out
+            check(passed, "the shipping enumeration reads and speaks correctly"
+                  if passed else "the shipping enumeration failed a case:%s" % out)
+            # A compiled run that quietly lost cases still reports success, so the count the
+            # binary printed for the cases it executed is checked against a floor: only the
+            # number notices a case list that was shortened.
+            reported = re.search(r"RUN PASSED \((\d+) checks\)", out or "")
+            counted = int(reported.group(1)) if reported else -1
+            check(counted >= MIN_DRIVER_CHECKS,
+                  "the compiled run reports its own case list (%d checks, floor %d)"
+                  % (counted, MIN_DRIVER_CHECKS))
         else:
             check(code != 0, "the check still fails when %s" % label)
 
@@ -264,6 +394,32 @@ def main():
               mutated(rules, "the key names",
                       '@[ @"USB Vendor ID", @"idVendor", @"USB_Vendor_ID" ]',
                       '@[ @"USB Vendor ID", @"USB_Vendor_ID" ]'),
+              cc, sdk)
+    run_rules("the aggregation stops at the first node's interfaces",
+              mutated(rules, "the interface union",
+                      "        [interfaces addObjectsFromArray:MLInterfacesFromProperties(node)];",
+                      "        if (interfaces.count == 0) {\n"
+                      "            [interfaces addObjectsFromArray:MLInterfacesFromProperties(node)];\n"
+                      "        }"),
+              cc, sdk)
+    run_rules("identifiers are only taken from a node that is not an interface",
+              mutated(rules, "the identifier sweep",
+                      "        if (vendorID == nil) {",
+                      "        if (vendorID == nil && MLInterfacesFromProperties(node).count == 0) {"),
+              cc, sdk)
+    run_rules("identical interfaces are collapsed while aggregating",
+              mutated(rules, "the duplicate union",
+                      "        [interfaces addObjectsFromArray:MLInterfacesFromProperties(node)];",
+                      "        for (MLUSBInterfaceDescriptor *candidate in MLInterfacesFromProperties(node)) {\n"
+                      "            BOOL seen = NO;\n"
+                      "            for (MLUSBInterfaceDescriptor *kept in interfaces) {\n"
+                      "                seen = seen || (kept.majorClass == candidate.majorClass &&\n"
+                      "                            kept.protocolClass == candidate.protocolClass);\n"
+                      "            }\n"
+                      "            if (!seen) {\n"
+                      "                [interfaces addObject:candidate];\n"
+                      "            }\n"
+                      "        }"),
               cc, sdk)
 
     print("%d usb-device-enumeration failures" % len(failures))

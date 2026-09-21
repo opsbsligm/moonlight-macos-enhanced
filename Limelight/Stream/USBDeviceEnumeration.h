@@ -47,4 +47,26 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryProperties(
     NSDictionary<NSString *, id> *properties);
 
+/// One device the way the bus actually lays it out: the device node, plus one node per
+/// interface. Measured on macOS 27.2 against every device attached at the time (see
+/// docs/usb-redirection-design.md 2.5): the kernel publishes one `IOUSBHostInterface` /
+/// `IOUSBInterface` object per interface, each carrying a single-number `bInterfaceClass`
+/// and `bInterfaceProtocol` together with the parent's `idVendor` / `idProduct`, and it does
+/// not publish an array of classes anywhere.
+///
+/// The composite case therefore arrives split, and the composite rule only exists if the
+/// split is put back together here. A dock that is storage plus a smart card reaches this
+/// function as two nodes; an aggregation that kept the first node's class would hand the
+/// policy a storage device, and the reserved-class refusal in 4.5 -- written so a device
+/// cannot choose which of its faces gets seen -- would never fire. So: identifiers and the
+/// serial come from whichever node carries them, interfaces are the union over every node,
+/// and the union keeps duplicates, because two identical interface descriptors is what the
+/// registry said.
+///
+/// An empty array is an unreadable device, not an empty one: identifiers stay nil and the
+/// audit token says `none`, which is the same answer 2.5 observed on real hardware, where no
+/// device attached published a serial number at all.
+FOUNDATION_EXPORT MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryNodes(
+    NSArray<NSDictionary<NSString *, id> *> *nodes);
+
 NS_ASSUME_NONNULL_END

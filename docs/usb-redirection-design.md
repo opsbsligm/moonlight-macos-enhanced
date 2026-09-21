@@ -20,6 +20,9 @@
 4. **Stage 1 已实现并进门禁**：`Limelight/Stream/USBDeviceEnumeration.{h,m}` +
    `scripts/usb-device-enumeration-tests.py`。它把"本机插着什么"读成一个可归因、可审计、可拒绝的身份，
    并且**只到这一步**：不接 UI、不打开设备、不加 entitlement（可行性取证见 2.5，UI 的取舍见 6）。
+   归因入口有两个，因为真机给的就是两个形状：`...FromRegistryProperties`（单节点）与
+   `...FromRegistryNodes`（设备节点 + 其接口节点的并集，2.5 的实测形状）。只有前者时，4.5 的
+   "复合设备整体拒绝"在真实总线上一句话也说不出来——复合设备根本不是一个节点。
 
 ## 2. 已核实的事实（写结论前先取证）
 
@@ -58,10 +61,19 @@
   返回 `KERN_SUCCESS` 且 iterator 有效 → **读取本机 USB 设备的属性不需要新 entitlement，也不需要 DEXT**。
   2.3 的签名前置挡住的是"打开并接管设备"，不是"看见它插着"。
 - 由此确定 Stage 1 的边界：枚举与归因是纯读取，可以今天做完并进门禁；任何"把设备交给主机"的动作仍留在 Stage 3。
-- **尚未取证的部分**：真机上 `IOUSBHostDevice` 节点的键名与取值形态（`USB Vendor ID` 是 NSData 还是 NSNumber、
-  `bInterfaceClass` 是否按接口以数组到达）。薄壳按候选键名读取，接受数值或不超过 4 位的十六进制文本两种形态，
-  **读不到就返回 nil**，由 Stage 0 的身份门按"身份不完整"拒绝；接口 protocol 字节缺失时按启动输入设备处理（见 4.10）。
-  真机核对完成后，这两处只允许收紧，不允许放宽。
+- **真机取证已完成**（macOS 27.2，一台 Apple Silicon 机器，读取时挂着的全部设备：8 个设备节点与 8 个接口节点，
+  取证程序是一次性 clang 构建的只读探针，`IOServiceGetMatchingServices` + `IORegistryEntryCreateCFProperties`，
+  不打开任何设备、不使用任何 entitlement；`IOUSBHostDevice`/`IOUSBHostInterface`/`IOUSBDevice`/`IOUSBInterface`
+  四类匹配全部返回 `KERN_SUCCESS` 且有节点）。实测推翻了写代码前的两个假设：
+
+  | 写代码前的假设 | 实测 | 后果 |
+  |---|---|---|
+  | 标识符首选键是 `USB Vendor ID` | 8+8 个节点上**一次都没出现**；真正生效的是第二个候选 `idVendor`/`idProduct`，形态是 **CFNumber**（`USB_Vendor_ID` 同样从未出现） | 候选键顺序仍保留（多键名是有意的宽容），但"harness 用哪种形状驱动"这件事从此有了依据：形状 = 短键名 + 数值 |
+  | 接口类别可能按接口以**数组**到达设备节点 | 每个接口是**独立 registry 节点**（`IOUSBHostInterface`），各自发布**单个数值** `bInterfaceClass`/`bInterfaceSubClass`/`bInterfaceProtocol`；`interfaceClasses`/`interfaceProtocols` 两个数组候选键从未出现 | 复合设备不是"一条记录里两个类别"，而是"同一设备的两个节点各带一个类别"。**4.5 的复合设备整体拒绝在旧的单节点 API 下无法表达**——按节点逐个归因时，扩展坞会以"存储设备"的身份通过类别门。已补 `MLUSBDeviceIdentityFromRegistryNodes(...)`：标识符取第一个拼得出来的节点，接口是所有节点的并集（含重复项，节点说两个就是两个） |
+  | 序列号通常读得到，`token=none` 是异常路径 | **没有任何节点发布 `USB Serial Number` 或 `kUSBSerialNumberString`** | `none` 是真机默认路径；摘要脱敏保护的是一条本就不常带号的路，而审计行必须先把"没有号"说清楚 |
+  | 产品名是可选装饰 | `USB Product Name` 在**每个**节点上都有；接口节点的 registry name 甚至可以是 `http://help.vesa.org/dp-usb-type-c/` 这类可关联字符串。接口节点也带 `idVendor`/`idProduct` | "读取路径不看产品名"这条静态断言现在有了物证：泄露向量确实存在，而只遍历接口节点也必须能归因（否则可见设备被记成匿名设备，策略只能拒） |
+
+- **仍未观测的部分**：Apple 文档里出现过的 Data 形态标识符（`USB Vendor ID` 为 NSData 那一类）在本次取证的 16 个节点上**一个都没出现**，本机既不能证实也不能证伪。实现**不接受** Data 形态，按不利处理成 `unread`，由身份门拒绝——也就是说：如果哪天在一台机器上只见到 Data 形态，症状是"看得见设备但身份不完整"，而不是把两个字节猜成厂商号。这一条留作观测记录，**不构成放宽解析的依据**。
 
 
 ## 3. 架构：分层交付，每层各自解锁下一层
@@ -109,8 +121,8 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 | 构建纳入 | `Moonlight.xcodeproj` 的 `membershipExceptions` 已加入 `Stream/DeviceRedirectionPolicy.m`（`source-membership-audit.py` 通过：120 files / 128 entries / 3 documented exclusions） |
 | 由谁执行 | macOS 每个 build 的 `scaling-output-evidence-tests.py` step 调用本 gate；`constraints-audit.py` 的 `DRIVEN_BY` 记录了这条依赖并校验"driver 确实是 CI step 且确实调用它"。原因：该 gate 需要真 clang 与 macOS SDK，Ubuntu audits job 跑不了，而新增 step 需要带 `workflow` scope 的凭证，当前推送凭证没有 |
 | Stage 1 门禁 | `scripts/usb-device-enumeration-tests.py`：把 `USBDeviceEnumeration.m` 与 Stage 0 的 `DeviceRedirectionPolicy.m` 作为**同一翻译单元**用真 clang + `-Wall -Werror` 编译（摘要实现只有一份，不复刻第二套），输入是注入的 registry 属性字典，**不链接 IOKit** |
-| Stage 1 断言 | 16 条行为断言在编译出的二进制里执行（数值/十六进制文本/`0x` 前缀/无标识符/过长文本/半个十六进制/4 字符的半十六进制、候选键名、接口与 protocol 的三种配对、复合设备经枚举路径同样被拒、诊断行不含序列号与产品名、摘要令牌一对一）；另有 5 条静态断言（不链接 IOKit、除摘要外只 import 一个系统头、枚举自身无日志出口、读取路径不看产品名、`Moonlight.entitlements` 未新增 usb） |
-| Stage 1 变异 | 6 个，全部被抓：序列号写出、序列号丢弃使所有设备同形、超长文本仍按标识符解析、半个十六进制被采信、一个 protocol 字节摊给两个接口、候选键名被删一个。第 4 个只有 4 字符输入才能抓到——长度护栏会掩盖它，所以那条断言是补上的缺口，不是装饰 |
+| Stage 1 断言 | 行为断言在编译出的二进制里执行，条数由二进制自己打印（当前那次运行 23 条），harness 拒绝低于下限的用例清单——用例被悄悄删掉时，只有那个数字会发现不对。覆盖的形状：数值/十六进制文本/`0x` 前缀/无标识符/过长文本/半个十六进制/4 字符的半十六进制、候选键名、接口与 protocol 的三种配对、**真机节点形状**（短键名 + 单数值 + 每接口一个节点 + 无序列号 + 每节点都有产品名）、只遍历接口节点也要能归因、重复接口节点不得折叠、复合设备以分离节点到达时 whichever-face-first 都被拒、诊断行不含序列号与产品名、摘要令牌一对一。另有 5 条静态断言（不链接 IOKit、除摘要外只 import 一个系统头、枚举自身无日志出口、读取路径不看产品名、`Moonlight.entitlements` 未新增 usb） |
+| Stage 1 变异 | 9 个，全部被抓：序列号写出、序列号丢弃使所有设备同形、超长文本仍按标识符解析、半个十六进制被采信、一个 protocol 字节摊给两个接口、候选键名被删一个、归并只取第一个节点、只从"非接口节点"取标识符、把重复接口折叠成一个。第 4 个只有 4 字符输入才能抓到——长度护栏会掩盖它，所以那条断言是补上的缺口，不是装饰；后三个是 2.5 实测之后补的，它们各自对应一条真实总线会让 4.5 静默失效的归因错误 |
 
 
 **剩余 gate**：枚举脱敏（禁止序列号与设备名进入日志）已由 Stage 1 门禁覆盖；剩下的两处随各自的交付走——UI 落地时新诊断文案必须过 `l10n-audit.py`，Stage 2 的协商 gate 必须让未知能力位、缺字段、版本偏斜全部落`host-unsupported`。
@@ -119,6 +131,10 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 
 - Stage 1 的边界（本轮已按此交付）：做枚举、归因与诊断串；不做 UI、不做网络消息、不打开设备。理由见第 3 节末尾——主机与签名两个前置到位之前，一份被拒列表只会把系统层面的不可用伪装成用户的设备问题。枚举本身经 2.5 取证，不需要新 entitlement，因此它属于"能今天做完并锁进门禁"的那一类。
 - 解锁 Stage 2 需要主机契约：新能力位 + 新 RTSP 协商项 + 至少一个主机实现的 PR。在此之前，`hostAdvertisesDeviceRedirectionInServerInfo:` 永远返回否，这是事实而不是占位。契约本身已写成可评审的草案：`docs/usb-redirection-host-contract.md`（取证、字段语义、双向验收、以及为什么客户端此刻不接线都在那里）。
+- 归因入口对**调用方**也有一条硬规则，它是 2.5 实测的直接后果：一次设备 = 一个设备节点 + 挂在它下面的全部
+  接口节点，接口节点不得被当成独立设备各自过门。真机上复合设备就是这样分开的，所以并集这一步必须在归因里做，
+  否则"扩展坞 = 存储 + 智能卡 → 整体拒绝"会变成"先看哪一面就放行哪一面"。反过来也成立：只遍历到接口节点时
+  仍要能报出身份，否则看得见的东西会被记成匿名设备而只能拒。
 - 该读取目前没有生产调用点，这是有意状态：没有消费者（不发消息、不开设备、无 UI）时接线只会得到一段无法验证的死代码——真实主机不发这个字段，连"读到一次是"都无法观测。主机侧任一实现落地后，接线才是可验证的改动。
 - 解锁 Stage 3 需要：Developer ID 证书与公证流水线、DEXT 安装/卸载生命周期、主机虚拟设备组件、崩溃与热插拔回退策略。缺任一项时 Stage 3 的工时估算没有意义。
 

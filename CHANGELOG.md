@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Device attribution gained the entry point the real bus needs, because the composite
+  device rule could not be expressed without it.** `MLUSBDeviceIdentityFromRegistryNodes`
+  takes the device node plus every interface node hanging off it and returns one identity:
+  identifiers from the first node that spells them, interfaces as the union over all nodes,
+  duplicates kept because two identical interface nodes is what the registry said. The shape
+  was measured, not assumed (docs/usb-redirection-design.md 2.5): on macOS 27.2 each interface
+  is its own `IOUSBHostInterface` object publishing one numeric `bInterfaceClass` and one
+  `bInterfaceProtocol`, and no class array is published anywhere. A dock that is storage plus
+  a smart card therefore arrives split in two, and the single-node reader handed the policy a
+  storage device -- exactly the face-choosing that the reserved-class refusal exists to prevent.
+
+### Fixed
+
+- **The enumeration no longer relies on a key name the kernel does not publish, and its
+  harness no longer drives it with shapes nobody hands over.** Measurement found
+  `USB Vendor ID` absent from all 16 nodes read -- the identifiers that answer are
+  `idVendor`/`idProduct`, as numbers -- and found that no node published a serial number at
+  all, so `token=none` is the normal line in an audit rather than the degenerate one. The
+  fixture set now carries the measured node shapes, including a product name on every node and
+  identifiers on the interface nodes, which is what pins two rules previously asserted only
+  against invented input: a product name stays out of the diagnostic line, and walking only
+  the interface nodes still identifies the device instead of recording a visible thing as
+  anonymous. Three planted defects cover the aggregation -- stop at the first node, read
+  identifiers only off a node that carries no interface, collapse duplicate interfaces -- and
+  the compiled run now reports its own case count, refused below a floor.
+
+### Maintenance
+
+- The Stage 1 gate reports what its run proved and how many cases the binary executed,
+  instead of a count transcribed into a document.
+
 ## [1.6.0-build1574] - 2026-09-22
 
 
