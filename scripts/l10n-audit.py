@@ -48,7 +48,7 @@ def strings_values(path):
                            io.open(path, encoding="utf-8").read(), re.M))
 
 
-def string_entries(text):
+def walk_table(text):
     """Every entry a .strings table declares, with the two lines it spans.
 
     A .strings table is an OpenStep plist. Nothing in it requires one entry per
@@ -118,10 +118,29 @@ def string_entries(text):
         while i < n and text[i] in " \t\r\n":
             line += text[i] == "\n"
             i += 1
-        if i < n and text[i] == ";":
+        terminated = i < n and text[i] == ";"
+        if terminated:
             i += 1
-        entries.append((key, start_line, value_end_line))
+        entries.append((key, start_line, value_end_line, terminated))
     return entries
+
+
+def entries_missing_a_terminator(text):
+    """Entries whose value is never closed by a semicolon, with the line each begins on.
+
+    An entry with no semicolon is not a table entry; CoreFoundation stops reading the
+    table where the syntax stops. Reading past it -- which is what a lenient parser
+    does, and what this one did until a two-line insertion loses its semicolon and
+    shipped -- makes the broken row look like two good ones, so the entry count, the
+    symmetry check and the coverage check all agree with each other and disagree with
+    the app. That insertion was caught by `plutil -lint`, not by this audit.
+    """
+    return [(key, start) for key, start, _, terminated in walk_table(text) if not terminated]
+
+
+def string_entries(text):
+    """Every entry a .strings table declares, with the two lines it spans."""
+    return [(key, start, end) for key, start, end, _ in walk_table(text)]
 
 
 def entries_the_line_scan_cannot_see(text):
@@ -780,6 +799,12 @@ DUPLICATE_CASES = [
 
 # The shape that hides an entry from the audit: one entry riding on the line of the
 # entry above it, and one entry whose value carries a real newline.
+TERMINATOR_CASES = [
+    ("both rows closed", ['"a" = "1";', '"b" = "2";'], []),
+    ("a row that forgets the semicolon", ['"a" = "1"', '"b" = "2";'], [("a", 1)]),
+    ("the last row forgets it", ['"a" = "1";', '"b" = "2"'], [("b", 2)]),
+]
+
 ENTRY_SHAPE_CASES = [
     ("one entry per line", ['"a" = "1";', '"b" = "2";'], []),
     ("the second entry rides on the first line",
@@ -865,6 +890,13 @@ def self_test():
         ok = found == expected
         check(ok, "duplicate key check %s %s" %
               ("reports" if ok else "got %s, expected %s for" % (found, expected), name))
+    for name, table_lines, expected in TERMINATOR_CASES:
+        found = entries_missing_a_terminator("\n".join(table_lines))
+        ok = found == expected
+        check(ok, "terminator rule %s %s" %
+              ("refuses" if expected else "accepts", name) if ok else
+              "terminator rule got %s for %s" % (found, name))
+
     for name, table_lines, expected in ENTRY_SHAPE_CASES:
         found = [key for key, _, _ in
                  entries_the_line_scan_cannot_see("\n".join(table_lines))]
@@ -1031,6 +1063,15 @@ for label, table in (("en", EN_TABLE), ("zh-Hans", ZH_TABLE)):
     check(not hidden, "every entry in the %s table is visible to the line-anchored rules" % label
           if not hidden else "%d entries in the %s table are invisible to its own rules"
           % (len(hidden), label))
+    unterminated = entries_missing_a_terminator(text)
+    for key, start in unterminated:
+        print("::error file=%s::line %d ends an entry with no semicolon, and the table stops being read there: %s"
+              % (table, start, key))
+    check(not unterminated,
+          "every entry in the %s table is closed by a semicolon" % label
+          if not unterminated else
+          "%d entries in the %s table have no terminator, and CoreFoundation stops at the first one"
+          % (len(unterminated), label))
     parsed = string_entries(text)
     scanned = len(KEY_LINE.findall(text))
     check(len(parsed) == scanned,

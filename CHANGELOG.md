@@ -32,6 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The localization audit forgave a row the parser stops at.** Writing the 10-bit row
+  above, the insertion lost its closing semicolon on both language tables. `plutil -lint`
+  rejected the file; the audit, which is the tool that was supposed to catch it, reported
+  zero failures, because its own reader treated a terminator as optional and walked on.
+  Walking on is what makes this invisible rather than merely untidy: the broken row and
+  the row after it both come back as entries, so the entry count agrees with the count the
+  rules read, symmetry sees two complete tables, and every number is consistent with the
+  others while CoreFoundation has stopped reading the table at that line. The reader now
+  reports an unterminated entry with the line it begins on, and the shapes are planted --
+  a row that forgets the semicolon, and a last row that forgets it -- because a rule
+  nobody broke is indistinguishable from a rule nobody wrote.
+
 - **A gate that read the file it was auditing, and went red when that file stopped
   existing.** `gameplay-modifier-tests.py` asked for the reserved-shortcut wording
   inside `LanguageManager.swift`, which is where the sentence lived until the tables
