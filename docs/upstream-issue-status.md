@@ -93,4 +93,7 @@ Not a promise, and not ordered by anything but how much of it is blocked on some
    (`scripts/diagnostics-report-tests.py` plants each of those secrets and refuses the build
    if any survives). What these five issues still need is a reporter who attaches it: the
    app can now answer the question, but only the person with the failing machine can press
-   the button.
+   the button. That button ships from `v1.3.10-build1559`, so the ask can now carry a version
+   -- a reporter on an older build has to update before the sentence means anything, and a
+   report pasted from build 1559 or later answers the question in the thread that has been
+   waiting on it since issue 19 was opened.
