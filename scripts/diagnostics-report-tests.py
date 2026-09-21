@@ -68,6 +68,10 @@ BRIDGE = "Limelight/Moonlight-Bridging-Header.h"
 HOSTS = "Limelight/macOS/ViewControllers/HostsViewController.m"
 APP_PANE = "Limelight/macOS/ViewControllers/SettingsAppPane.swift"
 
+# The floor, not a claim about the exact number: the shipped binary prints how many checks it
+# actually ran, and this refuses a run that quietly lost cases.
+MIN_DRIVER_CHECKS = 40
+
 failures = []
 
 
@@ -88,9 +92,11 @@ DRIVER = r'''
 #import "InputDiagnosticsLedger.h"
 
 static int gFailures = 0;
+static int gChecks = 0;
 
 static void check(BOOL ok, const char *what) {
     printf("%s %s\n", ok ? "ok  " : "FAIL", what);
+    gChecks++;
     if (!ok) {
         gFailures++;
     }
@@ -309,8 +315,11 @@ int main(void) {
               "a report that fits is not shortened at all");
     }
 
+    // The count is printed rather than counted from the transcript by whoever reads it: a
+    // report that quotes "the harness has N checks" and is wrong is the same kind of number
+    // this repository keeps refusing to write down.
     if (gFailures == 0) {
-        printf("RUN PASSED\n");
+        printf("RUN PASSED (%d checks)\n", gChecks);
     }
     return gFailures != 0;
 }
@@ -437,6 +446,18 @@ def main():
         check(code == 0 and "RUN PASSED" in log,
               "the shipping builder passes every case"
               if code == 0 else "the shipping builder failed a case:" + log)
+        # The case list is asserted as well as its verdict. The count travels in the binary's
+        # own output rather than being counted from this file's text, because what a report
+        # quotes has to be something the run printed: a harness whose input cases were quietly
+        # deleted still reports success, and only the number notices.
+        run_line = next((line for line in log.splitlines() if line.startswith("RUN PASSED")), "")
+        checks = int(run_line.split("(")[1].split(" ")[0]) if "(" in run_line else 0
+        check(checks >= MIN_DRIVER_CHECKS,
+              "the harness runs its whole case list (%d checks in the shipped binary)" % checks
+              if checks >= MIN_DRIVER_CHECKS else
+              "the harness runs only %d of at least %d checks; a case list that shrinks in "
+              "silence reports success on less than it used to test"
+              % (checks, MIN_DRIVER_CHECKS))
 
     with tempfile.TemporaryDirectory() as work:
         found, log = analyze(shipping, work, cc, sdk)
