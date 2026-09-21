@@ -226,8 +226,16 @@ build, the Mac model, whether Gatekeeper is running the app out of a read-only
 translocation mount, the current answers from Input Monitoring / Accessibility / Screen
 Recording, the Bonjour services the bundle declares (including whether `_nvstream._tcp`
 is one of them, which is the first question an "another client finds my host" report
-needs), the hosts in the store with their paired and online state, and the tail of the
-app's own log.
+needs), an `input` block -- the mouse strategy in effect and the value stored for it,
+whether CoreHID was allowed, attempted, delivered movement or failed and why, and which
+sender last handed motion to the host and how long ago -- the hosts in the store with
+their paired and online state, and the tail of the app's own log.
+
+**If the problem is a pointer that stops moving, turn on `Settings → App → Debug Log →
+Input Diagnostics`, reproduce it, and then copy the report.** The per-sender counts inside
+the `input` block are only collected while that switch is on, and the report deliberately
+prints no zeros when it is off: zeros there would read as a pointer that never moved, when
+what happened is that nobody was counting.
 
 The report is redacted before it leaves the app: a pairing PIN, a password or token, a
 certificate-shaped blob, a MAC address, a UUID (its first eight characters stay, so two

@@ -12,6 +12,8 @@
 #import <sys/utsname.h>
 
 #import "DataManager.h"
+#import "InputDiagnosticsLedger.h"
+#import "Moonlight-Swift.h"
 #import "Logger.h"
 #import "TemporaryHost.h"
 
@@ -34,6 +36,10 @@ static NSString *stringOrNone(NSString *_Nullable value) {
     [sections addObject:[self applicationSection]];
     [sections addObject:[self systemSection]];
     [sections addObject:[self permissionsSection]];
+    // Input sits right after permissions, because the two questions a pointer report is
+    // read for are answered next to each other: whether the system lets the app listen to
+    // the mouse at all, and which sender was holding it when it stopped.
+    [sections addObject:[self inputSection]];
     [sections addObject:[self networkSection]];
     [sections addObject:[self hostsSection]];
     [sections addObject:[self logSection]];
@@ -147,6 +153,12 @@ static NSString *stringOrNone(NSString *_Nullable value) {
                        [NSString stringWithFormat:@"screen recording: %@",
                         CGPreflightScreenCaptureAccess() ? @"granted" : @"not granted"],
                    ]];
+}
+
++ (DiagnosticsReportSection *)inputSection {
+    return [self inputSectionWithSummary:InputDiagnosticsLedger.sharedLedger.summary
+                   collectionEnabledNow:[SettingsClass inputDiagnosticsEnabled]
+                                    now:[NSDate date]];
 }
 
 + (DiagnosticsReportSection *)networkSection {

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The copyable diagnostics report now carries an `input` section, which is what issue 24 was
+  waiting on.** A pointer that stops moving during a session left one trace only: a line in the
+  in-stream overlay, gone the moment the overlay is. The numbers behind it lived on the stream
+  view controller and its `HIDSupport` instance, both released before the copy button is
+  reachable, so the report a player could paste had nothing to say about the mouse. The block
+  carries the strategy the settings resolved together with the value stored for it, whether
+  CoreHID was allowed by that strategy, whether the session attempted to start the driver,
+  whether it delivered movement, and the reason if it failed; the sender that last handed motion
+  to the host and how long ago; and, with `Input Diagnostics` on, arrived versus dispatched
+  versus suppressed counts, raw versus sent deltas, capture and rearm counters with their top
+  reasons, and the packets that reached the host counted per sender, with the relative and
+  absolute paths kept apart. The sender line, the strategy and the CoreHID answers are recorded
+  by the code that produces them rather than by the logging switch, so they survive a session
+  that ran without it -- and a session that ran without it says so instead of printing zeros,
+  because zeros there read as a pointer that never moved when the truth is that nobody counted.
+  `scripts/diagnostics-report-tests.py` compiles the block with a real clang, drives it against
+  a session whose state is known exactly, and re-plants seven defects in it, among them a block
+  that describes a session that never started and one that prints counters nobody collected.
+
 ## [1.4.0-build1568] - 2026-09-22
 
 

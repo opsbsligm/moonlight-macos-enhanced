@@ -347,6 +347,8 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) NSUInteger inputDiagnosticsRearmSkippedCount;
 @property (nonatomic) NSUInteger inputDiagnosticsRearmDeferredCount;
 @property (nonatomic) NSUInteger inputDiagnosticsUncaptureCount;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *inputDiagnosticsRelativeMotionBySource;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *inputDiagnosticsAbsoluteMotionBySource;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *inputDiagnosticsCaptureSkipReasons;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *inputDiagnosticsRearmReasons;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *inputDiagnosticsRearmSkipReasons;

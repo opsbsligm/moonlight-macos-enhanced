@@ -27,6 +27,16 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 @property(nonatomic) NSInteger rawRelativeDeltaY;
 @property(nonatomic) NSInteger sentRelativeDeltaX;
 @property(nonatomic) NSInteger sentRelativeDeltaY;
+
+/// Packets that reached the host, counted per sender, relative and absolute apart.
+///
+/// The totals above say how much motion moved; these say who moved it. A pointer that stops
+/// in locked mouse mode is a question about which of four senders is still holding the
+/// packet, and totals cannot answer it: the same `rel=4180` arrives whether one sender wrote
+/// all of it or four wrote a quarter each. Keys are the tags the senders pass when they
+/// dispatch, so the name in a report is the name in the branch that sent it.
+@property(nonatomic, copy) NSDictionary<NSString *, NSNumber *> *relativeMotionBySource;
+@property(nonatomic, copy) NSDictionary<NSString *, NSNumber *> *absoluteMotionBySource;
 @end
 
 @interface HIDSupport : NSObject

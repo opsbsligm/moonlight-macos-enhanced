@@ -40,6 +40,13 @@ has to carry the button, the bridging header has to hand the class to Swift, and
 must not so much as read the three properties it promises to leave out -- the host MAC
 address, the pinned certificate, and the client UUID.
 
+The input block is held to the same standard, and for the same reason: it is the block issue
+24 is waiting on. It is compiled and run against a planted session, and three shapes of the
+mistake it can make are caught by construction -- describing a session that never started,
+printing counters that were never collected, and dropping the line that names which sender
+was holding the pointer. A zero and an uncollected value look identical once a report is
+pasted, which is why that one is a refusal rather than a preference.
+
 Usage: diagnostics-report-tests.py [root]
 Exit 0 when the shipping builder passes, every planted defect is caught, and the wiring holds.
 """
@@ -52,6 +59,11 @@ ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
 HEADER = "Limelight/macOS/Helpers/DiagnosticsReportBuilder.h"
 SOURCE = "Limelight/macOS/Helpers/DiagnosticsReportBuilder.m"
 LIVE = "Limelight/macOS/Helpers/DiagnosticsReportBuilder+Live.m"
+LEDGER_HEADER = "Limelight/Input/InputDiagnosticsLedger.h"
+LEDGER_SOURCE = "Limelight/Input/InputDiagnosticsLedger.m"
+HID = "Limelight/Input/HIDSupport.m"
+STREAM_DIAG = "Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m"
+PBX = "Moonlight.xcodeproj/project.pbxproj"
 BRIDGE = "Limelight/Moonlight-Bridging-Header.h"
 HOSTS = "Limelight/macOS/ViewControllers/HostsViewController.m"
 APP_PANE = "Limelight/macOS/ViewControllers/SettingsAppPane.swift"
@@ -73,6 +85,7 @@ def read(rel):
 DRIVER = r'''
 #import <Foundation/Foundation.h>
 #import "DiagnosticsReportBuilder.h"
+#import "InputDiagnosticsLedger.h"
 
 static int gFailures = 0;
 
@@ -146,6 +159,112 @@ int main(void) {
         check([folders rangeOfString:@"zyxvpxvq"].location == NSNotFound,
               "a gatekeeper translocation folder leaves");
 
+        NSDate *now = [NSDate dateWithTimeIntervalSince1970:1770000000];
+
+        // The input block. Every claim below is a claim a report makes about somebody's
+        // mouse, so each is checked against a session whose state is known exactly.
+        InputDiagnosticsSummary *noStream = [[InputDiagnosticsSummary alloc] init];
+        noStream.startedAt = now;
+        NSString *beforeAnyStream = [[DiagnosticsReportBuilder
+            inputSectionWithSummary:noStream collectionEnabledNow:YES now:now].lines componentsJoinedByString:@"\n"];
+        check([beforeAnyStream rangeOfString:@"no stream has started since launch"].location != NSNotFound,
+              "a report written before any stream says that, and does not describe a session");
+
+        InputDiagnosticsSummary *uncollected = [[InputDiagnosticsSummary alloc] init];
+        uncollected.startedAt = now;
+        uncollected.streamStartedAt = [now dateByAddingTimeInterval:-100];
+        uncollected.streamEndedAt = [now dateByAddingTimeInterval:-15];
+        uncollected.streamEndReason = @"connection-terminated:-1";
+        uncollected.streamsStarted = 1;
+        uncollected.streamsFinished = 1;
+        uncollected.mouseStrategyName = @"automatic";
+        uncollected.mouseStrategyStoredValue = 3;
+        uncollected.coreHIDAllowedByStrategy = YES;
+        uncollected.lastMotionSource = @"coreHIDMouse";
+        uncollected.lastMotionSourceAt = [now dateByAddingTimeInterval:-3];
+        NSString *withoutCounters = [[DiagnosticsReportBuilder
+            inputSectionWithSummary:uncollected collectionEnabledNow:NO now:now].lines componentsJoinedByString:@"\n"];
+        check([withoutCounters rangeOfString:@"not collected"].location != NSNotFound,
+              "a session that ran with the switch off says nobody was counting");
+        check([withoutCounters rangeOfString:@"pointer events:"].location == NSNotFound,
+              "and it does not print counters that were never collected -- a zero would read "
+              "as a mouse that never moved");
+        check([withoutCounters rangeOfString:@"finished 15s ago"].location != NSNotFound,
+              "a finished session is named as finished, with how long ago");
+        check([withoutCounters rangeOfString:@"connection-terminated:-1"].location != NSNotFound,
+              "and why it ended");
+        check([withoutCounters rangeOfString:@"coreHIDMouse"].location != NSNotFound,
+              "the sender that last moved the pointer survives without the counters, because "
+              "it is recorded by the sender rather than by the logging switch");
+        check([withoutCounters rangeOfString:@"mouse driver: automatic (stored value: 3"].location != NSNotFound,
+              "the strategy is printed with the value stored for it");
+
+        InputDiagnosticsSummary *collecting = [uncollected copy];
+        collecting.collectionEnabledForLastStream = YES;
+        collecting.mouseMoveEvents = 4210;
+        collecting.relativeDispatches = 4180;
+        collecting.absoluteDispatches = 30;
+        collecting.coreHIDRawEvents = 4190;
+        collecting.suppressedRelativeEvents = 7;
+        collecting.sentRelativeDeltaX = 1230;
+        collecting.relativeMotionBySource = @{ @"mouseMoved": @4180, @"coreHIDMouse": @12 };
+        collecting.absoluteMotionBySource = @{ @"sendAbsoluteMousePosition": @30 };
+        NSString *withCounters = [[DiagnosticsReportBuilder
+            inputSectionWithSummary:collecting collectionEnabledNow:YES now:now].lines componentsJoinedByString:@"\n"];
+        check([withCounters rangeOfString:@"pointer events: 4210"].location != NSNotFound &&
+              [withCounters rangeOfString:@"suppressed before the host 7"].location != NSNotFound,
+              "with the switch on, the counters are carried");
+        check([withCounters rangeOfString:@"not collected"].location == NSNotFound,
+              "and the not-collected line is not carried into a session that was collected");
+        check([withCounters rangeOfString:
+                   @"packets handed to the host by sender (relative): mouseMoved=4180, coreHIDMouse=12"].location != NSNotFound,
+              "the relative totals name the senders that wrote them, busiest first -- the "
+              "totals alone cannot tell one sender from four");
+        check([withCounters rangeOfString:
+                   @"packets handed to the host by sender (absolute): sendAbsoluteMousePosition=30"].location != NSNotFound,
+              "and the absolute path is kept apart from the relative one, because a mouseMoved "
+              "packet means a different thing on each");
+        check([withoutCounters rangeOfString:@"by sender (relative)"].location == NSNotFound,
+              "a session that was never collected gets no sender counts, only the sender the "
+              "code credited on its own");
+
+        InputDiagnosticsSummary *noSender = [uncollected copy];
+        noSender.lastMotionSource = nil;
+        NSString *withoutSender = [[DiagnosticsReportBuilder
+            inputSectionWithSummary:noSender collectionEnabledNow:NO now:now].lines componentsJoinedByString:@"\n"];
+        check([withoutSender rangeOfString:@"none (no relative motion"].location != NSNotFound,
+              "a session where no sender handed motion says so, instead of dropping the line -- "
+              "an absent line and an absent feature cannot be told apart");
+
+        InputDiagnosticsSummary *live = [uncollected copy];
+        live.streamEndedAt = nil;
+        live.streamEndReason = nil;
+        live.streamsFinished = 0;
+        live.streamInProgress = YES;
+        NSString *whileStreaming = [[DiagnosticsReportBuilder
+            inputSectionWithSummary:live collectionEnabledNow:YES now:now].lines componentsJoinedByString:@"\n"];
+        check([whileStreaming rangeOfString:@"in progress for 1m 40s"].location != NSNotFound,
+              "a stream that is still running is reported as running, for as long as it has");
+
+        InputDiagnosticsLedger *ledger = [[InputDiagnosticsLedger alloc] init];
+        [ledger noteStreamStarted];
+        [ledger updateSummary:^(InputDiagnosticsSummary *summary) {
+            summary.mouseStrategyName = @"coreHID";
+            summary.lastMotionSource = @"mouseMoved";
+        }];
+        check(ledger.summary.mouseStrategyName != nil &&
+              ledger.summary.lastMotionSource != nil,
+              "the ledger keeps what the input code recorded on a thread other than the "
+              "report's");
+        [ledger noteStreamEndedWithReason:@"launch-failed"];
+        check(ledger.summary.streamsFinished == 1 && !ledger.summary.streamInProgress,
+              "and closing a session is visible in the summary the report reads");
+        [ledger noteStreamStarted];
+        check(ledger.summary.lastMotionSource == nil &&
+              ledger.summary.mouseStrategyName != nil,
+              "a new session loses the sender and counters of the one before it, and keeps the "
+              "strategy, which the code that decides it records rather than this method");
+
         NSMutableArray *lines = [NSMutableArray array];
         for (int index = 0; index < 4000; index++) {
             [lines addObject:[NSString stringWithFormat:
@@ -218,6 +337,24 @@ MUTATIONS = (
     ("the UUID loses the prefix that correlates two reports about one client",
      'stringWithFormat:@"%@-%@", prefix, kRedactedUuid',
      'stringWithFormat:@"%@-%@", kRedactedUuid, prefix'),
+    ("a session that never started is described as though it had run",
+     "    if (summary.streamStartedAt == nil) {",
+     "    if (NO) {"),
+    ("counters are printed for a session that was never collected",
+     "    if (!summary.collectionEnabledForLastStream) {",
+     "    if (NO) {"),
+    ("the sender line names a sender even when no sender handed motion",
+     "    if (summary.lastMotionSource.length > 0) {",
+     "    if (YES) {"),
+    ("a session that ended is reported as still running",
+     "    if (summary.streamInProgress) {",
+     "    if (YES) {"),
+    ("the per-sender line renders empty, so the totals stand alone again",
+     '    return [parts componentsJoinedByString:@", "];',
+     '    return @"";'),
+    ("the per-sender list is ordered by name, so the quietest sender appears first",
+     "                return leftCount > rightCount ? NSOrderedAscending : NSOrderedDescending;",
+     "                return NSOrderedSame;"),
 )
 
 
@@ -248,7 +385,8 @@ def analyze(source, work, cc, sdk):
     one line inside that noise.
     """
     for name, text in ((os.path.basename(HEADER), read(HEADER)),
-                       (os.path.basename(SOURCE), source)):
+                       (os.path.basename(SOURCE), source),
+                       (os.path.basename(LEDGER_HEADER), read(LEDGER_HEADER))):
         with open(os.path.join(work, name), "w", encoding="utf-8") as handle:
             handle.write(text)
     ran = subprocess.run(
@@ -264,6 +402,8 @@ def analyze(source, work, cc, sdk):
 def compile_and_run(source, work, cc, sdk):
     for name, text in ((os.path.basename(HEADER), read(HEADER)),
                        (os.path.basename(SOURCE), source),
+                       (os.path.basename(LEDGER_HEADER), read(LEDGER_HEADER)),
+                       (os.path.basename(LEDGER_SOURCE), read(LEDGER_SOURCE)),
                        ("driver.m", DRIVER)):
         with open(os.path.join(work, name), "w", encoding="utf-8") as handle:
             handle.write(text)
@@ -271,7 +411,8 @@ def compile_and_run(source, work, cc, sdk):
     built = subprocess.run(
         [cc, "-x", "objective-c", "-isysroot", sdk, "-Wall", "-Werror",
          "-framework", "Foundation", os.path.join(work, "driver.m"),
-         os.path.join(work, os.path.basename(SOURCE)), "-o", binary],
+         os.path.join(work, os.path.basename(SOURCE)),
+         os.path.join(work, os.path.basename(LEDGER_SOURCE)), "-o", binary],
         capture_output=True, text=True)
     if built.returncode != 0:
         return None, (built.stdout + built.stderr).strip()[-2000:]
@@ -333,6 +474,33 @@ def main():
     for forbidden in (".mac", ".serverCert", ".uuid"):
         check(not re.search(r"host%s\b" % re.escape(forbidden), live),
               "the collector never reads %s, which the report promises to leave out" % forbidden)
+
+    live_builds = read(LIVE)
+    check("inputSectionWithSummary:" in live_builds and
+          "InputDiagnosticsLedger.sharedLedger.summary" in live_builds,
+          "the report a player copies asks the ledger for the input block, rather than "
+          "carrying a block nothing fills")
+    hid = read(HID)
+    check("recordMouseInputPathStateIntoLedger" in hid and
+          "[self recordMouseInputPathStateIntoLedger];" in hid and
+          hid.count("InputDiagnosticsLedger sharedLedger") >= 3,
+          "the input code records the strategy, the CoreHID outcome and the sender that moved "
+          "the pointer, from the places that decide them")
+    stream_diag = read(STREAM_DIAG)
+    check("noteStreamStarted" in stream_diag and "noteStreamEndedWithReason:" in stream_diag and
+          stream_diag.count("[self publishInputDiagnosticsToLedger];") >= 3,
+          "a session opens, publishes on every sample, and closes in the ledger")
+    check("Input/InputDiagnosticsLedger.m" in read(PBX),
+          "the ledger is a member of the target, so something compiles it")
+
+    ledger_props = re.findall(r"@property[^;]*?\b([A-Za-z0-9_]+);", read(LEDGER_HEADER))
+    identity = {"uuid", "macAddress", "serverCert", "clientCert", "pairingSecret", "pin",
+                "password", "homePath", "ipAddress", "hostName"} & set(ledger_props)
+    check(not identity,
+          "the input summary holds behaviour and no identity, so a pasted report cannot carry "
+          "the player's host"
+          if not identity else
+          "the input summary declares identity fields: %s" % sorted(identity))
 
     hosts = read(HOSTS)
     check("Pairing Failed" in hosts and "Copy Diagnostics" in hosts and

@@ -877,6 +877,34 @@ class SettingsClass: NSObject {
     mouseInputStrategy(for: key).rawValue
   }
 
+  /// The strategy name the input code branches on, for the diagnostics report.
+  ///
+  /// The report prints the case name rather than the menu label on purpose: issue 24 is what
+  /// a label and an effect that disagree cost, and a report that repeated the label could
+  /// describe a mode this build no longer has.
+  @objc static func mouseDriverStrategyName(for key: String) -> String {
+    switch mouseInputStrategy(for: key) {
+    case .gameController:
+      return "gameController"
+    case .coreHID:
+      return "coreHID"
+    case .automatic:
+      return "automatic"
+    }
+  }
+
+  /// The number actually stored for the driver, or nil when this host has no settings object
+  /// at all. Printed next to the resolved name it makes the shapes the resolver has to
+  /// absorb visible: the retired 0, a value written by a future build, and the string the
+  /// menu no longer lists each arrive as the default strategy, and a report that showed only
+  /// the default could not tell "the player chose it" from "nobody ever configured this".
+  @objc static func persistedMouseDriverRawValue(for key: String) -> NSNumber? {
+    guard let stored = Settings.persistedSettings(for: key)?.mouseDriver else {
+      return nil
+    }
+    return NSNumber(value: stored)
+  }
+
   @objc static func shouldUseGameControllerMouse(for key: String) -> Bool {
     mouseInputStrategy(for: key) == .gameController
   }

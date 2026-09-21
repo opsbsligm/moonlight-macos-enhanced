@@ -5,6 +5,7 @@
 
 #import "StreamViewController_Internal.h"
 #import "GlassOverlayContainer.h"
+#import "InputDiagnosticsLedger.h"
 #import <objc/runtime.h>
 
 // Which click still owns a button's temporary title. The button carries the
@@ -538,12 +539,88 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
     self.inputDiagnosticsRearmSkippedCount = 0;
     self.inputDiagnosticsRearmDeferredCount = 0;
     self.inputDiagnosticsUncaptureCount = 0;
+    self.inputDiagnosticsRelativeMotionBySource = [NSMutableDictionary dictionary];
+    self.inputDiagnosticsAbsoluteMotionBySource = [NSMutableDictionary dictionary];
     self.inputDiagnosticsCaptureSkipReasons = [NSMutableDictionary dictionary];
     self.inputDiagnosticsRearmReasons = [NSMutableDictionary dictionary];
     self.inputDiagnosticsRearmSkipReasons = [NSMutableDictionary dictionary];
     self.inputDiagnosticsRearmDeferredReasons = [NSMutableDictionary dictionary];
     [self stopInputDiagnosticsTimer];
     [self.hidSupport resetInputDiagnostics];
+
+    // A new input session begins with the counters blank rather than with the previous
+    // session's numbers still standing, and the ledger learns here rather than from the
+    // stream manager, because this is the method that actually zeroes them.
+    InputDiagnosticsLedger *ledger = InputDiagnosticsLedger.sharedLedger;
+    [ledger noteStreamStarted];
+    BOOL collecting = self.inputDiagnosticsDetailActiveForStream;
+    [ledger updateSummary:^(InputDiagnosticsSummary *summary) {
+        summary.collectionEnabledForLastStream = collecting;
+    }];
+    [self publishInputDiagnosticsToLedger];
+}
+
+/// Hand the session's input numbers to the ledger the diagnostics report reads.
+///
+/// Assignment rather than accumulation: the ledger describes the most recent session, and
+/// these are that session's running totals. It is called from the one-second sample and
+/// again at the end, so a player who copies the report during a stream sees the numbers the
+/// overlay showed them a second ago, and one who copies it afterwards sees the last ones.
+- (void)publishInputDiagnosticsToLedger {
+    NSString *captureSkipTop = [self inputDiagnosticsTopReasonsFrom:self.inputDiagnosticsCaptureSkipReasons limit:2];
+    NSString *rearmTop = [self inputDiagnosticsTopReasonsFrom:self.inputDiagnosticsRearmReasons limit:2];
+    NSString *rearmSkipTop = [self inputDiagnosticsTopReasonsFrom:self.inputDiagnosticsRearmSkipReasons limit:2];
+    NSString *rearmDeferredTop = [self inputDiagnosticsTopReasonsFrom:self.inputDiagnosticsRearmDeferredReasons limit:2];
+
+    NSUInteger mouseMoveEvents = self.inputDiagnosticsMouseMoveEvents;
+    NSUInteger nonZeroRelativeEvents = self.inputDiagnosticsNonZeroRelativeEvents;
+    NSUInteger relativeDispatches = self.inputDiagnosticsRelativeDispatches;
+    NSUInteger absoluteDispatches = self.inputDiagnosticsAbsoluteDispatches;
+    NSUInteger absoluteDuplicateSkips = self.inputDiagnosticsAbsoluteDuplicateSkips;
+    NSUInteger coreHIDRawEvents = self.inputDiagnosticsCoreHIDRawEvents;
+    NSUInteger coreHIDDispatches = self.inputDiagnosticsCoreHIDDispatches;
+    NSUInteger suppressedRelativeEvents = self.inputDiagnosticsSuppressedRelativeEvents;
+    NSInteger rawRelativeDeltaX = self.inputDiagnosticsRawRelativeDeltaX;
+    NSInteger rawRelativeDeltaY = self.inputDiagnosticsRawRelativeDeltaY;
+    NSInteger sentRelativeDeltaX = self.inputDiagnosticsSentRelativeDeltaX;
+    NSInteger sentRelativeDeltaY = self.inputDiagnosticsSentRelativeDeltaY;
+    NSUInteger captureArmed = self.inputDiagnosticsCaptureArmedCount;
+    NSUInteger captureSkipped = self.inputDiagnosticsCaptureSkipCount;
+    NSUInteger captureReleased = self.inputDiagnosticsUncaptureCount;
+    NSUInteger rearms = self.inputDiagnosticsRearmCount;
+    NSUInteger rearmSkips = self.inputDiagnosticsRearmSkippedCount;
+    NSUInteger rearmDeferred = self.inputDiagnosticsRearmDeferredCount;
+    NSDictionary<NSString *, NSNumber *> *relativeMotionBySource = [self.inputDiagnosticsRelativeMotionBySource copy];
+    NSDictionary<NSString *, NSNumber *> *absoluteMotionBySource = [self.inputDiagnosticsAbsoluteMotionBySource copy];
+    BOOL collecting = self.inputDiagnosticsDetailActiveForStream;
+
+    [[InputDiagnosticsLedger sharedLedger] updateSummary:^(InputDiagnosticsSummary *summary) {
+        summary.collectionEnabledForLastStream = collecting;
+        summary.mouseMoveEvents = mouseMoveEvents;
+        summary.nonZeroRelativeEvents = nonZeroRelativeEvents;
+        summary.relativeDispatches = relativeDispatches;
+        summary.absoluteDispatches = absoluteDispatches;
+        summary.absoluteDuplicateSkips = absoluteDuplicateSkips;
+        summary.coreHIDRawEvents = coreHIDRawEvents;
+        summary.coreHIDDispatches = coreHIDDispatches;
+        summary.suppressedRelativeEvents = suppressedRelativeEvents;
+        summary.rawRelativeDeltaX = rawRelativeDeltaX;
+        summary.rawRelativeDeltaY = rawRelativeDeltaY;
+        summary.sentRelativeDeltaX = sentRelativeDeltaX;
+        summary.sentRelativeDeltaY = sentRelativeDeltaY;
+        summary.captureArmed = captureArmed;
+        summary.captureSkipped = captureSkipped;
+        summary.captureReleased = captureReleased;
+        summary.rearms = rearms;
+        summary.rearmSkips = rearmSkips;
+        summary.rearmDeferred = rearmDeferred;
+        summary.relativeMotionBySource = relativeMotionBySource;
+        summary.absoluteMotionBySource = absoluteMotionBySource;
+        summary.captureSkipTopReasons = captureSkipTop;
+        summary.rearmTopReasons = rearmTop;
+        summary.rearmSkipTopReasons = rearmSkipTop;
+        summary.rearmDeferredTopReasons = rearmDeferredTop;
+    }];
 }
 
 - (void)stopInputDiagnosticsTimer {
@@ -593,6 +670,28 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
     self.inputDiagnosticsRawRelativeDeltaY += snapshot.rawRelativeDeltaY;
     self.inputDiagnosticsSentRelativeDeltaX += snapshot.sentRelativeDeltaX;
     self.inputDiagnosticsSentRelativeDeltaY += snapshot.sentRelativeDeltaY;
+
+    [self mergeInputDiagnosticsBucket:self.inputDiagnosticsRelativeMotionBySource
+                        fromDictionary:snapshot.relativeMotionBySource];
+    [self mergeInputDiagnosticsBucket:self.inputDiagnosticsAbsoluteMotionBySource
+                        fromDictionary:snapshot.absoluteMotionBySource];
+
+    [self publishInputDiagnosticsToLedger];
+}
+
+/// Add one sample's per-sender counts into the session's totals.
+///
+/// Addition rather than replacement: `consumeInputDiagnosticsSnapshot:` clears what it hands
+/// over, so each sample carries only what arrived since the last one.
+- (void)mergeInputDiagnosticsBucket:(NSMutableDictionary<NSString *, NSNumber *> *)bucket
+                     fromDictionary:(NSDictionary<NSString *, NSNumber *> *)sample {
+    if (bucket == nil || sample.count == 0) {
+        return;
+    }
+    [sample enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSNumber *value, BOOL *stop) {
+        (void)stop;
+        bucket[key] = @(bucket[key].unsignedIntegerValue + value.unsignedIntegerValue);
+    }];
 }
 
 - (void)incrementInputDiagnosticsBucket:(NSMutableDictionary<NSString *, NSNumber *> *)bucket key:(NSString *)key {
@@ -697,6 +796,9 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
     NSString *rearmTop = [self inputDiagnosticsTopReasonsFrom:self.inputDiagnosticsRearmReasons limit:2];
     NSString *rearmSkipTop = [self inputDiagnosticsTopReasonsFrom:self.inputDiagnosticsRearmSkipReasons limit:2];
     NSString *rearmDeferredTop = [self inputDiagnosticsTopReasonsFrom:self.inputDiagnosticsRearmDeferredReasons limit:2];
+
+    [self publishInputDiagnosticsToLedger];
+    [InputDiagnosticsLedger.sharedLedger noteStreamEndedWithReason:reason];
 
     NSMutableArray<NSString *> *parts = [NSMutableArray array];
     [parts addObject:[NSString stringWithFormat:@"detail=%@", self.inputDiagnosticsDetailActiveForStream ? @"on" : @"off"]];

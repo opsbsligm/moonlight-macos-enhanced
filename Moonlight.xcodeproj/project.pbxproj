@@ -83,6 +83,7 @@
 				Input/HIDSupport.m,
 				Input/KeyboardMapResolver.m,
 				"Input/HIDSupport+Pointer.m",
+				Input/InputDiagnosticsLedger.m,
 				"Input/HIDSupport+Rumble.m",
 				"Input/HIDSupport+Scroll.m",
 				Input/Ticks.m,

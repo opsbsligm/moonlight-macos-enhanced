@@ -10,6 +10,8 @@
 
 #import <Foundation/Foundation.h>
 
+@class InputDiagnosticsSummary;
+
 NS_ASSUME_NONNULL_BEGIN
 
 /// One titled block of the report. English on purpose, in both the title and the
@@ -49,6 +51,24 @@ NS_ASSUME_NONNULL_BEGIN
 /// job is to remove the player's own path has to be testable against a path that is
 /// not the tester's, so the lookup lives in the caller and this one takes the value.
 + (NSString *)redactString:(NSString *)input homeDirectory:(nullable NSString *)home;
+
+/// The block that says what the pointer-input path did.
+///
+/// `summary` may be nil, which means the app never recorded any input at all; that has to
+/// read as absence, not as a session in which nothing moved. `now` is passed in rather than
+/// read from the clock so the same summary can be shown to say "ended 15s ago" in a test and
+/// in the shipping app.
+///
+/// The counters only advance while the "Input Diagnostics" switch is on. A session that ran
+/// without it says so instead of printing zeros, because zeros are the single most
+/// misleading thing this block can hold: they read like a pointer that never moved when the
+/// truth is that nobody was counting. `collectionEnabledNow` is the switch as it stands
+/// while the report is written, which is a different question from whether it was on during
+/// the session the counters describe -- a player who turned it on after the mouse stopped
+/// has to be told that the numbers below it were never collected.
++ (DiagnosticsReportSection *)inputSectionWithSummary:(nullable InputDiagnosticsSummary *)summary
+                                collectionEnabledNow:(BOOL)collectionEnabledNow
+                                                 now:(NSDate *)now;
 
 /// Assemble the sections in the order given, redact the whole of it once at the end
 /// -- one pass, so a value cannot survive by arriving in a line nobody thought to

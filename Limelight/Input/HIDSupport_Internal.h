@@ -139,6 +139,8 @@
 @property (nonatomic) uint64_t activeScrollTraceLastEventMs;
 @property (nonatomic) BOOL activeScrollTraceLockedToPrecise;
 @property (nonatomic, copy) NSString *activeScrollTraceSource;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *inputDiagnosticsRelativeMotionBySource;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *inputDiagnosticsAbsoluteMotionBySource;
 @property (nonatomic) NSUInteger inputDiagnosticsMouseMoveEvents;
 @property (nonatomic) NSUInteger inputDiagnosticsNonZeroRelativeEvents;
 @property (nonatomic) NSUInteger inputDiagnosticsRelativeDispatches;

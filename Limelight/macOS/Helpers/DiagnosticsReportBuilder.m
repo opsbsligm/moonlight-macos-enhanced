@@ -5,6 +5,10 @@
 
 #import "DiagnosticsReportBuilder.h"
 
+#import <math.h>
+
+#import "InputDiagnosticsLedger.h"
+
 @interface DiagnosticsReportSection ()
 // The public properties say readonly, because a report section that changed after it
 // was handed over would make the assembled text disagree with the sections it came from.
@@ -40,6 +44,7 @@
 
 @implementation DiagnosticsReportBuilder
 
+static NSString *const kInputSection = @"input";
 static NSString *const kRedactedValue = @"[redacted]";
 static NSString *const kRedactedPin = @"[redacted-pin]";
 static NSString *const kRedactedMac = @"[redacted-mac]";
@@ -81,6 +86,207 @@ static NSString *const kRuleUnavailable = @"\n[redaction rule unavailable]\n";
         [kept insertObject:trimmed atIndex:0];
     }
     return [kept copy];
+}
+
+/// The per-sender counts as `coreHIDMouse=4180, mouseMoved=12`.
+///
+/// Ordered by count first: the sender that carried the session is the one a reader has to see
+/// first, and a report that listed the quietest sender at the top would send a maintainer to
+/// the wrong branch. A handful at most, because a report is read in an issue thread and a
+/// sender that moved three packets is not the story.
++ (NSString *)senderCountsStringFrom:(NSDictionary<NSString *, NSNumber *> *_Nullable)counts {
+    if (counts.count == 0) {
+        return @"none";
+    }
+    NSArray<NSString *> *names =
+        [counts.allKeys sortedArrayUsingComparator:^NSComparisonResult(NSString *left, NSString *right) {
+            unsigned long long leftCount = counts[left].unsignedLongLongValue;
+            unsigned long long rightCount = counts[right].unsignedLongLongValue;
+            if (leftCount != rightCount) {
+                return leftCount > rightCount ? NSOrderedAscending : NSOrderedDescending;
+            }
+            return [left compare:right];
+        }];
+    NSUInteger cap = 6;
+    NSMutableArray<NSString *> *parts = [NSMutableArray arrayWithCapacity:MIN(cap, names.count)];
+    for (NSUInteger index = 0; index < MIN(cap, names.count); index++) {
+        NSString *name = names[index];
+        [parts addObject:[NSString stringWithFormat:@"%@=%llu", name,
+                                                  counts[name].unsignedLongLongValue]];
+    }
+    if (names.count > cap) {
+        [parts addObject:[NSString stringWithFormat:@"(+%lu more senders)",
+                                                      (unsigned long)(names.count - cap)]];
+    }
+    return [parts componentsJoinedByString:@", "];
+}
+
+/// `yes`/`no`, because a report line a reader has to translate reads worse than one they
+/// can grep.
+static NSString *ReportYesNo(BOOL value) {
+    return value ? @"yes" : @"no";
+}
+
+/// A duration as `12s`, `4m 05s` or `2h 03m`. Deliberately not clock-formatted: a report
+/// that says a session ended at 21:14:07 still leaves the reader subtracting to find out
+/// whether that was before or after the update they installed.
++ (NSString *)elapsedStringFrom:(NSDate *_Nullable)start to:(NSDate *_Nullable)end {
+    if (start == nil || end == nil) {
+        return @"unknown";
+    }
+    NSTimeInterval interval = [end timeIntervalSinceDate:start];
+    if (interval < 0) {
+        interval = 0;
+    }
+    NSUInteger seconds = (NSUInteger)llround(interval);
+    if (seconds < 60) {
+        return [NSString stringWithFormat:@"%lus", (unsigned long)seconds];
+    }
+    NSUInteger minutes = seconds / 60;
+    if (minutes < 60) {
+        return [NSString stringWithFormat:@"%lum %02lus", (unsigned long)minutes,
+                                          (unsigned long)(seconds % 60)];
+    }
+    return [NSString stringWithFormat:@"%luh %02lum", (unsigned long)(minutes / 60),
+                                       (unsigned long)(minutes % 60)];
+}
+
++ (DiagnosticsReportSection *)inputSectionWithSummary:(InputDiagnosticsSummary *_Nullable)summary
+                                collectionEnabledNow:(BOOL)collectionEnabledNow
+                                                 now:(NSDate *)now {
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    [lines addObject:[NSString stringWithFormat:@"collecting input counters: %@",
+                                                collectionEnabledNow ? @"yes"
+                                                                     : @"no (turn on the "
+                                                                       "\"Input Diagnostics\" "
+                                                                       "switch in Settings, then "
+                                                                       "reproduce the problem)"]];
+    if (summary == nil) {
+        [lines addObject:@"input state unavailable: the app recorded nothing"];
+        return [DiagnosticsReportSection sectionWithTitle:kInputSection lines:lines];
+    }
+
+    [lines addObject:[NSString stringWithFormat:@"streams since launch: %lu (%lu finished)",
+                                                (unsigned long)summary.streamsStarted,
+                                                (unsigned long)summary.streamsFinished]];
+    if (summary.streamStartedAt == nil) {
+        // The one answer that rules out half of what an input report is read for: the
+        // pointer has not been sent anywhere yet, so nothing below it can describe a game.
+        [lines addObject:@"no stream has started since launch"];
+        return [DiagnosticsReportSection sectionWithTitle:kInputSection lines:lines];
+    }
+
+    if (summary.streamInProgress) {
+        [lines addObject:[NSString stringWithFormat:@"stream: in progress for %@",
+                                                    [self elapsedStringFrom:summary.streamStartedAt
+                                                                         to:now]]];
+    } else {
+        NSString *elapsed = [self elapsedStringFrom:summary.streamEndedAt to:now];
+        NSString *reason = summary.streamEndReason.length > 0
+            ? [NSString stringWithFormat:@" (%@)", summary.streamEndReason]
+            : @"";
+        [lines addObject:[NSString stringWithFormat:@"stream: finished %@ ago%@",
+                                                    elapsed.length > 0 ? elapsed : @"(unknown)",
+                                                    reason]];
+    }
+
+    NSString *stored = summary.mouseStrategyStoredValue >= 0
+        ? [NSString stringWithFormat:@"%ld", (long)summary.mouseStrategyStoredValue]
+        : @"none";
+    [lines addObject:[NSString stringWithFormat:
+                      @"mouse driver: %@ (stored value: %@, corehid allowed by strategy: %@)",
+                      summary.mouseStrategyName.length > 0 ? summary.mouseStrategyName : @"unknown",
+                      stored,
+                      ReportYesNo(summary.coreHIDAllowedByStrategy)]];
+    NSString *failure = summary.coreHIDFailureReason.length > 0
+        ? [NSString stringWithFormat:@", reason: %@", summary.coreHIDFailureReason]
+        : @"";
+    [lines addObject:[NSString stringWithFormat:
+                      @"corehid: wanted to start: %@ | delivered movement: %@ | failed at "
+                      @"runtime: %@%@",
+                      ReportYesNo(summary.coreHIDWantedToStart),
+                      ReportYesNo(summary.coreHIDDeliveredMovement),
+                      ReportYesNo(summary.coreHIDFailedAtRuntime),
+                      failure]];
+    if (summary.coreHIDAllowedByStrategy && !summary.coreHIDWantedToStart) {
+        // The two facts differ for a reason a reader cannot see from either alone: the
+        // absolute pointer path takes the mouse before the driver is ever started, so
+        // "allowed but never attempted" is a configuration, not a failure.
+        [lines addObject:@"corehid: the strategy allows it and this session never started "
+                        @"the driver (the absolute pointer path takes the mouse when mouse "
+                        @"mode is remote or touchscreen mode is on)"];
+    }
+    if (summary.lastMotionSource.length > 0) {
+        NSString *when = [self elapsedStringFrom:summary.lastMotionSourceAt to:now];
+        [lines addObject:[NSString stringWithFormat:
+                          @"sender that last handed motion to the host: %@ (%@ ago)",
+                          summary.lastMotionSource,
+                          when.length > 0 ? when : @"unknown"]];
+    } else {
+        // Absence stated as absence. Four senders can move the host's pointer, and a report
+        // that left this line out altogether could not be told apart from a build too old to
+        // carry it.
+        [lines addObject:@"sender that last handed motion to the host: none (no relative "
+                        @"motion has been handed to the host this session)"];
+    }
+
+    if (!summary.collectionEnabledForLastStream) {
+        [lines addObject:@"input counters: not collected for this session, because the "
+                        "\"Input Diagnostics\" switch was off when it ran -- the lines above "
+                        @"are what was observable without it"];
+        return [DiagnosticsReportSection sectionWithTitle:kInputSection lines:lines];
+    }
+
+    [lines addObject:[NSString stringWithFormat:
+                      @"pointer events: %lu (relative dispatches %lu, absolute dispatches %lu, "
+                      @"duplicate absolute skips %lu)",
+                      (unsigned long)summary.mouseMoveEvents,
+                      (unsigned long)summary.relativeDispatches,
+                      (unsigned long)summary.absoluteDispatches,
+                      (unsigned long)summary.absoluteDuplicateSkips]];
+    [lines addObject:[NSString stringWithFormat:
+                      @"packets handed to the host by sender (relative): %@",
+                      [self senderCountsStringFrom:summary.relativeMotionBySource]]];
+    [lines addObject:[NSString stringWithFormat:
+                      @"packets handed to the host by sender (absolute): %@",
+                      [self senderCountsStringFrom:summary.absoluteMotionBySource]]];
+    [lines addObject:[NSString stringWithFormat:
+                      @"relative motion: non-zero events %lu, suppressed before the host "
+                      @"%lu",
+                      (unsigned long)summary.nonZeroRelativeEvents,
+                      (unsigned long)summary.suppressedRelativeEvents]];
+    [lines addObject:[NSString stringWithFormat:
+                      @"corehid: raw events %lu, dispatched %lu",
+                      (unsigned long)summary.coreHIDRawEvents,
+                      (unsigned long)summary.coreHIDDispatches]];
+    [lines addObject:[NSString stringWithFormat:
+                      @"relative delta: raw (%ld,%ld), sent (%ld,%ld)",
+                      (long)summary.rawRelativeDeltaX, (long)summary.rawRelativeDeltaY,
+                      (long)summary.sentRelativeDeltaX, (long)summary.sentRelativeDeltaY]];
+    [lines addObject:[NSString stringWithFormat:
+                      @"pointer capture: armed %lu, skipped %lu, released %lu",
+                      (unsigned long)summary.captureArmed,
+                      (unsigned long)summary.captureSkipped,
+                      (unsigned long)summary.captureReleased]];
+    [lines addObject:[NSString stringWithFormat:
+                      @"capture rearm: attempted %lu, skipped %lu, deferred %lu",
+                      (unsigned long)summary.rearms,
+                      (unsigned long)summary.rearmSkips,
+                      (unsigned long)summary.rearmDeferred]];
+    // Pairs rather than a dictionary: a dictionary literal throws on a nil value, and every
+    // one of these reasons is nil until a session has had a reason to record one.
+    NSArray<NSArray<NSString *> *> *tops = @[
+        @[ @"top capture skip reasons", summary.captureSkipTopReasons ?: @"" ],
+        @[ @"top capture rearm reasons", summary.rearmTopReasons ?: @"" ],
+        @[ @"top capture rearm skip reasons", summary.rearmSkipTopReasons ?: @"" ],
+        @[ @"top capture rearm deferred reasons", summary.rearmDeferredTopReasons ?: @"" ],
+    ];
+    for (NSArray<NSString *> *pair in tops) {
+        if (pair[1].length > 0) {
+            [lines addObject:[NSString stringWithFormat:@"%@: %@", pair[0], pair[1]]];
+        }
+    }
+    return [DiagnosticsReportSection sectionWithTitle:kInputSection lines:lines];
 }
 
 + (NSString *)redactString:(NSString *)input {

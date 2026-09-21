@@ -6,6 +6,7 @@
 //  Copyright © 2017 Moonlight Stream. All rights reserved.
 //
 #import "HIDSupport_Internal.h"
+#import "InputDiagnosticsLedger.h"
 #import "GamepadMenuGesture.h"
 #import "KeyboardMapResolver.h"
 
@@ -465,6 +466,8 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         self.inputDiagnosticsRawRelativeDeltaY = 0;
         self.inputDiagnosticsSentRelativeDeltaX = 0;
         self.inputDiagnosticsSentRelativeDeltaY = 0;
+        self.inputDiagnosticsRelativeMotionBySource = [NSMutableDictionary dictionary];
+        self.inputDiagnosticsAbsoluteMotionBySource = [NSMutableDictionary dictionary];
     }
 }
 
@@ -484,6 +487,13 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         snapshot.rawRelativeDeltaY = self.inputDiagnosticsRawRelativeDeltaY;
         snapshot.sentRelativeDeltaX = self.inputDiagnosticsSentRelativeDeltaX;
         snapshot.sentRelativeDeltaY = self.inputDiagnosticsSentRelativeDeltaY;
+        // Taken and cleared rather than read, like every other field here: a report that
+        // sampled the same sender twice would credit it twice, and one that sampled after a
+        // clear would show a sender that had already been counted.
+        snapshot.relativeMotionBySource = [self.inputDiagnosticsRelativeMotionBySource copy];
+        snapshot.absoluteMotionBySource = [self.inputDiagnosticsAbsoluteMotionBySource copy];
+        [self.inputDiagnosticsRelativeMotionBySource removeAllObjects];
+        [self.inputDiagnosticsAbsoluteMotionBySource removeAllObjects];
 
         self.inputDiagnosticsMouseMoveEvents = 0;
         self.inputDiagnosticsNonZeroRelativeEvents = 0;
@@ -584,6 +594,20 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     return traceId;
 }
 
+/// Count one packet under the sender that handed it over.
+///
+/// Under the diagnostics lock rather than atomic: the buckets are read whole by
+/// `consumeInputDiagnosticsSnapshot:`, which takes and clears them, and an atomic value in a
+/// dictionary still leaves that read halfway through a write.
+static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSString *, NSNumber *> *bucket,
+                                                     NSString *source) {
+    if (bucket == nil) {
+        return;
+    }
+    NSString *key = source.length > 0 ? source : @"unknown";
+    bucket[key] = @(bucket[key].unsignedIntegerValue + 1);
+}
+
 - (void)recordRelativeInputDiagnosticsFrom:(NSString *)source
                                  rawDeltaX:(CGFloat)rawDeltaX
                                  rawDeltaY:(CGFloat)rawDeltaY
@@ -610,6 +634,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
             self.inputDiagnosticsRelativeDispatches += 1;
             self.inputDiagnosticsSentRelativeDeltaX += sentDeltaX;
             self.inputDiagnosticsSentRelativeDeltaY += sentDeltaY;
+            HIDIncrementInputDiagnosticsBucket(self.inputDiagnosticsRelativeMotionBySource, source);
         }
     }
 
@@ -643,6 +668,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         if (diagnosticsEnabled) {
             self.inputDiagnosticsMouseMoveEvents += 1;
             self.inputDiagnosticsAbsoluteDispatches += 1;
+            HIDIncrementInputDiagnosticsBucket(self.inputDiagnosticsAbsoluteMotionBySource, source);
         }
     }
 
@@ -1491,8 +1517,27 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
         [self registerMouseCallbacks:mouse];
     }
 
+    [self recordMouseInputPathStateIntoLedger];
     [self tearDownCoreHIDMouseDriver];
     [self setupCoreHIDMouseDriverIfNeeded];
+}
+
+/// Write what the input path decided into the ledger the diagnostics report reads.
+///
+/// The ledger is written by the code that decides, not by the page that displays. Issue 24
+/// is what those two disagreeing costs: a strategy whose label promised HID and whose effect
+/// was to stop CoreHID, and a settings page that went on showing the default while a host
+/// nobody configured ran in the retired mode. A report assembled from display names would
+/// repeat the mistake, so this reads the same accessors the branches read.
+- (void)recordMouseInputPathStateIntoLedger {
+    NSString *hostUuid = self.host.uuid ?: @"";
+    NSNumber *storedValue = [SettingsClass persistedMouseDriverRawValueFor:hostUuid];
+    BOOL allowedByStrategy = self.useCoreHIDMouse;
+    [[InputDiagnosticsLedger sharedLedger] updateSummary:^(InputDiagnosticsSummary *summary) {
+        summary.mouseStrategyName = [SettingsClass mouseDriverStrategyNameFor:hostUuid];
+        summary.mouseStrategyStoredValue = storedValue != nil ? storedValue.integerValue : -1;
+        summary.coreHIDAllowedByStrategy = allowedByStrategy;
+    }];
 }
 
 - (void)setupCoreHIDMouseDriverIfNeeded {
@@ -1530,6 +1575,13 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
         (long)[SettingsClass mouseDriverFor:self.host.uuid],
         self.coreHIDMouseDriver.maximumReportRate,
         self.coreHIDMouseDriver.requestsListenAccessIfNeeded ? 1 : 0);
+    [[InputDiagnosticsLedger sharedLedger] updateSummary:^(InputDiagnosticsSummary *summary) {
+        // Named for the attempt, not the permission: the strategy can allow CoreHID and the
+        // session still never try, when the absolute pointer path takes the mouse instead.
+        summary.coreHIDWantedToStart = YES;
+        summary.coreHIDFailedAtRuntime = NO;
+        summary.coreHIDFailureReason = nil;
+    }];
     [self.coreHIDMouseDriver start];
 }
 
@@ -1577,6 +1629,13 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
         return;
     }
     self.lastReportedRelativeMotionSource = [sourceName copy];
+    // The same fact the status line shows, kept where the report can reach it after the
+    // window is gone. This is the line that answers "which path had my mouse" once there is
+    // no overlay left to look at.
+    [[InputDiagnosticsLedger sharedLedger] updateSummary:^(InputDiagnosticsSummary *summary) {
+        summary.lastMotionSource = [sourceName copy];
+        summary.lastMotionSourceAt = [NSDate date];
+    }];
     [SettingsClass updateMouseInputRuntimeStatusFor:self.host.uuid
                                         summaryKey:summaryKey
                                          detailKey:detailKey];
@@ -1660,6 +1719,10 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
 
     if (!self.coreHIDMouseDidDeliverMovement) {
         self.coreHIDMouseDidDeliverMovement = YES;
+        [[InputDiagnosticsLedger sharedLedger] updateSummary:^(InputDiagnosticsSummary *summary) {
+            summary.coreHIDDeliveredMovement = YES;
+            summary.coreHIDFailedAtRuntime = NO;
+        }];
         Log(LOG_I, @"CoreHID mouse active: first movement received");
         [[InputMonitoringPermissionManager sharedManager] noteCoreHIDDidBecomeActive];
         [self noteMotionSource:@"coreHIDMouse"
@@ -1712,6 +1775,10 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     NSString *safeMessage = messageKey.length > 0 ? messageKey : @"CoreHID Mouse input failed.";
     NSInteger configuredStrategy = [SettingsClass mouseDriverFor:self.host.uuid];
     self.coreHIDMouseRuntimeFailed = YES;
+    [[InputDiagnosticsLedger sharedLedger] updateSummary:^(InputDiagnosticsSummary *summary) {
+        summary.coreHIDFailedAtRuntime = YES;
+        summary.coreHIDFailureReason = safeReason;
+    }];
     if ([safeReason isEqualToString:@"permission-denied"]) {
         [[InputMonitoringPermissionManager sharedManager] noteCoreHIDPermissionFailureWithMessage:safeMessage];
     }
