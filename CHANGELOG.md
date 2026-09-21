@@ -19,7 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports a failure the tree does not have is worse than one that admits a gap. Folded
   steps are unfolded before they are read, which is what turned up two invocations whose
   flags live on the following line. `--all` runs the full constraint battery;
-  `--list` prints the commands it found.
+  `--list` prints the commands it found. The list is checked before the first gate
+  runs, because a sweep that quietly drops a gate is the failure this exists to end: a
+  call left folded, or written in a shape the reader does not know, is now reported
+  instead of gone. `--self-test` plants one of each, and it caught this script's own
+  first version, whose unfold pattern asked for two backslashes and matched none. What
+  it cannot yet do is protect itself in CI: the workflow it reads is the thing that can
+  break it silently, and a push that touches `.github/workflows` needs a token scoped
+  for workflows, which this one is not. `bash scripts/local-gates.sh --self-test` as a
+  step in the audit job is the missing line, and the workflow's existing
+  `bash -n scripts/*.sh` loop is what covers it until then.
 
 ### Fixed
 

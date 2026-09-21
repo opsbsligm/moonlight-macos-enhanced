@@ -42,7 +42,57 @@ gate_commands() {
          | sed 's/[[:space:]]*$//' | sort -u
 }
 
+# The list is the whole point of this script, so the list gets checked before any gate
+# runs. Both ways it can come up short are shapes this script has already shown: a call
+# the unfold left folded, because its flags went to the next line and the pattern
+# stopped at the backslash, and a call written in a shape the pattern does not know --
+# a quoted path, a variable, a wrapper -- which never matches at all. A runner that
+# quietly drops a gate is exactly how a green sweep and a red build coexist.
+check_the_list() {
+  local raw found folded
+  raw=$(unfold | grep -c 'python3 ["'"'"']\?scripts/')
+  found=$(gate_commands | wc -l | tr -d ' ')
+  folded=$(gate_commands | grep -c '\\$')
+  if [ "$folded" -ne 0 ]; then
+    echo "list error: $folded of $found commands are still folded" >&2
+    return 1
+  fi
+  if [ "$raw" -ne "$found" ]; then
+    echo "list error: the workflow calls a script $raw times, the list holds $found" >&2
+    return 1
+  fi
+}
+
+if [ "${1:-}" = "--self-test" ]; then
+  workflow=$(mktemp); trap 'rm -f "$workflow"' EXIT
+  # A call with its flags on the next line unfolds into one entry; a quoted call is a
+  # second call the pattern does not know, so the two together must be reported.
+  {
+    printf 'run: python3 scripts/one-tests.py\n'
+    printf '        python3 scripts/two-tests.py \\\n'
+    printf '          --tag v1\n'
+    printf 'run: python3 "scripts/three-tests.py"\n'
+  } > "$workflow"
+  if check_the_list >/dev/null 2>&1; then
+    echo "self-test failed: an unfolder that loses a quoted call still passed" >&2
+    exit 1
+  fi
+  {
+    printf 'run: python3 scripts/one-tests.py\n'
+    printf '        python3 scripts/two-tests.py \\\n'
+    printf '          --tag v1\n'
+  } > "$workflow"
+  if ! check_the_list; then
+    echo "self-test failed: a list with nothing missing was refused" >&2
+    exit 1
+  fi
+  echo "self-test ok: the list notices a call it cannot read, and accepts one it can"
+  exit 0
+fi
+
+
 [ "${1:-}" = "--list" ] && { gate_commands; exit 0; }
+check_the_list || exit 2
 gate_commands > /tmp/local-gates.list
 
 passed=0 failed=0 skipped=0
