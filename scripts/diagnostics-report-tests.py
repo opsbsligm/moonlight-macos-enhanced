@@ -26,6 +26,14 @@ path kept, the log section no longer giving way, an empty section no longer sayi
 long token redacted, the UUID prefix lost. Every one has to be caught. A gate that only
 passes tells you nothing about whether it would notice.
 
+ clang also runs its static analyzer over the same shipping source. The analyzer belongs to
+CI, where xcodebuild sweeps the whole tree, and it is the gate that went red one commit after
+this file was written: the report's section factory guarded its assignments with
+`if (section != nil)`, which gives the nullability checker a path where a method the header
+declares nonnull returns nil. This file needs nothing but Foundation, so the sweep that caught
+it costs a second here instead of arriving with the next build, and the defect it caught is
+planted back below to prove the pass would say so again.
+
 Finally the wiring is checked from the text of the tree, because the report is worth nothing
 if no failure path can reach it: the pairing failure alert has to offer it, the settings pane
 has to carry the button, the bridging header has to hand the class to Swift, and the collector
@@ -213,6 +221,46 @@ MUTATIONS = (
 )
 
 
+# The defect CI's analyzer job found on this file, planted back into the source to prove the
+# local pass bites. It is the shape the checker reads, not this file's wording: a nonnull
+# factory whose own guard hands the analyzer a branch where the object is nil at the return.
+ANALYZER_DEFECTS = (
+    ("a report section can come back nil from a factory the header promises nonnull",
+     """    DiagnosticsReportSection *section = [[self alloc] init];
+    section.title = [title copy] ?: @"";
+    section.lines = [lines copy] ?: @[];
+    return section;""",
+     """    DiagnosticsReportSection *section = [[self alloc] init];
+    if (section != nil) {
+        section.title = [title copy] ?: @"";
+        section.lines = [lines copy] ?: @[];
+    }
+    return section;"""),
+)
+
+
+def analyze(source, work, cc, sdk):
+    """Run clang's static analyzer over the builder on its own, and return its findings.
+
+    ARC is passed on purpose. The project builds with it, and the analyzer reads a manual
+    retain-count world differently: without the flag this file reports a dozen leaks and a
+    missing `dealloc` that the shipping build cannot have, and the finding worth seeing is
+    one line inside that noise.
+    """
+    for name, text in ((os.path.basename(HEADER), read(HEADER)),
+                       (os.path.basename(SOURCE), source)):
+        with open(os.path.join(work, name), "w", encoding="utf-8") as handle:
+            handle.write(text)
+    ran = subprocess.run(
+        [cc, "--analyze", "-x", "objective-c", "-fobjc-arc", "-isysroot", sdk, "-I", work,
+         os.path.join(work, os.path.basename(SOURCE)),
+         "-o", os.path.join(work, "analysis.plist")],
+        capture_output=True, text=True)
+    # The analyzer exits 0 while reporting findings, so the text is the verdict.
+    log = (ran.stdout + ran.stderr).strip()
+    return [line for line in log.splitlines() if "warning:" in line or "error:" in line], log
+
+
 def compile_and_run(source, work, cc, sdk):
     for name, text in ((os.path.basename(HEADER), read(HEADER)),
                        (os.path.basename(SOURCE), source),
@@ -243,6 +291,24 @@ def main():
         check(code == 0 and "RUN PASSED" in log,
               "the shipping builder passes every case"
               if code == 0 else "the shipping builder failed a case:" + log)
+
+    with tempfile.TemporaryDirectory() as work:
+        found, log = analyze(shipping, work, cc, sdk)
+        check(not found,
+              "the static analyzer finds nothing in the shipping builder"
+              if not found else
+              "the static analyzer found %d thing(s) in the shipping builder:\n    %s"
+              % (len(found), "\n    ".join(found)))
+
+    for label, old, new in ANALYZER_DEFECTS:
+        if old not in shipping:
+            check(False, "the analyzer defect '%s' no longer matches the source" % label)
+            continue
+        with tempfile.TemporaryDirectory() as work:
+            found, log = analyze(shipping.replace(old, new, 1), work, cc, sdk)
+            check(bool(found),
+                  "the analyzer reports it when %s" % label
+                  if found else "NOT CAUGHT (%s): %s" % (label, log))
 
     for label, old, new in MUTATIONS:
         if old not in shipping:
