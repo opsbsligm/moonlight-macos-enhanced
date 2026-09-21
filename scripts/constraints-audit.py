@@ -105,6 +105,29 @@ check(len(product_names) == 1
 check("CFBundleDisplayName" in info,
       "Info.plist carries a display name, so the disk name can stay ASCII")
 
+# Renaming the product renames the header the Swift compiler emits, because its default
+# name is `$(PRODUCT_NAME)-Swift.h`. Seventeen Objective-C files import that header under
+# the name it carried before the rename, and every build starting from a clean derived
+# data path -- the analyzer job and the render probe, both -- died in twenty-four seconds
+# on the mismatch, while a stale derived data path let a local build report success. The
+# name the compiler hands back is a compile-time contract, not a name a user reads, so the
+# product name moves and this one is pinned, and a pin nobody checks is a comment.
+GENERATED_SWIFT_HEADER = "Moonlight-Swift.h"
+pinned_headers = set(re.findall(r'SWIFT_OBJC_INTERFACE_HEADER_NAME\s*=\s*"?([^";]+)"?;', project))
+check(pinned_headers == {GENERATED_SWIFT_HEADER},
+      "the generated Swift header keeps the name the sources import, whatever the product is called"
+      if pinned_headers == {GENERATED_SWIFT_HEADER}
+      else "the project pins the generated header to %s" % sorted(pinned_headers))
+imported_headers = set(re.findall(
+    r'#import "([^"]+)"',
+    subprocess.run(["grep", "-rho", "--include=*.m", "--include=*.h",
+                    "-e", '#import "[^"]*-Swift\\.h"', "Limelight"],
+                   capture_output=True, text=True, cwd=root).stdout))
+check(imported_headers == {GENERATED_SWIFT_HEADER},
+      "no Objective-C file imports a generated Swift header the project does not emit"
+      if imported_headers == {GENERATED_SWIFT_HEADER}
+      else "sources import %s" % sorted(imported_headers))
+
 # The reader itself is a gate: its refusal is the half that protects issue 41, and a
 # refusal that no local command runs is discovered on a runner eight minutes later.
 identity = subprocess.run([sys.executable,

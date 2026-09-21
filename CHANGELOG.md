@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The product rename broke every build from a clean derived data path.** A
+  Swift generated header is named `$(PRODUCT_NAME)-Swift.h` by default, so
+  naming the bundle `MoonlightEnhanced.app` silently renamed the header to
+  `MoonlightEnhanced-Swift.h` while 17 Objective-C files went on importing
+  `Moonlight-Swift.h`. A stale derived data path made a local build report
+  success and hid this; the analyzer job and the render probe, which both start
+  from a clean path, failed in twenty-four seconds. The name the compiler hands
+  back is a compile-time contract rather than a name a user reads, so it is now
+  pinned to `Moonlight-Swift.h` in both configurations: the disk name moves, the
+  imports do not. `constraints-audit.py` compares the pin against every import of
+  it in the tree, and the battery re-plants both ways it can go wrong.
+
 - **A mouse strategy nobody chose used to be the one that switches CoreHID
   off (issue #24).** `MouseInputDriverStrategy` read its stored value with a
   `default:` case pointing at the retired `.compatibility` mode, so a host

@@ -467,6 +467,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac2;
 				PRODUCT_NAME = MoonlightEnhanced;
+				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Moonlight-Swift.h";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				// Swift needs the condition named, not just the preprocessor macro: without
 				// this, `#if DEBUG` in a .swift file silently compiles to nothing, which is how
@@ -531,6 +532,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac2;
 				PRODUCT_NAME = MoonlightEnhanced;
+				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Moonlight-Swift.h";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

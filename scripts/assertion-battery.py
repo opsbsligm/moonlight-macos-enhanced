@@ -216,6 +216,21 @@ def replace_nth(text, needle, repl, position, where):
             return text[:index] + repl + text[index + len(needle):]
 
 
+HEADER_PIN = '\t\t\t\tSWIFT_OBJC_INTERFACE_HEADER_NAME = "Moonlight-Swift.h";\n'
+
+
+def drift_the_pinned_header_name(text):
+    assert text.count(HEADER_PIN) == 2, "expected the header pin in both configurations"
+    return text.replace(HEADER_PIN,
+                        '\t\t\t\tSWIFT_OBJC_INTERFACE_HEADER_NAME = '
+                        '"MoonlightEnhanced-Swift.h";\n')
+
+
+def drop_the_pinned_header_name(text):
+    assert text.count(HEADER_PIN) == 2, "expected the header pin in both configurations"
+    return text.replace(HEADER_PIN, "")
+
+
 def offer_the_retired_strategy_again(text):
     return once(text, DISPLAY_ORDER, "the mouse strategy order").replace(
         DISPLAY_ORDER,
@@ -1712,6 +1727,12 @@ MUTATIONS = [
      AUDIT_GATE),
     ("strings-table-promises-a-path-again", EN_STRINGS, promise_a_path_the_sender_never_took,
      "the row that names a sender nobody credits comes back word for word", AUDIT_GATE),
+    ("generated-header-name-drifts", PBXPROJ, drift_the_pinned_header_name,
+     "the product rename moves the header the Swift compiler emits, and 17 imports break",
+     AUDIT_GATE),
+    ("generated-header-pin-dropped", PBXPROJ, drop_the_pinned_header_name,
+     "the pin disappears, so a clean derived data path dies in twenty-four seconds",
+     AUDIT_GATE),
 ]
 
 
