@@ -81,6 +81,16 @@ Not a promise, and not ordered by anything but how much of it is blocked on some
    hardware first) or remove the strategy and the promise with it. Its issue has no log
    attachment, so the reporter's setting remains unknown.
 4. **43** -- a design note before a pull request.
-5. **19, 28, 29, 33, 35** -- nothing to build. These need the diagnostics report the app
-   already produces, which suggests the next useful work is making the app offer it
-   unprompted after a failure rather than waiting for a menu item.
+5. **19, 28, 29, 33, 35** -- nothing to build, and now an excuse less. The app builds a
+   pasteable report (`Settings` -> App -> Debug Log -> `Copy Diagnostics Report…`, and the
+   same button inside the pairing failure alert): version and build, macOS build, model,
+   whether Gatekeeper is running it out of a translocation mount, the live answers for Input
+   Monitoring / Accessibility / Screen Recording, the declared Bonjour services including
+   whether `_nvstream._tcp` is among them, the hosts in the store with their pair and online
+   state, and the tail of its own log. A PIN, a password, a certificate-shaped blob, a MAC
+   address, a UUID and the home path are replaced by a marker before the text leaves the
+   process, and the host MAC, the pinned certificate and the client identifier are never read
+   (`scripts/diagnostics-report-tests.py` plants each of those secrets and refuses the build
+   if any survives). What these five issues still need is a reporter who attaches it: the
+   app can now answer the question, but only the person with the failing machine can press
+   the button.

@@ -217,13 +217,28 @@ Then:
 
 ## 🐛 Reporting Issues
 
-Please include:
-- macOS version
-- Mac model / chip
-- Host software and version
+**Copy the diagnostics report first.** `Settings → App → Debug Log → Copy Diagnostics
+Report…` puts a ready-to-paste report on the clipboard, and a pairing failure offers the
+same button in its own alert. One report carries the app version and build, the macOS
+build, the Mac model, whether Gatekeeper is running the app out of a read-only
+translocation mount, the current answers from Input Monitoring / Accessibility / Screen
+Recording, the Bonjour services the bundle declares (including whether `_nvstream._tcp`
+is one of them, which is the first question an "another client finds my host" report
+needs), the hosts in the store with their paired and online state, and the tail of the
+app's own log.
+
+The report is redacted before it leaves the app: a pairing PIN, a password or token, a
+certificate-shaped blob, a MAC address, a UUID (its first eight characters stay, so two
+reports about one client can be matched), and your home folder path are replaced with a
+marker such as `[redacted-pin]`. The host MAC address, the pinned certificate and the
+client identifier are never read at all. Host names and addresses are included on
+purpose -- a connection report without them cannot be triaged.
+
+Then add, if you can:
+- Host software and version (Sunshine or GeForce Experience)
 - Whether third-party mouse tools such as Mos, BetterMouse, or SteerMouse are active
 - Reproduction steps
-- Logs or screenshots
+- What you expected to happen
 
 For input / wheel / mouse bugs, it is especially helpful to include:
 - The log exported from `Settings → App → Debug Log`

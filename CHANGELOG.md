@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A failure now leaves something behind: a diagnostics report the player
+  can paste (issues 19, 28, 33, 35).** Five open upstream issues are stuck
+  in the same place: the report describes a symptom, the maintainer asks for
+  the machine's answers, and the thread never gets them, because assembling
+  them by hand is a chore nobody will do while their game is down. The app
+  assembles it now. One action builds English text carrying the app version
+  and build, the macOS build, the model and CPU, whether Gatekeeper is
+  running the app out of a read-only `AppTranslocation` mount (the condition
+  that silently voids the grants a player believes they gave), what the
+  system answers right now for Input Monitoring (`IOHIDCheckAccess` for both
+  listen and post, plus the CoreGraphics preflight), Accessibility and
+  Screen Recording, which Bonjour services the bundle declares and whether
+  `_nvstream._tcp` is one of them -- the first question an "every other
+  client finds my host" report has -- the hosts in the store with their
+  paired and online state, and the tail of the app's own debug log, read from
+  the end of the file rather than whole.
+  `Limelight/macOS/Helpers/DiagnosticsReportBuilder.m` holds the shape and
+  the rules and `DiagnosticsReportBuilder+Live.m` the measurements, because a
+  rule that needs a running app cannot be driven by a harness.
+- **What that report may not carry is executed, not reviewed.** A report is
+  code writing down whatever it was handed, so no amount of reading shows a
+  PIN leaving; `scripts/diagnostics-report-tests.py` compiles the shipping
+  builder and drives it with planted secrets -- a PIN stated in a sentence, a
+  password, a pairing secret, a base64 certificate, a MAC address, a UUID,
+  another user's home path, this machine's -- and every one has to come back
+  replaced by a marker such as `[redacted-pin]`. Two controls matter as much:
+  `NSLocalNetworkUsageDescription` is longer than the blob threshold and all
+  letters, so it has to survive a rule written for base64, and an ordinary
+  line has to arrive unchanged. The size policy is played too: a report
+  built from four thousand log lines has to fit what an issue body takes, and
+  what gives way is the oldest lines -- the version, the macOS build, the
+  permission answers and the newest lines may not. Eight defects are planted
+  one at a time in the source under test (newest lines replaced by oldest,
+  the PIN rule narrowed to a length no host uses, the blob pass removed, the
+  home path kept, the log block no longer giving way, an empty section no
+  longer saying so, every long token treated as a secret, the UUID prefix
+  lost) and all eight are caught. Three fields are never read, and the gate
+  refuses the file if anyone starts: the host MAC address, the pinned
+  certificate, the client UUID.
+- **It is offered where the app already knows it failed.** The pairing
+  failure alert carries a `Copy Diagnostics` button beside `OK`, because that
+  alert is the moment a report is worth having, and the settings pane's Debug
+  Log section gained `Copy Diagnostics Report…`, which says afterwards
+  whether the clipboard took the text -- a button that only appears to work
+  stays invisible until somebody replies asking for the information that
+  never left the machine. The English text is deliberate: the reader is
+  whoever triages the report, not the player whose language the menus are in.
+
 - **10-bit samples can now carry an SDR picture (issue #22).** The Qt client has two
   controls here and this client had one: HDR was the only route to a 10-bit format bit,
   so the combination the protocol plainly allows -- 10-bit encoding of an ordinary
