@@ -612,7 +612,7 @@ final class InputMonitoringPermissionManager: NSObject, ObservableObject {
         alert.messageText = localized("CoreHID Permission Required", fallback: "CoreHID Permission Required")
         alert.informativeText = localized(
             "CoreHID Permission Alert Message",
-            fallback: "CoreHID needs Input Monitoring to deliver high-polling mouse input. Moonlight is currently using the compatibility path. Grant access in System Settings, then re-enter the stream."
+            fallback: "CoreHID needs Input Monitoring to deliver high-polling mouse input. Until that access is granted this source stays off, and Moonlight does not claim a replacement for it. Grant access in System Settings, then re-enter the stream."
         )
         alert.addButton(withTitle: localized("Open Input Monitoring", fallback: "Open Input Monitoring"))
         alert.addButton(withTitle: localized("Later", fallback: "Later"))

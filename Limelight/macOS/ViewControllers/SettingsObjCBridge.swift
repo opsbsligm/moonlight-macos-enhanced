@@ -886,10 +886,6 @@ class SettingsClass: NSObject {
     return strategy == .coreHID || strategy == .automatic
   }
 
-  @objc static func shouldUseCompatibilityMouse(for key: String) -> Bool {
-    mouseInputStrategy(for: key) == .compatibility
-  }
-
   @objc static func coreHIDMaxMouseReportRate(for key: String) -> Int {
     if let settings = Settings.getSettings(for: key) {
       return settings.coreHIDMaxMouseReportRate ?? SettingsModel.defaultCoreHIDMaxMouseReportRate

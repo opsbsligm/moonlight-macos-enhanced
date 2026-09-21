@@ -91,7 +91,6 @@
 "Notched" = "分段";
 "High Precision" = "高精度";
 "Adaptive" = "自适应";
-"Mouse Input Strategy Compatibility detail" = "使用 HID 兼容的 AppKit 路径处理鼠标移动，并保留原生滚轮语义。";
 "Mouse Input Strategy GameController detail" = "使用 MFI / GameController 鼠标路径，适合兼容性排障。";
 "Mouse Input Strategy CoreHID detail" = "在 macOS 15 或更高版本强制使用 CoreHID 鼠标移动；若不可用会自动回退。";
 "Mouse Input Strategy Automatic CoreHID detail" = "自动模式会优先使用 CoreHID，其次回退到 HID；MFI 保留为最后的保底路径。";
@@ -150,10 +149,10 @@
 "Mouse Runtime Detail GameController Active" = "当前相对鼠标移动来自 GameController 鼠标路径。";
 "Mouse Runtime Path Absolute Active" = "绝对指针同步已生效";
 "Mouse Runtime Detail Absolute Active" = "远程桌面指针同步当前正在使用绝对指针路径。";
-"Mouse Runtime Path AppKit Fallback" = "AppKit 回退路径已生效";
-"Mouse Runtime Detail AppKit Fallback Permission" = "由于未授予输入监控权限，CoreHID 无法启动，Moonlight 已回退到 AppKit 兼容路径。";
-"Mouse Runtime Detail AppKit Fallback UnsupportedOS" = "CoreHID 需要 macOS 15 或更高版本，Moonlight 已回退到 AppKit 兼容路径。";
-"Mouse Runtime Detail AppKit Fallback Runtime" = "CoreHID 运行时失败，Moonlight 已回退到 AppKit 兼容路径。";
+"Mouse Runtime Path CoreHID Stopped" = "CoreHID 已停止（未确认移动来源）";
+"Mouse Runtime Detail CoreHID Stopped Permission" = "未授予输入监控权限，CoreHID 无法启动；没有观测到替代的移动来源。";
+"Mouse Runtime Detail CoreHID Stopped UnsupportedOS" = "CoreHID 需要 macOS 15 或更高版本，在本机上它不是移动来源。";
+"Mouse Runtime Detail CoreHID Stopped Runtime" = "CoreHID 在运行中停止。只有真正发出过移动的发送者，才会被写进这一行。";
 "Scroll Runtime Path Idle" = "暂无近期滚动路径";
 "Scroll Runtime Detail Idle" = "在串流中滚动后，这里会显示当前是滚轮、连续手势还是改写滚动输入。";
 "Scroll Runtime Path Wheel" = "离散滚轮路径已生效";

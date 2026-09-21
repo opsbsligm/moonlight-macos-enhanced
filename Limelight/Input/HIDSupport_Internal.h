@@ -177,6 +177,10 @@
 @property (nonatomic) CGFloat relativeMotionResidualY;
 @property (nonatomic) CGFloat relativeDeltaResidualX;
 @property (nonatomic) CGFloat relativeDeltaResidualY;
+// Which sender the settings status line is currently crediting, if any. The line claims
+// who is moving the pointer, so only the code that actually hands motion to the host may
+// write it, and nil means the line is not crediting anyone.
+@property (nonatomic, copy, nullable) NSString *lastReportedRelativeMotionSource;
 // The emulated pointer keeps its own debt, separate from the mouse's: a stick held a
 // little off centre asks for one and eight tenths pixels a frame, and the residue is
 // what makes the cursor travel at the rate the settings promise instead of the two
@@ -230,6 +234,9 @@
                                          y:(short)y
                                      width:(short)width
                                     height:(short)height;
+- (void)noteMotionSource:(NSString *)sourceName
+              summaryKey:(NSString *)summaryKey
+               detailKey:(NSString *)detailKey;
 - (void)dispatchRelativeMouseDeltaX:(CGFloat)deltaX
                              deltaY:(CGFloat)deltaY
                           sourceTag:(NSString *)sourceTag;

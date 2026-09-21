@@ -14,7 +14,11 @@ import SwiftUI
 import VideoToolbox
 
 @objc enum MouseInputDriverStrategy: Int, CaseIterable {
-  case compatibility = 0
+  // RawValue 0 is a hole on purpose. It was `compatibility`, whose settings label read
+  // "HID" while its only effect was to stop CoreHID from starting -- the opposite of its
+  // label -- and whose single ObjC reader, `shouldUseCompatibilityMouse`, had no caller
+  // anywhere in `Limelight/` (issue 24). Keeping the number reserved is what lets a stored
+  // 0 be recognised as retired rather than reinterpreted as some other mode.
   case gameController = 1
   case coreHID = 2
   case automatic = 3
@@ -30,7 +34,13 @@ import VideoToolbox
     case MouseInputDriverStrategy.automatic.rawValue:
       self = .automatic
     default:
-      self = .compatibility
+      // Covers every way a value can be unusable: never stored, stored as the retired 0,
+      // stored as the string "HID" that menu no longer lists, written by a future build,
+      // or corrupted. Each of those used to land on the retired mode, so a host nobody
+      // ever configured silently had CoreHID switched off while the settings page still
+      // displayed the default strategy. Unusable means nobody chose, and nobody chose
+      // means the default.
+      self = Self.defaultStrategy
     }
   }
 
@@ -42,8 +52,6 @@ import VideoToolbox
 
   var displayKey: String {
     switch self {
-    case .compatibility:
-      return "HID"
     case .gameController:
       return "MFI"
     case .coreHID:
@@ -57,7 +65,7 @@ import VideoToolbox
     displayOrder.map(\.displayKey)
   }
 
-  static let displayOrder: [Self] = [.automatic, .coreHID, .compatibility, .gameController]
+  static let displayOrder: [Self] = [.automatic, .coreHID, .gameController]
 }
 
 @objc enum PhysicalWheelScrollMode: Int, CaseIterable {

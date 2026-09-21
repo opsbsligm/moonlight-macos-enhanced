@@ -51,6 +51,11 @@ Each check below corresponds to a defect that shipped at some point:
   * a key the mapping table has no entry for was translated to 0 and forwarded,
     so the host received a virtual key that exists on no keyboard and held it:
     the ISO section key and the contextual-menu key were both missing rows.
+  * a locked pointer was reported immovable (issue 24), and the tree answered with two
+    claims: an unrecognised stored mouse strategy fell through to the mode that switches
+    CoreHID off, and the status line credited motion to a sender nobody had observed --
+    the AppKit line was written where the event arrived and a failed CoreHID named a
+    replacement nothing had measured.
   * the capability matrix asked VideoToolbox whether a feature is supported and
     showed that answer, while the same configuration reported zero interpolation
     slots and no supported scale factor at the stream's size, so the settings page
@@ -362,6 +367,71 @@ def swift_block(text, declaration):
                 return text[opening:index + 1]
         index += 1
     raise AssertionError("unbalanced braces after " + declaration)
+
+
+# Issue 24 is a locked pointer that cannot be moved at all, and two things in this tree
+# made that report harder to act on than the missing feature itself. A stored mouse
+# strategy this client does not recognise used to fall through to the strategy whose label
+# read "HID" -- the strategy whose only effect was to switch CoreHID off, and whose single
+# ObjC reader had no caller anywhere in `Limelight/`. And the runtime status line credited
+# motion to a sender nobody had observed: the AppKit line was written where the pointer
+# event arrived, which is upstream of every reason that event is still dropped, and a
+# failed CoreHID named a replacement path that nothing had seen deliver anything. Both were
+# claims with no measurement behind them, and the earlier version of this file repeated the
+# second claim while trying to document it -- an assertion written from a reading of the
+# strings table instead of the sender is how a wrong fact gets protected by a gate.
+derived_text = open(os.path.join(root, "Limelight/macOS/ViewControllers/"
+                                 "SettingsModel+DerivedValues.swift"),
+                    encoding="utf-8").read()
+strategy_block = swift_block(derived_text, "MouseInputDriverStrategy")
+strategy_init = strategy_block.split("init(persistedRawValue", 1)[-1].split("init(selection", 1)[0]
+check("self = Self.defaultStrategy" in strategy_init
+      and ".compatibility" not in strategy_init,
+      "an unusable stored mouse strategy falls back to the default, not to the retired mode")
+check("case compatibility" not in strategy_block,
+      "the strategy that only switched CoreHID off is retired, so it cannot be re-added as a case")
+check(".compatibility" not in strategy_block.split("displayOrder")[-1],
+      "the retired strategy is not offered by the settings picker")
+
+bridge_text = open(os.path.join(root, "Limelight/macOS/ViewControllers/"
+                                "SettingsObjCBridge.swift"), encoding="utf-8").read()
+check("shouldUseCompatibilityMouse" not in bridge_text,
+      "the reader that had no caller is not drafted back into the bridge")
+
+# A string the runtime never asks for is not documentation, it is a claim waiting to be
+# quoted. These rows stated which path would move the pointer, and no sender wrote them.
+RETIRED_MOUSE_ROWS = ('"Mouse Input Strategy Compatibility detail"',
+                      '"Mouse Runtime Path AppKit Fallback"',
+                      '"Mouse Runtime Detail AppKit Fallback')
+MOUSE_ROW_LIES = ("HID-compatible AppKit path", "使用 HID 兼容的 AppKit 路径",
+                  "fell back to the AppKit compatibility path", "已回退到 AppKit 兼容路径")
+OBSERVED_MOUSE_ROWS = ('"Mouse Runtime Path CoreHID Stopped"',
+                       '"Mouse Runtime Detail CoreHID Stopped Permission"',
+                       '"Mouse Runtime Detail CoreHID Stopped UnsupportedOS"',
+                       '"Mouse Runtime Detail CoreHID Stopped Runtime"')
+for table_name, table_path in (("en", "Limelight/macOS/en.lproj/Localizable.strings"),
+                               ("zh-Hans", "Limelight/macOS/zh-Hans.lproj/Localizable.strings")):
+    table = open(os.path.join(root, table_path), encoding="utf-8").read()
+    check(not any(row in table for row in RETIRED_MOUSE_ROWS),
+          "%s carries no mouse row that names a sender nobody credits" % table_name)
+    check(not any(lie in table for lie in MOUSE_ROW_LIES),
+          "%s does not keep a sentence that promised a path it never measured" % table_name)
+    check(all(row in table for row in OBSERVED_MOUSE_ROWS),
+          "%s states CoreHID stopping without naming a replacement" % table_name)
+
+hid_text = open(os.path.join(root, "Limelight/Input/HIDSupport.m"), encoding="utf-8").read()
+failure_body = method_body(hid_text, "- (void)coreHIDMouseDriver:(CoreHIDMouseDriver *)driver\n         didFailWithReason:")
+check("AppKit" not in failure_body and "CoreHID Stopped" in failure_body,
+      "a CoreHID failure reports what it observed and leaves the sender line uncredited")
+dispatcher_body = method_body(hid_text, "- (void)dispatchRelativeMouseDeltaX:(CGFloat)deltaX")
+check("noteMotionSource" in dispatcher_body and "LiSendMouseMoveEventCtx" in dispatcher_body
+      and dispatcher_body.index("LiSendMouseMoveEventCtx") < dispatcher_body.rindex("noteMotionSource"),
+      "the relative sender credits the status line after the packet, not before it")
+pointer_text = open(os.path.join(root, "Limelight/Input/HIDSupport+Pointer.m"),
+                    encoding="utf-8").read()
+moved_body = method_body(pointer_text, "- (void)mouseMoved:(NSEvent *)event")
+check("updateMouseInputRuntimeStatusFor" not in moved_body,
+      "the pointer path no longer credits a sender on the way in, before the motion survives")
 
 
 presenter_path = "Limelight/macOS/ViewControllers/LiquidGlass/SettingsOverlayPresenter.swift"

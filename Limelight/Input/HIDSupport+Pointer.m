@@ -618,9 +618,9 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
                 HIDDispatchInput(me, inputCtx, ^{
                     LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
                 });
-                [SettingsClass updateMouseInputRuntimeStatusFor:me.host.uuid
-                                                    summaryKey:@"Mouse Runtime Path GameController Active"
-                                                     detailKey:@"Mouse Runtime Detail GameController Active"];
+                [me noteMotionSource:@"gameController"
+                          summaryKey:@"Mouse Runtime Path GameController Active"
+                           detailKey:@"Mouse Runtime Detail GameController Active"];
             }
         }
     }
@@ -832,9 +832,9 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
                                                y:hostY
                                            width:referenceWidth
                                           height:referenceHeight];
-        [SettingsClass updateMouseInputRuntimeStatusFor:self.host.uuid
-                                            summaryKey:@"Mouse Runtime Path Absolute Active"
-                                             detailKey:@"Mouse Runtime Detail Absolute Active"];
+        [self noteMotionSource:@"absolute"
+                    summaryKey:@"Mouse Runtime Path Absolute Active"
+                     detailKey:@"Mouse Runtime Detail Absolute Active"];
         HIDDispatchInput(self, inputCtx, ^{
             LiSendMousePositionEventCtx(inputCtx, hostX, hostY, referenceWidth, referenceHeight);
         });
@@ -844,9 +844,8 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
             self.coreHIDMouseDriver.secondsSinceLastMovementEvent < 0.25) {
             return;
         }
-        [SettingsClass updateMouseInputRuntimeStatusFor:self.host.uuid
-                                            summaryKey:@"Mouse Runtime Path AppKit Active"
-                                             detailKey:@"Mouse Runtime Detail AppKit Active"];
+        // No status line here: whether this delta reaches the host is decided inside the
+        // dispatcher, which credits itself once it does.
         [self dispatchRelativeMouseDeltaX:event.deltaX
                                    deltaY:event.deltaY
                                 sourceTag:@"mouseMoved"];

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A mouse strategy nobody chose used to be the one that switches CoreHID
+  off (issue #24).** `MouseInputDriverStrategy` read its stored value with a
+  `default:` case pointing at the retired `.compatibility` mode, so a host
+  with nothing stored, a number written by a future build, or a corrupted
+  value was handed the one mode whose observable effect is that CoreHID never
+  starts -- while the settings page displayed the default, so nothing on
+  screen said the pointer had been left to a single source. An unrecognised
+  value now means "nobody chose yet" and lands on the default strategy.
+- **The input path line is now written by whoever moved the pointer
+  (issue #24).** The `AppKit compatibility active` sentence was written where
+  a pointer event arrived, which is upstream of every reason that event is
+  still dropped before the host sees it: suppressed inside the warp window,
+  quantised down to a zero-pixel move, or routed to the absolute path
+  instead. A CoreHID start failure wrote an `AppKit fallback active` line on
+  top of that, naming a replacement nothing had observed. Each sender now
+  credits the line itself, after its packet is handed to the host, and a
+  CoreHID failure reports only that CoreHID stopped, with the reason, leaving
+  the sender line uncredited until a sender appears.
+
+### Removed
+
+- **The mouse strategy labelled "HID" (issue #24).** Its label said HID and
+  its only effect was to stop CoreHID, the client's highest-polling relative
+  mouse source, from starting; its single Objective-C reader,
+  `shouldUseCompatibilityMouse`, had no caller anywhere in `Limelight/`, so
+  choosing it changed nothing else. A setting whose label recommends the
+  opposite of its effect is not a troubleshooting option, and the settings
+  row that used to describe it was an orphan string no code ever asked for.
+  The case is retired with its raw value held reserved, so a stored `0`, the
+  string `HID` the menu no longer lists, and an absent value all resolve to
+  the default instead of being reinterpreted as some other mode.
+
+### Performance
+
+- **The input path line stops rewriting itself.** The `GameController active`
+  and `Absolute pointer sync active` lines were written once per frame of
+  pointer motion, which re-encoded the same sentence into settings sixty
+  times a second. A sender now credits itself once, and it is the previous
+  sender's credit that makes the next change visible.
+
 ### Changed
 
 - **The build no longer replaces the Qt client's app (issue #41).** Both

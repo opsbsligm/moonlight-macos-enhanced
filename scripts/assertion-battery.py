@@ -48,6 +48,7 @@ CRED_SCAN = os.path.join(root, "scripts", "credential-scan-audit.py")
 HELD_PAIR = os.path.join(root, "scripts",
                           "held-modifier-keyboard-pair-tests.py")
 TOOLCHAIN = os.path.join(root, "scripts", "apple_toolchain.py")
+EN_STRINGS = os.path.join(root, "Limelight", "macOS", "en.lproj", "Localizable.strings")
 INTERNAL = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                         "StreamViewController_Internal.h")
 WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
@@ -184,6 +185,17 @@ TRANSLATION_ACTION_EXIT = (
     "    return NO;\n}\n")
 
 
+DISPLAY_ORDER = "static let displayOrder: [Self] = [.automatic, .coreHID, .gameController]"
+COREHID_STOP_LINE = 'summaryKey:@"Mouse Runtime Path CoreHID Stopped"'
+DISPATCHER_CREDIT = (
+    '    if ([sourceTag isEqualToString:@"mouseMoved"]) {\n'
+    '        [self noteMotionSource:sourceTag\n'
+    '                    summaryKey:@"Mouse Runtime Path AppKit Active"\n'
+    '                     detailKey:@"Mouse Runtime Detail AppKit Active"];\n'
+    '    }')
+STOPPED_RUNTIME_ROW = '"Mouse Runtime Detail CoreHID Stopped Runtime" = '
+
+
 def once(text, needle, where):
     if text.count(needle) != 1:
         raise SystemExit("anchor found %d times, expected 1: %s in %s"
@@ -202,6 +214,49 @@ def replace_nth(text, needle, repl, position, where):
         seen += 1
         if seen == position:
             return text[:index] + repl + text[index + len(needle):]
+
+
+def offer_the_retired_strategy_again(text):
+    return once(text, DISPLAY_ORDER, "the mouse strategy order").replace(
+        DISPLAY_ORDER,
+        "static let displayOrder: [Self] = [.automatic, .coreHID, .compatibility, "
+        ".gameController]", 1)
+
+
+def strand_an_unconfigured_host(text):
+    anchor = ("      self = Self.defaultStrategy\n    }\n  }\n\n  init(selection: String) {")
+    once(text, anchor, "the mouse strategy fallback")
+    return text.replace("      self = Self.defaultStrategy\n    }\n  }\n\n  init(selection: String) {",
+                        "      self = .compatibility\n    }\n  }\n\n  init(selection: String) {", 1)
+
+
+def name_a_sender_that_was_never_seen(text):
+    return once(text, COREHID_STOP_LINE, "the CoreHID stop line").replace(
+        COREHID_STOP_LINE, 'summaryKey:@"Mouse Runtime Path AppKit Fallback"', 1)
+
+
+def uncredit_the_sender_that_sent(text):
+    return once(text, DISPATCHER_CREDIT, "the dispatcher's credit").replace(
+        DISPATCHER_CREDIT, "    // (credit removed)", 1)
+
+
+def credit_the_sender_on_the_way_in(text):
+    anchor = ("        // No status line here: whether this delta reaches the host is decided inside the\n"
+              "        // dispatcher, which credits itself once it does.\n")
+    once(text, anchor, "the AppKit dispatch site")
+    return text.replace(anchor, (
+        '        [SettingsClass updateMouseInputRuntimeStatusFor:self.host.uuid\n'
+        '                                            summaryKey:@"Mouse Runtime Path AppKit Active"\n'
+        '                                             detailKey:@"Mouse Runtime Detail AppKit Active"];\n'), 1)
+
+
+def promise_a_path_the_sender_never_took(text):
+    start = once(text, STOPPED_RUNTIME_ROW, "the CoreHID stop detail").index(
+        STOPPED_RUNTIME_ROW)
+    end = text.index('";', start) + 2
+    return text[:start] + (
+        '"Mouse Runtime Detail AppKit Fallback Runtime" = "CoreHID failed at runtime, '
+        'so Moonlight fell back to the AppKit compatibility path.";') + text[end:]
 
 
 def neuter_if(text):
@@ -1640,6 +1695,23 @@ MUTATIONS = [
      pair_step_dropped_from_ci,
      "CI stops running the held-modifier pair harness while the aggregate does",
      AUDIT_GATE),
+    ("retired-mouse-strategy-offered-again", DERIVED, offer_the_retired_strategy_again,
+     "the picker offers the strategy whose label said HID and whose effect switched CoreHID off",
+     AUDIT_GATE),
+    ("unconfigured-host-stranded-on-the-retired-mode", DERIVED, strand_an_unconfigured_host,
+     "a host nobody configured lands in the mode that strands a locked pointer (issue 24)",
+     AUDIT_GATE),
+    ("core-hid-failure-names-a-replacement-again", HID, name_a_sender_that_was_never_seen,
+     "a driver failure reports a sender that nothing observed delivering motion", AUDIT_GATE),
+    ("relative-sender-never-credited", HID, uncredit_the_sender_that_sent,
+     "the line that says who moved the pointer stops being written by who moved it",
+     AUDIT_GATE),
+    ("sender-credited-before-the-motion-survives", POINTER_FILE,
+     credit_the_sender_on_the_way_in,
+     "a pointer event that is dropped downstream still credits the AppKit path",
+     AUDIT_GATE),
+    ("strings-table-promises-a-path-again", EN_STRINGS, promise_a_path_the_sender_never_took,
+     "the row that names a sender nobody credits comes back word for word", AUDIT_GATE),
 ]
 
 

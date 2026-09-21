@@ -91,7 +91,6 @@
 "Notched" = "Notched";
 "High Precision" = "High Precision";
 "Adaptive" = "Adaptive";
-"Mouse Input Strategy Compatibility detail" = "Uses the HID-compatible AppKit path for mouse movement and native wheel semantics.";
 "Mouse Input Strategy GameController detail" = "Uses the MFI / GameController mouse path for compatibility-focused troubleshooting.";
 "Mouse Input Strategy CoreHID detail" = "Forces CoreHID mouse movement on macOS 15 or later, with automatic fallback if CoreHID is unavailable.";
 "Mouse Input Strategy Automatic CoreHID detail" = "Automatic uses CoreHID first, then HID. MFI remains available as the last fallback path.";
@@ -150,10 +149,10 @@
 "Mouse Runtime Detail GameController Active" = "Relative mouse movement is currently coming from the GameController mouse path.";
 "Mouse Runtime Path Absolute Active" = "Absolute pointer sync active";
 "Mouse Runtime Detail Absolute Active" = "Remote desktop pointer sync is currently using the absolute pointer path.";
-"Mouse Runtime Path AppKit Fallback" = "AppKit fallback active";
-"Mouse Runtime Detail AppKit Fallback Permission" = "CoreHID could not start because Input Monitoring access was denied, so Moonlight fell back to the AppKit compatibility path.";
-"Mouse Runtime Detail AppKit Fallback UnsupportedOS" = "CoreHID requires macOS 15 or later, so Moonlight fell back to the AppKit compatibility path.";
-"Mouse Runtime Detail AppKit Fallback Runtime" = "CoreHID failed at runtime, so Moonlight fell back to the AppKit compatibility path.";
+"Mouse Runtime Path CoreHID Stopped" = "CoreHID stopped; motion source unconfirmed";
+"Mouse Runtime Detail CoreHID Stopped Permission" = "CoreHID could not start because Input Monitoring access was denied. No replacement sender has been observed.";
+"Mouse Runtime Detail CoreHID Stopped UnsupportedOS" = "CoreHID needs macOS 15 or later, so it is not the sender on this system.";
+"Mouse Runtime Detail CoreHID Stopped Runtime" = "CoreHID stopped at runtime. This line names a sender only once that sender has delivered motion.";
 "Scroll Runtime Path Idle" = "No recent scroll path";
 "Scroll Runtime Detail Idle" = "Scroll during a stream to see whether Moonlight is handling wheel, gesture, or rewritten scroll input.";
 "Scroll Runtime Path Wheel" = "Discrete wheel active";

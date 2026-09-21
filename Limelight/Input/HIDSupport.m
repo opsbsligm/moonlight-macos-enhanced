@@ -1520,6 +1520,9 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     self.coreHIDMouseDriver.delegate = self;
     self.coreHIDMouseDriver.maximumReportRate = [SettingsClass coreHIDMaxMouseReportRateFor:self.host.uuid];
     self.coreHIDMouseDriver.requestsListenAccessIfNeeded = NO;
+    // Pending is a state of the driver, not a sender, so it may not leave a sender's
+    // credit behind: the line has to be free to name whoever delivers the next motion.
+    self.lastReportedRelativeMotionSource = nil;
     [SettingsClass updateMouseInputRuntimeStatusFor:self.host.uuid
                                         summaryKey:@"Mouse Runtime Path CoreHID Pending"
                                          detailKey:@"Mouse Runtime Detail CoreHID Pending"];
@@ -1539,6 +1542,9 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     self.coreHIDMouseDriver.delegate = nil;
     self.coreHIDMouseDriver = nil;
     self.coreHIDMouseDidDeliverMovement = NO;
+    // Reconfiguring retires the credit along with the driver, so the replacement gets to
+    // say who it is instead of inheriting the name of a sender that no longer exists.
+    self.lastReportedRelativeMotionSource = nil;
     HIDInvalidateCoreHIDFreeMouseAbsoluteSync(self);
 }
 
@@ -1553,6 +1559,27 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
 - (void)resetRelativeMotionResidualForHIDQueueConsumer {
     self.relativeDeltaResidualX = 0.0;
     self.relativeDeltaResidualY = 0.0;
+}
+
+/** Credit the status line to whoever really handed motion to the host.
+
+ * Two things this fixes by construction. The AppKit line used to be written where the
+ * pointer event arrived, which is upstream of every reason that event can still be
+ * dropped -- suppressed inside the warp window, quantised down to a zero-pixel move, or
+ * routed to the absolute path instead -- so the line could claim a sender that sent
+ * nothing; and the GameController and absolute lines were written on every frame, which
+ * rewrote the same sentence into settings sixty times a second. A sender credits itself
+ * once, and the previous sender's credit is what makes the next change visible. */
+- (void)noteMotionSource:(NSString *)sourceName
+              summaryKey:(NSString *)summaryKey
+               detailKey:(NSString *)detailKey {
+    if ([self.lastReportedRelativeMotionSource isEqualToString:sourceName]) {
+        return;
+    }
+    self.lastReportedRelativeMotionSource = [sourceName copy];
+    [SettingsClass updateMouseInputRuntimeStatusFor:self.host.uuid
+                                        summaryKey:summaryKey
+                                         detailKey:detailKey];
 }
 
 - (void)dispatchRelativeMouseDeltaX:(CGFloat)deltaX
@@ -1603,6 +1630,11 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     HIDDispatchInput(self, inputCtx, ^{
         LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
     });
+    if ([sourceTag isEqualToString:@"mouseMoved"]) {
+        [self noteMotionSource:sourceTag
+                    summaryKey:@"Mouse Runtime Path AppKit Active"
+                     detailKey:@"Mouse Runtime Detail AppKit Active"];
+    }
 }
 
 - (void)coreHIDMouseDriver:(CoreHIDMouseDriver *)driver
@@ -1630,9 +1662,9 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
         self.coreHIDMouseDidDeliverMovement = YES;
         Log(LOG_I, @"CoreHID mouse active: first movement received");
         [[InputMonitoringPermissionManager sharedManager] noteCoreHIDDidBecomeActive];
-        [SettingsClass updateMouseInputRuntimeStatusFor:self.host.uuid
-                                            summaryKey:@"Mouse Runtime Path CoreHID Active"
-                                             detailKey:@"Mouse Runtime Detail CoreHID Active"];
+        [self noteMotionSource:@"coreHIDMouse"
+                    summaryKey:@"Mouse Runtime Path CoreHID Active"
+                     detailKey:@"Mouse Runtime Detail CoreHID Active"];
     }
     if (self.inputDiagnosticsEnabled) {
         @synchronized (self.inputDiagnosticsLock) {
@@ -1685,14 +1717,17 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     }
     LogLevel level = (configuredStrategy == 3 && [safeReason isEqualToString:@"permission-denied"]) ? LOG_I : LOG_W;
     Log(level, @"CoreHID mouse fallback: reason=%@ message=%@", safeReason, safeMessage);
-    NSString *detailKey = @"Mouse Runtime Detail AppKit Fallback Runtime";
+    // Naming a replacement here was never supported by anything observed: this callback
+    // knows CoreHID stopped, and nothing here knows another sender is delivering motion.
+    NSString *detailKey = @"Mouse Runtime Detail CoreHID Stopped Runtime";
     if ([safeReason isEqualToString:@"permission-denied"]) {
-        detailKey = @"Mouse Runtime Detail AppKit Fallback Permission";
+        detailKey = @"Mouse Runtime Detail CoreHID Stopped Permission";
     } else if ([safeReason isEqualToString:@"unsupported-os"]) {
-        detailKey = @"Mouse Runtime Detail AppKit Fallback UnsupportedOS";
+        detailKey = @"Mouse Runtime Detail CoreHID Stopped UnsupportedOS";
     }
+    self.lastReportedRelativeMotionSource = nil;
     [SettingsClass updateMouseInputRuntimeStatusFor:self.host.uuid
-                                        summaryKey:@"Mouse Runtime Path AppKit Fallback"
+                                        summaryKey:@"Mouse Runtime Path CoreHID Stopped"
                                          detailKey:detailKey];
 }
 
