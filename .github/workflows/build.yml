@@ -54,6 +54,13 @@ jobs:
     - name: Install the parser used by the workflow audit
       run: python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
 
+    - name: Verify the product installs under a name that is not the Qt client's
+      # `product_name()` is the single reader of the bundle name for the DMG packaging, the
+      # codesign step, the workflow paths and the README install line. It is worth a gate
+      # because the refusal is the interesting half: an identity reader that reads anything
+      # at all would certify a build that replaces another client's app.
+      run: python3 scripts/project_identity.py --self-test
+
     - name: Verify no credential is carried by this tree
       # Every audit here reads source to ask what the code does. None of them asks
       # what a file happens to contain, so a token pasted into a helper during a
@@ -146,6 +153,14 @@ jobs:
       with:
         submodules: recursive
         fetch-depth: 0
+
+    - name: Read the product name from the project
+      # Every path below -- the bundle copy, the codesign target, the tar member, the DMG
+      # icon and drop positions -- has to name the bundle the project decides to build.
+      # A literal in this file would be a second source of truth, and the day the product
+      # is renamed one of these lines would keep packaging the old name (upstream issue 41
+      # is what two names for one bundle did to people's /Applications).
+      run: echo "APP_NAME=$(./scripts/product-name.sh)" >> "$GITHUB_ENV"
 
     - name: Setup Xcode
       # Pinned to a commit rather than the moving v1 tag: this step runs before the
@@ -585,8 +600,8 @@ jobs:
 
     - name: Verify ${{ matrix.variant }} binary slices
       run: |
-        app_bundle="build/Build/Products/Release/Moonlight.app"
-        main_binary="$app_bundle/Contents/MacOS/Moonlight"
+        app_bundle="build/Build/Products/Release/${APP_NAME}.app"
+        main_binary="$app_bundle/Contents/MacOS/${APP_NAME}"
         # Derive the helper name from the built bundle instead of hardcoding it.
         # The build phase names the helper "$(PRODUCT_BUNDLE_IDENTIFIER).AwdlPrivilegedHelper",
         # so a bundle id change used to break this check silently in both arch jobs.
@@ -628,7 +643,7 @@ jobs:
       # failed. This reads the class table of the linked Mach-O instead, where a
       # file that nothing compiled cannot hide.
       run: |
-        main_binary="build/Build/Products/Release/Moonlight.app/Contents/MacOS/Moonlight"
+        main_binary="build/Build/Products/Release/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
         python3 scripts/compiled-source-audit.py "$main_binary" \
           --arch "${{ matrix.archs }}" --self-test
         python3 scripts/compiled-source-audit.py "$main_binary" \
@@ -637,9 +652,9 @@ jobs:
     - name: Package ${{ matrix.variant }} app bundle
       run: |
         mkdir -p dist/app
-        cp -R "build/Build/Products/Release/Moonlight.app" "dist/app/Moonlight.app"
-        ./scripts/codesign-bundle.sh "dist/app/Moonlight.app"
-        tar -czf "dist/Moonlight-macOS-${{ matrix.variant }}.app.tar.gz" -C dist/app Moonlight.app
+        cp -R "build/Build/Products/Release/${APP_NAME}.app" "dist/app/${APP_NAME}.app"
+        ./scripts/codesign-bundle.sh "dist/app/${APP_NAME}.app"
+        tar -czf "dist/Moonlight-macOS-${{ matrix.variant }}.app.tar.gz" -C dist/app "${APP_NAME}.app"
 
     - name: Verify every binary the ${{ matrix.variant }} bundle embeds
       # The release shipped a main executable with no signature at all and two
@@ -647,7 +662,7 @@ jobs:
       # three failed `codesign --verify` -- and the bundle was not sealed either, so
       # nobody could tell a shipped app from a modified one. This reads the bundle the
       # tarball and the DMG are both made from.
-      run: python3 scripts/launch-code-audit.py dist/app/Moonlight.app --report-identity
+      run: python3 scripts/launch-code-audit.py dist/app/${APP_NAME}.app --report-identity
 
     - name: Create ${{ matrix.variant }} DMG
       run: |
@@ -655,16 +670,16 @@ jobs:
 
         create-dmg \
           --volname "Moonlight macOS Enhanced (${{ matrix.variant }})" \
-          --volicon "dist/app/Moonlight.app/Contents/Resources/AppIcon.icns" \
+          --volicon "dist/app/${APP_NAME}.app/Contents/Resources/AppIcon.icns" \
           --window-pos 200 120 \
           --window-size 600 400 \
           --icon-size 100 \
-          --icon "Moonlight.app" 150 185 \
-          --hide-extension "Moonlight.app" \
+          --icon "${APP_NAME}.app" 150 185 \
+          --hide-extension "${APP_NAME}.app" \
           --app-drop-link 450 185 \
           "dist/Moonlight-macOS-Enhanced-${{ matrix.variant }}.dmg" \
-          "dist/app/Moonlight.app" || \
-        hdiutil create -volname "Moonlight-${{ matrix.variant }}" -srcfolder "dist/app/Moonlight.app" -ov -format UDZO "dist/Moonlight-macOS-Enhanced-${{ matrix.variant }}.dmg"
+          "dist/app/${APP_NAME}.app" || \
+        hdiutil create -volname "Moonlight-${{ matrix.variant }}" -srcfolder "dist/app/${APP_NAME}.app" -ov -format UDZO "dist/Moonlight-macOS-Enhanced-${{ matrix.variant }}.dmg"
 
     - name: Audit the ${{ matrix.variant }} DMG
       # Three questions the build log cannot answer. Does the image still hold the
@@ -719,6 +734,14 @@ jobs:
       # now refuses that shape wherever it is written again.
       uses: actions/checkout@v6
 
+    - name: Read the product name from the project
+      # Every path below -- the bundle copy, the codesign target, the tar member, the DMG
+      # icon and drop positions -- has to name the bundle the project decides to build.
+      # A literal in this file would be a second source of truth, and the day the product
+      # is renamed one of these lines would keep packaging the old name (upstream issue 41
+      # is what two names for one bundle did to people's /Applications).
+      run: echo "APP_NAME=$(./scripts/product-name.sh)" >> "$GITHUB_ENV"
+
     - name: Download arm64 app artifact
       uses: actions/download-artifact@v8
       with:
@@ -740,11 +763,11 @@ jobs:
     - name: Merge universal app bundle
       run: |
         mkdir -p dist/universal
-        rsync -a "work/arm64/Moonlight.app/" "dist/universal/Moonlight.app/"
+        rsync -a "work/arm64/${APP_NAME}.app/" "dist/universal/${APP_NAME}.app/"
 
-        export ARM_APP="$PWD/work/arm64/Moonlight.app"
-        export X86_APP="$PWD/work/x86_64/Moonlight.app"
-        export UNIVERSAL_APP="$PWD/dist/universal/Moonlight.app"
+        export ARM_APP="$PWD/work/arm64/${APP_NAME}.app"
+        export X86_APP="$PWD/work/x86_64/${APP_NAME}.app"
+        export UNIVERSAL_APP="$PWD/dist/universal/${APP_NAME}.app"
 
         python3 <<'PY'
         import os
@@ -816,8 +839,8 @@ jobs:
 
     - name: Verify universal binary slices
       run: |
-        app_bundle="dist/universal/Moonlight.app"
-        main_binary="$app_bundle/Contents/MacOS/Moonlight"
+        app_bundle="dist/universal/${APP_NAME}.app"
+        main_binary="$app_bundle/Contents/MacOS/${APP_NAME}"
         # Same derivation as the per-architecture job above.
         bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_bundle/Contents/Info.plist")"
         echo "Bundle identifier: $bundle_id"
@@ -845,7 +868,7 @@ jobs:
       # and not in the artifact. Both slices are read, because the merge can lose
       # either one.
       run: |
-        main_binary="dist/universal/Moonlight.app/Contents/MacOS/Moonlight"
+        main_binary="dist/universal/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
         for arch in arm64 x86_64; do
           python3 scripts/compiled-source-audit.py "$main_binary" --arch "$arch"
         done
@@ -855,10 +878,10 @@ jobs:
       # fat file whose slices carry the wrong hashes -- this is where the shipped
       # frameworks got the seals that failed verification. The merged bundle is signed
       # after the merge and before anything is made from it.
-      run: ./scripts/codesign-bundle.sh dist/universal/Moonlight.app
+      run: ./scripts/codesign-bundle.sh dist/universal/${APP_NAME}.app
 
     - name: Verify every binary the universal bundle embeds
-      run: python3 scripts/launch-code-audit.py dist/universal/Moonlight.app --report-identity
+      run: python3 scripts/launch-code-audit.py dist/universal/${APP_NAME}.app --report-identity
 
     - name: Create universal DMG
       run: |
@@ -866,16 +889,16 @@ jobs:
 
         create-dmg \
           --volname "Moonlight macOS Enhanced (universal)" \
-          --volicon "dist/universal/Moonlight.app/Contents/Resources/AppIcon.icns" \
+          --volicon "dist/universal/${APP_NAME}.app/Contents/Resources/AppIcon.icns" \
           --window-pos 200 120 \
           --window-size 600 400 \
           --icon-size 100 \
-          --icon "Moonlight.app" 150 185 \
-          --hide-extension "Moonlight.app" \
+          --icon "${APP_NAME}.app" 150 185 \
+          --hide-extension "${APP_NAME}.app" \
           --app-drop-link 450 185 \
           "dist/Moonlight-macOS-Enhanced-universal.dmg" \
-          "dist/universal/Moonlight.app" || \
-        hdiutil create -volname "Moonlight-universal" -srcfolder "dist/universal/Moonlight.app" -ov -format UDZO "dist/Moonlight-macOS-Enhanced-universal.dmg"
+          "dist/universal/${APP_NAME}.app" || \
+        hdiutil create -volname "Moonlight-universal" -srcfolder "dist/universal/${APP_NAME}.app" -ov -format UDZO "dist/Moonlight-macOS-Enhanced-universal.dmg"
 
     - name: Audit the universal DMG
       # The expected build number comes from the arm64 bundle the merge started with,
@@ -884,7 +907,7 @@ jobs:
       # refused here instead of at the release page.
       run: |
         expected_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
-          work/arm64/Moonlight.app/Contents/Info.plist)"
+          work/arm64/${APP_NAME}.app/Contents/Info.plist)"
         echo "arm64 slice build: $expected_build"
         python3 scripts/dmg-audit.py \
           "dist/Moonlight-macOS-Enhanced-universal.dmg" \

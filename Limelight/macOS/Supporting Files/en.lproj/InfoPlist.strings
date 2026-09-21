@@ -1,3 +1,8 @@
+/* The name the Finder, the Dock and the Force Quit list show. The bundle on disk stays
+   ASCII: MoonlightEnhanced.app, so a DMG, a codesign path and a README install line all
+   quote the same string without needing a shell to cope with non-ASCII paths. */
+"CFBundleDisplayName" = "Moonlight Enhanced";
+
 /* Permission prompt shown by macOS when microphone access is requested */
 "NSMicrophoneUsageDescription" = "Used to capture microphone audio for streaming to the host.";
 /* Permission prompt shown by macOS when Input Monitoring access is requested */

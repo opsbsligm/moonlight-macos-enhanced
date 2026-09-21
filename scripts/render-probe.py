@@ -31,6 +31,9 @@ Usage: render-probe.py [--app path] [--out dir] [--self-test] [--timeout N]
 import argparse, hashlib, json, os, shutil, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import project_identity
+
 DERIVED = os.path.join(ROOT, "build-render-probe")
 
 
@@ -266,7 +269,7 @@ def build(timeout):
         for line in tail:
             print("     %s" % line.strip())
         return None
-    return os.path.join(DERIVED, "Build", "Products", "Debug", "Moonlight.app")
+    return os.path.join(DERIVED, "Build", "Products", "Debug", project_identity.product_name() + ".app")
 
 
 def env_developer_dir():

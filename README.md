@@ -58,8 +58,10 @@
 
 ### 方式一：下载 DMG（推荐）
 1. 从 [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest) 下载最新的 `Moonlight-<版本>.dmg`（每个版本提供 arm64、x86_64、universal 三个镜像，各自附带 sha256）
-2. 打开 DMG，将 Moonlight 拖入 Applications
+2. 打开 DMG，将 `MoonlightEnhanced.app` 拖入 Applications（访达、Dock 与「强制退出」列表里显示为「Moonlight 增强版」）
 3. 首次运行时，在「系统设置 → 隐私与安全性」中允许运行
+
+> ℹ️ 本构建的 bundle 名是 `MoonlightEnhanced.app`，与 Qt 客户端的 `Moonlight.app` 不再是同一个文件，安装不会互相替换（issue #41），两者可以并存。若 `/Applications` 里还留着本仓库早期版本装的 `Moonlight.app`，请先删除它：两者 bundle 标识符相同（`std.skyhua.MoonlightMac2`），同时存在时 LaunchServices 可能仍启动旧的那一份，权限授予也会跟着旧路径走。
 
 ### 方式二：从源码构建
 ```bash

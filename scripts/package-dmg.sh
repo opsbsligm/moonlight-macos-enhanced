@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Package Moonlight.app into a DMG for distribution
+# Package the built .app into a DMG for distribution
 # Usage: scripts/package-dmg.sh [path-to-app] [output-dmg]
 
 # "${0:A:h}" is a zsh modifier for the script directory, and it reads as an
@@ -12,7 +12,8 @@ SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 PROJECT_DIR="$(dirname -- "$SCRIPT_DIR")"
 
-APP_PATH="${1:-${PROJECT_DIR}/build/xcode/derivedData/Build/Products/Release/Moonlight.app}"
+APP_NAME="$(bash "${SCRIPT_DIR}/product-name.sh")"
+APP_PATH="${1:-${PROJECT_DIR}/build/xcode/derivedData/Build/Products/Release/${APP_NAME}.app}"
 APP_NAME=$(basename "$APP_PATH" .app)
 
 if [[ ! -d "$APP_PATH" ]]; then
@@ -45,12 +46,12 @@ cat > "$STAGING_DIR/安装说明.txt" << 'README_EOF'
 Moonlight macOS 安装说明
 ========================
 
-1. 将 Moonlight.app 拖入 Applications 文件夹
+1. 将 ${APP_NAME}.app 拖入 Applications 文件夹
 
 2. 安装后修复权限（重要！）：
    - 打开 终端 (Terminal)
    - 运行以下命令：
-     bash /Applications/Moonlight.app/Contents/Resources/../../fix-moonlight-permissions.sh
+     bash "/Applications/${APP_NAME}.app/Contents/Resources/../../fix-moonlight-permissions.sh"
    - 或者双击本 DMG 中的 fix-moonlight-permissions.sh
 
 3. 首次启动：

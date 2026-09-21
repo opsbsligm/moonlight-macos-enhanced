@@ -32,7 +32,13 @@ by the image's own checksum and once by the sidecar.
 import argparse, hashlib, os, plistlib, re, shutil, subprocess, sys, tempfile
 
 HDIUTIL = shutil.which("hdiutil") or "/usr/bin/hdiutil"
-APP_NAME = "Moonlight.app"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import project_identity
+
+# The name the image has to carry is the project's decision, not this file's. Reading it
+# here rather than writing "Moonlight.app" is what makes a rename a one-place change, and
+# what refuses to certify an image that would replace the Qt client's bundle (issue 41).
+APP_NAME = project_identity.product_name() + ".app"
 BINARY = os.path.join("Contents", "MacOS", "Moonlight")
 INFO = os.path.join("Contents", "Info.plist")
 RESOURCES = os.path.join("Contents", "Resources")

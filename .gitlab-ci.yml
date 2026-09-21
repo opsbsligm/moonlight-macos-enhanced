@@ -141,7 +141,7 @@ build-app:
   artifacts:
     when: always
     paths:
-      - $DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app
+      - $DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/MoonlightEnhanced.app
       - build.log
       - build/reports/
     expire_in: 1 week
@@ -157,7 +157,7 @@ test-app:
     - build-app
   script:
     - zsh scripts/integration-test.sh
-        "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app"
+        "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/MoonlightEnhanced.app"
         2>&1 | tee test-integration.log
   artifacts:
     when: always
@@ -180,7 +180,7 @@ package-dmg:
     # Info.plist and names the DMG "Moonlight-<ver>-build<num>.dmg" — this
     # guarantees DMG name == app version, regardless of CI context.
     - zsh scripts/package-dmg.sh
-        "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app"
+        "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/MoonlightEnhanced.app"
   artifacts:
     paths:
       - build/*.dmg
@@ -204,5 +204,5 @@ package-dmg:
 #         --team-id "$APPLE_TEAM_ID"
 #         --password "$APP_SPECIFIC_PASSWORD"
 #         --wait
-#     - xcrun stapler staple "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/Moonlight.app"
+#     - xcrun stapler staple "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/MoonlightEnhanced.app"
 #     - xcrun stapler staple build/*.dmg

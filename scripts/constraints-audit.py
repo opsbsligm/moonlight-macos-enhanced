@@ -83,6 +83,32 @@ project = open(os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj"),
 bundle_ids = set(re.findall(r"PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);", project))
 check(bundle_ids == {"std.skyhua.MoonlightMac2"},
       "product bundle identifier is %s" % (sorted(bundle_ids) or "unset"))
+
+# The bundle name is what two clients collide over. Issue 41 is a report about an app that
+# vanished from /Applications after this one was installed, and the identifier was never the
+# problem -- both installed themselves as Moonlight.app. `project_identity` refuses that name
+# on read, so the check below is about the constraint surviving an edit: a project file that
+# names the Qt product has to be refused here, where a green build would otherwise ship it.
+sys.path.insert(0, os.path.join(root, "scripts"))
+import project_identity
+product_names = set(re.findall(r"PRODUCT_NAME = ([^;]+);", project))
+check(len(product_names) == 1
+      and product_names == {project_identity.product_name(
+          os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj"))},
+      "the product installs as %s, not the Qt client's Moonlight.app"
+      % (", ".join(product_names) or "unset"))
+check("CFBundleDisplayName" in info,
+      "Info.plist carries a display name, so the disk name can stay ASCII")
+
+# The reader itself is a gate: its refusal is the half that protects issue 41, and a
+# refusal that no local command runs is discovered on a runner eight minutes later.
+identity = subprocess.run([sys.executable,
+                           os.path.join(root, "scripts", "project_identity.py"), "--self-test"],
+                          capture_output=True, text=True)
+check(identity.returncode == 0,
+      "project_identity.py self-test passes"
+      if identity.returncode == 0 else
+      "project_identity.py self-test failed: %s" % (identity.stdout + identity.stderr).strip()[-400:])
 check("NSLocalNetworkUsageDescription" in info,
       "Info.plist declares NSLocalNetworkUsageDescription")
 bonjour = info.get("NSBonjourServices") or []

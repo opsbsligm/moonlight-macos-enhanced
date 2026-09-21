@@ -12,7 +12,8 @@ SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 PROJECT_DIR="$(dirname -- "$SCRIPT_DIR")"
 
-APP_PATH="${1:-${PROJECT_DIR}/build/xcode/derivedData/Build/Products/Release/Moonlight.app}"
+APP_NAME="$(bash "${PROJECT_DIR}/scripts/product-name.sh")"
+APP_PATH="${1:-${PROJECT_DIR}/build/xcode/derivedData/Build/Products/Release/${APP_NAME}.app}"
 PASS=0
 FAIL=0
 
@@ -36,7 +37,7 @@ assert_contains() {
   fi
 }
 
-echo "=== Integration Test: Moonlight.app ==="
+echo "=== Integration Test: ${APP_NAME}.app ==="
 echo ""
 
 if [[ ! -d "$APP_PATH" ]]; then
@@ -88,10 +89,10 @@ echo "5. Launch test (5 second smoke test)"
 open -n "$APP_PATH" 2>/dev/null
 sleep 5
 
-if pgrep -f "Moonlight.app/Contents/MacOS/Moonlight" >/dev/null 2>&1; then
+if pgrep -f "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" >/dev/null 2>&1; then
   echo "  PASS: App launched and running"
   PASS=$((PASS + 1))
-  pkill -f "Moonlight.app/Contents/MacOS/Moonlight" 2>/dev/null || true
+  pkill -f "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" 2>/dev/null || true
   sleep 1
 else
   echo "  FAIL: App did not stay running"

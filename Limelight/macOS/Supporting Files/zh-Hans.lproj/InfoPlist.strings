@@ -1,3 +1,8 @@
+/* 访达、Dock 与「强制退出」列表里显示的名字。磁盘上的 bundle 仍是 ASCII 的
+   MoonlightEnhanced.app：这样 DMG、签名路径与 README 里的安装命令引用的是同一个字符串，
+   不需要让 shell 去处理含非 ASCII 的路径。 */
+"CFBundleDisplayName" = "Moonlight 增强版";
+
 /* macOS 在请求麦克风权限时展示 */
 "NSMicrophoneUsageDescription" = "用于采集麦克风音频并推流到主机端（需要主机端支持）。";
 /* macOS 在请求输入监控权限时展示 */

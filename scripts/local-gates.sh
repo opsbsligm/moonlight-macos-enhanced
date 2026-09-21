@@ -95,11 +95,20 @@ fi
 check_the_list || exit 2
 gate_commands > /tmp/local-gates.list
 
+# CI reads the bundle name into the job environment before it writes a path; the sweep has
+# to do the same, or a gate whose path contains ${APP_NAME} is excused here as "a value only
+# CI computes" when in truth only the built bundle is missing -- and an excuse that names the
+# wrong reason is how a gate stops being looked at.
+app_name=$(./scripts/product-name.sh 2>/dev/null || echo "")
+
 passed=0 failed=0 skipped=0
 : > /tmp/local-gates.failed
 
 while IFS= read -r cmd; do
   [ -n "$cmd" ] || continue
+  # sed rather than a bash pattern substitution: `${APP_NAME}` inside `${cmd//...}` is the
+  # kind of nesting that quietly rewrites the wrong part of a command line.
+  [ -n "$app_name" ] && cmd=$(printf '%s' "$cmd" | sed "s/\${APP_NAME}/$app_name/g")
   case "$cmd" in
     # Gates pointed at runner scratch take a mode that stands on its own, so drop the
     # scratch and run the gate: --derived and --log are where they read a build, and

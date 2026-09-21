@@ -26,7 +26,11 @@ for arg in "$@"; do
 done
 
 DERIVED_DATA_DIR="${PROJECT_DIR}/build/xcode/derivedData"
-APP_PATH="${DERIVED_DATA_DIR}/Build/Products/${CONFIGURATION}/Moonlight.app"
+# The bundle name is read from the project rather than repeated here, so the day the
+# product is renamed this script cannot keep building the old name and packaging it
+# into a DMG under the new one.
+APP_NAME="$(zsh "${SCRIPT_DIR}/product-name.sh" 2>/dev/null || bash "${SCRIPT_DIR}/product-name.sh")"
+APP_PATH="${DERIVED_DATA_DIR}/Build/Products/${CONFIGURATION}/${APP_NAME}.app"
 
 # Step 1: Download frameworks if needed
 if [[ "$SKIP_DEPS" -eq 0 ]]; then

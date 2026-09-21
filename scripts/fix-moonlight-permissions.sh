@@ -1,9 +1,10 @@
 #!/bin/bash
 # Fix Moonlight macOS Gatekeeper and TCC permissions
-# Run AFTER copying Moonlight.app to /Applications
+# Run AFTER copying the built .app to /Applications
 # Usage: bash scripts/fix-moonlight-permissions.sh
 
-APP_PATH="${1:-/Applications/Moonlight.app}"
+APP_NAME="$(bash "$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)/product-name.sh" 2>/dev/null || echo MoonlightEnhanced)"
+APP_PATH="${1:-/Applications/${APP_NAME}.app}"
 BUNDLE_ID="${MOONLIGHT_BUNDLE_ID:-std.skyhua.MoonlightMac2}"
 
 echo "=== Moonlight 权限修复脚本 ==="
@@ -11,7 +12,7 @@ echo ""
 
 if [ ! -d "$APP_PATH" ]; then
     echo "错误: 未找到 $APP_PATH"
-    echo "请先将 Moonlight.app 复制到 /Applications"
+    echo "请先将 ${APP_NAME}.app 复制到 /Applications（或把完整路径作为参数传给本脚本）"
     exit 1
 fi
 

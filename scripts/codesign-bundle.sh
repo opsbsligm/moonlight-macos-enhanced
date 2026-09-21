@@ -18,8 +18,8 @@ set -euo pipefail
 # a Developer ID and notarization does -- and launch-code-audit.py reports that
 # part as what it is instead of letting it read as either success or failure.
 #
-# Usage: scripts/codesign-bundle.sh path/to/Moonlight.app
-#         scripts/codesign-bundle.sh path/to/Moonlight.app --install-localizations-only
+# Usage: scripts/codesign-bundle.sh path/to/<product>.app
+#         scripts/codesign-bundle.sh path/to/<product>.app --install-localizations-only
 SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 

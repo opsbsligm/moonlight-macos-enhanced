@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The build no longer replaces the Qt client's app (issue #41).** Both
+  clients installed themselves as `/Applications/Moonlight.app`, so
+  installing one quietly removed the other, and the fact that their bundle
+  identifiers differed did nothing about it: the collision is on the file
+  name, not the identifier. The bundle is now `MoonlightEnhanced.app`, and
+  the name a user reads -- in the Finder, the Dock and the Force Quit list
+  -- is a display name the system localizes: `Moonlight Enhanced` in
+  English, `Moonlight 增强版` in Chinese. The disk name stays ASCII so a DMG
+  layout, a codesign path and a README install line can all quote the same
+  string without asking a shell to cope with non-ASCII paths. What did not
+  change is the bundle identifier, so the paired identity in the Keychain
+  and the permission grants still describe the same application to the
+  system. What a user of an older build of *this* repository has to do is
+  delete the `Moonlight.app` this repository left behind: two bundles
+  carrying one identifier in `/Applications` is how LaunchServices ends up
+  launching the stale copy while the grants follow the old path. The name
+  is now read rather than copied -- `scripts/project_identity.py` is the
+  only reader, it refuses the Qt name when it reads it, the workflow asks it
+  for the name before it writes a single path, and the DMG packaging, the
+  codesign step, the README install lines, the permission helper and the
+  image audit all ask it too. A rename that left one of those copies behind
+  would have shipped an image whose bundle name no gate had ever looked at.
+
 ## [1.3.10-build1559] - 2026-09-21
 
 

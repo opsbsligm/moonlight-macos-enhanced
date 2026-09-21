@@ -191,13 +191,15 @@ These Moonlight-specific stream shortcuts can be adjusted in `Settings → Input
 ### Download Release
 Download the latest `.dmg` from [Releases](https://github.com/skyhua0224/moonlight-macos-enhanced/releases).
 
-> ⚠️ This app is currently not notarized by Apple. If macOS says `Moonlight.app` is damaged or blocks it from launching, that is usually Gatekeeper stopping a non-notarized app, not proof that the file is actually broken.
+> ℹ️ This build installs as `MoonlightEnhanced.app`, so it no longer replaces the Qt client's `Moonlight.app` (issue #41) and the two can live side by side. If `/Applications` still holds a `Moonlight.app` installed by an earlier build of *this* repository, delete it first: both carry the same bundle identifier (`std.skyhua.MoonlightMac2`), so LaunchServices may keep launching the stale copy and the permissions follow the old path.
+>
+> ⚠️ This app is currently not notarized by Apple. If macOS says `MoonlightEnhanced.app` is damaged or blocks it from launching, that is usually Gatekeeper stopping a non-notarized app, not proof that the file is actually broken.
 >
 > Recommended first-launch steps:
 > 1. Right-click the app and choose `Open`
 > 2. Go to **System Settings → Privacy & Security** and click `Open Anyway`
 > 3. If needed, run:
->    `xattr -dr com.apple.quarantine /Applications/Moonlight.app`
+>    `xattr -dr com.apple.quarantine /Applications/MoonlightEnhanced.app`
 
 ### Build from Source
 
