@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0-build1570] - 2026-09-22
+
+
 ### Added
 
 - **The copyable diagnostics report now carries an `input` section, which is what issue 24 was

@@ -101,7 +101,7 @@ Not a promise, and not ordered by anything but how much of it is blocked on some
    the button. That button ships from `v1.3.10-build1559`, so the ask can now carry a version
    -- a reporter on an older build has to update before the sentence means anything, and a
    report pasted from build 1559 or later answers the question in the thread that has been
-   waiting on it since issue 19 was opened. The `input` block is newer than that button: it is
-   not in `v1.4.0-build1568`, so an ask about a pointer has to name the first build after it,
-   and a report that has no `input` section at all is a report from a build that predates it
-   rather than evidence that nothing moved.
+   waiting on it since issue 19 was opened. The `input` block is newer than that button: it ships
+   from `v1.5.0-build1570`, so an ask about a pointer names that build or newer -- and a pasted
+   report with no `input` section at all came from a build that predates the block, which is not
+   the same thing as a session in which nothing moved.
