@@ -741,6 +741,23 @@ def run_sas_preset():
           if ran.returncode == 0 else "the sas-preset gate failed:\n" + chr(10).join(tail))
 
 
+def run_diagnostics_report():
+    """Ride the diagnostics report gate on the same step.
+
+    The report is compiled Objective-C with a harness of its own, so its harness wants the
+    macOS clang and SDK this job has and the audit runner does not, and a step of its own
+    would want the `workflow` scope the pushing credential does not carry. It is the gate
+    that decides whether a PIN or a certificate can leave the machine inside a bug report,
+    so it runs on every build rather than on somebody's memory.
+    """
+    ran = subprocess.run([sys.executable, "scripts/diagnostics-report-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "the diagnostics report helps a maintainer without carrying the player's secrets"
+          if ran.returncode == 0 else "the diagnostics-report gate failed:\n" + chr(10).join(tail))
+
+
 
 def finish():
     run_aspect_fit()
@@ -753,6 +770,7 @@ def finish():
     run_command_to_control()
     run_sas_preset()
     run_sdr_10bit_codec()
+    run_diagnostics_report()
 
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0

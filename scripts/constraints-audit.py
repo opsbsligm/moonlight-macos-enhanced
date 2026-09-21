@@ -1242,6 +1242,11 @@ DRIVEN_BY = {
     # where the toolchain is, and a step of its own would need the `workflow` scope the
     # pushing credential does not carry.
     "sdr-10bit-codec-tests.py": "scaling-output-evidence-tests.py",
+    # The report is Objective-C plus a compiled harness, so it needs the macOS clang and SDK,
+    # and a step of its own would need the `workflow` scope this credential does not carry.
+    # It is also the gate that decides whether a pairing PIN can reach an issue, so it rides
+    # a driver that runs on every macOS build instead of waiting for a step nobody can add.
+    "diagnostics-report-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}
