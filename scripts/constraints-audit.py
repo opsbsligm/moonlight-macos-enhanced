@@ -1238,6 +1238,10 @@ DRIVEN_BY = {
     # Reads Swift and Objective-C text and needs no toolchain, but a gate still needs a CI
     # step to run it, and a step needs the `workflow` scope this credential does not carry.
     "sas-preset-tests.py": "scaling-output-evidence-tests.py",
+    # Same shape again: Objective-C compiled against the macOS SDK, so the harness runs
+    # where the toolchain is, and a step of its own would need the `workflow` scope the
+    # pushing credential does not carry.
+    "sdr-10bit-codec-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

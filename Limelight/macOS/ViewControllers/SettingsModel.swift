@@ -429,6 +429,16 @@ class SettingsModel: ObservableObject {
     }
   }
 
+  // 10-bit samples carrying an SDR picture. Deliberately not wired to the bitrate:
+  // deeper samples carry the same picture at the same bitrate with less banding, so
+  // raising the target here would charge for a change that was never asked for.
+  @Published var enable10BitSdr: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
+
   @Published var ignoreAspectRatio: Bool {
     didSet {
       guard !isLoading else { return }
@@ -1263,6 +1273,7 @@ class SettingsModel: ObservableObject {
 
     autoAdjustBitrate = Self.defaultAutoAdjustBitrate
     enableYUV444 = Self.defaultEnableYUV444
+    enable10BitSdr = Self.defaultEnable10BitSdr
     ignoreAspectRatio = Self.defaultIgnoreAspectRatio
     showLocalCursor = Self.defaultShowLocalCursor
     enableMicrophone = Self.defaultEnableMicrophone

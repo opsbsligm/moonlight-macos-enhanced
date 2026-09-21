@@ -38,6 +38,8 @@
 "HDR" = "HDR";
 "Enable YUV 4:4:4" = "Enable YUV 4:4:4";
 "YUV 4:4:4 hint" = "This option requires Sunshine (or compatible host) with YUV 4:4:4 support. The stream may fail or fallback automatically if the host doesn't support it.";
+"Enable 10-Bit SDR" = "Enable 10-Bit SDR";
+"10-Bit SDR hint" = "Sends the picture in 10-bit samples while the host keeps its own HDR setting off, so an SDR desktop gains the smoother gradients of 10-bit encoding without the host switching its display to HDR. It is a transport setting and stays independent of the HDR switch above it: turning both on is the same stream as HDR alone. Needs a host that can encode 10-bit for SDR (Sunshine, or NVIDIA drivers that offer it); where the host cannot, the stream falls back to 8-bit. It does not change the bitrate, and it is not a substitute for HDR on a display that supports HDR.";
 "Frame Pacing" = "Frame Pacing";
 "Lowest Latency" = "Lower Latency";
 "Smoothest Video" = "Smoother Video";

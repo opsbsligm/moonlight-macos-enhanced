@@ -443,6 +443,14 @@ struct VideoView: View {
 
           Divider()
 
+          ToggleCell(
+            title: "Enable 10-Bit SDR",
+            hintKey: "10-Bit SDR hint",
+            boolBinding: $settingsModel.enable10BitSdr
+          )
+
+          Divider()
+
           FormCell(
             title: "Streaming Style", contentWidth: 200,
             content: {

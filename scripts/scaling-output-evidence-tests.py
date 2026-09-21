@@ -711,6 +711,22 @@ def run_command_to_control():
           if ran.returncode == 0 else "the command-to-control gate failed:\n" + chr(10).join(tail))
 
 
+def run_sdr_10bit_codec():
+    """Ride the 10-bit SDR negotiation gate on a macOS job, beside its HDR sibling.
+
+    The gate compiles the shipping negotiation with a real clang against the core
+    headers, so it cannot run in the Ubuntu audits job, and a step of its own would
+    need the `workflow` scope this pushing credential does not carry.
+    constraints-audit.py's DRIVEN_BY records the arrangement.
+    """
+    ran = subprocess.run([sys.executable, "scripts/sdr-10bit-codec-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "10-bit samples can carry an SDR picture without the picture changing"
+          if ran.returncode == 0 else "the sdr-10bit-codec gate failed:\n" + chr(10).join(tail))
+
+
 def run_sas_preset():
     """Ride the secure-attention-sequence preset gate on the same step.
 
@@ -736,6 +752,7 @@ def finish():
     run_gamepad_menu_gesture()
     run_command_to_control()
     run_sas_preset()
+    run_sdr_10bit_codec()
 
     print("%d scaling-output-evidence failures" % len(failures))
     return 1 if failures else 0

@@ -27,6 +27,7 @@ struct Settings: Encodable, Decodable {
   // Streaming preferences parity with moonlight-qt
   let autoAdjustBitrate: Bool?
   let enableYUV444: Bool?
+  let enable10BitSdr: Bool?
   let ignoreAspectRatio: Bool?
   let showLocalCursor: Bool?
   let enableMicrophone: Bool?
@@ -186,6 +187,7 @@ struct Settings: Encodable, Decodable {
       customFps: customFps,
       autoAdjustBitrate: autoAdjustBitrate,
       enableYUV444: enableYUV444,
+      enable10BitSdr: enable10BitSdr,
       ignoreAspectRatio: ignoreAspectRatio,
       showLocalCursor: showLocalCursor,
       enableMicrophone: enableMicrophone,
@@ -330,6 +332,7 @@ extension SettingsClass {
     customFps: CGFloat?? = nil,
     autoAdjustBitrate: Bool? = nil,
     enableYUV444: Bool? = nil,
+    enable10BitSdr: Bool? = nil,
     streamResolutionScale: Bool? = nil,
     streamResolutionScaleRatio: Int? = nil,
     remoteResolution: Bool? = nil,
@@ -367,6 +370,7 @@ extension SettingsClass {
 
     let resolvedAutoAdjustBitrate = autoAdjustBitrate ?? settings.autoAdjustBitrate
     let resolvedEnableYUV444 = enableYUV444 ?? settings.enableYUV444
+    let resolvedEnable10BitSdr = enable10BitSdr ?? settings.enable10BitSdr
     let resolvedStreamResolutionScale = streamResolutionScale ?? settings.streamResolutionScale
     let resolvedStreamResolutionScaleRatio = streamResolutionScaleRatio ?? settings.streamResolutionScaleRatio
 
@@ -425,6 +429,7 @@ extension SettingsClass {
 
       autoAdjustBitrate: resolvedAutoAdjustBitrate,
       enableYUV444: resolvedEnableYUV444,
+      enable10BitSdr: resolvedEnable10BitSdr,
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
       enableMicrophone: settings.enableMicrophone,

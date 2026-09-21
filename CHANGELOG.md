@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **10-bit samples can now carry an SDR picture (issue #22).** The Qt client has two
+  controls here and this client had one: HDR was the only route to a 10-bit format bit,
+  so the combination the protocol plainly allows -- 10-bit encoding of an ordinary
+  desktop -- could not be asked for, and a player wanting smoother gradients had to take
+  PQ or HLG with it. `Limelight/Stream/VideoFormatNegotiation.h` now holds the answer,
+  and the request carries `hdrRequested` and `sdrTenBitRequested` as the two separate
+  things they are: Limelight.h itself keeps the profile bits in
+  `supportedVideoFormats` and the picture's dynamic range in `dynamicRangeMode`, and its
+  own comment calls that field the preferred range "for HDR-capable 10-bit streams", a
+  statement about the picture rather than a consequence of the profile. A switch appears
+  in the video pane beside 4:4:4, per host, off by default, because a preference nobody
+  chose must not change what a host encodes. It is not wired to the bitrate: deeper
+  samples carry the same picture at the same bitrate, so raising the target would charge
+  for something nobody asked for.
+  `scripts/sdr-10bit-codec-tests.py` compiles the shipping negotiation with a real clang
+  against the core headers and drives all 32 combinations of its five inputs. The first
+  thing it compares against is the answer that shipped before this change -- the old
+  if-chain, kept beside it as a model -- and the two may not differ anywhere the new
+  switch is off: a refactor that quietly improved one combination would be reported, not
+  enjoyed. Then the new request itself: the 10-bit bits appear under SDR; the 10-bit 4:4:4
+  profiles appear with it; AV1 switches profile rather than offering two, so its 8-bit
+  bit has to go while HEVC keeps its separate 8-bit Main bit; HDR plus the switch is the
+  same answer as HDR alone; and a Mac with no 10-bit codec in hardware advertises none.
+  The reported symptom is a colour one, so the second half matters more than the bits:
+  the dynamic range is taken from the file that decides it and swept across every
+  transfer preference with HDR off, and the answer may not move, which is the rule that
+  would catch the oversaturation if this client ever routed an SDR stream to the BT.2020
+  path. Six planted defects have to be noticed -- the request ignored, the request turned
+  into a second HDR, AV1 left at 8-bit, the dynamic range starting to follow sample depth,
+  a machine with no 10-bit codec promised one, and 10-bit SDR refused as unsatisfiable.
+  What it does not claim: no stream was played against a real host, so "the host accepts
+  10-bit for SDR and renders it correctly" is reasoned from the protocol and the
+  renderer's existing 10-bit path, not measured. The row says a fallback happens where
+  the host cannot encode it; that fallback is what the host does, not something this
+  repository observed.
+
+
 - **`scripts/local-gates.sh`, so a local sweep means the whole list.** The red build
   above was green locally: six gates had been run by hand, and the one that failed was
   not among them. The tree carries forty-odd gates now, so the list is read out of

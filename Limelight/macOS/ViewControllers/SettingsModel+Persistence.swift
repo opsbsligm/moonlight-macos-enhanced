@@ -124,6 +124,7 @@ extension SettingsModel {
 
     autoAdjustBitrate = Self.defaultAutoAdjustBitrate
     enableYUV444 = Self.defaultEnableYUV444
+    enable10BitSdr = Self.defaultEnable10BitSdr
     ignoreAspectRatio = Self.defaultIgnoreAspectRatio
     showLocalCursor = Self.defaultShowLocalCursor
     enableMicrophone = Self.defaultEnableMicrophone
@@ -255,6 +256,7 @@ extension SettingsModel {
 
       autoAdjustBitrate = settings.autoAdjustBitrate ?? Self.defaultAutoAdjustBitrate
       enableYUV444 = settings.enableYUV444 ?? Self.defaultEnableYUV444
+      enable10BitSdr = settings.enable10BitSdr ?? Self.defaultEnable10BitSdr
       ignoreAspectRatio = settings.ignoreAspectRatio ?? Self.defaultIgnoreAspectRatio
       showLocalCursor = settings.showLocalCursor ?? Self.defaultShowLocalCursor
       enableMicrophone = settings.enableMicrophone ?? Self.defaultEnableMicrophone
@@ -677,6 +679,7 @@ extension SettingsModel {
 
       autoAdjustBitrate: autoAdjustBitrate,
       enableYUV444: enableYUV444,
+      enable10BitSdr: enable10BitSdr,
       ignoreAspectRatio: ignoreAspectRatio,
       showLocalCursor: showLocalCursor,
       enableMicrophone: enableMicrophone,

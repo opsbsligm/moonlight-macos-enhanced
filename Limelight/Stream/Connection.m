@@ -7,6 +7,7 @@
 //
 
 #import "Connection.h"
+#import "VideoFormatNegotiation.h"
 #import "LogBuffer.h"
 #import "Utils.h"
 
@@ -2557,10 +2558,18 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
     BOOL hevcSupported = codecPreference >= 1 && hevcDecodeSupported;
     BOOL av1Supported = codecPreference >= 2 && VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1);
 
-    // If HDR is requested, at least one 10-bit codec path must be available.
-    assert(!config.enableHdr || hevcSupported || av1Supported);
+    // If HDR is requested, at least one 10-bit codec path must be available. 10-bit
+    // SDR is not in this test: it degrades to the 8-bit path on its own, and asserting
+    // about it would turn a Mac without HEVC into a crash instead of a stream.
+    assert(MLVideoFormatRequestIsSatisfiable((MLVideoFormatRequest){
+        .hevcAvailable = hevcSupported, .av1Available = av1Supported,
+        .hdrRequested = config.enableHdr}));
 
     BOOL enableYuv444 = NO;
+    // Issue #22: 10-bit samples carrying an SDR picture. A request of its own rather
+    // than a shade of HDR, because the two live in different fields of the stream
+    // configuration and only one of them changes how the picture is drawn.
+    BOOL enableSdrTenBit = NO;
     @try {
         NSString* uuid = config.hostUUID;
         if (uuid == nil && config.host != nil) {
@@ -2571,51 +2580,30 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
         NSDictionary* settings = [SettingsClass getSettingsFor:settingsKey];
         if (settings != nil) {
             enableYuv444 = [settings[@"yuv444"] boolValue];
+            enableSdrTenBit = [settings[@"sdr10bit"] boolValue];
         }
     } @catch (NSException* exception) {
         enableYuv444 = NO;
+        enableSdrTenBit = NO;
     }
 
-    int supportedVideoFormats = VIDEO_FORMAT_H264;
-    if (hevcSupported) {
-        supportedVideoFormats |= VIDEO_FORMAT_H265;
-        if (config.enableHdr) {
-            supportedVideoFormats |= VIDEO_FORMAT_H265_MAIN10;
-        }
-    }
-
-    if (enableYuv444) {
-        supportedVideoFormats |= VIDEO_FORMAT_H264_HIGH8_444;
-        if (hevcSupported) {
-            supportedVideoFormats |= VIDEO_FORMAT_H265_REXT8_444;
-            if (config.enableHdr) {
-                supportedVideoFormats |= VIDEO_FORMAT_H265_REXT10_444;
-            }
-        }
-    }
-
-    if (av1Supported) {
-        if (config.enableHdr) {
-            supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN10;
-        } else {
-            supportedVideoFormats |= VIDEO_FORMAT_AV1_MAIN8;
-        }
-
-        if (enableYuv444) {
-            supportedVideoFormats |= VIDEO_FORMAT_AV1_HIGH8_444;
-            if (config.enableHdr) {
-                supportedVideoFormats |= VIDEO_FORMAT_AV1_HIGH10_444;
-            }
-        }
-    }
-
+    MLVideoFormatRequest formatRequest = {
+        .hevcAvailable = hevcSupported,
+        .av1Available = av1Supported,
+        .hdrRequested = config.enableHdr,
+        .sdrTenBitRequested = enableSdrTenBit,
+        .yuv444Requested = enableYuv444,
+    };
+    int supportedVideoFormats = MLResolveSupportedVideoFormats(formatRequest);
     _streamConfig.supportedVideoFormats = supportedVideoFormats;
-    Log(LOG_I, @"[diag] Codec preference resolved: pref=%d av1=%d hevc=%d hdr=%d yuv444=%d formats=0x%X",
+    Log(LOG_I, @"[diag] Codec preference resolved: pref=%d av1=%d hevc=%d hdr=%d yuv444=%d sdr10bit=%d tenBit=%d formats=0x%X",
         codecPreference,
         av1Supported ? 1 : 0,
         hevcSupported ? 1 : 0,
         config.enableHdr ? 1 : 0,
         enableYuv444 ? 1 : 0,
+        enableSdrTenBit ? 1 : 0,
+        MLVideoFormatRequestWantsTenBit(formatRequest) ? 1 : 0,
         supportedVideoFormats);
 #else
     if (@available(iOS 11.3, tvOS 11.3, macOS 10.14, *)) {

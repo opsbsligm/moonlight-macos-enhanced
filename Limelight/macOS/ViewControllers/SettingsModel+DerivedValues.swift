@@ -1089,6 +1089,9 @@ extension SettingsModel {
 
   static let defaultAutoAdjustBitrate = true
   static let defaultEnableYUV444 = false
+  // Issue #22. Off, because it asks the host for a different encoder profile, and a
+  // preference nobody opted into must not change what a host encodes.
+  static let defaultEnable10BitSdr = false
   static let defaultIgnoreAspectRatio = false
   static let defaultShowLocalCursor = false
   static let defaultEnableMicrophone = false

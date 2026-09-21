@@ -97,6 +97,9 @@ class SettingsClass: NSObject {
         "customFps": settings.customFps,
         "autoAdjustBitrate": settings.autoAdjustBitrate ?? true,
         "yuv444": settings.enableYUV444 ?? false,
+        // The name the connection reads to negotiate 10-bit samples for an SDR
+        // picture (issue #22). One string on each side of the bridge, checked here.
+        "sdr10bit": settings.enable10BitSdr ?? false,
         "ignoreAspectRatio": settings.ignoreAspectRatio ?? true,
         "showLocalCursor": settings.showLocalCursor ?? false,
         "microphone": settings.enableMicrophone ?? false,
@@ -308,6 +311,7 @@ class SettingsClass: NSObject {
 
       autoAdjustBitrate: settings.autoAdjustBitrate,  // Preserve auto bitrate setting
       enableYUV444: settings.enableYUV444,
+      enable10BitSdr: settings.enable10BitSdr,
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
       enableMicrophone: settings.enableMicrophone,
@@ -418,6 +422,7 @@ class SettingsClass: NSObject {
         customFps: updated.customFps,
         autoAdjustBitrate: updated.autoAdjustBitrate,
         enableYUV444: updated.enableYUV444,
+        enable10BitSdr: updated.enable10BitSdr,
         ignoreAspectRatio: updated.ignoreAspectRatio,
         showLocalCursor: updated.showLocalCursor,
         enableMicrophone: updated.enableMicrophone,
@@ -524,6 +529,7 @@ class SettingsClass: NSObject {
 
       autoAdjustBitrate: settings.autoAdjustBitrate,
       enableYUV444: settings.enableYUV444,
+      enable10BitSdr: settings.enable10BitSdr,
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
       enableMicrophone: settings.enableMicrophone,
