@@ -104,4 +104,9 @@ Not a promise, and not ordered by anything but how much of it is blocked on some
    waiting on it since issue 19 was opened. The `input` block is newer than that button: it ships
    from `v1.5.0-build1570`, so an ask about a pointer names that build or newer -- and a pasted
    report with no `input` section at all came from a build that predates the block, which is not
-   the same thing as a session in which nothing moved.
+   the same thing as a session in which nothing moved. The two lines that say which pointer mode
+   the block is describing ship one build later, from `v1.6.0-build1574`: a report with an `input`
+   section but no `pointer mode` line came from `v1.5.0-build1570`, the only published build before
+   this one, and such a report cannot tell a locked session that stopped sending from an absolute
+   session that never sends. So the ask for the measurement issue 24 still owes names
+   `v1.6.0-build1574` or newer.
