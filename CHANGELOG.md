@@ -43,7 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   10-bit for SDR and renders it correctly" is reasoned from the protocol and the
   renderer's existing 10-bit path, not measured. The row says a fallback happens where
   the host cannot encode it; that fallback is what the host does, not something this
-  repository observed.
+  repository observed. Where to look once someone does play it: the connection logs the
+  request and the answer together (`sdr10bit=` beside `tenBit=` and the resulting
+  `formats=`), and the diagnostics panel already reads the selected format's 10-bit mask.
+  The stream picture the risk assessor prints is the one place that still names chroma
+  without naming depth, so a screenshot of it cannot tell 10-bit SDR from 8-bit.
 
 
 - **`scripts/local-gates.sh`, so a local sweep means the whole list.** The red build
