@@ -94,6 +94,8 @@
 				macOS/Helpers/AwdlAuthorizationHelper.m,
 				macOS/Helpers/BackgroundColorView.m,
 				macOS/Helpers/ControllerNavigation.m,
+				"macOS/Helpers/DiagnosticsReportBuilder+Live.m",
+				macOS/Helpers/DiagnosticsReportBuilder.m,
 				macOS/Helpers/Functional/F.m,
 				"macOS/Helpers/Functional/NSArray+F.m",
 				"macOS/Helpers/Functional/NSDictionary+F.m",

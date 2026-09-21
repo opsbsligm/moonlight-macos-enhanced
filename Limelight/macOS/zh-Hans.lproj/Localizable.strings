@@ -1218,3 +1218,9 @@
 "Wake Host" = "唤醒主机";
 "Refresh Status" = "刷新状态";
 "Back to Computers" = "返回计算机列表";
+"Copy Diagnostics Report…" = "拷贝诊断报告…";
+"Copy Diagnostics" = "拷贝诊断报告";
+"Diagnostics Report Copied" = "诊断报告已拷贝";
+"Diagnostics Report Copied Message" = "报告已在剪贴板中，可直接粘贴到你要提交的 issue。报告会主动去掉 PIN、密码、证书以及本机用户目录路径。";
+"Diagnostics Report Unavailable" = "无法拷贝诊断报告";
+"Diagnostics Report Unavailable Message" = "剪贴板未能写入，请使用“导出原始日志”获取日志文件。";

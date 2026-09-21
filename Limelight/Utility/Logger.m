@@ -714,6 +714,14 @@ static void ProcessCuratedLogLine(NSString *line, LogLevel level) {
     }
 }
 
+NSString* LoggerRawLogPath(void) {
+    return EnsureRawFileLogPath();
+}
+
+NSString* LoggerCuratedLogPath(void) {
+    return EnsureCuratedFileLogPath();
+}
+
 void LoggerSetMinimumLevel(LogLevel level) {
     if (gLoggerStateLock == nil) {
         gLoggerStateLock = [[NSObject alloc] init];

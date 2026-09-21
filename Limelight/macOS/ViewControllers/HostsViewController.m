@@ -13,6 +13,7 @@
 #import "AppsViewController.h"
 #import "AppsWorkspaceViewController.h" // Import Workspace VC
 #import "AlertPresenter.h"
+#import "DiagnosticsReportBuilder+Live.h"
 #import "NSWindow+Moonlight.h"
 #import "NSCollectionView+Moonlight.h"
 #import "Helpers.h"
@@ -924,7 +925,24 @@
             [self.view.window endSheet:self.pairAlert.window];
             self.pairAlert = nil;
         }
-        [AlertPresenter displayAlert:NSAlertStyleWarning title:NSLocalizedString(@"Pairing Failed", @"Pairing Failed") message:[self localizedMessageForPairFailureReason:reason detail:detail] window:self.view.window completionHandler:nil];
+        NSAlert *failureAlert = [[NSAlert alloc] init];
+        failureAlert.alertStyle = NSAlertStyleWarning;
+        failureAlert.messageText = NSLocalizedString(@"Pairing Failed", @"Pairing Failed");
+        failureAlert.informativeText = [self localizedMessageForPairFailureReason:reason detail:detail];
+        // The second button is here because this alert is the moment a report is worth
+        // having: the version, the machine, what the system permits, and the log tail are
+        // the four things a maintainer asks for next. Sending a player to find a menu item
+        // after a failure is how five open upstream issues ended up with screenshots
+        // instead of an answer.
+        [failureAlert addButtonWithTitle:NSLocalizedString(@"OK", @"OK")];
+        [failureAlert addButtonWithTitle:NSLocalizedString(@"Copy Diagnostics",
+                                                         @"Copy the diagnostics report from the pairing failure alert")];
+        [failureAlert beginSheetModalForWindow:self.view.window
+                             completionHandler:^(NSModalResponse returnCode) {
+            if (returnCode == NSAlertSecondButtonReturn) {
+                [DiagnosticsReportBuilder writeCurrentReportToPasteboard];
+            }
+        }];
         [self->_discMan startDiscovery];
     });
 }

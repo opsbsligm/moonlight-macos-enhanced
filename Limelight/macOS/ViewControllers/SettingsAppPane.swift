@@ -50,6 +50,8 @@ struct AppView: View {
   @SwiftUI.State private var showFullResetConfirm = false
   @SwiftUI.State private var showResetDone = false
   @SwiftUI.State private var resetDoneMessageKey = ""
+  @SwiftUI.State private var showDiagnosticsCopied = false
+  @SwiftUI.State private var showDiagnosticsCopyFailed = false
 
   private var appAppearanceBinding: Binding<AppAppearanceOption> {
     Binding(
@@ -105,6 +107,17 @@ struct AppView: View {
   @MainActor
   private func viewDebugLog() {
     showLiveLogViewer = true
+  }
+
+  /// The whole report goes to the pasteboard, or the player is told it did not.
+  ///
+  /// A button that appears to work is worse than one that reports failure: the report is
+  /// meant to be pasted into an issue, and an empty clipboard is invisible until somebody
+  /// replies asking for the information that never left the machine.
+  private func copyDiagnosticsReport() {
+    let copied = DiagnosticsReportBuilder.writeCurrentReportToPasteboard()
+    showDiagnosticsCopied = copied
+    showDiagnosticsCopyFailed = !copied
   }
 
   @MainActor
@@ -313,6 +326,9 @@ struct AppView: View {
               Button(languageManager.localize("Export Raw Log…")) {
                 exportRawDebugLog()
               }
+              Button(languageManager.localize("Copy Diagnostics Report…")) {
+                copyDiagnosticsReport()
+              }
             }
           }
 
@@ -380,6 +396,16 @@ struct AppView: View {
       }
     } message: {
       Text(languageManager.localize("Full Reset Confirm Message"))
+    }
+    .alert(languageManager.localize("Diagnostics Report Copied"), isPresented: $showDiagnosticsCopied) {
+      Button(languageManager.localize("OK"), role: .cancel) {}
+    } message: {
+      Text(languageManager.localize("Diagnostics Report Copied Message"))
+    }
+    .alert(languageManager.localize("Diagnostics Report Unavailable"), isPresented: $showDiagnosticsCopyFailed) {
+      Button(languageManager.localize("OK"), role: .cancel) {}
+    } message: {
+      Text(languageManager.localize("Diagnostics Report Unavailable Message"))
     }
     .alert(languageManager.localize("Reset Completed"), isPresented: $showResetDone) {
       Button(languageManager.localize("Restart App")) {

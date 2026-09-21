@@ -35,5 +35,10 @@ BOOL LoggerIsCuratedModeEnabled(void);
 void LoggerSetInputDiagnosticsEnabled(BOOL enabled);
 BOOL LoggerIsInputDiagnosticsEnabled(void);
 void LoggerPersistMessage(LogLevel level, NSString *message);
+// Where the two debug logs live, so a diagnostics report can name the file it read
+// instead of guessing at a container path. Nil when the log directory could not be
+// created, which is the same reason nothing was ever written to them.
+NSString* LoggerRawLogPath(void);
+NSString* LoggerCuratedLogPath(void);
 
 #endif

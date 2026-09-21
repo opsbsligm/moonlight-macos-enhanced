@@ -1218,3 +1218,9 @@
 "Wake Host" = "Wake Host";
 "Refresh Status" = "Refresh Status";
 "Back to Computers" = "Back to Computers";
+"Copy Diagnostics Report…" = "Copy Diagnostics Report…";
+"Copy Diagnostics" = "Copy Diagnostics";
+"Diagnostics Report Copied" = "Diagnostics Report Copied";
+"Diagnostics Report Copied Message" = "The report is on your clipboard, ready to paste into the issue you are filing. A PIN, password, certificate and your home folder path are left out on purpose.";
+"Diagnostics Report Unavailable" = "Diagnostics Report Unavailable";
+"Diagnostics Report Unavailable Message" = "Nothing was copied. Use Export Raw Log… to get the log file itself.";
