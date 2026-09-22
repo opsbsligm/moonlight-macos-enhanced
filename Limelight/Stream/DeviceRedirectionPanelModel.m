@@ -71,6 +71,8 @@ NSString *MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaim claim) {
             return @"host-refused";
         case MLDeviceRedirectionHostClaimOffered:
             return @"host-offered";
+        case MLDeviceRedirectionHostClaimUnreachable:
+            return @"host-unreachable";
     }
     return @"host-not-asked";
 }
@@ -321,6 +323,14 @@ NSString *MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaim claim) {
                       value == nil ? @{} : @{ MLDeviceRedirectionServerInfoTagName() : value }]
         ? MLDeviceRedirectionHostClaimOffered
         : MLDeviceRedirectionHostClaimRefused;
+}
+
+- (void)noteHostWasUnreachable {
+    _hostClaim = MLDeviceRedirectionHostClaimUnreachable;
+}
+
+- (void)clearHostClaim {
+    _hostClaim = MLDeviceRedirectionHostClaimNotAsked;
 }
 
 // MARK: - Reading the bus

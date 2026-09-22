@@ -1232,7 +1232,9 @@
 "System extension entitlement" = "System extension entitlement";
 "The host offers it" = "The host offers it";
 "Check host" = "Check host";
-"Check host detail" = "Asks the selected host one question and remembers the answer only for this visit. A host that did not answer, answered something else, or turned out to be a different machine is a refusal.";
+"Check host detail" = "Asks the selected host one question and remembers the answer only for this visit. A host that answered no, answered with something the protocol does not define, or left the field out is a refusal; a host that could not be reached at all is shown as unreachable instead.";
+"Host unreachable detail" = "The question went out and nothing answerable came back: no address for this host, no reply, an error, or a reply signed by a different machine. None of those is the host refusing devices, so the setting to look at is the connection rather than the PC.";
+
 "What stands in the way" = "What stands in the way";
 "Reason" = "Reason";
 "Devices panel reason detail" = "One word, in the same spelling the log uses, so a screenshot and a log line describe the same obstacle. Until it reads none, no device on the list below can be handed over.";

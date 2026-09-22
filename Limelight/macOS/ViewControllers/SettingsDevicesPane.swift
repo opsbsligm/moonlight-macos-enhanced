@@ -157,7 +157,7 @@ struct DevicesView: View {
       Spacer()
       Text(MLDeviceRedirectionHostClaimName(panel.hostClaim))
         .font(.system(.body, design: .monospaced))
-        .foregroundColor(panel.hostClaim == .offered ? .green : .secondary)
+        .foregroundColor(hostClaimColour)
       Button(action: checkHost) {
         if isCheckingHost {
           ProgressView().controlSize(.small)
@@ -166,7 +166,8 @@ struct DevicesView: View {
         }
       }
       .disabled(isCheckingHost)
-      .help(languageManager.localize("Check host detail"))
+      .help(languageManager.localize(
+        panel.hostClaim == .unreachable ? "Host unreachable detail" : "Check host detail"))
     }
   }
 
@@ -363,13 +364,22 @@ struct DevicesView: View {
   ///
   /// The uuid check is not ceremony: several machines can answer `/serverinfo` on one address space,
   /// and crediting a stranger's capability bit would hand devices to a host that never offered them.
+  ///
+  /// Every way out of this function names what actually happened. The three that get no answer --
+  /// no host selected, no address to ask, and an answer that came from somebody else -- are not the
+  /// host saying no, and the page has to be able to say so: a player told their host refuses will go
+  /// fiddling with its settings, while the thing to check was the network.
   private func checkHost() {
     guard let host = pairedTemporaryHost() else {
-      note(advertised: nil)
+      // Nothing was asked, so nothing may be shown about what was heard -- including whatever the
+      // host that used to be selected had said.
+      panel.clearHostClaim()
+      panelRevision += 1
       return
     }
     guard let address = ConnectionEndpointStore.allEndpoints(for: host).first else {
-      note(advertised: nil)
+      panel.noteHostWasUnreachable()
+      panelRevision += 1
       return
     }
     isCheckingHost = true
@@ -401,14 +411,22 @@ struct DevicesView: View {
       let answered = serverInfo.isStatusOk()
         && !expectedUuid.isEmpty
         && answeredUuid == expectedUuid
-      note(advertised: answered ? advertisedTag : nil)
+      note(advertised: advertisedTag, hostAnswered: answered)
     }
   }
 
-  private func note(advertised: String?) {
+  /// `hostAnswered` is the difference between a host that said no and a host that was not heard.
+  /// Folding the two together was the original bug: the panel would print a refusal it had never
+  /// been given, and the one number the player needed -- whether to touch the PC or the cable --
+  /// was the number it got wrong.
+  private func note(advertised: String?, hostAnswered: Bool) {
     DispatchQueue.main.async {
       isCheckingHost = false
-      panel.noteServerInfoValue(advertised)
+      if hostAnswered {
+        panel.noteServerInfoValue(advertised)
+      } else {
+        panel.noteHostWasUnreachable()
+      }
       panelRevision += 1
     }
   }
@@ -493,6 +511,17 @@ struct DevicesView: View {
   }
 
   // MARK: - Formatting
+
+  /// Three colours for three situations the player can act on differently: offered needs nothing,
+  /// refused is a decision on the PC, unreachable is the network in between, and not-asked says the
+  /// button has not been pressed yet. Orange rather than red, because nothing here is broken.
+  private var hostClaimColour: Color {
+    switch panel.hostClaim {
+    case .offered: return .green
+    case .unreachable: return .orange
+    default: return .secondary
+    }
+  }
 
   private func yesNo(_ value: Bool) -> String {
     languageManager.localize(value ? "Yes" : "No")

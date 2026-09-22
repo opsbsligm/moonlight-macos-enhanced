@@ -83,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compiled assertions, 9 planted defects all caught.
 - **The devices panel: the first screen that says why USB redirection is not available yet.**
   Settings gained a Devices pane (`SettingsDevicesPane.swift`, rendered entirely from
-  `MLDeviceRedirectionPanelModel`). Its 84 compiled assertions cover the logic; its source assertions
+  `MLDeviceRedirectionPanelModel`). Its 90 compiled assertions and 18 planted defects cover the logic; its source assertions
   cover the wiring, because an unwired panel fails silently: model reachable through the bridging
   header, pane a member of the target, pane actually reachable from the tab bar, and every sentence it
   can print answered in both language tables. The four preconditions sit above the device list because
@@ -112,6 +112,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The devices page reported a host decision that nobody heard.**
+  `/serverinfo` either answered or it did not, and the panel had two states for the answer and
+  none for the silence: no address, a failed request, an error status, or a reply from a different
+  machine all printed `host-refused`. That contradicts what this repository already decided for
+  the session layer, where unanswered and refused are two stops precisely because a slow host and
+  a full host must not look the same in a log -- and it sent the player to the PC's settings when
+  the thing to check was the connection. `host-unreachable` is a fourth state now, named separately
+  in the page and the audit line, held in orange rather than red because nothing is broken, and
+  never sticky: changing the selected host clears an answer that belonged to another machine, which
+  the page used to keep showing. Two planted defects cover the two ways that went wrong.
 - **The devices page would have told a player their host refused devices when it offered them.**
   The page compared the `uniqueid` of a `/serverinfo` answer against the stored host, and the
   advertised tag against `"1"`, both untrimmed. Every other tag read from that response is

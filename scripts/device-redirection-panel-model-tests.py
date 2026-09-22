@@ -303,6 +303,26 @@ int main(void) {
               ![MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaimRefused)
                    isEqual:MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaimOffered)],
               "not-asked, refused, and offered have three names");
+        // A fourth state exists because the page had been about to report a host decision that
+        // nobody heard. The names are the whole of it: `host-refused` sent a player to the PC,
+        // when the thing to check was the cable, so the two must never share a spelling.
+        [answers noteHostWasUnreachable];
+        CHECK(answers.hostClaim == MLDeviceRedirectionHostClaimUnreachable,
+              "a host that was not reached is held as unreachable, not as a refusal");
+        CHECK([MLDeviceRedirectionHostClaimName(answers.hostClaim)
+                   isEqual:@"host-unreachable"],
+              "and the page and the log both name the silence as a silence");
+        CHECK(!answers.mayBecomeActive,
+              "an unreachable host is not a host that offered, so no handover is offered either");
+        CHECK(![MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaimUnreachable)
+                   isEqual:MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaimRefused)],
+              "unreachable does not borrow the name of a refusal");
+        [answers noteServerInfoValue:@"1"];
+        CHECK(answers.hostClaim == MLDeviceRedirectionHostClaimOffered,
+              "an answer heard after a silence replaces the silence rather than arguing with it");
+        [answers clearHostClaim];
+        CHECK(answers.hostClaim == MLDeviceRedirectionHostClaimNotAsked,
+              "and clearing the claim forgets an answer that belonged to another host");
 
         // Class selection, and the range of a byte.
         MLDeviceRedirectionPanelModel *classes =
@@ -645,6 +665,12 @@ def main():
               "%s is trimmed before the page compares it, because the answer arrives from an "
               "XML reader and `ServerInfoResponse` trims every tag it stores for that reason"
               % tag)
+    check("panel.noteHostWasUnreachable()" in pane,
+          "the page has a branch for the host it could not reach, rather than a refusal it "
+          "invented on that host's behalf")
+    check("panel.clearHostClaim()" in pane,
+          "changing the selected host forgets what the previous one answered, because an answer "
+          "belongs to the machine that gave it")
     check("!expectedUuid.isEmpty" in pane,
           "a host whose identifier this app never learned is not credited with the answer of "
           "whoever replied, which is what comparing two missing identifiers would do")
@@ -721,6 +747,16 @@ def main():
               mutated(rules, "the rule switch",
                       "    rewritten[kRuleEnabledField] = @(enabled);",
                       "    rewritten[kRuleEnabledField] = @(YES);"),
+              cc, sdk)
+    run_rules("a host nobody reached is reported as one that refused",
+              mutated(rules, "the unreachable state",
+                      "- (void)noteHostWasUnreachable {\n    _hostClaim = MLDeviceRedirectionHostClaimUnreachable;\n}",
+                      "- (void)noteHostWasUnreachable {\n    _hostClaim = MLDeviceRedirectionHostClaimRefused;\n}"),
+              cc, sdk)
+    run_rules("the answer outlives the host it belonged to",
+              mutated(rules, "the claim that cannot be cleared",
+                      "- (void)clearHostClaim {\n    _hostClaim = MLDeviceRedirectionHostClaimNotAsked;\n}",
+                      "- (void)clearHostClaim {\n    _hostClaim = MLDeviceRedirectionHostClaimOffered;\n}"),
               cc, sdk)
     run_rules("an offer is refused because it arrived with the whitespace the reader left",
               mutated(rules, "the trimmed answer",

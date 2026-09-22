@@ -40,9 +40,18 @@ NS_ASSUME_NONNULL_BEGIN
 /// somebody else's machine. Leaving the panel resets it to `NotAsked`.
 typedef NS_ENUM(NSInteger, MLDeviceRedirectionHostClaim) {
     MLDeviceRedirectionHostClaimNotAsked = 0,
-    /// The host answered, and the answer was not yes. An absent field and a `0` both land here.
+    /// The host answered, and the answer was not yes. An absent field and a `0` both land
+    /// here, and so does a field that says `yes` instead of one -- the answer has to arrive in
+    /// the one spelling the protocol defines. What does not land here is never getting an
+    /// answer, which is the next case.
     MLDeviceRedirectionHostClaimRefused = 1,
     MLDeviceRedirectionHostClaimOffered = 2,
+    /// The question went out and nothing answerable came back: no route, an error status, or
+    /// an answer signed by a different machine. A page that called this a refusal would be
+    /// reporting a host's decision that nobody heard, which is the same class of lie as
+    /// calling a missing signing identity a broken device -- and it sends a player to their
+    /// PC's settings instead of their network.
+    MLDeviceRedirectionHostClaimUnreachable = 3,
 };
 
 /// One device on the bus, with the reading taken of it and the decision that would follow.
@@ -138,9 +147,21 @@ typedef NS_ENUM(NSInteger, MLDeviceRedirectionHostClaim) {
 /// record while reporting the row as gone.
 - (BOOL)removeRuleAtIndex:(NSUInteger)index NS_SWIFT_NAME(removeRule(atIndex:));
 
-/// The value the host returned for MLDeviceRedirectionServerInfoTagName(), or nil when it returned
-/// nothing at all. Both are recorded as a refusal, and neither is recorded as an offer.
-- (void)noteServerInfoValue:(id _Nullable)value;
+/// The value the host returned for MLDeviceRedirectionServerInfoTagName(), or nil when it answered
+/// and the field was absent. Both land on `Refused`, and neither lands on `Offered`.
+///
+/// Only call this with an answer that was actually received and identified. A request that failed
+/// belongs to the method below, and a page that conflates the two is what this comment exists for.
+- (void)noteServerInfoValue:(id _Nullable)value NS_SWIFT_NAME(noteServerInfoValue(_:));
+
+/// Records that the host could not be reached, or answered as somebody else. Explicitly not a
+/// refusal: the host made no decision that this page is entitled to report.
+- (void)noteHostWasUnreachable NS_SWIFT_NAME(noteHostWasUnreachable());
+
+/// Forgets whatever was heard, which is what leaving the panel does and what changing the
+/// selected host has to do too. An answer belongs to one machine, and a page that keeps showing
+/// the previous host's answer is making a claim about a machine it has not asked.
+- (void)clearHostClaim NS_SWIFT_NAME(clearHostClaim());
 
 /// Scans the bus now and reads each device the bus reported. Explicit, because a settings page
 /// should not iterate the registry on every redraw.
