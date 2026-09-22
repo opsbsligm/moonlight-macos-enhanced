@@ -1249,6 +1249,14 @@ CI_ONLY = {
     "relative-pointer-gain-tests.py": "macOS SDK",
     "discrete-scroll-click-tests.py": "macOS SDK",
     "controller-mouse-emulation-tests.py": "macOS SDK",
+    # The excuse is thinner here than the others and worth reading exactly: the script runs
+    # anywhere, and what it cannot do is invent its own input. It reads the transcript a build
+    # left behind, and local-gates.sh has no build to hand it, so the step skips on a laptop and
+    # the human has to point it at a log after building -- which is precisely what did not
+    # happen once: a warning sat in a first-party Swift file, every local gate was green, the
+    # local build log contained the line, and the check that reads such logs was inline shell in
+    # the build job and therefore invisible to the local list. Run it against your own log.
+    "build-warning-audit.py": "xcodebuild log",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})

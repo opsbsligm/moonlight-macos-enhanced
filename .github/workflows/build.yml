@@ -586,17 +586,15 @@ jobs:
           build 2>&1 | tee "build-${{ matrix.variant }}.log"
 
     - name: Fail on warnings in project sources
-      # Vendored third-party headers (OpenSSL umbrella headers, moonlight-common,
-      # xcframeworks) keep their own diagnostics; first-party code must stay clean.
+      # The rule lives in scripts/build-warning-audit.py rather than in this shell, and the
+      # reason is this file: scripts/local-gates.sh builds its list out of the python3 calls
+      # below, so a check written as grep here never reached that list and never ran on any
+      # laptop. The one gate that would have caught a warning in a first-party Swift file was
+      # the gate that only ran after a push, next to a local build log that already contained
+      # the line. Vendored sources keep their own diagnostics; first-party code stays clean.
       run: |
-        set -o pipefail
-        if grep -E 'warning: ' "build-${{ matrix.variant }}.log" \
-          | grep -vE 'xcframeworks/|moonlight-common|Packages/|libs/openssl|libs/OpenSSL|appintentsmetadataprocessor|libtool' \
-          | grep -qE 'Limelight/'; then
-          echo "::error::compiler warnings in first-party sources"
-          exit 1
-        fi
-        echo "first-party sources are warning-free"
+        python3 scripts/build-warning-audit.py --self-test
+        python3 scripts/build-warning-audit.py --log "build-${{ matrix.variant }}.log"
 
     - name: Verify ${{ matrix.variant }} binary slices
       run: |

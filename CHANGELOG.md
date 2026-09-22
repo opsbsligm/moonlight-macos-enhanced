@@ -177,6 +177,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The warning rule left the build job's shell and came home to `scripts/build-warning-audit.py.**
+  `local-gates.sh` takes its list of gates from the `python3 scripts/*.py` calls in the
+  workflow, so a check written as `grep` was never on that list and never ran on a laptop.
+  The one gate that would have refused
+  `left side of nil coalescing operator '??' has non-optional type 'String'` in a first-party
+  Swift file therefore ran only after a push, beside a local build log that already contained
+  the line. It has one home now, four self-test cases -- one of them that exact line -- and a
+  workflow check that refuses an inline copy of the rule surviving next to it. It is registered
+  as needing a build transcript, a thinner excuse than most of the others and worth reading:
+  the script runs anywhere, it cannot invent the build it judges, so point it at the log your
+  own build wrote before calling a local sweep green.
 - **`local-gates.sh` counted a gate that had read nothing as a passing gate.**
   It cut `--derived` and `--log` off the command line and ran what was left, on the theory
   that each such gate has a self-contained invocation besides. The gates left with no input
