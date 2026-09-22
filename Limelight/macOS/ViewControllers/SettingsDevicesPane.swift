@@ -387,7 +387,8 @@ struct DevicesView: View {
     // match: a host whose identifier this app never learned cannot be credited with an answer
     // it did not sign, and comparing two missing identifiers optional-to-optional would do
     // exactly that and call the stranger's capability bit our host's.
-    let expectedUuid = (host.uuid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let expectedUuid = ((host.uuid as String?) ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
     DispatchQueue.global(qos: .userInitiated).async {
       let serverInfo = ServerInfoResponse()
       if let http = HttpManager(

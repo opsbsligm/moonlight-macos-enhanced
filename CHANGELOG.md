@@ -112,6 +112,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A missing host identifier would have crashed the page instead of matching nobody, and only a
+  warning the local sweep could not run said so.** `TemporaryHost.h` declares `uuid` with no
+  nullability annotation, so the importer hands Swift an implicitly unwrapped `String`, and
+  `host.uuid ?? ""` never reached its right-hand side -- the branch the guard exists for. A
+  host whose identifier this app had never learned would have unwrapped nil and taken the
+  settings page down, which is the opposite of what the sentence above it claims. Read through
+  `as String?` the fallback is a fallback again, and the compiler stopped objecting because it
+  was no longer being asked to promise something it could not deliver.
 - **The devices page reported a host decision that nobody heard.**
   `/serverinfo` either answered or it did not, and the panel had two states for the answer and
   none for the silence: no address, a failed request, an error status, or a reply from a different
@@ -169,6 +177,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The warning rule left the build job's shell and came home to `scripts/build-warning-audit.py.**
+  `local-gates.sh` takes its list of gates from the `python3 scripts/*.py` calls in the
+  workflow, so a check written as `grep` was never on that list and never ran on a laptop.
+  The one gate that would have refused
+  `left side of nil coalescing operator '??' has non-optional type 'String'` in a first-party
+  Swift file therefore ran only after a push, beside a local build log that already contained
+  the line. It has one home now, four self-test cases -- one of them that exact line -- and a
+  workflow check that refuses an inline copy of the rule surviving next to it. It is registered
+  as needing a build transcript, a thinner excuse than most of the others and worth reading:
+  the script runs anywhere, it cannot invent the build it judges, so point it at the log your
+  own build wrote before calling a local sweep green.
 - The Stage 1 gate reports what its run proved and how many cases the binary executed,
   instead of a count transcribed into a document. Two shapes the measured bus never published
   are pinned anyway -- an identifier as raw bytes, and as a list -- because the parser can be
