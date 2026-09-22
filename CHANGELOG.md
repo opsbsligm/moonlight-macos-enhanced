@@ -20,25 +20,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a smart card therefore arrives split in two, and the single-node reader handed the policy a
   storage device -- exactly the face-choosing that the reserved-class refusal exists to prevent.
 
+### Added
+
+- **A USB measurement can no longer be wrong about a key name it invented.**
+  `scripts/usb-registry-shape.py` compiles a read-only IORegistry probe whose list of keys
+  is extracted out of `USBDeviceEnumeration.m` itself, prints the node counts the probe saw,
+  and reports whether every value shape on the bus today is pinned by a named case in the
+  Stage 1 harness. It is deliberately not a gate: on a runner with no USB devices it prints
+  `not measured` and does not print `covered`, and that state is itself tested against a
+  faked toolchain. `docs/usb-redirection-design.md` 8 records the reproduction commands,
+  and 8.1 the eight planted defects that have to turn it red.
+
 ### Fixed
 
 - **The enumeration no longer relies on a key name the kernel does not publish, and its
   harness no longer drives it with shapes nobody hands over.** Measurement found
-  `USB Vendor ID` absent from all 16 nodes read -- the identifiers that answer are
-  `idVendor`/`idProduct`, as numbers -- and found that no node published a serial number at
-  all, so `token=none` is the normal line in an audit rather than the degenerate one. The
-  fixture set now carries the measured node shapes, including a product name on every node and
-  identifiers on the interface nodes, which is what pins two rules previously asserted only
-  against invented input: a product name stays out of the diagnostic line, and walking only
-  the interface nodes still identifies the device instead of recording a visible thing as
-  anonymous. Three planted defects cover the aggregation -- stop at the first node, read
-  identifiers only off a node that carries no interface, collapse duplicate interfaces -- and
-  the compiled run now reports its own case count, refused below a floor.
+  `USB Vendor ID` absent from every one of the 21 unique nodes on the bus -- the identifiers
+  that answer are `idVendor`/`idProduct`, as numbers. **An earlier version of this entry also
+  claimed no node published a serial number, and that claim was wrong**: the probe asked for
+  `USB SerialNumber` while the kernel publishes `USB Serial Number`, with the space, and a
+  probe cannot report that it asked for the wrong name. Measured with the right key, the
+  serial answers on 7 of 10 device nodes and 11 of 11 interface nodes, so digesting it is the
+  work the design assumed it was, and `token=none` appears when a device really has none. The
+  node count in the same entry was the probe's own eight-per-class cap rather than the size of
+  the bus; that cap is gone. The fixture set now carries the measured node shapes, including a
+  product name on every node and identifiers on the interface nodes, which is what pins two
+  rules previously asserted only against invented input: a product name stays out of the
+  diagnostic line, and walking only the interface nodes still identifies the device instead of
+  recording a visible thing as anonymous. Three planted defects cover the aggregation -- stop
+  at the first node, read identifiers only off a node that carries no interface, collapse
+  duplicate interfaces -- and the compiled run now reports its own case count, refused below a
+  floor.
 
 ### Maintenance
 
 - The Stage 1 gate reports what its run proved and how many cases the binary executed,
-  instead of a count transcribed into a document.
+  instead of a count transcribed into a document. Two shapes the measured bus never published
+  are pinned anyway -- an identifier as raw bytes, and as a list -- because the parser can be
+  handed both, and each has a planted defect that turns the run red if either blob is ever
+  read as an identifier. The bus-shape classifier is exercised from this gate too, so the
+  measurement that justified the fixtures is checked on runners that have no USB devices.
 
 ## [1.6.0-build1574] - 2026-09-22
 

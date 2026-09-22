@@ -23,9 +23,13 @@ Defects are planted one at a time and every one has to be caught -- the serial w
 instead of digested, the serial dropped so every device looks alike, the hex length bound
 removed, half-parsed text believed, a protocol byte matched to the wrong interface, a key-name
 list shortened, an aggregation that stops at the first registry node, an aggregation that only
-reads identifiers off the device node, and one that collapses duplicate interfaces. How many
-behavioural cases the compiled binary ran is its own report, and the run is refused if that
-count falls below a floor.
+reads identifiers off the device node, one that collapses duplicate interfaces, a blob of bytes
+becoming a vendor id, and a list becoming its first element. How many behavioural cases the
+compiled binary ran is its own report, and the run is refused if that count falls below a floor.
+
+The measurement that justified the node shapes is checked from here as well: the classifier in
+scripts/usb-registry-shape.py is run against buses that are not attached, because the machine
+that runs this gate usually has no USB devices on it.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -109,8 +113,12 @@ static NSDictionary *device(id vendor, id product, id serial, id classes, id pro
 
 // The node shapes below were read off the registry rather than imagined: on macOS 27.2, for
 // every device attached at the time, identifiers arrived as numbers under the io-kit short
-// keys, each interface got its own node carrying one class byte and one protocol byte, no
-// device published a serial number, and every node published a product name.
+// keys, each interface got its own node carrying one class byte and one protocol byte plus
+// the device's identifiers and its own serial, and every node published a product name.
+// The first version of this note also claimed no device published a serial number. That was
+// wrong, and it was wrong because the probe asked for a key name the kernel does not use:
+// docs/usb-redirection-design.md 2.5 records the correction, and scripts/usb-registry-shape.py
+// is what keeps a probe from under-asking again.
 static NSDictionary *measured_device_node(unsigned short vid, unsigned short pid, id name) {
     NSMutableDictionary *node = [NSMutableDictionary dictionary];
     node[@"idVendor"] = @(vid);
@@ -172,6 +180,18 @@ int main(void) {
         // characters clears the length guard, so only the scanner itself can refuse it.
         expect_identity("a non-hex tail voids the half not a prefix",
                         device(@"28dZ", @"2202", nil, @0x03, nil, nil), 0, NO, 0x2202, YES);
+        // Two shapes the parser can be handed that the measured bus never published: an
+        // identifier as raw bytes, and an identifier as a list. Neither is a number and
+        // neither is text, so accepting one means choosing bytes or an element out of a
+        // blob, which is how a device gets matched against the wrong rule. They are pinned
+        // here so the rule outlives the absence, and usb-registry-shape.py turns them into
+        // a red run the day a bus really carries one.
+        expect_identity("a data-shaped identifier stays unread instead of becoming two bytes of a vendor id",
+                        device([NSData dataWithBytes:(unsigned char[]){0x28, 0xde} length:2],
+                               @0x2202, nil, @0x03, nil, nil), 0, NO, 0x2202, YES);
+        expect_identity("an array-shaped identifier is not read out of its first element",
+                        device(@[ @0x28de ], @0x2202, nil, @0x03, nil, nil),
+                        0, NO, 0x2202, YES);
 
         MLUSBDeviceIdentity *shortNamed = MLUSBDeviceIdentityFromRegistryProperties(
             @{@"idVendor": @"046d", @"idProduct": @"c52b"});
@@ -209,7 +229,7 @@ int main(void) {
               !hub.interfaces[2].isBootInputInterface,
               "a device split across four registry nodes comes back as one device with three interfaces");
         check([hub.auditToken isEqual:@"none"],
-              "a device the registry gave no serial for says none, which is what the bus actually did");
+              "a device the registry gave no serial for says none");
         check([[hub diagnosticLineForVerdict:nil]
                rangeOfString:@"HS USB Dongle"].location == NSNotFound,
               "the product name the registry publishes on every node stays out of the line");
@@ -365,6 +385,18 @@ def main():
     check("usb" not in entitlements.lower(),
           "reading the bus needed no new entitlement, and none was added")
 
+    # The bus-shape classifier has to be right for the 2.5 table to mean anything, and a
+    # CI runner has no USB devices on it -- so the classifier is exercised against buses
+    # that are not attached, from inside a gate that already runs everywhere.
+    shape_tool = subprocess.run(
+        [sys.executable, os.path.abspath(os.path.join(ROOT, "scripts", "usb-registry-shape.py")),
+         "--self-test", "--root", os.path.abspath(ROOT)], capture_output=True, text=True)
+    check(shape_tool.returncode == 0 and "RUN PASSED" in shape_tool.stdout,
+          "the bus-shape classifier checks itself, so a wrong measurement is caught with no bus attached")
+    if shape_tool.returncode != 0:
+        print(shape_tool.stdout[-1200:])
+        print(shape_tool.stderr[-400:])
+
     run_rules("the serial is written out instead of digested",
               mutated(rules, "the serial digest",
                       "auditToken:MLUSBDeviceAuditToken(serialNumber)",
@@ -406,6 +438,23 @@ def main():
               mutated(rules, "the identifier sweep",
                       "        if (vendorID == nil) {",
                       "        if (vendorID == nil && MLInterfacesFromProperties(node).count == 0) {"),
+              cc, sdk)
+    run_rules("a data-shaped identifier becomes two bytes of a vendor id",
+              mutated(rules, "the data identifier",
+                      "    if (![value isKindOfClass:[NSString class]]) {\n        return nil;",
+                      "    if ([value isKindOfClass:[NSData class]] && [(NSData *)value length] >= 2) {\n"
+                      "        const unsigned char *bytes = [(NSData *)value bytes];\n"
+                      "        return @(((unsigned int)bytes[0] << 8) | bytes[1]);\n"
+                      "    }\n"
+                      "    if (![value isKindOfClass:[NSString class]]) {\n        return nil;"),
+              cc, sdk)
+    run_rules("an array-shaped identifier becomes its first element",
+              mutated(rules, "the array identifier",
+                      "    if (![value isKindOfClass:[NSString class]]) {\n        return nil;",
+                      "    if ([value isKindOfClass:[NSArray class]] && [(NSArray *)value count] > 0) {\n"
+                      "        return MLIdentifierFromProperty([(NSArray *)value objectAtIndex:0]);\n"
+                      "    }\n"
+                      "    if (![value isKindOfClass:[NSString class]]) {\n        return nil;"),
               cc, sdk)
     run_rules("identical interfaces are collapsed while aggregating",
               mutated(rules, "the duplicate union",

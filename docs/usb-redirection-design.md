@@ -61,19 +61,27 @@
   返回 `KERN_SUCCESS` 且 iterator 有效 → **读取本机 USB 设备的属性不需要新 entitlement，也不需要 DEXT**。
   2.3 的签名前置挡住的是"打开并接管设备"，不是"看见它插着"。
 - 由此确定 Stage 1 的边界：枚举与归因是纯读取，可以今天做完并进门禁；任何"把设备交给主机"的动作仍留在 Stage 3。
-- **真机取证已完成**（macOS 27.2，一台 Apple Silicon 机器，读取时挂着的全部设备：8 个设备节点与 8 个接口节点，
-  取证程序是一次性 clang 构建的只读探针，`IOServiceGetMatchingServices` + `IORegistryEntryCreateCFProperties`，
-  不打开任何设备、不使用任何 entitlement；`IOUSBHostDevice`/`IOUSBHostInterface`/`IOUSBDevice`/`IOUSBInterface`
-  四类匹配全部返回 `KERN_SUCCESS` 且有节点）。实测推翻了写代码前的两个假设：
+- **真机取证已完成**（macOS 27.2，一台 Apple Silicon 机器，**该时刻**挂着的全部设备：探针自报的 `COUNT` 行为
+  **10 个设备节点与 11 个接口节点**（`IOUSBDevice` 与 `IOUSBHostDevice`、`IOUSBInterface` 与 `IOUSBHostInterface`
+  各自是同一批对象的别名匹配，去重后 21 个唯一节点）。取证程序是一次性 clang 构建的只读探针，
+  `IOServiceGetMatchingServices` + `IORegistryEntryCreateCFProperties`，不打开任何设备、不使用任何 entitlement；
+  四类匹配全部返回 `KERN_SUCCESS` 且有节点）。
+
+  **这张表的第一版把序列号那一行写反了，此处按改正后的版本记录。** 上一轮的数字来自一个手写键名清单的探针：
+  它查的是 `USB SerialNumber`（无空格），而内核发布的是 `USB Serial Number`（有空格）。探针不会为"自己问错了名字"
+  报错，它只会安静地报告一个干净而虚假的世界，而这里的安全规则是照着那张表写的。同一份旧程序还把每类匹配截断到
+  8 个节点，于是"16 个节点"是截断上限而不是总线上的节点数。两处都已修：键名清单现在**由 `scripts/usb-registry-shape.py`
+  从解析器自己的五组候选键抽取生成**（"探针少问一个键"在结构上不再可能），节点数由探针自报的 `COUNT` 行给出。
+  改正后的实测推翻了写代码前的三个假设：
 
   | 写代码前的假设 | 实测 | 后果 |
   |---|---|---|
-  | 标识符首选键是 `USB Vendor ID` | 8+8 个节点上**一次都没出现**；真正生效的是第二个候选 `idVendor`/`idProduct`，形态是 **CFNumber**（`USB_Vendor_ID` 同样从未出现） | 候选键顺序仍保留（多键名是有意的宽容），但"harness 用哪种形状驱动"这件事从此有了依据：形状 = 短键名 + 数值 |
+  | 标识符首选键是 `USB Vendor ID` | 21 个唯一节点上**一次都没出现**；真正生效的是第二个候选 `idVendor`/`idProduct`，形态是 **CFNumber**（10/10 设备节点、11/11 接口节点；`USB_Vendor_ID`/`USB_Product_ID` 同样从未出现） | 候选键顺序仍保留（多键名是有意的宽容），但"harness 用哪种形状驱动"这件事从此有了依据：形状 = 短键名 + 数值 |
   | 接口类别可能按接口以**数组**到达设备节点 | 每个接口是**独立 registry 节点**（`IOUSBHostInterface`），各自发布**单个数值** `bInterfaceClass`/`bInterfaceSubClass`/`bInterfaceProtocol`；`interfaceClasses`/`interfaceProtocols` 两个数组候选键从未出现 | 复合设备不是"一条记录里两个类别"，而是"同一设备的两个节点各带一个类别"。**4.5 的复合设备整体拒绝在旧的单节点 API 下无法表达**——按节点逐个归因时，扩展坞会以"存储设备"的身份通过类别门。已补 `MLUSBDeviceIdentityFromRegistryNodes(...)`：标识符取第一个拼得出来的节点，接口是所有节点的并集（含重复项，节点说两个就是两个） |
-  | 序列号通常读得到，`token=none` 是异常路径 | **没有任何节点发布 `USB Serial Number` 或 `kUSBSerialNumberString`** | `none` 是真机默认路径；摘要脱敏保护的是一条本就不常带号的路，而审计行必须先把"没有号"说清楚 |
+  | 序列号通常读得到，`token=none` 是异常路径 | **上一版这一行写反了，现已改正**：正确键名（带空格）在 **7/10 设备节点与 11/11 接口节点**上发布，`kUSBSerialNumberString` 在 **7/10 设备节点**上发布，形态都是字符串 | 原判断方向成立：序列号通常拿得到，所以摘要脱敏是在做实事，而 `none` 只在真没号的时候出现。接口节点 11/11 都带号还多出一层含义——"只遍历接口节点"那条路径同样能拿到可关联的稳定标识，所以脱敏必须在那条路径上一视同仁，Stage 1 的对应断言不是冗余 |
   | 产品名是可选装饰 | `USB Product Name` 在**每个**节点上都有；接口节点的 registry name 甚至可以是 `http://help.vesa.org/dp-usb-type-c/` 这类可关联字符串。接口节点也带 `idVendor`/`idProduct` | "读取路径不看产品名"这条静态断言现在有了物证：泄露向量确实存在，而只遍历接口节点也必须能归因（否则可见设备被记成匿名设备，策略只能拒） |
 
-- **仍未观测的部分**：Apple 文档里出现过的 Data 形态标识符（`USB Vendor ID` 为 NSData 那一类）在本次取证的 16 个节点上**一个都没出现**，本机既不能证实也不能证伪。实现**不接受** Data 形态，按不利处理成 `unread`，由身份门拒绝——也就是说：如果哪天在一台机器上只见到 Data 形态，症状是"看得见设备但身份不完整"，而不是把两个字节猜成厂商号。这一条留作观测记录，**不构成放宽解析的依据**。
+- **仍未观测的部分**：Apple 文档里出现过的 Data 形态标识符（`USB Vendor ID` 为 NSData 那一类）在本次取证的 21 个唯一节点上**一个都没出现**，本机既不能证实也不能证伪。`USB Vendor ID`/`USB Product ID` 本身一个节点都没有，所以"短键名全消失、只剩 Data 形态"那种总线本次也无法证实——它仍是推测，而实现按不利处理，不依赖它出现。实现**不接受** Data 形态，按不利处理成 `unread`，由身份门拒绝——也就是说：如果哪天在一台机器上只见到 Data 形态，症状是"看得见设备但身份不完整"，而不是把两个字节猜成厂商号。这一条留作观测记录，**不构成放宽解析的依据**。
 
 
 ## 3. 架构：分层交付，每层各自解锁下一层
@@ -119,10 +127,11 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 | 结构断言 | 头文件只 import Foundation；实现只 import CommonCrypto 与自己；无 IOKit/DriverKit/Usb import；`.m` 内无 `NSLog`/`printf`；`Moonlight.entitlements` 未新增 usb/driverkit；类别门不可能先于保留类别门 |
 | 变异 | 9 个，全部被抓：默认改为放行、配对门移除、保留类别清空、本地输入门移除、两输入门交换顺序、产品号允许匹配任意规则、身份门退化为"全不可读才拦"、未读到的 protocol 字节被当成无害、序列号写入日志 |
 | 构建纳入 | `Moonlight.xcodeproj` 的 `membershipExceptions` 已加入 `Stream/DeviceRedirectionPolicy.m`（`source-membership-audit.py` 通过：120 files / 128 entries / 3 documented exclusions） |
+| 取证回归 | `scripts/usb-registry-shape.py`（**不是门禁**，命名刻意向）：从解析器源码抽取候选键生成只读探针、在活总线上取证，并把每个形状与 Stage 1 已钉的 fixture 表比对；三种结论 covered / drift / not measured，无 IOKit 的机器上明说"这次没取证"且不打印 covered。`stale_pins()` 每次遍历整张 pin 表，所以删掉一条 fixture 会立刻红（8.1 记的六个植入缺陷全部被抓）。它的 `--self-test` 由 `usb-device-enumeration-tests.py` 调用，因此跟着现有门禁在两种 runner 上一起跑，不需要新 step。见 8 |
 | 由谁执行 | macOS 每个 build 的 `scaling-output-evidence-tests.py` step 调用本 gate；`constraints-audit.py` 的 `DRIVEN_BY` 记录了这条依赖并校验"driver 确实是 CI step 且确实调用它"。原因：该 gate 需要真 clang 与 macOS SDK，Ubuntu audits job 跑不了，而新增 step 需要带 `workflow` scope 的凭证，当前推送凭证没有 |
 | Stage 1 门禁 | `scripts/usb-device-enumeration-tests.py`：把 `USBDeviceEnumeration.m` 与 Stage 0 的 `DeviceRedirectionPolicy.m` 作为**同一翻译单元**用真 clang + `-Wall -Werror` 编译（摘要实现只有一份，不复刻第二套），输入是注入的 registry 属性字典，**不链接 IOKit** |
-| Stage 1 断言 | 行为断言在编译出的二进制里执行，条数由二进制自己打印（当前那次运行 23 条），harness 拒绝低于下限的用例清单——用例被悄悄删掉时，只有那个数字会发现不对。覆盖的形状：数值/十六进制文本/`0x` 前缀/无标识符/过长文本/半个十六进制/4 字符的半十六进制、候选键名、接口与 protocol 的三种配对、**真机节点形状**（短键名 + 单数值 + 每接口一个节点 + 无序列号 + 每节点都有产品名）、只遍历接口节点也要能归因、重复接口节点不得折叠、复合设备以分离节点到达时 whichever-face-first 都被拒、诊断行不含序列号与产品名、摘要令牌一对一。另有 5 条静态断言（不链接 IOKit、除摘要外只 import 一个系统头、枚举自身无日志出口、读取路径不看产品名、`Moonlight.entitlements` 未新增 usb） |
-| Stage 1 变异 | 9 个，全部被抓：序列号写出、序列号丢弃使所有设备同形、超长文本仍按标识符解析、半个十六进制被采信、一个 protocol 字节摊给两个接口、候选键名被删一个、归并只取第一个节点、只从"非接口节点"取标识符、把重复接口折叠成一个。第 4 个只有 4 字符输入才能抓到——长度护栏会掩盖它，所以那条断言是补上的缺口，不是装饰；后三个是 2.5 实测之后补的，它们各自对应一条真实总线会让 4.5 静默失效的归因错误 |
+| Stage 1 断言 | 行为断言在编译出的二进制里执行，条数由二进制自己打印（当前那次运行 23 条），harness 拒绝低于下限的用例清单——用例被悄悄删掉时，只有那个数字会发现不对。覆盖的形状：数值/十六进制文本/`0x` 前缀/无标识符/过长文本/半个十六进制/4 字符的半十六进制、候选键名、接口与 protocol 的三种配对、**真机节点形状**（短键名 + 单数值 + 每接口一个节点 + 设备与接口节点都带序列号 + 每节点都有产品名）、Data 形态与数组形态的标识符一律不读、只遍历接口节点也要能归因、重复接口节点不得折叠、复合设备以分离节点到达时 whichever-face-first 都被拒、诊断行不含序列号与产品名、摘要令牌一对一。另有 6 条静态断言（不链接 IOKit、除摘要外只 import 一个系统头、枚举自身无日志出口、读取路径不看产品名、`Moonlight.entitlements` 未新增 usb） |
+| Stage 1 变异 | 11 个，全部被抓：序列号写出、序列号丢弃使所有设备同形、超长文本仍按标识符解析、半个十六进制被采信、一个 protocol 字节摊给两个接口、候选键名被删一个、归并只取第一个节点、只从"非接口节点"取标识符、把重复接口折叠成一个；另有本轮补的两个——把一坨字节读成厂商号、把数组读成它的第一个元素。第 4 个只有 4 字符输入才能抓到——长度护栏会掩盖它，所以那条断言是补上的缺口，不是装饰；中间三个是 2.5 实测之后补的，它们各自对应一条真实总线会让 4.5 静默失效的归因错误；最后两个钉的是"真机今天没有但文档里出现过"的形状，它们的存在由 8.1 的负向验证证明不是装饰 |
 
 
 **剩余 gate**：枚举脱敏（禁止序列号与设备名进入日志）已由 Stage 1 门禁覆盖；剩下的两处随各自的交付走——UI 落地时新诊断文案必须过 `l10n-audit.py`，Stage 2 的协商 gate 必须让未知能力位、缺字段、版本偏斜全部落`host-unsupported`。
@@ -158,109 +167,65 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 
 ## 8. 附：2.5 那次取证的复现程序
 
-2.5 的每个数字都来自下面这个程序的一次运行。它不写任何东西、不打开任何设备、不需要 entitlement，
-所以任何一台 Mac 上 30 秒就能复核或推翻那张表——包括推翻之后该怎么改。
+2.5 的每个数字都来自一次探针运行。它不写任何东西、不打开任何设备、不需要 entitlement，
+所以任何一台 Mac 上几十秒就能复核或推翻那张表——包括推翻之后该怎么改。
+
+**探针不再是手写的，它由 `scripts/usb-registry-shape.py` 生成。** 这条规则本身是 2.5 那次改正的产物：
+第一版取证程序里的手工键名清单把 `USB Serial Number` 写成 `USB SerialNumber`，于是"没有设备发布序列号"
+这个结论被写成表格、写进 CHANGELOG、写进 harness 的用例文案，直到有人重新怀疑它。同一份程序还把每类匹配
+截断到 8 个节点，那张表把 8 当成总线规模报告了出来。所以现在的生成规则是：
+
+- **被查的键 = 解析器自己的候选键**，由 `key_lists()` 从 `Limelight/Stream/USBDeviceEnumeration.m` 的五组
+  候选键里正则抽取；解析器如果重构到读不到这些键，工具直接 `SystemExit` 而不是安静地少问一个；
+  工具还额外断言 `idVendor`/`idProduct` 仍在清单里——那正是上一版出错的地方。
+- **节点数由探针自报**（`COUNT` 行），不再有"每类前 8 个"这种上限混进结论。
+- **不打印任何值**：只报类型、长度、以及字符串是否呈十六进制形状。序列号是个人数据，而这份输出是要能贴进
+  issue 的。
 
 ```bash
-clang -Wall -Wextra -framework IOKit -framework CoreFoundation -o /tmp/usbprobe /tmp/usbprobe.c
-/tmp/usbprobe        # 打印每个节点上被查键的实际类型与值形状
+python3 scripts/usb-registry-shape.py --print-probe > /tmp/shape.c   # 看生成了什么
+clang -Wall -Wextra -isysroot "$(xcrun --show-sdk-path)" \
+      -framework IOKit -framework CoreFoundation /tmp/shape.c -o /tmp/shape && /tmp/shape
+python3 scripts/usb-registry-shape.py                                # 生成 + 编译 + 归类 + 比对 fixture
 ```
 
-```c
-// Read-only IORegistry probe: what keys and value shapes does the real kernel
-// publish for USB devices and interfaces? No device is opened, no entitlement used.
-#include <IOKit/IOKitLib.h>
-#include <CoreFoundation/CoreFoundation.h>
-#include <stdio.h>
-#include <string.h>
+最后那条命令只有三种结论：
 
-static void dumpValue(CFTypeRef v) {
-    if (!v) { printf("nil"); return; }
-    CFTypeID t = CFGetTypeID(v);
-    if (t == CFDataGetTypeID()) {
-        CFDataRef d = (CFDataRef)v; CFIndex n = CFDataGetLength(d);
-        const UInt8 *b = CFDataGetBytePtr(d);
-        printf("DATA len=%ld hex=", (long)n);
-        for (CFIndex i = 0; i < n && i < 8; i++) printf("%02x", b[i]);
-    } else if (t == CFNumberGetTypeID()) {
-        CFNumberRef n = (CFNumberRef)v; long long ll = 0;
-        CFNumberGetValue(n, kCFNumberLongLongType, &ll);
-        char buf[64] = {0};
-        CFStringRef desc = CFCopyDescription(n);
-        CFStringGetCString(desc, buf, sizeof buf, kCFStringEncodingUTF8);
-        CFRelease(desc);
-        printf("NUMBER aslong=%lld desc=%s", ll, buf);
-    } else if (t == CFStringGetTypeID()) {
-        char buf[128] = {0};
-        CFStringGetCString((CFStringRef)v, buf, sizeof buf, kCFStringEncodingUTF8);
-        printf("STRING len=%ld \"%s\"", (long)CFStringGetLength((CFStringRef)v), buf);
-    } else if (t == CFArrayGetTypeID()) {
-        CFArrayRef a = (CFArrayRef)v; CFIndex n = CFArrayGetCount(a);
-        printf("ARRAY count=%ld elems=", (long)n);
-        for (CFIndex i = 0; i < n && i < 4; i++) { dumpValue(CFArrayGetValueAtIndex(a, i)); printf(" | "); }
-    } else if (t == CFBooleanGetTypeID()) {
-        printf("BOOL %s", CFBooleanGetValue((CFBooleanRef)v) ? "true" : "false");
-    } else {
-        CFStringRef d = CFCopyDescription(v); char buf[80] = {0};
-        CFStringGetCString(d, buf, sizeof buf, kCFStringEncodingUTF8); CFRelease(d);
-        printf("OTHER typeID=%lu %s", (unsigned long)t, buf);
-    }
-}
+| 结论 | 含义 |
+|---|---|
+| `covered` | 今天总线上的每个形状都有一条 Stage 1 用例钉住它 |
+| `not covered: N shape(s)` + `DRIFT ...` | 出现了没钉过的形状，或某条 pin 指向的用例已从 harness 里消失。前者说该加哪条 fixture，后者说表被人缩小了 |
+| `not measured: ...` | 这台机器没有工具链或没有 IOKit（比如 Ubuntu runner）。它明说这次没取证，**不打印 `covered`**，退出码 0。这一态由 self-test 用伪造的工具链验证（把 `apple_toolchain` 换成一个必定失败的对象），因为跑 self-test 的机器往往真有工具链，不伪造就永远测不到 |
 
-static void walk(const char *cls) {
-    printf("\n===== %s =====\n", cls);
-    CFMutableDictionaryRef m = IOServiceMatching(cls);
-    io_iterator_t it = {0};
-    kern_return_t kr = IOServiceGetMatchingServices(kIOMainPortDefault, m, &it);
-    printf("IOServiceGetMatchingServices kr=0x%x\n", kr);
-    if (kr != KERN_SUCCESS) return;
-    io_service_t s; int seen = 0;
-    static const char *want[] = {
-        "USB Vendor ID", "idVendor", "USB_Vendor_ID", "USB Product ID", "idProduct",
-        "USB_Product_ID", "USB SerialNumber", "serialNumber", "bInterfaceClass",
-        "bInterfaceSubClass", "bInterfaceProtocol", "interfaceClasses",
-        "interfaceProtocols", "USB Product Name", "Product Name", "bDeviceProtocol",
-        "bDeviceClass", "bNumDevices", "USB Address", NULL
-    };
-    while ((s = IOIteratorNext(it)) && seen < 8) {
-        seen++;
-        CFMutableDictionaryRef props = NULL;
-        if (IORegistryEntryCreateCFProperties(s, &props, kCFAllocatorDefault, 0) != KERN_SUCCESS || !props) {
-            printf("- entry %d: properties unreadable\n", seen); IOObjectRelease(s); continue;
-        }
-        char name[128] = {0};
-        io_name_t regname = {0};
-        if (IORegistryEntryGetName(s, regname) == KERN_SUCCESS) snprintf(name, sizeof name, "%s", regname);
-        printf("- entry %d (%s) has keys:", seen, name);
-        for (int i = 0; want[i]; i++) {
-            CFStringRef k = CFStringCreateWithCString(NULL, want[i], kCFStringEncodingUTF8);
-            CFTypeRef v = CFDictionaryGetValue(props, k);
-            CFRelease(k);
-            if (!v) continue;
-            printf(" | %s -> ", want[i]);
-            dumpValue(v);
-        }
-        printf("\n");
-        CFRelease(props);
-        IOObjectRelease(s);
-    }
-    if (!seen) printf("(no matching services on this machine)\n");
-    IOObjectRelease(it);
-}
+`stale_pins()` 与 `verdict()` 是两件事，分开是必要的：`verdict` 只对"今天出现的形状"判漂移，
+而一条今天没出现的形状对应的 fixture 仍然是承重的——如果删掉它可以等到那种设备真出现才变红，
+那张表就能靠删目标悄悄缩小。所以每次运行都遍历整张 pin 表。
 
-int main(void) {
-    walk("IOUSBHostDevice");
-    walk("IOUSBHostInterface");
-    walk("IOUSBDevice");
-    walk("IOUSBInterface");
-    return 0;
-}
+```
+$ python3 scripts/usb-registry-shape.py            # macOS 27.2，本轮
+measured IOUSBHostDevice=10, IOUSBHostInterface=11, IOUSBDevice=10, IOUSBInterface=11
+  interface-class=number-per-node    11/IOUSBHostInterface nodes carry bInterfaceClass as number; ...
+  interface-protocol=number-per-node 11/IOUSBHostInterface nodes carry bInterfaceProtocol as number; ...
+  product=number                     10/IOUSBDevice ...; 11/IOUSBHostInterface ...
+  serial=string                      7/IOUSBDevice nodes carry USB Serial Number as string; ...
+  vendor=number                      10/IOUSBDevice ...; 11/IOUSBHostInterface ...
+covered: every shape on this bus is pinned by a Stage 1 case
 ```
 
-运行环境写进 2.5：`sw_vers -productVersion` 在那台机器上是 `27.2`；被查的键就是代码里那三组候选键
-加上 `bInterfaceSubClass`、`bDeviceClass`、`bDeviceProtocol`、`USB Address` 与 `USB Product Name`，
-每类匹配各取前 8 个节点。
+分类器本身在**没有 USB 设备的机器上**也要被验证，所以它带 `--self-test`（当前 19 条）：用伪造的总线记录驱动
+`classify`/`verdict`/`stale_pins`，断言五组候选键确实能从真实源码抽出来，并伪造一个失败的工具链来验证
+"这次没取证"那一态不会说成通过。这条 self-test 由
+`usb-device-enumeration-tests.py` 调用，因此它跟着已有门禁在 macOS 与 Ubuntu 上一起跑——不必为它新增 CI step。
 
+这个工具**故意不叫** `*-audit.py`/`*-tests.py`/`*-probe.py`：它是取证，不是门禁。若它是门禁，
+一台没有 USB 设备的 runner 会让它"通过"，而那正是最危险的假绿。
+
+### 8.1 这次改正是怎么被验证的
+
+上一版的错就是"没人能反驳"，所以改正后的东西必须能反驳。六个植入缺陷逐个验证会被抓：
+分类器永远返回"没有漂移"；解析器少问一个候选键；`idVendor` 从解析器清单里被删；
+已经答上话的角色也被判成 absent；节点数被硬编码成 8（正是上一版那个截断错误的形状）；
+从 harness 里删掉一条真机今天没出现过的 fixture；还有两个打在"没取证"那一态上的——`run_probe` 在无工具链时返回空记录而不是 `None`，以及把那条提示的措辞改成 `covered`。八个全部变红。
 
 ## 9. 不依赖任何外部配合的 Stage 2/3 推进计划
 
@@ -279,7 +244,7 @@ int main(void) {
 
 | 批次 | 内容 | 新增面 | 完成判据（各批独立可评审） |
 |---|---|---|---|
-| A | 取证回归工具：`scripts/usb-registry-shape.py` 读活总线，把形状签名与"已被门禁钉住的形状表"比对；出现没钉过的形状就红，并说出该加哪条 fixture | 一个非门控工具 + harness 增加它 self-test 的一条用例 | 分类器三种结论（covered / drift / no IOKit here）都能被自测驱动；"钉住的 fixture 名字必须在 harness 源里存在"这条断言可失败（删掉那条 fixture 就红）；无 IOKit 的机器上明说"这次没取证，不算通过"，不打印通过 |
+| A | **已完成**。取证回归工具 `scripts/usb-registry-shape.py`：从解析器源码生成探针读活总线，把形状与已钉 fixture 表比对（见 8） | 一个非门控工具 + harness 里的两条新用例与一次 self-test 调用 | 三条判据逐一成立：三种结论都能被驱动（`not measured` 由伪造工具链验证、`drift` 由 self-test 验证、`covered` 由真机实跑给出）；pin 表整表遍历，删 fixture 即红（8.1）；无 IOKit 时明说没取证且不打印 covered。**超出判据的收获**：它一出生就抓到一个已发布错误——2.5 的序列号那一行是错的，改正见 2.5 与 8 |
 | B | 协商与消息状态机（Stage 2 的客户端半边）：把 serverinfo 应答 + 三段式消息的**时序语义**收成一个纯类，配一个仓库内参考应答器，形状表覆盖缺字段/`0`/空串/非数字/大小写/重复键/版本偏斜/半程断连 | 一个 `Limelight/Stream/` 类 + 一个 harness | 参考应答器的每种应答都落到唯一分类；"只认 `1`"被反转必须被抓；状态机不读时钟、不读 `NSUserDefaults`，同样输入同样判决 |
 | C | Stage 3 的纯逻辑：DEXT 生命周期状态机（安装中/已装/崩溃/卸载中/回退）+ 所有权与超时 + 热插拔竞态下的"同一设备两次插拔不得复用旧判决" | 一个 `Limelight/Stream/` 类 + 一个 harness | 每个状态转移单独驱动；崩溃后未释放的所有权必须超时失效；任何"跳过卸载直接复用"的变异被抓 |
 | D | 签名前置的门禁化：构建树里出现 `.dext`/DriverKit 目标而 workflow 没有 Developer ID 签名与 `notarytool` 步骤时构建失败；证书到位后按 9.3 清单逐项解锁 | 一条门禁规则 | 植入一个假 `.dext` 目标即红；真签名步骤加进去后转绿 |
