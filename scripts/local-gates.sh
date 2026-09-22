@@ -101,6 +101,35 @@ gate_commands > /tmp/local-gates.list
 # wrong reason is how a gate stops being looked at.
 app_name=$(./scripts/product-name.sh 2>/dev/null || echo "")
 
+# Which artefact gates can be run honestly on this checkout, and what they need.
+#
+# Empty means no: the gate reads something only CI produces, and running it with an empty path
+# would report a failure the tree does not have. Three answers below are verified claims about a
+# laptop, not hopes: compile-audit is measured at 56 of 56 sources with no flag, swift-typecheck
+# needs one generated-header root from a build that has happened here, and the warning audit needs
+# the transcript of the build you just ran, because a log from last week would certify a tree it
+# never saw.
+artefact_command() {
+  case "$1" in
+    *compile-audit.py*)
+      printf '%s' "$1" | sed 's/ --derived.*//';;
+    *swift-typecheck.py*)
+      for root in build-analyze build-header-check build build-probe; do
+        derived="$root/Build/Intermediates.noindex/Moonlight.build/Debug/Moonlight for macOS.build/DerivedSources"
+        [ -d "$derived" ] && {
+          printf 'python3 scripts/swift-typecheck.py . --derived "%s"' "$derived"; return; }
+      done;;
+    *build-warning-audit.py*)
+      # LOCAL_BUILD_LOG is the transcript of this checkout's own build, on purpose: the point of
+      # the gate is the warning in the compiler's words, and only the build you just ran has a
+      # right to certify the source you just changed.
+      if [ -n "${LOCAL_BUILD_LOG:-}" ] && [ -f "${LOCAL_BUILD_LOG}" ]; then
+        printf 'python3 scripts/build-warning-audit.py --log "%s"' "${LOCAL_BUILD_LOG}"
+      fi;;
+  esac
+  printf ''
+}
+
 passed=0 failed=0 skipped=0
 : > /tmp/local-gates.failed
 
@@ -110,11 +139,21 @@ while IFS= read -r cmd; do
   # kind of nesting that quietly rewrites the wrong part of a command line.
   [ -n "$app_name" ] && cmd=$(printf '%s' "$cmd" | sed "s/\${APP_NAME}/$app_name/g")
   case "$cmd" in
-    # Gates pointed at runner scratch take a mode that stands on its own, so drop the
-    # scratch and run the gate: --derived and --log are where they read a build, and
-    # each has a self-contained invocation besides.
+    # A gate handed no artefact is not a gate that passed, and the old shape did exactly that:
+    # it cut --derived and --log off the command line, ran what was left, and counted the exit
+    # code, so a gate that had printed "nothing to check" and exited zero arrived as a pass. Two
+    # of them sat in that count while a build log carrying a first-party warning swept green --
+    # the pairing this script's header says it exists to prevent. Dropping the flag outright is
+    # the other mistake, and costs coverage: compile-audit type-checks all 56 macOS sources from
+    # this checkout with no flag at all. So each artefact gate is asked whether it can stand on
+    # its own here, and the answer is written down below with its reason rather than inferred.
     *--derived*|*--log*)
-      cmd=$(printf '%s' "$cmd" | sed -e 's/ --derived.*//' -e 's/ --log.*//');;
+      local_cmd=$(artefact_command "$cmd")
+      if [ -z "$local_cmd" ]; then
+        echo "skip  $cmd (needs a build artefact this sweep was not given: see artefact_command)"
+        skipped=$((skipped+1)); continue
+      fi
+      cmd="$local_cmd";;
     # Anything else still holding a variable wants a value only the runner computes --
     # a tag name, a matrix arch, a build number this checkout does not carry. Running
     # it with an empty value would report a failure the tree does not have, which is
