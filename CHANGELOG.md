@@ -83,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compiled assertions, 9 planted defects all caught.
 - **The devices panel: the first screen that says why USB redirection is not available yet.**
   Settings gained a Devices pane (`SettingsDevicesPane.swift`, rendered entirely from
-  `MLDeviceRedirectionPanelModel`). Its 80 compiled assertions cover the logic; its source assertions
+  `MLDeviceRedirectionPanelModel`). Its 84 compiled assertions cover the logic; its source assertions
   cover the wiring, because an unwired panel fails silently: model reachable through the bridging
   header, pane a member of the target, pane actually reachable from the tab bar, and every sentence it
   can print answered in both language tables. The four preconditions sit above the device list because
@@ -112,6 +112,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The devices page would have told a player their host refused devices when it offered them.**
+  The page compared the `uniqueid` of a `/serverinfo` answer against the stored host, and the
+  advertised tag against `"1"`, both untrimmed. Every other tag read from that response is
+  trimmed by `ServerInfoResponse` before it is stored -- which is why the stored uuid is trimmed
+  and the fresh answer was not -- so an answer carrying the whitespace an XML reader leaves
+  behind fails the comparison, and the panel reports a refusal it then states as fact. The
+  harness could not see it, because a harness hands the model a clean `@"1"`: the defect lives
+  in the seam between the transport and the model, not in either. Both sides are trimmed now,
+  the model refuses to be fooled whatever its caller does, and four cases plus a planted defect
+  cover the shape a clean literal never takes. The same comparison carried a second hole: an
+  absent stored uuid and an absent answer are two missing strings that compare equal, which
+  would credit whoever replied on that address with the paired host's capability bit. An unknown
+  identifier now matches nobody.
 - **A Swift type check read a whole tree as clean while `xcodebuild` failed on the same source.**
   The gate located an error with a pattern that refused spaces, and the compiler locates an
   error inside a macro expansion at `macro expansion @State:7:71:` -- a location with a space

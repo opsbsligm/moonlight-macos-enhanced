@@ -373,7 +373,11 @@ struct DevicesView: View {
       return
     }
     isCheckingHost = true
-    let expectedUuid = host.uuid
+    // Trimmed, because `ServerInfoResponse` stores a trimmed uuid, and an empty one is not a
+    // match: a host whose identifier this app never learned cannot be credited with an answer
+    // it did not sign, and comparing two missing identifiers optional-to-optional would do
+    // exactly that and call the stranger's capability bit our host's.
+    let expectedUuid = (host.uuid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     DispatchQueue.global(qos: .userInitiated).async {
       let serverInfo = ServerInfoResponse()
       if let http = HttpManager(
@@ -386,9 +390,18 @@ struct DevicesView: View {
           fallbackRequest: http.newHttpServerInfoRequest(true))
         http.executeRequestSynchronously(request)
       }
+      // Trimmed, because that is how this app reads every other tag of the same response:
+      // `ServerInfoResponse` trims each one before it stores it, so `host.uuid` holds a trimmed
+      // string and an untrimmed answer could never equal it. The failure this avoids is silent --
+      // the page would report a host that offered devices as one that refused them.
+      let answeredUuid = (serverInfo.getStringTag(TAG_UNIQUE_ID) ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      let advertisedTag = serverInfo.getStringTag(MLDeviceRedirectionServerInfoTagName())?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
       let answered = serverInfo.isStatusOk()
-        && serverInfo.getStringTag(TAG_UNIQUE_ID) == expectedUuid
-      note(advertised: answered ? serverInfo.getStringTag(MLDeviceRedirectionServerInfoTagName()) : nil)
+        && !expectedUuid.isEmpty
+        && answeredUuid == expectedUuid
+      note(advertised: answered ? advertisedTag : nil)
     }
   }
 

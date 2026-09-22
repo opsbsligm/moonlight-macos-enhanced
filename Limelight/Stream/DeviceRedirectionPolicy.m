@@ -317,7 +317,15 @@ NSString *MLDeviceRedirectionServerInfoTagName(void) {
         return [value longLongValue] == 1;
     }
     if ([value isKindOfClass:[NSString class]]) {
-        return [(NSString *)value isEqualToString:@"1"];
+        // The answer arrives out of an XML reader, and every other tag this app reads from the
+        // same response is trimmed before it is compared -- `ServerInfoResponse` trims all of
+        // them for exactly that reason. An untrimmed comparison does not fail loudly: a host
+        // that offered devices is reported as one that refused them, and the page says so with
+        // the same confidence as a refusal that was real. Trimming cannot turn "10" into "1",
+        // so the strictness above is untouched.
+        NSString *answered = [(NSString *)value stringByTrimmingCharactersInSet:
+            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        return [answered isEqualToString:@"1"];
     }
     return NO;
 }

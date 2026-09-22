@@ -282,6 +282,22 @@ int main(void) {
         [answers noteServerInfoValue:@(1)];
         CHECK(answers.hostClaim == MLDeviceRedirectionHostClaimOffered,
               "the number one and the text one mean the same thing");
+        // The literal above is what a caller hands over after trimming. The ones below are what
+        // the XML reader hands over, which is the shape `ServerInfoResponse` trims every tag of
+        // for this reason: an untrimmed comparison reports a host that offered devices as one
+        // that refused them, and the page states that with the same confidence as a real no.
+        [answers noteServerInfoValue:@" 1 "];
+        CHECK(answers.hostClaim == MLDeviceRedirectionHostClaimOffered,
+              "spaces the reader left behind do not turn an offer into a refusal");
+        [answers noteServerInfoValue:@"1\n"];
+        CHECK(answers.hostClaim == MLDeviceRedirectionHostClaimOffered,
+              "nor does the newline that usually follows a tag");
+        [answers noteServerInfoValue:@" 0 "];
+        CHECK(answers.hostClaim == MLDeviceRedirectionHostClaimRefused,
+              "a trimmed zero is still a refusal");
+        [answers noteServerInfoValue:@"10"];
+        CHECK(answers.hostClaim == MLDeviceRedirectionHostClaimRefused,
+              "trimming does not turn ten into one, so the strictness survives the convenience");
         CHECK(![MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaimNotAsked)
                    isEqual:MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaimRefused)] &&
               ![MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaimRefused)
@@ -622,6 +638,16 @@ def main():
           "no-argument factory named after its class is what an importer rewrites into init()")
     check("panelModel" not in pane and "panelModel" not in header and "panelModel" not in impl,
           "no factory is left for an importer to rename out from under the page that calls it")
+    folded_pane = " ".join(pane.split())
+    for tag in ("TAG_UNIQUE_ID", "MLDeviceRedirectionServerInfoTagName()"):
+        at = folded_pane.find("getStringTag(" + tag)
+        check(at != -1 and "trimmingCharacters" in folded_pane[at:at + 220],
+              "%s is trimmed before the page compares it, because the answer arrives from an "
+              "XML reader and `ServerInfoResponse` trims every tag it stores for that reason"
+              % tag)
+    check("!expectedUuid.isEmpty" in pane,
+          "a host whose identifier this app never learned is not credited with the answer of "
+          "whoever replied, which is what comparing two missing identifiers would do")
     check("@property(nonatomic, readwrite) BOOL featureEnabled" in header and
           "@property(nonatomic, readwrite) BOOL localInputDevicesAllowed" in header,
           "the two switches are properties a page can assign, not a getter and a setter that "
@@ -695,6 +721,13 @@ def main():
               mutated(rules, "the rule switch",
                       "    rewritten[kRuleEnabledField] = @(enabled);",
                       "    rewritten[kRuleEnabledField] = @(YES);"),
+              cc, sdk)
+    run_rules("an offer is refused because it arrived with the whitespace the reader left",
+              mutated(rules, "the trimmed answer",
+                      "        NSString *answered = [(NSString *)value stringByTrimmingCharactersInSet:"
+                      + chr(10) + "            [NSCharacterSet whitespaceAndNewlineCharacterSet]];"
+                      + chr(10) + '        return [answered isEqualToString:@"1"];',
+                      "        return [(NSString *)value isEqualToString:@\"1\"];\\"),
               cc, sdk)
     run_rules("a host that answered nothing answered yes",
               mutated(rules, "the empty answer",
