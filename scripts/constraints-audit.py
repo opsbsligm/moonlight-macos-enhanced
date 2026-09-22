@@ -1397,6 +1397,20 @@ DRIVEN_BY = {
     # entry below it -- that one refuses an unsigned artefact, this one refuses a lifecycle that
     # would pretend an artefact nobody can load is working.
     "driver-lifecycle-tests.py": "scaling-output-evidence-tests.py",
+    # The measurement that says the obvious implementation is wrong -- the interface iterator
+    # returned 11 of the 16 interfaces the devices named under themselves -- is Objective-C
+    # against a live bus, so it needs the macOS clang, SDK, and hardware, and a step of its own
+    # would need the `workflow` scope this credential does not carry.
+    "usb-bus-snapshot-tests.py": "scaling-output-evidence-tests.py",
+    # What a build may claim about its own signature. The classifier is built against three
+    # generated certificates plus the harness's own ad-hoc signature, so it needs Security.framework
+    # and a codesign-capable runner; a step of its own needs the scope that is missing here.
+    "code-signature-profile-tests.py": "scaling-output-evidence-tests.py",
+    # The devices panel: the same two reasons, and one more worth writing down. The panel is the
+    # first part of this feature a player touches, so it is the first place where four independent
+    # preconditions have to be checked together rather than one at a time -- and the gate rides a
+    # driver that runs on every macOS build rather than waiting for a step nobody can add.
+    "device-redirection-panel-model-tests.py": "scaling-output-evidence-tests.py",
     # Reads the committed file list and the workflow text, so no toolchain is missing here; the
     # missing thing is a CI step, and a step needs the `workflow` scope this credential lacks.
     "driver-extension-signing-audit.py": "scaling-output-evidence-tests.py",

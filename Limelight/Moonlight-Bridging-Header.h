@@ -18,3 +18,4 @@
 #import "AwdlAuthorizationHelper.h"
 #import "Logger.h"
 #import "DiagnosticsReportBuilder+Live.h"
+#import "DeviceRedirectionPanelModel.h"

@@ -36,7 +36,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import apple_toolchain
 
 MACRO_GAP = re.compile(r"plugin for module '(\w+)' not found")
-ERROR_LINE = re.compile(r"^\s*(\S+?):(\d+):(\d+): error: (.*)$")
+# A locator names either a file or a macro expansion, and either can contain a space:
+# "macro expansion @State:7:71:" is one. A character class that stops at the first space reads
+# that line as prose, so a tree whose only complaint lives inside a macro expansion is reported
+# clean here while xcodebuild fails on the same source -- which is how a factory method the
+# importer had renamed into an initialiser reached the build job and cost a runner twelve minutes.
+ERROR_LINE = re.compile(r"^\s*(.+?):(\d+):(\d+): error: (.*)$")
+# The location of an error inside a macro expansion names the macro rather than a file, so the
+# per-file gap rule below cannot reach it: the file that owns the macro is named on another line.
+MACRO_LOCATION = re.compile(r"macro expansion @?([A-Za-z_][A-Za-z0-9_]*)\Z")
+MACRO_GAP_NAME = re.compile(r"could not be found for macro '([A-Za-z_][A-Za-z0-9_]*)")
 PREVIEW = re.compile(r"^#Preview\b")
 
 
@@ -127,7 +136,8 @@ def classify(output):
     So the gap is tracked per file, and an error is only forgiven where the compiler
     had already said it could not see the macro that file uses.
     """
-    gaps, gap_files, errors, knockon = set(), set(), [], []
+    gaps, gap_files, missing_macros, errors, knockon = set(), set(), set(), [], []
+    matches = []
     for line in output.splitlines():
         match = ERROR_LINE.search(line)
         if not match:
@@ -137,9 +147,30 @@ def classify(output):
         if gap:
             gaps.add(gap.group(1))
             gap_files.add(path)
+            missing = MACRO_GAP_NAME.search(message)
+            if missing:
+                missing_macros.add(missing.group(1))
+        matches.append((path, line_no, column, message))
+    # Two passes, because the compiler does not promise the gap and the defect arrive in the
+    # order that makes the second pass easy: on a runner the macro line came second, and a
+    # single pass would have filed the expansion error as a defect before learning the reason.
+    for path, line_no, column, message in matches:
+        if MACRO_GAP.search(message):
             continue
         entry = "%s:%s:%s: %s" % (path, line_no, column, message)
-        (knockon if path in gap_files else errors).append(entry)
+        if path in gap_files:
+            knockon.append(entry)
+            continue
+        # An error inside an expansion is only legible on a host that could expand the macro.
+        # Matching the macro named by the gap would miss the nested ones -- @State expands into
+        # _StateInitialStoredValue, which is where a renamed factory method actually surfaces --
+        # so any refused plugin makes every expansion in that run unreadable. A host with every
+        # plugin has no gap to name, and its expansion errors stay defects.
+        located = MACRO_LOCATION.fullmatch(path)
+        if located is not None and (missing_macros or gaps):
+            knockon.append(entry)
+            continue
+        errors.append(entry)
     return gaps, gap_files, errors, knockon
 
 
@@ -245,6 +276,13 @@ KNOCK_ON = PLUGIN_NOISE + (
     "work/Stream.swift:117:29: error: left side of mutating operator isn't mutable: "
     "'self' is immutable\n")
 
+# The complaint that this file was written to catch, and the reason the locator cannot exclude
+# spaces: it names a macro expansion, so the old regex read it as prose and the run said clean.
+EXPANSION_DEFECT = ("macro expansion @State:7:71: error: 'panelModel()' has been replaced by "
+                    "'init()'" + chr(10))
+
+EXPANSION_WITH_GAP = PLUGIN_NOISE + EXPANSION_DEFECT
+
 GAP_AND_DEFECT = PLUGIN_NOISE + (
     "work/Stream.swift:117:29: error: left side of mutating operator isn't mutable: "
     "'self' is immutable\n"
@@ -273,6 +311,13 @@ def self_test():
     gaps, gap_files, errors, knockon = classify(GAP_AND_DEFECT)
     check(bool(gaps) and len(errors) == 1 and "other/File.swift" in errors[0],
           "a real defect is not forgiven because another file lost a plugin")
+
+    gaps, gap_files, errors, knockon = classify(EXPANSION_DEFECT)
+    check(len(errors) == 1 and not gaps and not knockon,
+          "an error inside a macro expansion is a defect when every plugin is present")
+    gaps, gap_files, errors, knockon = classify(EXPANSION_WITH_GAP)
+    check(bool(gaps) and not errors and len(knockon) == 1,
+          "the same expansion error is the host gap when a plugin is refused")
 
     checked, plugins, refusal = strip_preview(
         "struct A { var x = 1 }\n#Preview {\n  Text(\"a\")\n}\n")

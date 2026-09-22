@@ -99,6 +99,10 @@ struct LiquidGlassSettingsView: View {
             SettingPaneLoader(settingsModel) {
               AppView()
             }
+          case .devices:
+            SettingPaneLoader(settingsModel) {
+              DevicesView()
+            }
           case .legacy:
             EmptyView()
           }

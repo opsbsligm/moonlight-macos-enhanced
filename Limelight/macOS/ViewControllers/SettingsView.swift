@@ -20,9 +20,13 @@ enum SettingsPaneType: Int, CaseIterable {
   case input = 2
   case app = 3
   case legacy = 4
+  /// The devices panel. Six is the next free value rather than a slot next to `input`, because the
+  /// raw values above are pinned to what players already have stored: renumbering a pane to make the
+  /// source read tidier would move somebody's saved selection onto a different page.
+  case devices = 6
 
   static var allCases: [SettingsPaneType] {
-    [.stream, .video, .audio, .input, .app]
+    [.stream, .video, .audio, .input, .app, .devices]
   }
 
   var title: String {
@@ -39,6 +43,8 @@ enum SettingsPaneType: Int, CaseIterable {
       return "App"
     case .legacy:
       return "Legacy"
+    case .devices:
+      return "Devices"
     }
   }
 
@@ -56,6 +62,8 @@ enum SettingsPaneType: Int, CaseIterable {
       return "appclip"
     case .legacy:
       return "archivebox.fill"
+    case .devices:
+      return "cable.connector"
     }
   }
 
@@ -73,6 +81,8 @@ enum SettingsPaneType: Int, CaseIterable {
       return .pink
     case .legacy:
       return Color(hex: 0x65B741)
+    case .devices:
+      return .indigo
     }
   }
 }
@@ -179,6 +189,10 @@ struct Detail: View {
       case .app:
         SettingPaneLoader(settingsModel) {
           AppView()
+        }
+      case .devices:
+        SettingPaneLoader(settingsModel) {
+          DevicesView()
         }
       case .legacy:
         EmptyView()

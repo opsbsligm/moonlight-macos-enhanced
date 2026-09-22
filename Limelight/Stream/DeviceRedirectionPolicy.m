@@ -307,6 +307,10 @@ static BOOL MLIdentityIsReadable(NSNumber *identity) {
     return majorClass == MLUSBClassChipSmartCard || majorClass == MLUSBClassDiagnostic;
 }
 
+NSString *MLDeviceRedirectionServerInfoTagName(void) {
+    return MLDeviceRedirectionServerInfoTag;
+}
+
 + (BOOL)hostAdvertisesDeviceRedirectionInServerInfo:(NSDictionary<NSString *, id> *)serverInfo {
     id value = serverInfo[MLDeviceRedirectionServerInfoTag];
     if ([value isKindOfClass:[NSNumber class]]) {

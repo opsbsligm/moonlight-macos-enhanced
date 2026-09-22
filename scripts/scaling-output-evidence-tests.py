@@ -678,6 +678,57 @@ def run_driver_lifecycle():
           "the driver lifecycle gate failed:\n" + chr(10).join(tail))
 
 
+def run_usb_bus_snapshot():
+    """Which registry nodes belong to one device, checked against the bus the runner has.
+
+    The step the enumeration gate leaves to its caller, and the step a measurement says the
+    obvious way of doing is wrong: the interface iterator returned 11 of the 16 interfaces the
+    devices named under themselves. Objective-C against the macOS SDK, and no `workflow` scope on
+    this credential for a step of its own -- the same two reasons as the gates above, written into
+    constraints-audit.py's DRIVEN_BY.
+    """
+    ran = subprocess.run([sys.executable, "scripts/usb-bus-snapshot-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "an interface lands on the device it names, and the bus is read without being touched"
+          " (%s)" % " | ".join(tail))
+
+
+def run_code_signature_profile():
+    """What this build may claim about its own signature, which is what the panel may show.
+
+    Stage 3 waits on a signing identity, so the only honest line the devices panel can put above a
+    list of refusals is one read from the running binary. It rides here for the same two reasons
+    as the gates above, and the gate runs its classifier against three generated certificates plus
+    the harness's own signature.
+    """
+    ran = subprocess.run([sys.executable, "scripts/code-signature-profile-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "an ad-hoc build cannot talk itself into a driver extension"
+          " (%s)" % " | ".join(tail))
+
+
+def run_device_redirection_panel_model():
+    """What the devices panel may claim, and about which device.
+
+    The panel is where stage 2 and stage 3 meet a player: four preconditions have to be true at the
+    same moment, and the panel has to say which one is still missing instead of listing refusals as
+    though the devices were broken. Objective-C against the macOS SDK, so it rides here for the same
+    two reasons as the gates above -- and it is also the first consumer of the two layers before it,
+    which is what turns their audit lines from dead code into the thing a screen shows.
+    """
+    ran = subprocess.run([sys.executable, "scripts/device-redirection-panel-model-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "the devices panel refuses the same way the policy does, and names what is missing"
+          if ran.returncode == 0 else
+          "the devices panel gate failed:\n" + chr(10).join(tail))
+
+
 def run_driver_extension_signing():
     """Whether anything in the tree could be loaded by a player at all.
 
@@ -818,6 +869,9 @@ def finish():
     run_usb_device_enumeration()
     run_device_redirection_session()
     run_driver_lifecycle()
+    run_usb_bus_snapshot()
+    run_code_signature_profile()
+    run_device_redirection_panel_model()
     run_driver_extension_signing()
     run_hdr_sdr_exposure()
     run_settings_rebuild_passthrough()

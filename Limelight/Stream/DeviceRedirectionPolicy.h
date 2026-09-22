@@ -157,6 +157,10 @@ FOUNDATION_EXPORT NSString *MLUSBInterfaceClassNames(NSArray<MLUSBInterfaceDescr
 /// Interface classes no rule can reach. Asked by the diagnostics panel so it can say
 /// why a rule it just accepted will never fire, instead of accepting it in silence.
 + (BOOL)isReservedInterfaceClass:(unsigned char)majorClass;
+/// The question asked of /serverinfo, so that a caller asking it and the rule answering it cannot
+/// drift apart into two spellings of one field.
+FOUNDATION_EXPORT NSString *MLDeviceRedirectionServerInfoTagName(void);
+
 /// Whether a host's /serverinfo answers the question at all. Anything that is not an
 /// explicit yes is a no: an old host, a host that answers nothing, and a host whose
 /// answer could not be parsed all get the same refusal as a host that said no.

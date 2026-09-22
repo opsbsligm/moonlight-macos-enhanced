@@ -81,6 +81,23 @@
   | 序列号通常读得到，`token=none` 是异常路径 | **上一版这一行写反了，现已改正**：正确键名（带空格）在 **7/10 设备节点与 11/11 接口节点**上发布，`kUSBSerialNumberString` 在 **7/10 设备节点**上发布，形态都是字符串 | 原判断方向成立：序列号通常拿得到，所以摘要脱敏是在做实事，而 `none` 只在真没号的时候出现。接口节点 11/11 都带号还多出一层含义——"只遍历接口节点"那条路径同样能拿到可关联的稳定标识，所以脱敏必须在那条路径上一视同仁，Stage 1 的对应断言不是冗余 |
   | 产品名是可选装饰 | `USB Product Name` 在**每个**节点上都有；接口节点的 registry name 甚至可以是 `http://help.vesa.org/dp-usb-type-c/` 这类可关联字符串。接口节点也带 `idVendor`/`idProduct` | "读取路径不看产品名"这条静态断言现在有了物证：泄露向量确实存在，而只遍历接口节点也必须能归因（否则可见设备被记成匿名设备，策略只能拒） |
 
+- **第二轮取证测的是「归因入口应当从哪一端遍历」，因为 `MLUSBBusSnapshot` 只能照这一个事实写**。
+  同一台机器、同一系统版本、同一次枚举：从 `IOUSBHostDevice` 的 10 个设备节点沿 `kIOServicePlane` 向下走 children，
+  带 `bInterfaceNumber` 键的节点共 **16 个（唯一 id 也是 16 个，没有被两条路径重复计入）**；
+  而 `IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOUSBHostInterface"))` 只返回 **11 个**，
+  且这 11 个**全部**落在那 16 个里面——也就是说接口迭代器会**漏掉 16 个里的 5 个（31%）**，而不是「多给出一些不相干的节点」。
+  16 个节点逐个沿 parent 方向数，**16/16 恰好只有一个 IOService 父节点**，且父节点自身不带 `bInterfaceNumber`
+  （即它是设备，而不是接口的另一种拼法）。三个后果都写成了代码与门禁：
+
+  1. 归因只允许**从设备节点向下**，接口迭代器不得当接口全集使用。漏掉的方向恰好是复合设备的那些面，
+     而「扩展坞 = 存储 + 智能卡 → 整体拒绝」在少看一面时会退化成「先看哪一面就放行哪一面」。
+     这条不是注释里的偏好：`scripts/usb-bus-snapshot-tests.py` 断言去注释后的源码里**不出现**
+     `IOUSBHostInterface`/`IOUSBInterface`，并**反向**要求 `USBBusSnapshot.h` 的注释里保留这个类名与这组数字
+     ——规则要读起来像一次发现，而不是一条禁忌。
+  2. `MLUSBBusSoleParentID` 只在 parent **恰好一个**时才认这个归属：两个父节点是「归属有争议」，不是「多一个证据」。
+  3. 「这张表是不是一张接口表」的判据是**键名** `bInterfaceNumber` 存在与否，值一律不看。
+     看值的判据会被它所描述的那台设备的返回值改变，而复合设备的归因规则不能由设备自己挑选。
+
 - **仍未观测的部分**：Apple 文档里出现过的 Data 形态标识符（`USB Vendor ID` 为 NSData 那一类）在本次取证的 21 个唯一节点上**一个都没出现**，本机既不能证实也不能证伪。`USB Vendor ID`/`USB Product ID` 本身一个节点都没有，所以"短键名全消失、只剩 Data 形态"那种总线本次也无法证实——它仍是推测，而实现按不利处理，不依赖它出现。实现**不接受** Data 形态，按不利处理成 `unread`，由身份门拒绝——也就是说：如果哪天在一台机器上只见到 Data 形态，症状是"看得见设备但身份不完整"，而不是把两个字节猜成厂商号。这一条留作观测记录，**不构成放宽解析的依据**。
 
 
@@ -96,7 +113,7 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）  ← 生命�
 | Stage | 内容 | 前置条件 | 交付物 | 主要风险 |
 |---|---|---|---|---|
 | 0 | 策略引擎 + 能力协商 + 审计串 | 无 | `DeviceRedirectionPolicy`、门禁 harness、本文档 | 逻辑黑洞（顺序/绕过）；以门禁变异覆盖对冲 |
-| 1 | 本机设备枚举、类别归因、"为什么被拒"的诊断串 | Stage 0；`IOKit` 只读枚举（取证见 2.5） | **已交付**：`USBDeviceEnumeration`（身份 + 摘要令牌 + 诊断行）及其门禁。**未交付**：设备面板 UI | 枚举信息进入日志造成指纹聚合 → 序列号只在读取处摘要，对象上不保留序列号字段；UI 缺席是有意为之（见 6） |
+| 1 | 本机设备枚举、类别归因、"为什么被拒"的诊断串，以及把这三样摆给玩家看的面板 | Stage 0；`IOKit` 只读枚举（取证见 2.5） | **已交付**：`USBDeviceEnumeration`（身份 + 摘要令牌 + 诊断行）、归因入口 `USBBusSnapshot`、签名形态 `CodeSignatureProfile`、面板模型 `DeviceRedirectionPanelModel` 与 SwiftUI 的 `DevicesView`，各自带门禁 | 枚举信息进入日志造成指纹聚合 → 序列号只在读取处摘要，对象上不保留序列号字段，面板与每一行都不出现产品名（门禁断言真机输出）；UI 之所以此刻可以给，见 6 第一条的改正 |
 | 2 | 主机侧虚拟 HID/存储：新增 RTSP 协商项、新能力位、新消息类型 | 主机实现 + 上游协议共识 | 上游 PR + 双端兼容矩阵 | 与旧主机误协商 → 严格"未知即否"（Stage 0 已实现该读法） |
 | 3 | DriverKit 直通 | Developer ID 证书 + 公证 + 主机虚拟总线 + 安装/卸载生命周期 | DEXT + helper 生命周期 + 崩溃回退 | 权限提升面、热插拔竞态、驱动残留 |
 
@@ -141,7 +158,12 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）  ← 生命�
 
 ## 6. Stage 1 已交付的边界，与 Stage 2/3 的解锁条件
 
-- Stage 1 的边界（本轮已按此交付）：做枚举、归因与诊断串；不做 UI、不做网络消息、不打开设备。理由见第 3 节末尾——主机与签名两个前置到位之前，一份被拒列表只会把系统层面的不可用伪装成用户的设备问题。枚举本身经 2.5 取证，不需要新 entitlement，因此它属于"能今天做完并锁进门禁"的那一类。
+- Stage 1 的边界（已按此交付）：做枚举、归因与诊断串；不做网络消息、不打开设备。**UI 这一项本轮改正了**：
+  原来的理由（第 3 节末尾）是「主机与签名两个前置到位之前，一份被拒列表只会把系统层面的不可用伪装成用户的设备问题」。
+  它成立的不是「不能做 UI」，而是「不能只给一张被拒列表」。所以本轮交付的面板把四项前置放在列表**之上**：
+  这个构建能否加载扩展（从正在运行的二进制自己的签名读出来，而不是从构建设置读）、DriverKit 与系统扩展两个 entitlement、
+  主机是否宣告、总线是否真的被扫过。「伪装」这一条由此被拆掉：今天每一项拒绝都会先显示成 `build-adhoc`，
+  而不是显示成一屏可疑的设备。仍然不做的还是网络消息与打开设备——那两项的前置确实没到位，面板上也照样写着没到位。枚举本身经 2.5 取证，不需要新 entitlement，因此它属于"能今天做完并锁进门禁"的那一类。
 - 解锁 Stage 2 需要主机契约：新能力位 + 新 RTSP 协商项 + 至少一个主机实现的 PR。在此之前，`hostAdvertisesDeviceRedirectionInServerInfo:` 永远返回否，这是事实而不是占位。契约本身已写成可评审的草案：`docs/usb-redirection-host-contract.md`（取证、字段语义、双向验收、以及为什么客户端此刻不接线都在那里）。
 - 归因入口对**调用方**也有一条硬规则，它是 2.5 实测的直接后果：一次设备 = 一个设备节点 + 挂在它下面的全部
   接口节点，接口节点不得被当成独立设备各自过门。真机上复合设备就是这样分开的，所以并集这一步必须在归因里做，
@@ -284,6 +306,44 @@ A→D 的顺序由风险决定：A 让后面几批的取证前提不会悄悄过
 
 它不声称前置到位。它保证的是：**"设备能直通"这句话不会在扩展根本加载不了的时候被写进发布说明**。
 
+
+### 9.7 批 E 交付了什么：一屏能说的话，必须能从二进制里证明
+
+三件事同时落地，缺任何一件，这一屏就变成安慰：
+
+- `Limelight/Stream/CodeSignatureProfile.{h,m}` + `scripts/code-signature-profile-tests.py`：
+  用 Security.framework 的公开 API 读**正在运行的这个二进制**的签名，回答「这个形态能不能加载扩展」。
+  实测 ad-hoc 构建返回的签名字典里根本没有 certificates/entitlements-dict/teamid/trust 这些键，
+  第三方 Developer ID 应用则有 3 段证书链与 entitlement 字典，所以判定用**证书链 + leaf subject 前缀**
+  （`Developer ID Application:` / `Apple Development:`），不去猜 flags 的位含义。
+  `mayAttemptDriverExtension` 只有在 Developer ID **且** entitlement 键名前缀出现 `com.apple.driverkit` 授权时才为真
+  （系统扩展那一项用精确键）。门禁用 openssl 现场生成三种 issuer 名的真证书喂进分类器：
+  46 条 Python 断言、106 条编译断言、11 个植入缺陷全抓。类型守卫顺手抓到一次真实崩溃——
+  数组元素被无条件桥接成 `SecCertificateRef`。
+- `Limelight/Stream/USBBusSnapshot.{h,m}` + `scripts/usb-bus-snapshot-tests.py`：把 2.5 的第二轮取证变成代码——
+  只从设备节点向下遍历、按「恰好一个父节点」归组、孤儿节点自成一组、判据只看键名。
+  49 条 Python 断言、37 条编译断言、9 个植入缺陷全抓。隐私那一侧另做交叉验证：
+  用 `ioreg -l -p IOUSB` 独立取到的 14 个产品名与序列号，逐个断言不出现在被测程序的输出里（checked 14, leaked 0）。
+- `Limelight/Stream/DeviceRedirectionPanelModel.{h,m}` + `Limelight/macOS/ViewControllers/SettingsDevicesPane.swift`
+  + `scripts/device-redirection-panel-model-tests.py`：面板的全部逻辑在 Objective-C 里，Swift 只渲染模型产出的字符串。
+  78 条编译断言，另有源码与接线断言（模型进了桥接头、面板进了 target、面板被 tab 页引用、两种语言表都答得上面板要的每一句），
+  13 个植入缺陷全抓，其中一个是「删除按钮删的是存储槽而不是玩家看见的那一行」。
+  面板上每一条文案与日志用的是同一个拼写，所以截图和日志行说的是同一个障碍。
+
+**接线状态说清楚**：`DevicesView` 是这些 `auditLine` 的第一个生产调用方（此前它们一个调用者都没有，等于死代码）。
+面板读写的是 `NSUserDefaults` 里 `moonlight.usbredirection.` 前缀下的四个键，而**没有任何一条流媒体路径读这些开关**——
+在扩展存在之前开关授权不了任何东西，这是设计而不是待办。
+
+**UNLOCK(stage3) 的集中清单**（`SettingsDevicesPane.swift` 顶部有同名标记，门禁同时断言两处都在：
+占位注释能无声消失的话，它就不是占位，而是一个悄悄不再标注自己未完成的功能）：
+
+1. DriverKit 驱动扩展目标进入 app 的两个 macOS job；
+2. app 与该扩展用 Developer ID 身份 + hardened runtime 签名（面板第一张卡读的就是这一项的现状）；
+3. `notarytool` 公证 + `stapler staple`，否则下载到的副本根本打不开；
+4. helper 的安装/启用生命周期接到真实对象上（`DriverLifecycle` 已经把这套生命周期建模好，并且拒绝假装）。
+
+主机侧那一半另有其位置：`+[MLDeviceRedirectionPolicy hostAdvertisesDeviceRedirectionInServerInfo:]`
+要在真实连接建立处被问一次，今天问它的只有面板上那个「查询主机」按钮。四项各是一个可评审提交，不是一个「顺手做完」。
 
 ### 9.3 两个物理前置：缺时必须红，到位时按清单解锁
 
