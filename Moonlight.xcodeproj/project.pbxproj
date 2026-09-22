@@ -190,6 +190,8 @@
 				macOS/PointerEntryPolicy.m,
 				Stream/DeviceRedirectionPolicy.m,
 				Stream/USBDeviceEnumeration.m,
+				Stream/DeviceRedirectionSession.m,
+				Stream/DriverLifecycle.m,
 				Stream/RendererLayerContainer.m,
 				Stream/StreamConfiguration.m,
 				Stream/StreamManager.m,

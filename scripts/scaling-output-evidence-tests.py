@@ -643,6 +643,58 @@ def run_usb_device_enumeration():
           "the usb device enumeration gate failed:\n" + chr(10).join(tail))
 
 
+def run_device_redirection_session():
+    """The order a device may be handed over in, checked against a host that does not exist.
+
+    Stage 2's client half. No host implements the three exchanges, so the question is why CI runs
+    it at all: sequencing is the part this repository can get right today, and a gate that only a
+    real host could settle would be a gate nobody can add. It rides here for the same two reasons
+    as the enumeration gate above -- Objective-C against the macOS SDK, and no `workflow` scope on
+    this credential for a step of its own -- and constraints-audit.py's DRIVEN_BY writes it down.
+    """
+    ran = subprocess.run([sys.executable, "scripts/device-redirection-session-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "a device never reaches a host that has not been asked for room"
+          if ran.returncode == 0 else
+          "the device redirection session gate failed:\n" + chr(10).join(tail))
+
+
+def run_driver_lifecycle():
+    """What a driver extension that has not shipped may be trusted to have done.
+
+    Stage 3's logic, and stage 3 itself is blocked on a signing identity, so nothing here loads
+    anything: the gate covers installs that time out, crashes that keep what they held, and a
+    replugged device that must not inherit the last session's answer. Objective-C against the
+    macOS SDK, and no `workflow` scope for a step of its own -- the same two reasons as above.
+    """
+    ran = subprocess.run([sys.executable, "scripts/driver-lifecycle-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "an unloadable extension is never counted as one that works"
+          if ran.returncode == 0 else
+          "the driver lifecycle gate failed:\n" + chr(10).join(tail))
+
+
+def run_driver_extension_signing():
+    """Whether anything in the tree could be loaded by a player at all.
+
+    Not a scaling question, and it needs no toolchain: it reads the committed file list and the
+    workflow text. It rides here for one reason only -- a gate needs a CI step, and a step needs the
+    `workflow` scope this credential does not carry. constraints-audit.py's DRIVEN_BY records the
+    arrangement, and the audit refuses its own entry if the step stops invoking it.
+    """
+    ran = subprocess.run([sys.executable, "scripts/driver-extension-signing-audit.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "no driver extension ships that a player could not load"
+          if ran.returncode == 0 else
+          "the driver extension signing audit failed:\n" + chr(10).join(tail))
+
+
 def run_hdr_sdr_exposure():
     """The exposure each HDR-to-SDR policy applies, and where that number is allowed to live.
 
@@ -764,6 +816,9 @@ def finish():
     run_device_redirection_policy()
     run_pointer_entry_policy()
     run_usb_device_enumeration()
+    run_device_redirection_session()
+    run_driver_lifecycle()
+    run_driver_extension_signing()
     run_hdr_sdr_exposure()
     run_settings_rebuild_passthrough()
     run_gamepad_menu_gesture()

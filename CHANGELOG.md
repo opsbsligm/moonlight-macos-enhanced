@@ -19,9 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bInterfaceProtocol`, and no class array is published anywhere. A dock that is storage plus
   a smart card therefore arrives split in two, and the single-node reader handed the policy a
   storage device -- exactly the face-choosing that the reserved-class refusal exists to prevent.
-
-### Added
-
 - **A USB measurement can no longer be wrong about a key name it invented.**
   `scripts/usb-registry-shape.py` compiles a read-only IORegistry probe whose list of keys
   is extracted out of `USBDeviceEnumeration.m` itself, prints the node counts the probe saw,
@@ -30,6 +27,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `not measured` and does not print `covered`, and that state is itself tested against a
   faked toolchain. `docs/usb-redirection-design.md` 8 records the reproduction commands,
   and 8.1 the eight planted defects that have to turn it red.
+
+- **The order a device may be handed over in, checked against a host that does not exist.**
+  `MLDeviceRedirectionSession` carries stage 2's client half: a host first answers `1` in
+  `/serverinfo`, then a bind, then a state request, then an upload, and no step happens before the
+  one before it was accepted. Only an explicit yes is a yes; a tag that answered two different
+  things is not resolved by picking one; a message on a channel this contract does not define ends
+  the session rather than being skipped, because the next answer would be read against the wrong
+  step; and an unanswered step is a different stop from a refused one, so a slow host and a full
+  host do not come out of the log looking the same. 44 compiled assertions, 10 planted defects all
+  caught. It is **not wired into the stream start path, deliberately**: the three calls it sequences
+  exist in no host, so wiring it would mean deciding the wire format by guessing, and a guess that
+  reads as support costs a player a device they were told they had.
+- **A driver extension that nobody can load can no longer be counted as one that works.**
+  `MLDriverLifecycle` covers the logic on this side of the signing wall: an install that times out
+  falls back to `not-installed` with a reason instead of sitting in `installing` forever, an
+  unanswered *removal* stays in `removing` rather than claiming a system state nobody observed, a
+  crash keeps the leases it held (they expire; they are not returned by a process that died), a
+  spent crash budget cannot be argued out of holding back, and a replugged device starts a new
+  lease even when the removal event never arrived. 39 compiled assertions, 10 planted defects all
+  caught. Devices are named by the stage 1 digest, and the log line is asserted not to contain it.
+- **A gate over the prerequisite stage 3 is actually missing.**
+  `scripts/driver-extension-signing-audit.py` refuses the combination of "the tree builds a driver
+  extension" and "the workflow cannot notarise it": a `.dext` target, a DriverKit import, a system
+  extension request or the DriverKit entitlement each require a Developer ID signature, the
+  hardened runtime, `notarytool` and a staple in the workflow, and each names the file to change.
+  Its `--self-test` includes a properly signed tree that has to pass, because a gate that can only
+  ever fire is as useless as one that never does.
 
 ### Fixed
 
@@ -60,6 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handed both, and each has a planted defect that turns the run red if either blob is ever
   read as an identifier. The bus-shape classifier is exercised from this gate too, so the
   measurement that justified the fixtures is checked on runners that have no USB devices.
+- Neither new state machine reads a clock, and that is enforced rather than asserted in prose:
+  the gates check that `NSDate`, `CACurrentMediaTime`, `clock_gettime`, `gettimeofday` and
+  `NSUserDefaults` do not appear in the sources, so a timeout has to arrive as an event the caller
+  reports. A run of either harness on a machine whose clock is wrong gives the same answers.
 
 ## [1.6.0-build1574] - 2026-09-22
 

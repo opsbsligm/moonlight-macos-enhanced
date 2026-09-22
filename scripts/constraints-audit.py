@@ -1387,6 +1387,19 @@ DRIVEN_BY = {
     # where the toolchain is, and a step of its own would need the `workflow` scope the
     # pushing credential does not carry.
     "sdr-10bit-codec-tests.py": "scaling-output-evidence-tests.py",
+    # Stage 2's client half, same shape and same two reasons: Objective-C against the macOS SDK,
+    # and no `workflow` scope on this credential for a step of its own. Worth noting what it is
+    # a gate over -- no host implements the three exchanges, so this one pins the sequencing
+    # rather than the wire, which is exactly the part that can be wrong today and right later.
+    "device-redirection-session-tests.py": "scaling-output-evidence-tests.py",
+    # Stage 3's logic, same shape and the same two reasons: Objective-C against the macOS SDK, and
+    # no `workflow` scope on this credential for a step of its own. It is the counterpart of the
+    # entry below it -- that one refuses an unsigned artefact, this one refuses a lifecycle that
+    # would pretend an artefact nobody can load is working.
+    "driver-lifecycle-tests.py": "scaling-output-evidence-tests.py",
+    # Reads the committed file list and the workflow text, so no toolchain is missing here; the
+    # missing thing is a CI step, and a step needs the `workflow` scope this credential lacks.
+    "driver-extension-signing-audit.py": "scaling-output-evidence-tests.py",
     # The report is Objective-C plus a compiled harness, so it needs the macOS clang and SDK,
     # and a step of its own would need the `workflow` scope this credential does not carry.
     # It is also the gate that decides whether a pairing PIN can reach an issue, so it rides

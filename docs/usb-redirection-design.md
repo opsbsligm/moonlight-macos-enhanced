@@ -89,8 +89,8 @@
 ```
 Stage 0  决策与协商（纯本地、零设备访问）        ← 已实现
 Stage 1  设备枚举可见性与诊断（只读，本机关）        ← 已实现（不含 UI）
-Stage 2  语义旁路（新消息类型 + 能力位，需主机契约）
-Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
+Stage 2  语义旁路（新消息类型 + 能力位，需主机契约）  ← 客户端半边已实现（有意未接线，见 9.4）
+Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）  ← 生命周期逻辑已实现（扩展本体受阻，见 9.5/9.6）
 ```
 
 | Stage | 内容 | 前置条件 | 交付物 | 主要风险 |
@@ -128,6 +128,9 @@ Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）
 | 变异 | 9 个，全部被抓：默认改为放行、配对门移除、保留类别清空、本地输入门移除、两输入门交换顺序、产品号允许匹配任意规则、身份门退化为"全不可读才拦"、未读到的 protocol 字节被当成无害、序列号写入日志 |
 | 构建纳入 | `Moonlight.xcodeproj` 的 `membershipExceptions` 已加入 `Stream/DeviceRedirectionPolicy.m`（`source-membership-audit.py` 通过：120 files / 128 entries / 3 documented exclusions） |
 | 取证回归 | `scripts/usb-registry-shape.py`（**不是门禁**，命名刻意向）：从解析器源码抽取候选键生成只读探针、在活总线上取证，并把每个形状与 Stage 1 已钉的 fixture 表比对；三种结论 covered / drift / not measured，无 IOKit 的机器上明说"这次没取证"且不打印 covered。`stale_pins()` 每次遍历整张 pin 表，所以删掉一条 fixture 会立刻红（8.1 记的六个植入缺陷全部被抓）。它的 `--self-test` 由 `usb-device-enumeration-tests.py` 调用，因此跟着现有门禁在两种 runner 上一起跑，不需要新 step。见 8 |
+| Stage 2 断言 | `scripts/device-redirection-session-tests.py`：整个 `DeviceRedirectionSession` 被编译后由仓库内参考应答器驱动 **44 条**时序/判定断言（serverinfo 负向矩阵、bind/state/item 的顺序与畸形应答、超时与拒答的区分、槽位消耗、首因保留）；**10 个植入缺陷全部被抓**；另断言源码里不存在 `NSDate`/`CACurrentMediaTime`/`clock_gettime`/`gettimeofday`/`NSUserDefaults` |
+| Stage 3 断言 | `scripts/driver-lifecycle-tests.py`：整个 `DriverLifecycle` 被编译后驱动 **39 条**断言（安装超时回落、卸载超时不得谎称已卸载、崩溃预算、orphaned 租约只能超时失效、重插不复用、"相位 + 租约"双条件可用性）；**10 个植入缺陷全部被抓** |
+| 签名门禁 | `scripts/driver-extension-signing-audit.py`：树里出现 `.dext`/DriverKit 源码/`OSSystemExtensionRequest`/DriverKit entitlement，而 workflow 缺 Developer ID 签名、hardened runtime、`notarytool`、`stapler staple` 任一项 → 红。`--self-test` **10 条**含"完整签名必须判绿"，避免一个只会红的门禁 |
 | 由谁执行 | macOS 每个 build 的 `scaling-output-evidence-tests.py` step 调用本 gate；`constraints-audit.py` 的 `DRIVEN_BY` 记录了这条依赖并校验"driver 确实是 CI step 且确实调用它"。原因：该 gate 需要真 clang 与 macOS SDK，Ubuntu audits job 跑不了，而新增 step 需要带 `workflow` scope 的凭证，当前推送凭证没有 |
 | Stage 1 门禁 | `scripts/usb-device-enumeration-tests.py`：把 `USBDeviceEnumeration.m` 与 Stage 0 的 `DeviceRedirectionPolicy.m` 作为**同一翻译单元**用真 clang + `-Wall -Werror` 编译（摘要实现只有一份，不复刻第二套），输入是注入的 registry 属性字典，**不链接 IOKit** |
 | Stage 1 断言 | 行为断言在编译出的二进制里执行，条数由二进制自己打印（当前那次运行 23 条），harness 拒绝低于下限的用例清单——用例被悄悄删掉时，只有那个数字会发现不对。覆盖的形状：数值/十六进制文本/`0x` 前缀/无标识符/过长文本/半个十六进制/4 字符的半十六进制、候选键名、接口与 protocol 的三种配对、**真机节点形状**（短键名 + 单数值 + 每接口一个节点 + 设备与接口节点都带序列号 + 每节点都有产品名）、Data 形态与数组形态的标识符一律不读、只遍历接口节点也要能归因、重复接口节点不得折叠、复合设备以分离节点到达时 whichever-face-first 都被拒、诊断行不含序列号与产品名、摘要令牌一对一。另有 6 条静态断言（不链接 IOKit、除摘要外只 import 一个系统头、枚举自身无日志出口、读取路径不看产品名、`Moonlight.entitlements` 未新增 usb） |
@@ -245,11 +248,42 @@ covered: every shape on this bus is pinned by a Stage 1 case
 | 批次 | 内容 | 新增面 | 完成判据（各批独立可评审） |
 |---|---|---|---|
 | A | **已完成**。取证回归工具 `scripts/usb-registry-shape.py`：从解析器源码生成探针读活总线，把形状与已钉 fixture 表比对（见 8） | 一个非门控工具 + harness 里的两条新用例与一次 self-test 调用 | 三条判据逐一成立：三种结论都能被驱动（`not measured` 由伪造工具链验证、`drift` 由 self-test 验证、`covered` 由真机实跑给出）；pin 表整表遍历，删 fixture 即红（8.1）；无 IOKit 时明说没取证且不打印 covered。**超出判据的收获**：它一出生就抓到一个已发布错误——2.5 的序列号那一行是错的，改正见 2.5 与 8 |
-| B | 协商与消息状态机（Stage 2 的客户端半边）：把 serverinfo 应答 + 三段式消息的**时序语义**收成一个纯类，配一个仓库内参考应答器，形状表覆盖缺字段/`0`/空串/非数字/大小写/重复键/版本偏斜/半程断连 | 一个 `Limelight/Stream/` 类 + 一个 harness | 参考应答器的每种应答都落到唯一分类；"只认 `1`"被反转必须被抓；状态机不读时钟、不读 `NSUserDefaults`，同样输入同样判决 |
-| C | Stage 3 的纯逻辑：DEXT 生命周期状态机（安装中/已装/崩溃/卸载中/回退）+ 所有权与超时 + 热插拔竞态下的"同一设备两次插拔不得复用旧判决" | 一个 `Limelight/Stream/` 类 + 一个 harness | 每个状态转移单独驱动；崩溃后未释放的所有权必须超时失效；任何"跳过卸载直接复用"的变异被抓 |
-| D | 签名前置的门禁化：构建树里出现 `.dext`/DriverKit 目标而 workflow 没有 Developer ID 签名与 `notarytool` 步骤时构建失败；证书到位后按 9.3 清单逐项解锁 | 一条门禁规则 | 植入一个假 `.dext` 目标即红；真签名步骤加进去后转绿 |
+| B | **已完成**。`MLDeviceRedirectionSession`：三段式的时序与判定，配仓库内参考应答器（见 9.4） | 一对 `Limelight/Stream/` 文件 + 一个门禁 | 44 条编译断言，10 个植入缺陷全被抓（含"只认 `1`"被反转、未知通道被跳过、重复键取第一个、文本槽位被 parse、槽位未知却放行上传、首因被覆盖、顺序检查反向、缺槽位读成满员、串台、花掉槽位仍放行第二个）；不读时钟由门禁断言源码中不存在这些符号来保证，超时以事件传入 |
+| C | **已完成**。`MLDriverLifecycle`：生命周期、租约、崩溃预算与热插拔竞态（见 9.5） | 一对 `Limelight/Stream/` 文件 + 一个门禁 | 39 条编译断言，10 个植入缺陷全被抓，包括"安装超时仍停在 installing""卸载超时谎称已卸载""崩溃把设备直接归还""重插继承上次租约""只看租约不看相位"；设备一律用 Stage 1 的摘要命名，且断言该行不含该摘要 |
+| D | **已完成**。`driver-extension-signing-audit.py`：把签名前置变成门禁规则（见 9.6） | 一个门禁 + 它的 `--self-test` | 10 条自测断言；负向五项——假 `.dext` 目标、DriverKit 源码、DriverKit entitlement 各报 4 条并退出 1，"目标 + 完整签名与公证"报 0 条并退出 0，被截断的 workflow 判红。规则单向：只拒绝"造出来却没人能加载"的组合 |
 
 A→D 的顺序由风险决定：A 让后面几批的取证前提不会悄悄过期；B/C 是纯逻辑，错了可回滚；D 是防"无声放宽"，本身不引入能力。
+
+### 9.4 批 B 交付了什么，以及它没有交付什么
+
+`Limelight/Stream/DeviceRedirectionSession.{h,m}` + `scripts/device-redirection-session-tests.py`（编译出 **44 条断言**，**10 个植入缺陷全被抓**）。
+
+**交付的是顺序与判定**：主机先在 serverinfo 上答 `1`，然后 bind、request state、upload；每步可被拒、可答得畸形、可不答。规则逐条落地——任何一步都不在前一步被接受之前发生；只有明确的 `1` 是"是"；同一个 tag 给出两个不同答案时不选边；未定义通道上的消息终结会话（跳过它会让下一条答复被读成对另一步骤的回答）；没答不等于"否"，`bind-unanswered` 与 `bind-refused` 是两个 stop，慢主机和满主机在日志里必须长得不一样；会话死掉的第一因保留到最后。
+
+**没有交付线上格式**。契约 §4 的三个调用在 moonlight-common-c 和任何主机里都不存在，所以 `usbRedirectionBound`/`usbRedirectionSlots`/`usbRedirectionAccepted` 是**参考应答器用的名字**，源码里逐个注明哪个 tag 有契约依据（只有 `usbRedirection`）。因此它**不接 stream 启动路径**：没有对端时接线等于用猜测填协议。能被单方面定死的只有时序，所以定的是时序。
+
+**形状表**（44 条）：缺字段、`0`、`"0"`、`"yes"`、空值、`2`、大小写错的 tag、同 tag 两次（一致/不一致）、未见过的未来字段、槽位写成文本、带小数、负数、128（超出 USB 能寻址的 127）、127、缺槽位、半程断连、槽位花完后的第三次上传、超时与拒答的区分。
+
+**两个记录而非修饰的事实**：Foundation 无法区分 `@1` 与 `@YES`，所以"只认 1"必然同时接受 `@YES`，这条写成断言而不是愿望；USB 用 7 bit 寻址，127 是主机能描述的上限，超它更像编码错误而不是慷慨。
+
+"状态机不读时钟"这件事不写在注释里，写在门禁里：`NSDate`/`CACurrentMediaTime`/`clock_gettime`/`gettimeofday`/`NSUserDefaults` 逐个断言源码中不存在——注释可以说任何话，断言不行。
+
+### 9.5 批 C 交付了什么
+
+`Limelight/Stream/DriverLifecycle.{h,m}` + `scripts/driver-lifecycle-tests.py`（编译出 **39 条断言**，**10 个植入缺陷全被抓**）。
+
+批 C 断言的东西：安装请求超时**必须回落到 `not-installed`**并带 `install-unanswered`（停在 `installing` 就是一个永远不告诉玩家该重试的设置页）；卸载请求无应答时**不得谎称已卸载**（相位留在 `removing`，因为没有任何观测支持"它已经没了"这个结论）；崩溃计数累加到预算即 `held-back`，且 `held-back` 无法被"再请求一次安装"解除；崩溃时持有的租约变成 `orphaned` 而**不是**直接释放，orphaned 只能超时失效、不能被"归还"（归还它的进程已经死了）；**同一设备第二次插拔不复用旧可用性**——包括移除事件丢失/乱序时的那次竞态；`mayUseDeviceToken` 必须同时问"扩展在跑"和"这台设备被我们租出去过"两个问题，只问其一会把设备交给主机而另一个会话还持有它。
+
+设备一律用 Stage 1 的摘要令牌命名，auditLine 里有断言检查该令牌不出现在行内——只数租约，不写它挂在什么硬件上。
+
+### 9.6 批 D 交付了什么
+
+`scripts/driver-extension-signing-audit.py`：`--self-test` **10 条**，另有真实树运行与 **5 项负向验证**。规则是**单向**的：树里出现 `.dext` 目标、DriverKit import、`OSSystemExtensionRequest` 或 `com.apple.developer.driverkit` entitlement，而 workflow 里没有 Developer ID 签名、hardened runtime、`notarytool`、`stapler staple` → 构建红，且每条缺口点名要改的文件与要敲的命令。
+
+**它的自测必须能给出绿色**：一个只会红的门禁和一个从不会响的门禁一样没用，所以自测里喂进一份"扩展目标 + 完整签名与公证"的假 workflow，断言它通过；也断言"签名做了一半、缺公证"恰好报出一条缺口。负向验证：假 `.dext` 目标 → 4 条 error、退出 1；DriverKit 源码 → 4 条、退出 1；DriverKit entitlement → 4 条、退出 1；目标 + 完整签名 → 0 条、退出 0；被截断的 workflow → 红（读不到被检查的东西不能算通过）。
+
+它不声称前置到位。它保证的是：**"设备能直通"这句话不会在扩展根本加载不了的时候被写进发布说明**。
+
 
 ### 9.3 两个物理前置：缺时必须红，到位时按清单解锁
 
