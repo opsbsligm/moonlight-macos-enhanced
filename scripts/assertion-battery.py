@@ -86,6 +86,11 @@ ASPECT_GATE = (os.path.join(root, "scripts", "aspect-fit-presentation-tests.py")
 # stopped asking the question it was written to ask.
 TIMER_HARNESS = os.path.join(root, "scripts", "timer-registration-tests.py")
 TIMER_GATE = (TIMER_HARNESS, [])
+# The block observer measurement is a harness of the same kind: it compiles observers and a
+# real window and asks AppKit how many times a callback ran, so it is the only gate that can
+# notice the probe having stopped asking.
+OBSERVER_HARNESS = os.path.join(root, "scripts", "notification-observer-tests.py")
+OBSERVER_GATE = (OBSERVER_HARNESS, [])
 # The workflow audit reads the pipeline that runs every other gate, so a mutation of
 # the pipeline itself is judged by it and by nothing else.
 WF_GATE = (os.path.join(root, "scripts", "workflow-audit.py"), [])
@@ -617,6 +622,17 @@ POLL_ONE_MODE = '        [[NSRunLoop mainRunLoop] addTimer:pointerPoll forMode:N
 POLL_STOP = '        [_mouseTimer invalidate];\n'
 DRAIN_MODAL = '        Drain(NSModalPanelRunLoopMode, 300);\n'
 DRAIN_AS_MODAL = '        Drain(NSDefaultRunLoopMode, 300);\n'
+# The withdrawal that keeps a second -viewDidAppear from registering a second observer, the
+# token the app delegate stopped throwing away, the hide that makes the window re-appear, and
+# the two rule readers that decide whether either shape is a defect. All five strings are
+# read out of the shipped files rather than retyped, and `once` below refuses one that has
+# moved.
+OBSERVER_WITHDRAWAL = ('    // one observer.\n'
+                       '    [self removeStreamSettingsObservers];\n')
+OBSERVER_STORED_TOKEN = ('self.localNetworkTriggerObserver = [[NSNotificationCenter')
+OBSERVER_HIDE_WINDOW = '        [window orderOut:nil];\n'
+LIFECYCLE_READER = 'REPEATING_LIFECYCLE = re.compile(r"^[-+]\\s*\\(\\s*void\\s*\\)\\s*(viewDidAppear|viewWillAppear)\\b")'
+TOKEN_READER_RETURN = '    return re.search(r"(?<![=!<>])=(?!=)|\\breturn\\b", before) is not None'
 
 
 def poll_fires_in_one_mode_only(text):
@@ -635,6 +651,38 @@ def timer_modes_measured_blind(text):
     """Have the probe drain the default mode and call it the modal one."""
     once(text, DRAIN_MODAL, "the probe draining the modal mode")
     return text.replace(DRAIN_MODAL, DRAIN_AS_MODAL, 1)
+
+
+def re_register_the_observer_each_pass(text):
+    """Take out the withdrawal, leaving the comment that says the withdrawal is there."""
+    once(text, OBSERVER_WITHDRAWAL, "the withdrawal before a block registration")
+    return text.replace(OBSERVER_WITHDRAWAL, "    // one observer.\n", 1)
+
+
+def discard_the_observer_token(text):
+    """Throw the token away on the spot, the way the local network observer used to."""
+    once(text, OBSERVER_STORED_TOKEN, "the stored block observer token")
+    return text.replace(OBSERVER_STORED_TOKEN, "[[NSNotificationCenter", 1)
+
+
+def never_hide_the_window(text):
+    """Stop hiding the window, so the probe never asks whether -viewDidAppear returns."""
+    once(text, OBSERVER_HIDE_WINDOW, "the probe hiding the window it re-shows")
+    return text.replace(OBSERVER_HIDE_WINDOW, "", 1)
+
+
+def blind_lifecycle_reader(text):
+    """Make the repeated-lifecycle reader match a method AppKit never calls."""
+    once(text, LIFECYCLE_READER, "the repeated lifecycle reader")
+    return text.replace(LIFECYCLE_READER,
+                        LIFECYCLE_READER.replace("viewDidAppear|viewWillAppear",
+                                                 "viewDidNeverAppear"), 1)
+
+
+def blind_token_reader(text):
+    """Make the stored-token reader answer yes without looking."""
+    once(text, TOKEN_READER_RETURN, "the stored token reader")
+    return text.replace(TOKEN_READER_RETURN, "    return True", 1)
 
 
 def blind_sweep(text):
@@ -1758,6 +1806,21 @@ MUTATIONS = [
     ("timer-modes-measured-blind", TIMER_HARNESS, timer_modes_measured_blind,
      "the probe drains the default mode and reports the count as the modal one",
      TIMER_GATE),
+    ("observer-reregistered-each-appear", STREAM_SVC, re_register_the_observer_each_pass,
+     "a re-shown window registers the same block observer a second time, and nothing can"
+     " reach the first one any more", AUDIT_GATE),
+    ("observer-token-thrown-away", APPDELEGATE, discard_the_observer_token,
+     "a block observer is registered with no token, so -removeObserver: can never withdraw it",
+     AUDIT_GATE),
+    ("observer-reregistration-unmeasured", OBSERVER_HARNESS, never_hide_the_window,
+     "the probe never hides the window, so it never learns that -viewDidAppear is delivered"
+     " a second time", OBSERVER_GATE),
+    ("observer-lifecycle-rule-blinded", AUDIT, blind_lifecycle_reader,
+     "the rule that counts a registration AppKit runs twice stops counting, so the"
+     " registration it planted stops tripping it", AUDIT_GATE),
+    ("observer-token-rule-blinded", AUDIT, blind_token_reader,
+     "the rule that asks whether a registration keeps its token answers yes without looking",
+     AUDIT_GATE),
     ("blind-sweep", ANALYZER, blind_sweep, "an analyzer that did not run reads as clean", ANALYZER_GATE),
     ("accept-new-findings", ANALYZER, accept_new_findings, "a new finding class slips past the baseline", ANALYZER_GATE),
     ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),

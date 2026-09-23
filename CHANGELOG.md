@@ -399,6 +399,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The two observer rules each got a mutant that has to be caught.** Five
+  went into the assertion battery: taking the withdrawal out of
+  `-viewDidAppear` while leaving the comment that describes it; throwing the
+  app delegate's token away again; making the probe never hide the window, so
+  it never learns that `-viewDidAppear` arrives twice; making the lifecycle
+  reader match a method AppKit never calls; and making the stored-token reader
+  answer yes without looking. The first two are judged against the shipped
+  tree, the third against the harness that measures the premise, and the last
+  two against the planted files -- a rule that stopped looking is only visible
+  to its own self test, because a clean tree is exactly what a dead rule also
+  reports. All five were applied and reported by hand before the battery ran
+  them, and each mutation anchor is read out of the shipped file rather than
+  retyped, so a moved line fails as an anchor rather than passing quietly.
+
 - **Two timer rules, and the measurement that says they are not guesses.**
   `constraints-audit.py` now refuses a repeating timer that names one run loop
   mode -- which includes `+scheduledTimerWithTimeInterval:` -- and refuses a
