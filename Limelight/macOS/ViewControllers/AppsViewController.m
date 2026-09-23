@@ -198,6 +198,16 @@ static NSUserInterfaceItemIdentifier const MLSunshineRefreshDisplaysMenuItemIden
     self.currentHostUUID = self.host.uuid;
 
     __weak typeof(self) weakSelf = self;
+    // -viewDidAppear runs again when this page comes back into view, and it ran
+    // three times across three measured show/hide cycles of one view controller.
+    // The centre holds on to every block it is given, so the assignment below would
+    // leave the previous block registered and one window becoming key would refresh
+    // the running-app state and re-read the host settings once per visit. Dropping
+    // the token this object already holds is what keeps the count at one.
+    if (self.windowDidBecomeKeyObserver != nil) {
+        [[NSNotificationCenter defaultCenter] removeObserver:self.windowDidBecomeKeyObserver];
+        self.windowDidBecomeKeyObserver = nil;
+    }
     self.windowDidBecomeKeyObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidBecomeKeyNotification object:self.view.window queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         [weakSelf updateRunningAppState];
         

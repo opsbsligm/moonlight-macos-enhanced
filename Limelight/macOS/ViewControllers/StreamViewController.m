@@ -681,6 +681,15 @@ highFreqMotor:(unsigned short)highFreqMotor {
     });
 
     __weak typeof(self) weakSelf = self;
+    // -viewDidAppear is delivered again to the same view controller when its window is
+    // ordered out and shown again -- two hide/show cycles were measured to deliver it
+    // twice -- and the centre keeps every block it is handed, so assigning a fresh token
+    // over an old one does not unregister the block that owned it. One settings change
+    // then reached -updateWindowSubtitle twice and one log line reached the overlay
+    // twice, and keeps reaching them once per cycle after that. Withdrawing the tokens
+    // this object already holds is what makes a repeated -viewDidAppear register exactly
+    // one observer.
+    [self removeStreamSettingsObservers];
     self.settingsDidChangeObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSUserDefaultsDidChangeNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         [weakSelf updateWindowSubtitle];
         [weakSelf refreshInputDiagnosticsPreference];
@@ -843,6 +852,32 @@ highFreqMotor:(unsigned short)highFreqMotor {
     self.controllerSupport = nil;
 }
 
+- (void)removeStreamSettingsObservers
+{
+    NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
+
+    if (self.settingsDidChangeObserver != nil) {
+        [defaultCenter removeObserver:self.settingsDidChangeObserver];
+        self.settingsDidChangeObserver = nil;
+    }
+    if (self.streamShortcutSettingsDidChangeObserver != nil) {
+        [defaultCenter removeObserver:self.streamShortcutSettingsDidChangeObserver];
+        self.streamShortcutSettingsDidChangeObserver = nil;
+    }
+    if (self.mouseSettingsDidChangeObserver != nil) {
+        [defaultCenter removeObserver:self.mouseSettingsDidChangeObserver];
+        self.mouseSettingsDidChangeObserver = nil;
+    }
+    if (self.hostLatencyUpdatedObserver != nil) {
+        [defaultCenter removeObserver:self.hostLatencyUpdatedObserver];
+        self.hostLatencyUpdatedObserver = nil;
+    }
+    if (self.logDidAppendObserver != nil) {
+        [defaultCenter removeObserver:self.logDidAppendObserver];
+        self.logDidAppendObserver = nil;
+    }
+}
+
 - (void)tearDownStreamLifecycleObserversAndTimers {
     NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
 
@@ -874,26 +909,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
         [defaultCenter removeObserver:self.appDidResignActiveObserver];
         self.appDidResignActiveObserver = nil;
     }
-    if (self.settingsDidChangeObserver != nil) {
-        [defaultCenter removeObserver:self.settingsDidChangeObserver];
-        self.settingsDidChangeObserver = nil;
-    }
-    if (self.streamShortcutSettingsDidChangeObserver != nil) {
-        [defaultCenter removeObserver:self.streamShortcutSettingsDidChangeObserver];
-        self.streamShortcutSettingsDidChangeObserver = nil;
-    }
-    if (self.mouseSettingsDidChangeObserver != nil) {
-        [defaultCenter removeObserver:self.mouseSettingsDidChangeObserver];
-        self.mouseSettingsDidChangeObserver = nil;
-    }
-    if (self.hostLatencyUpdatedObserver != nil) {
-        [defaultCenter removeObserver:self.hostLatencyUpdatedObserver];
-        self.hostLatencyUpdatedObserver = nil;
-    }
-    if (self.logDidAppendObserver != nil) {
-        [defaultCenter removeObserver:self.logDidAppendObserver];
-        self.logDidAppendObserver = nil;
-    }
+    [self removeStreamSettingsObservers];
 
     [defaultCenter removeObserver:self name:HIDMouseModeToggledNotification object:nil];
     [defaultCenter removeObserver:self name:HIDGamepadQuitNotification object:nil];

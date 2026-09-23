@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+
 - **A settings callback is now compiled to find out whether its model dies.**
   `scripts/settings-callback-ownership-tests.py` cuts the two closures out of
   `SettingsStreamPane.swift`, compiles them unchanged, and runs three shapes:
@@ -125,6 +126,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **A re-shown stream window no longer answers one event twice.**
+  `-viewDidAppear` is delivered again to the same view controller when its
+  window is hidden and shown again, and once per show across three parent
+  changes; both counts came from `scripts/notification-observer-tests.py`, not
+  from a reading of the docs. Five block observers in `StreamViewController`
+  and one in `AppsViewController` were registered on that path, and the
+  notification centre keeps every block it is handed -- measured: three
+  registrations answered one post three times, and writing a fresh token over
+  an old one left the old block registered while taking away the only name the
+  owner had for it. A settings change therefore reached
+  `-updateWindowSubtitle` once per visit and one log line reached the overlay
+  once per visit, growing with every hide and show. The stream page now
+  withdraws the tokens it holds through one `-removeStreamSettingsObservers`,
+  which the teardown already uses, and the apps page withdraws its own before
+  registering again. `AppDelegate` kept no token at all for its local-network
+  observer and asked `-removeObserver:` to withdraw it in `-dealloc`; that
+  call removes a selector observer and removes nothing of a block one, which
+  the same harness counts, so the token is now stored and removed by token.
+
 
 - **The audit's method reader could not see a method whose brace was on the
   next line.** `method_bodies` asked for the signature and its `{` on one

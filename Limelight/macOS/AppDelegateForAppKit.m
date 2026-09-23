@@ -949,6 +949,10 @@ static void MLFinishRenderProbeIfArmed(void) {
 @property (nonatomic, strong) ControllerNavigation *controllerNavigation;
 @property (weak) IBOutlet NSMenuItem *themeMenuItem;
 @property (nonatomic, assign) BOOL didAttemptPermissionRepair;
+// A block observer is only reachable through the token it returns: -removeObserver:
+// with the object that owns the block removes nothing, which is measured rather than
+// assumed. -dealloc below already asks for that; it needs the token to act on.
+@property (nonatomic) id localNetworkTriggerObserver;
 @end
 
 // These two keys and the probe below are declared ahead of the @implementation
@@ -1006,6 +1010,10 @@ static const void *MoonlightOriginalToolbarPaletteLabelKey = &MoonlightOriginalT
 static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolbarToolTipKey;
 
 - (void)dealloc {
+    if (self.localNetworkTriggerObserver != nil) {
+        [[NSNotificationCenter defaultCenter] removeObserver:self.localNetworkTriggerObserver];
+        self.localNetworkTriggerObserver = nil;
+    }
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
@@ -1060,7 +1068,7 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
     // NOTE: We match the notification name by literal string (mirroring the Swift
     // constant MoonlightRequestLocalNetworkTriggerNotification) to avoid needing
     // a Swift-ObjC bridging header just for this one symbol.
-    [[NSNotificationCenter defaultCenter] addObserverForName:@"MoonlightRequestLocalNetworkTrigger"
+    self.localNetworkTriggerObserver = [[NSNotificationCenter defaultCenter] addObserverForName:@"MoonlightRequestLocalNetworkTrigger"
                                                       object:nil
                                                        queue:[NSOperationQueue mainQueue]
                                                   usingBlock:^(NSNotification * _Nonnull note) {
