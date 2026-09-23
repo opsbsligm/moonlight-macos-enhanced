@@ -361,15 +361,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mode -- which includes `+scheduledTimerWithTimeInterval:` -- and refuses a
   repeating timer whose only stop is its owner's `dealloc`, which is not a
   stop, because a repeating timer keeps the object it polls alive and that
-  object therefore cannot reach the code that would end it. Both land with
-  zero exemptions: six repeating timers exist, all six now name the common
-  modes, and five of them are stopped on a path that runs. Each carries its
-  own planted counter-example, and the measurement behind both is
-  `scripts/timer-registration-tests.py`, which compiles and runs the shapes
-  rather than quoting the docs. Three mutations join the battery: putting the
-  pointer poll back into one mode, taking out its stop, and -- aimed at the
-  new harness itself -- having it drain the default mode and report the count
-  as the modal one. 128 mutations become 131.
+  object therefore cannot reach the code that would end it. Both land at zero
+  exemptions over the six repeating timers in the app: all six name the common
+  modes, and all six are stopped on a path that can run. Each rule carries its
+  planted counter-example, and `scripts/timer-registration-tests.py` measures
+  both premises by compiling and running the shapes rather than quoting the
+  docs. The reachable-stop rule was first written too wide -- it asked every
+  timer an object stores, eleven names, and one of them an iOS-only file --
+  which demands a stop the measurement gives no reason to demand, since a one-
+  shot releases its target by firing; it now asks only the timers that repeat,
+  and a planted one-shot that is stored and never stopped asserts the narrower
+  rule stays narrow. Three mutations join the battery: the pointer poll back
+  into one mode, its stop taken out, and -- aimed at the new harness itself --
+  having it drain the default mode and report the count as the modal one. 128
+  mutations become 131.
 
 - **Two more kinds of handle the app borrows from the system now have to give
   it back.** An IOKit registry iterator and a CoreFoundation-typed property

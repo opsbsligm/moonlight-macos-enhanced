@@ -1641,16 +1641,26 @@ STOPPED_TIMER = re.compile(r"\[(?:self\.|_)?(\w*[Tt]imer\w*)\s+invalidate\]")
 
 
 def held_timer_names(text):
-    """Names an object keeps a repeating timer under.
+    """Names an object keeps a *repeating* timer under.
 
-    The obvious shape is `self.statsTimer = [NSTimer ...]`. The shape that matters just as
-    much is the one the fix for the pointer poll uses: build the timer as a local so the
-    block can name it, hand it to the run loop, then store it -- `_mouseTimer = pointerPoll;`.
-    Reading only the creation would call that local invisible and let the object hold a
-    repeating timer with no name attached, which is the case a stop path has to be found for.
+    Two readings this went through. The first collected every `[NSTimer ...]` an object
+    stored, which reached eleven names, and asked for a reachable stop on each -- more than
+    the premise of the rule can pay for. A one-shot timer releases its target when it fires,
+    so demanding a stop for one is a refusal the measurement does not support, and a rule
+    that refuses things it never claimed to be about is how a gate gets walked past. So the
+    question asked of each creation is whether it repeats.
+
+    The second reading is why creation-site reading alone is not enough: the shape the
+    pointer fix uses builds the timer as a local so its block can name it, hands it to the
+    run loop, then stores it -- `_mouseTimer = pointerPoll;`. Reading only the assignment
+    would call that invisible, and the object would hold a repeating timer no rule could
+    trace to a stop.
     """
     held = set()
-    for name in CREATED_TIMER.findall(text):
+    for match in CREATED_TIMER.finditer(text):
+        if not REPEATING.search(text[match.end():match.end() + 400]):
+            continue
+        name = match.group(1)
         held.add(name[5:] if name.startswith("self.") else name.lstrip("_"))
     for match in REPEATING.finditer(text):
         head = text.rfind("[NSTimer", 0, match.start())
@@ -1708,13 +1718,21 @@ planted_early_stop = ("- (void)stopThePlantedPoll\n"
                       "{\n"
                       "    [_plantedPollTimer invalidate];\n"
                       "}\n")
+planted_single_shot = ("- (void)queueThePlantedThing\n"
+                       "{\n"
+                       "    _plantedOneShotTimer = [NSTimer scheduledTimerWithTimeInterval:1.0\n"
+                       "                                                             repeats:NO\n"
+                       "                                                               block:^(NSTimer *timer) { }];\n"
+                       "}\n")
 late_only = timers_without_a_reachable_stop([("planted.m", planted_late_stop)])
 early_too = timers_without_a_reachable_stop([("planted.m", planted_early_stop)])
-check(late_only == ["plantedPollTimer"] and not early_too,
-      "a repeating timer stopped only by a dealloc that cannot run trips the rule above"
-      if late_only == ["plantedPollTimer"] and not early_too else
-      "the reachable stop rule does not see the poll it was written for: %s / %s"
-      % (late_only, early_too))
+single_shot = timers_without_a_reachable_stop([("planted.m", planted_single_shot)])
+check(late_only == ["plantedPollTimer"] and not early_too and not single_shot,
+      "a repeating timer stopped only by a dealloc that cannot run trips the rule above,"
+      " and a one-shot, which releases its target by firing, does not"
+      if late_only == ["plantedPollTimer"] and not early_too and not single_shot else
+      "the reachable stop rule answers wrong: late=%s early=%s one-shot=%s"
+      % (late_only, early_too, single_shot))
 
 dealloc_body = method_body(hid_all, "- (void)dealloc")
 check("CFRelease(_hidManager);" in dealloc_body,
