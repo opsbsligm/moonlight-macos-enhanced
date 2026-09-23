@@ -600,8 +600,10 @@ def display_link_outlives(text):
 # the rule hand back nothing, which is what each rule's planted counter-example is
 # there to notice.
 IOKIT_GUARD = '                   if not re.search(r"IOObjectRelease\\(\\s*%s\\s*\\)" % re.escape(name), body)})'
-CF_GUARD = '                   if not re.search(r"\\w*Release\\(\\s*(?:self\\.|_)?%s\\s*\\)" % re.escape(name),\n                                    every)})'
-BLIND_GUARD = '                   if False})'
+CF_GUARD = ('                   for type_name, name in rows\n'
+            '                   if name not in released.get(class_name, set())})')
+BLIND_GUARD = ('                   for type_name, name in rows\n'
+               '                   if False})')
 
 
 def blind_iookit_rule(text):
@@ -636,6 +638,12 @@ OBSERVER_STORED_TOKEN = ('self.localNetworkTriggerObserver = [[NSNotificationCen
 OBSERVER_HIDE_WINDOW = '        [window orderOut:nil];\n'
 BATTERY_GUARD_CALL = ('    refuse_a_dirty_checkout(sorted({entry[1] for entry in MUTATIONS}))'
                       '\n\n')
+# Where HIDSupport hands its display link back, and the reader that decides which class a
+# CoreFoundation property belongs to.
+CF_LINK_DEALLOC_RELEASE = '        CVDisplayLinkRelease(_displayLink);\n'
+CF_LINK_TEARDOWN_RELEASE = '        CVDisplayLinkRelease(self.displayLink);\n'
+CLASS_SEGMENT_READER = ('CLASS_BLOCK = re.compile(r"^(?:@interface|@implementation)'
+                        '\\s+([A-Za-z_]\\w*)", re.M)')
 LIFECYCLE_READER = 'REPEATING_LIFECYCLE = re.compile(r"^[-+]\\s*\\(\\s*void\\s*\\)\\s*(viewDidAppear|viewWillAppear)\\b")'
 TOKEN_READER_RETURN = '    return re.search(r"(?<![=!<>])=(?!=)|\\breturn\\b", before) is not None'
 
@@ -674,6 +682,29 @@ def never_hide_the_window(text):
     """Stop hiding the window, so the probe never asks whether -viewDidAppear returns."""
     once(text, OBSERVER_HIDE_WINDOW, "the probe hiding the window it re-shows")
     return text.replace(OBSERVER_HIDE_WINDOW, "", 1)
+
+
+def stop_releasing_the_display_link(text):
+    """Stop the class that owns the display link from ever handing it back.
+
+    Both releases go, not one: the rule asks whether the owning class releases the name
+    anywhere, and leaving either in place would answer the question the way it already is
+    answered today. What this mutation is after is the other class -- `VideoDecoderRenderer`
+    releases a property of the same name, so the version of the rule that matched by name
+    across the whole tree stayed silent here.
+    """
+    once(text, CF_LINK_DEALLOC_RELEASE, "the dealloc release of the display link")
+    once(text, CF_LINK_TEARDOWN_RELEASE, "the teardown release of the display link")
+    return (text.replace(CF_LINK_DEALLOC_RELEASE, "", 1)
+                .replace(CF_LINK_TEARDOWN_RELEASE, "", 1))
+
+
+def blind_class_segment_reader(text):
+    """Stop the class reader from finding any class, so nothing belongs to anybody."""
+    once(text, CLASS_SEGMENT_READER, "the class segment reader")
+    return text.replace(CLASS_SEGMENT_READER,
+                        CLASS_SEGMENT_READER.replace("@interface|@implementation",
+                                                      "@interfaceThatNeverExists"), 1)
 
 
 def skip_the_dirty_checkout(text):
@@ -1835,6 +1866,12 @@ MUTATIONS = [
     ("dirty-checkout-guard-never-called", BATTERY_SELF, skip_the_dirty_checkout,
      "the battery defines a guard against writing into somebody's uncommitted work and then"
      " writes anyway", AUDIT_GATE),
+    ("cf-owner-stops-releasing-its-link", HID, stop_releasing_the_display_link,
+     "the class that owns the display link stops handing it back, and the class that merely"
+     " shares the name keeps saying nothing about it", AUDIT_GATE),
+    ("cf-class-segments-blinded", AUDIT, blind_class_segment_reader,
+     "the rule that asks which class owns a CoreFoundation property can no longer tell a"
+     " class apart, so its own planted pair stops being answered", AUDIT_GATE),
     ("blind-sweep", ANALYZER, blind_sweep, "an analyzer that did not run reads as clean", ANALYZER_GATE),
     ("accept-new-findings", ANALYZER, accept_new_findings, "a new finding class slips past the baseline", ANALYZER_GATE),
     ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),

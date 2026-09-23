@@ -1529,21 +1529,70 @@ check(unheld_iookit_locals(planted_walk) == ["plantedIterator"],
       "the IOKit rule does not see the leak it was written for")
 
 CF_PROPERTY = re.compile(r"@property[^(]*\([^)]*\)\s+(\w+Ref)\s+(\w+)\s*;")
+CF_RELEASE = re.compile(r"\w*Release\(\s*(?:self\.|_)?([A-Za-z_]\w*)\s*\)")
+CLASS_BLOCK = re.compile(r"^(?:@interface|@implementation)\s+([A-Za-z_]\w*)", re.M)
+BLOCK_EDGE = re.compile(r"^@(?:interface|implementation|protocol)\b", re.M)
+
+
+def class_segments(text):
+    """Every `@interface`/`@implementation` block, with the class it names and its span.
+
+    The rule below asks a question about one class -- did the object that owns this
+    property ever hand the reference back -- so it needs text cut along class lines. A
+    category or a class extension names its class first, which is the name that matters:
+    `- (void)tearDown` in `HIDSupport (Private)` still runs on a HIDSupport. The span is
+    returned because the caller has to know which declarations fell inside a class and
+    which fell outside every one of them.
+    """
+    marks = [match.start() for match in BLOCK_EDGE.finditer(text)]
+    for match in CLASS_BLOCK.finditer(text):
+        start = match.start()
+        end = len(text)
+        for pos in marks:
+            if pos > start:
+                end = pos
+                break
+        yield match.group(1), start, end
 
 
 def unreleased_cf_properties(texts):
-    """CF-typed properties nobody releases.
+    """CF-typed properties the class that owns them never releases.
 
     clang gives a property of a CoreFoundation type no reference at all -- the AST calls
     `@property (nonatomic) IOHIDManagerRef` an assign -- so nobody releasing it is not a
     leak the analyzer will always catch: it catches the store it cannot follow, not the
     owner that never hands it back.
+
+    This reads per class, and it did not use to. The first version joined every source
+    into one string and looked for a release by name anywhere in it, which is a judgement
+    about the repository rather than about the object. The tree shows why that matters:
+    `HIDSupport` owns `displayLink` and `VideoDecoderRenderer` owns one of its own under
+    the same name, so the shipped rule cleared HIDSupport's handle on the strength of a
+    release written in an unrelated class -- right answer, wrong evidence, and the next
+    class to borrow a name would have been cleared by whichever one released first.
     """
-    every = "\n".join(texts)
-    return sorted({"%s %s" % (type_name, name)
-                   for type_name, name in CF_PROPERTY.findall(every)
-                   if not re.search(r"\w*Release\(\s*(?:self\.|_)?%s\s*\)" % re.escape(name),
-                                    every)})
+    declared = {}
+    released = {}
+    for text in texts:
+        spans = list(class_segments(text))
+        for class_name, start, end in spans:
+            segment = text[start:end]
+            for type_name, name in CF_PROPERTY.findall(segment):
+                declared.setdefault(class_name, []).append((type_name, name))
+            for name in CF_RELEASE.findall(segment):
+                released.setdefault(class_name, set()).add(name)
+        # A property outside every @interface -- the planted snippet below, or a source
+        # that declares one at file scope -- still has to be answered, so it is filed
+        # under one name no release can ever be filed under.
+        inside = [(start, end) for _class_name, start, end in spans]
+        for match in CF_PROPERTY.finditer(text):
+            if any(start <= match.start() < end for start, end in inside):
+                continue
+            declared.setdefault("<no class>", []).append((match.group(1), match.group(2)))
+    return sorted({"%s %s (%s)" % (type_name, name, class_name)
+                   for class_name, rows in declared.items()
+                   for type_name, name in rows
+                   if name not in released.get(class_name, set())})
 
 
 objc_texts = [text for _path, text in compiled_sources(root)] + \
@@ -1555,9 +1604,36 @@ check(not unowned_properties,
       "a CoreFoundation-typed property is released by whoever owns the object"
       if not unowned_properties else
       "nobody releases: " + ", ".join(unowned_properties[:4]))
+planted_cf_pair = (
+    "@interface PlantedReaderOne\n"
+    "@property (nonatomic) CFReadStreamRef plantedStream;\n"
+    "@end\n"
+    "@implementation PlantedReaderOne\n"
+    "- (void)dealloc\n"
+    "{\n"
+    "    CFReadStreamRelease(_plantedStream);\n"
+    "}\n"
+    "@end\n"
+    "@interface PlantedReaderTwo\n"
+    "@property (nonatomic) CFReadStreamRef plantedStream;\n"
+    "@end\n"
+    "@implementation PlantedReaderTwo\n"
+    "- (void)dealloc\n"
+    "{\n"
+    "}\n"
+    "@end\n")
+unowned_by_class = unreleased_cf_properties([planted_cf_pair])
+check(unowned_by_class == ["CFReadStreamRef plantedStream (PlantedReaderTwo)"],
+      "the class that never hands its reference back is the one named, even when another"
+      " class releases one under the same name"
+      if unowned_by_class == ["CFReadStreamRef plantedStream (PlantedReaderTwo)"] else
+      "the per-class CF property rule answers wrong: %s" % unowned_by_class)
 check(unreleased_cf_properties(["@property (nonatomic) CFReadStreamRef plantedStream;"])
-      == ["CFReadStreamRef plantedStream"],
-      "a CF property nobody releases trips the rule above")
+      == ["CFReadStreamRef plantedStream (<no class>)"],
+      "a CF property nobody releases trips the rule above"
+      if unreleased_cf_properties(["@property (nonatomic) CFReadStreamRef plantedStream;"])
+      == ["CFReadStreamRef plantedStream (<no class>)"] else
+      "the CF rule no longer sees a property outside any @interface")
 
 # Repeating timers are a third handle family that fails silently, and silently in a
 # way the two above do not: nothing leaks, the poll just stops answering.

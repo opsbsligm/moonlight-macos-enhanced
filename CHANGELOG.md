@@ -399,6 +399,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The CoreFoundation property rule now asks one class, not one repository.**
+  It used to join every source into one string and look for `...Release(name)`
+  anywhere in it, so a handle was cleared by whoever happened to release one
+  under the same name. The shipped tree shows the shape: `HIDSupport` owns
+  `displayLink`, `VideoDecoderRenderer` owns one of its own under that same
+  name and releases it, and the rule cleared HIDSupport's handle on that
+  evidence -- right answer, wrong reason, and the next class to borrow a name
+  would have been cleared by whichever class released first. `class_segments`
+  cuts the text along `@interface`/`@implementation` lines (a category or a
+  class extension names its class first, and a `-tearDown` inside `HIDSupport
+  (Private)` still runs on a HIDSupport), and a declaration that falls outside
+  every class -- the planted snippet, or a file-scope one -- is filed under a
+  name no release can share rather than going unanswered. The refusal now
+  names the class it blames. Two mutants went into the assertion battery:
+  HIDSupport stops releasing its display link in both places, which the name-
+  matching version never saw because the other class kept releasing its own,
+  and a class reader that matches no class at all, which is visible to the
+  planted pair because the tree it then blames is the whole tree.
+
 - **The assertion battery now refuses to start writing into a checkout
   somebody is standing in.** It plants defects by editing the shipped sources
   and restores what it read, so a run stopped between the plant and the
