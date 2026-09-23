@@ -59,6 +59,7 @@ This repository is a fork of [skyhua0224/moonlight-macos-enhanced](https://githu
 - Can send Foundation Sunshine host-display extension parameters and let you choose the target display, streaming mode, `display_name`, `useVdd`, `customScreenMode`, and HDR display-profile overrides from host settings or when starting a stream
 - When paired with Foundation Sunshine, Moonlight can also use bidirectional clipboard sync for text and single-image items, with stream-window focus deciding which session owns clipboard sync
 - Host and network integration also includes per-host connection methods, custom ports, IPv6, domains, `AWDL`, performance overlay, connection warnings, input diagnostics, and both raw and curated logs
+- The `Devices` page lists what is on this Mac's USB bus and attributes each device to the reason it cannot be handed over -- reserved class, local input device, no matching rule, or an unmet precondition -- reports whether this build's own signature could load a driver extension at all, and reads the host's claim as four states: supported, unsupported, explicitly refused, and never answered. **It diagnoses only**: redirection also needs a Developer ID signature and a host-side virtual bus, and neither exists yet, so the page promises no handover
 
 </details>
 

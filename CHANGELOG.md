@@ -245,6 +245,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the gate needed an artefact it had just written, and the type-check gate
   left the local count silently. It probes both configurations now, Release
   first, because that is the order a build most often leaves them in.
+- **The README promised a switch for everything on the settings page and then
+  did not list the one a player now has to find.** The devices page had
+  shipped -- its pane, its rules table, its four host states -- while both
+  language copies of the feature list stopped at the log panel. They list it
+  now, and say what it is: a page that enumerates a bus this build cannot hand
+  over would otherwise read as support that failed to appear.
 - **The warning rule left the build job's shell and came home to `scripts/build-warning-audit.py.**
   `local-gates.sh` takes its list of gates from the `python3 scripts/*.py` calls in the
   workflow, so a check written as `grep` was never on that list and never ran on a laptop.
