@@ -126,6 +126,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The gamepad pointer stopped answering whenever the Mac took over the run
+  loop.** The pointer poll was scheduled, and scheduling registers a repeating
+  timer in `NSDefaultRunLoopMode` only. A modal session runs in
+  `NSModalPanelRunLoopMode` and a menu or a window drag in
+  `NSEventTrackingRunLoopMode`, so in those stretches the timer that turns a
+  right stick into a cursor fired zero times. Two places reach a modal mid-
+  session by name: the microphone helper's Input Monitoring alert -- whose own
+  text is about mouse polling -- and the settings page's file picker. It is
+  measured rather than argued: `scripts/timer-registration-tests.py` compiles
+  four repeating timers that differ only in the mode they were added to and
+  counts what fired in 300ms. A poll added to the default mode fired 30 times
+  in the default mode and 0 times in a modal session and 0 in event tracking;
+  the same timer added to the common modes fired 30 in all three. Both
+  directions of every case are counted, so a zero is never read as a dead
+  timer, and the app's four other repeating timers already asked for the
+  common modes by hand. The same file measured the other half: a repeating
+  timer scheduled with `target:self` was still alive and still being polled
+  300ms after the object's last reference outside the timer was dropped, which
+  is why the only thing that stops this one -- `-cleanup`, behind a main-
+  thread guard that returns without acting -- cannot be moved into `dealloc`.
+  The poll now holds its owner weakly and invalidate itself, the shape the
+  clipboard monitor in this app already uses. Interval, repeats, and
+  `-cleanup` staying the deliberate stop are unchanged. Not measured: this was
+  not reproduced against the shipped renderer, and nothing here counts how
+  often a player opens a modal during a stream.
+
 - **The settings page kept its model alive after the window closed.** The
   presenter builds a fresh `SettingsModel` for every settings window, and the
   stream pane handed that model two closures to call when a value it shows

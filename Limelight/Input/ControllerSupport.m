@@ -878,7 +878,51 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
     _debouncers[@(BACK_FLAG)] = [[NSMutableDictionary alloc] init];
 
     if (_gamepadMouseModeEnabled) {
-        _mouseTimer = [NSTimer scheduledTimerWithTimeInterval:0.016 target:self selector:@selector(mouseTimerCallback:) userInfo:nil repeats:YES];
+        // Two things this timer needed and did not have.
+        //
+        // It has to keep firing in every mode the app runs its main run loop
+        // in. A modal session and a menu drag are not NSDefaultRunLoopMode, and
+        // a poll that stops there stops the only thing that turns a stick into
+        // a pointer: the stream page can reach a modal alert mid-session twice
+        // by name, once from MicrophoneManager (the alert whose own text is
+        // about mouse polling) and once from the settings page's file picker.
+        // The four other repeating timers in this app each ask for the common
+        // modes by hand; this one was scheduled, which asks for the default.
+        //
+        // And it must not be the reason its own owner cannot be freed. A timer
+        // scheduled with target:self is retained by the run loop, which retains
+        // its target, so the object lived as long as the timer did -- and the
+        // only thing that ever stopped the timer is -cleanup, reached from one
+        // caller that returns without doing anything when it is not on the main
+        // thread. An owner polled by its own timer cannot reach dealloc to stop
+        // it, so the stop path cannot live there.
+        //
+        // Measured rather than assumed, with NSApplication initialized: a
+        // repeating timer registered only in the default mode fires 0 times
+        // while the main run loop runs in NSModalPanelRunLoopMode or in
+        // NSEventTrackingRunLoopMode, and 15 times in 300ms registered in the
+        // common modes; a target:self timer was still alive and still ticking
+        // after the owner's last external reference went away, and a weak block
+        // that invalidates itself was neither. scripts/timer-registration-tests.py
+        // reruns that measurement, and refuses the shapes if they come back.
+        //
+        // This is the shape the clipboard monitor in this app already uses, and
+        // the interval, the repeats, and -cleanup staying the deliberate stop
+        // are all unchanged: an uncaptured session still keeps polling, because
+        // the Menu-hold toggle below is the thing that turns mouse mode back on.
+        __weak typeof(self) weakSelf = self;
+        NSTimer *pointerPoll = [NSTimer timerWithTimeInterval:0.016
+                                                      repeats:YES
+                                                        block:^(NSTimer *timer) {
+            ControllerSupport *owner = weakSelf;
+            if (owner == nil) {
+                [timer invalidate];
+                return;
+            }
+            [owner mouseTimerCallback:timer];
+        }];
+        [[NSRunLoop mainRunLoop] addTimer:pointerPoll forMode:NSRunLoopCommonModes];
+        _mouseTimer = pointerPoll;
     }
 
     _player0osc = [[Controller alloc] init];
