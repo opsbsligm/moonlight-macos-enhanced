@@ -14,7 +14,12 @@
 
 @implementation AppAssetManager {
     NSOperationQueue* _opQueue;
-    id<AppAssetCallback> _callback;
+    // Weak: the apps page owns this manager and named itself as the callback, so a strong
+    // reference here was a cycle, and every host whose box art was fetched leaked the page,
+    // its collection view and its artwork state with it. Nothing ever nils this ivar, which
+    // is the difference between this cycle and the stream's, where the page does nil its
+    // controller support on the way out.
+    __weak id<AppAssetCallback> _callback;
 }
 
 static const int MAX_REQUEST_COUNT = 4;

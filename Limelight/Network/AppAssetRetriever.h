@@ -14,6 +14,9 @@
 
 @property (nonatomic) TemporaryHost* host;
 @property (nonatomic) TemporaryApp* app;
-@property (nonatomic) id<AppAssetCallback> callback;
+/// Weak, like every other back-reference in this tree. A retriever sits in somebody's
+/// queue, so held strongly it kept the page that asked for the artwork alive until the
+/// download finished -- and the artwork answer then arrived at a page nobody is looking at.
+@property (nonatomic, weak) id<AppAssetCallback> callback;
 
 @end

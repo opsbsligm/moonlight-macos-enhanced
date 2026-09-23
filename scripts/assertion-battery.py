@@ -133,6 +133,8 @@ CAPTURE_SHEET = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                             "SettingsSharedControls.swift")
 SETTINGS_PAGE = os.path.join(root, "Limelight", "macOS", "ViewControllers", "LiquidGlass",
                              "SettingsOverlayPresenter.swift")
+MDNS = os.path.join(root, "Limelight", "Network", "MDNSManager.h")
+ASSET_MANAGER = os.path.join(root, "Limelight", "Network", "AppAssetManager.m")
 
 UP_GUARD = """        if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {
             // The host never saw this key go down, so it must not see it come up
@@ -1545,6 +1547,45 @@ def the_view_holds_the_monitor_again(text):
                         + "  @SwiftUI.State private var eventMonitor: Any?", 1)
 
 
+def the_browser_kept_its_owner_again(text):
+    """MDNSManager holds its callback strongly again.
+
+    This is the revert, and it is invisible to every reader: the property still says
+    callback, the manager still reports hosts to whoever asked, and the page still sees
+    hosts. What comes back is that the DiscoveryManager owns the browser and the browser
+    owns the DiscoveryManager, so neither is ever released -- and the hosts page builds a
+    new pair of them every time it refreshes.
+    """
+    once(text, "@property (nonatomic, weak) id<MDNSCallback> callback;",
+         "the weak promise to report hosts")
+    return text.replace("@property (nonatomic, weak) id<MDNSCallback> callback;",
+                        "@property (nonatomic) id<MDNSCallback> callback;", 1)
+
+
+def the_box_art_kept_its_page_again(text):
+    """The apps page is kept alive by the artwork it asked for.
+
+    Dropping one qualifier out of an ivar declaration is the whole regression, and the
+    page still works: it just cannot be released after the host it was showing.
+    """
+    once(text, "    __weak id<AppAssetCallback> _callback;",
+         "the weak promise to report artwork")
+    return text.replace("    __weak id<AppAssetCallback> _callback;",
+                        "    id<AppAssetCallback> _callback;", 1)
+
+
+def the_stream_stops_letting_go_of_its_controller(text):
+    """The one strong delegate that is allowed stops being allowed, by deleting its proof.
+
+    The excuse is that the page nils its controller support on the way out, and that
+    sentence is the only thing standing between a strong delegate and a cycle. Delete the
+    line and the excuse is gone -- which is exactly what the rule has to notice, because
+    the excuse is a claim about a line of code and not a property of the type.
+    """
+    once(text, "    self.controllerSupport = nil;", "the teardown that breaks the cycle")
+    return text.replace("    self.controllerSupport = nil;" + chr(10), "", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-key-cancel", CAPTURE, drop_pending_cancel,
@@ -1809,6 +1850,15 @@ MUTATIONS = [
     ("settings-capture-monitor-held-by-the-view", CAPTURE_SHEET,
      the_view_holds_the_monitor_again,
      "a capture sheet holds its app-level key monitor token in its own storage again"),
+    ("discovery-browser-owned-its-owner-again", MDNS,
+     the_browser_kept_its_owner_again,
+     "the discovery stack and the page behind it are kept alive by their own callback"),
+    ("box-art-manager-owned-its-page-again", ASSET_MANAGER,
+     the_box_art_kept_its_page_again,
+     "the apps page is kept alive forever by the manager that reports artwork to it"),
+    ("stream-controller-nil-drop-removed", STREAM_SVC,
+     the_stream_stops_letting_go_of_its_controller,
+     "the line that made a strong delegate safe to hold is gone, and the excuse with it"),
 
 ]
 

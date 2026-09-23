@@ -601,6 +601,105 @@ check("SettingsKeyCaptureMonitor.handler?(event) ?? event" not in neutral_monito
       "a monitor that closes over one handler keeps recording after the capture ends, "
       "and trips the assertion above")
 
+# Every back-reference in this tree points at the object that owns the thing holding it: a
+# host cell points at the hosts page, a box-art retriever at the page that asked for the
+# artwork, a service browser at the discovery stack that started it. Held strongly each one
+# is a cycle, and a cycle is a leak with a face. Two of them were shipping: MDNSManager was
+# told to report hosts to the DiscoveryManager that owns it and held that promise strongly,
+# and AppAssetManager did the same to the apps page, so every refresh of the hosts page and
+# every host whose artwork was fetched left a whole stack alive forever. Nothing could
+# release it either, because a bare `id` ivar is strong under ARC and so is
+# `@property id<X> name;`, which is why neither of them read as anything special.
+#
+# So a back-reference is weak, or the reason it is not a cycle is written down with a line
+# that has to still be true -- and an excuse whose proof has gone away fails the same way.
+# An exemption nobody can re-check is a hole with a note beside it. A needle beginning with
+# "!" has to be absent.
+STRONG_BACK_REFERENCES = {
+    # "file::member" -> (why this is not a cycle, where to look, the line to find)
+    "Limelight/Network/PairManager.m::_callback": (
+        "the hosts page builds a pairing manager as a local and never stores it, so the "
+        "manager is not owned by the page it reports to and cannot own it back",
+        "Limelight/macOS/ViewControllers/HostsViewController.m",
+        "PairManager* pMan = [[PairManager alloc]"),
+    "Limelight/Stream/StreamManager.m::_callbacks": (
+        "this is the scoped forwarder rather than the page, and the forwarder holds the page "
+        "weakly and drops a callback whose stream generation is gone",
+        "Limelight/macOS/ViewControllers/StreamViewController.m",
+        "__weak id<MLStreamScopedCallbackOwner> _owner;"),
+    "Limelight/Stream/Connection.m::_callbacks": (
+        "the same scoped forwarder, carried to the connection thread that has to answer "
+        "callbacks without the page",
+        "Limelight/macOS/ViewControllers/StreamViewController.m",
+        "__weak id<MLStreamScopedCallbackOwner> _owner;"),
+    "Limelight/Input/ControllerSupport.m::_presenceDelegate": (
+        "the stream page owns its controller support and nils it on the way out, which is "
+        "what breaks the cycle a strong delegate would otherwise be",
+        "Limelight/macOS/ViewControllers/StreamViewController.m",
+        "self.controllerSupport = nil;"),
+    "Limelight/Input/OnScreenControls.m::_edgeDelegate": (
+        "the macOS target does not compile this file, so the delegate is a name in a source "
+        "nobody builds -- which is only safe to say while the project really does not name it",
+        "Moonlight.xcodeproj/project.pbxproj", "!OnScreenControls"),
+}
+BACK_REFERENCE_PROTOCOL = re.compile(r"(Delegates?|Callbacks?|DataSource|Listener|Owner)$")
+PROPERTY_REFERENCE = re.compile(
+    r"@property\s*(?:\((?P<attrs>[^)]*)\))?\s*(?P<weak>__weak\s+)?id\s*<(?P<proto>[^>]+)>\s*"
+    r"(?P<name>\w+)\s*;")
+IVAR_REFERENCE = re.compile(
+    r"^\s*(?P<weak>__weak\s+)?id\s*<(?P<proto>[^>]+)>\s*(?P<name>_\w+)\s*;\s*$", re.M)
+back_references = {}
+for directory, _, names in os.walk(os.path.join(root, "Limelight")):
+    for name in sorted(names):
+        if not name.endswith((".h", ".m")):
+            continue
+        relative = os.path.relpath(os.path.join(directory, name), root)
+        source = open(os.path.join(root, relative), encoding="utf-8", errors="replace").read()
+        for found in (list(PROPERTY_REFERENCE.finditer(source))
+                      + list(IVAR_REFERENCE.finditer(source))):
+            if not BACK_REFERENCE_PROTOCOL.search(found.group("proto")):
+                continue
+            attributes = (found.groupdict().get("attrs") or "").lower()
+            back_references["%s::%s" % (relative, found.group("name"))] = (
+                found.group("weak") is not None
+                or "weak" in attributes or "assign" in attributes)
+unowned = sorted(site for site, weak in sorted(back_references.items())
+                 if not weak and site not in STRONG_BACK_REFERENCES)
+check(not unowned,
+      "every back-reference to an owner is weak, or its reason is written down"
+      if not unowned else
+      "strong reference back to whatever owns it, which is a cycle and a leak: "
+      + ", ".join(unowned))
+stale_back_reference_excuses = []
+for site, (reason, proof_file, needle) in sorted(STRONG_BACK_REFERENCES.items()):
+    if site not in back_references:
+        stale_back_reference_excuses.append("%s is not declared any more" % site)
+        continue
+    if back_references[site]:
+        stale_back_reference_excuses.append("%s is weak now, so the excuse is dead weight" % site)
+        continue
+    proof = open(os.path.join(root, proof_file), encoding="utf-8", errors="replace").read()
+    wanted = needle[1:] if needle.startswith("!") else needle
+    present = wanted in proof
+    if present == needle.startswith("!"):
+        stale_back_reference_excuses.append("%s's excuse cites %s, which is not the case "
+                                            "any more" % (site, needle))
+check(not stale_back_reference_excuses,
+      "each written excuse for a strong back-reference is still needed and still true"
+      if not stale_back_reference_excuses else "; ".join(stale_back_reference_excuses))
+check(len(back_references) >= 12,
+      "the scan really reads the back-references it counts (%d found)" % len(back_references))
+for site in ("Limelight/Network/MDNSManager.h::callback",
+             "Limelight/Network/DiscoveryManager.m::_callback",
+             "Limelight/Network/AppAssetManager.m::_callback",
+             "Limelight/Network/AppAssetRetriever.h::callback"):
+    check(back_references.get(site) is True,
+          "%s is weak, which is what keeps the owner behind it releasable" % site)
+unqualified = PROPERTY_REFERENCE.search("@property (nonatomic) id<MDNSCallback> callback;")
+check(unqualified is not None and "weak" not in (unqualified.group("attrs") or "").lower(),
+      "a callback property written without a qualifier is read as strong, which is what "
+      "lets the rule above refuse one")
+
 # The page takes the key focus on the way in. Two things follow, and both are
 # about order rather than presence: the record has to be read before the focus
 # is taken, because reading the first responder afterwards records the page

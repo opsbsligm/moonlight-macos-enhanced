@@ -34,7 +34,12 @@ static BOOL MoonlightShouldAutoDiscoverNewHosts(void) {
 @implementation DiscoveryManager {
     NSMutableArray* _hostQueue;
     NSMutableSet* _pausedHosts;
-    id<DiscoveryCallback> _callback;
+    // Weak for the same reason MDNSManager.callback is: the hosts page owns this object and
+    // named itself as the callback, so a strong reference here was a cycle that kept the
+    // page alive behind a discarded discovery stack. A bare `id` ivar is strong under ARC --
+    // the absence of a qualifier is not the same thing as `weak`, which is how both halves
+    // of this cycle read as ordinary code for eleven years.
+    __weak id<DiscoveryCallback> _callback;
     MDNSManager* _mdnsMan;
     NSOperationQueue* _opQueue;
     NSString* _uniqueId;

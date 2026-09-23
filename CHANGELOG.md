@@ -112,7 +112,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- - **A shortcut capture could outlive the page that opened it, and go on
+- - **The discovery stack and the apps page were kept alive by their own
+  callbacks.** `MDNSManager` was told to report hosts to the
+  `DiscoveryManager` that owns it and held that promise strongly, and
+  `AppAssetManager` did the same to the apps page that asked for box art.
+  Under ARC a bare `id` ivar is strong and so is `@property id<X> name;`, so
+  neither read as anything special: each pair owned the other, nothing could
+  release either, and the hosts page built a new pair every time it refreshed
+  while every host whose artwork was fetched leaked the page behind it. Both
+  references are weak now, and the rule is that a back-reference to an owner
+  is weak or its reason is written down with a line that has to still be true
+  -- five reasons stand today, including the stream's delegate, which is safe
+  because the page nils its controller support on the way out. Three planted
+  defects and the scan's own 17 sites are in the aggregate.
+
+- **A shortcut capture could outlive the page that opened it, and go on
   writing shortcuts.** Both capture sheets read keys through an app local
   event monitor, because that is the only thing that sees a chord no control
   will accept, and each sheet removed its monitor from `onDisappear`.

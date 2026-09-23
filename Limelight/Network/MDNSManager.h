@@ -16,7 +16,11 @@
 
 @interface MDNSManager : NSObject <NSNetServiceBrowserDelegate, NSNetServiceDelegate>
 
-@property id<MDNSCallback> callback;
+/// Who to tell about a host. This is weak because the object on the other end is the one
+/// that owns this manager: held strongly it is a cycle, and a cycle here was a DiscoveryManager,
+/// its browser, its resolved services and the hosts page behind it, all kept alive forever,
+/// one per refresh of that page. Weak also means a page that has gone away is not told.
+@property (nonatomic, weak) id<MDNSCallback> callback;
 
 - (id) initWithCallback:(id<MDNSCallback>) callback;
 - (void) searchForHosts;
