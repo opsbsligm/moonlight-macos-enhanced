@@ -399,6 +399,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The assertion battery now refuses to start writing into a checkout
+  somebody is standing in.** It plants defects by editing the shipped sources
+  and restores what it read, so a run stopped between the plant and the
+  restore leaves the planted defect in the tree -- one such run left the
+  record of a forwarded key press sitting after its dispatch in
+  `HIDSupport.m`, on a file that also carried an uncommitted edit, and nothing
+  in the checkout said which of the two wrote what. An earlier uncommitted fix
+  was simply found gone after a gate had run over the same working tree.
+  `refuse_a_dirty_checkout` asks git, before the first write, whether any file
+  the battery is about to edit differs from HEAD, names the files, and exits
+  rather than guessing; `--allow-dirty` is the escape hatch, and it says so
+  out loud. The reader is judged both ways by `constraints-audit.py`,
+  including the rename line where git names both sides, and a rule refuses a
+  battery whose guard exists but is never called before the write.
+
 - **The two observer rules each got a mutant that has to be caught.** Five
   went into the assertion battery: taking the withdrawal out of
   `-viewDidAppear` while leaving the comment that describes it; throwing the

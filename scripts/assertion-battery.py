@@ -2045,6 +2045,60 @@ MUTATIONS = [
 ]
 
 
+# Every mutation below is planted by rewriting a real file in this checkout. The battery
+# restores what it read, so an uncommitted edit inside a file it is about to mutate is not
+# destroyed by the restore -- but it is indistinguishable from a mutation that is still in
+# place if the process dies between the two writes, and a signal landing inside the restore
+# leaves a tree nobody can read as either the shipped source or their own work. The check
+# below asks git, before the first write, whether any file the battery is about to edit
+# already differs from HEAD.
+#
+# This is not a hypothetical defence. A run stopped part way through this battery left a
+# planted mutation in `HIDSupport.m` -- the record of a forwarded key press sitting after
+# the dispatch instead of before it -- on a file that also carried an uncommitted edit, and
+# nothing in the tree said which of the two wrote what. Earlier, an uncommitted fix was
+# found gone after a gate had run over the same checkout. Where the write comes from, the
+# answer is the same: do not start a write into a checkout somebody is standing in.
+def dirty_among(paths, porcelain):
+    """Which of `paths` the checkout already has changes in.
+
+    `porcelain` is `git status --porcelain=v1` output. The format names the path after a
+    two-character status and a space, and a rename names both sides separated by ` -> `,
+    so the side that exists now is the one that matters.
+    """
+    named = {os.path.realpath(path) for path in paths}
+    dirty = set()
+    for line in porcelain.splitlines():
+        if len(line) < 4:
+            continue
+        candidate = line[3:].split(" -> ")[-1].strip().strip('"')
+        if os.path.realpath(os.path.join(root, candidate)) in named:
+            dirty.add(candidate)
+    return sorted(dirty)
+
+
+def refuse_a_dirty_checkout(paths):
+    """Stop the battery before its first write if the files it edits are already changed."""
+    if "--allow-dirty" in sys.argv:
+        print("--allow-dirty: planting mutations into a checkout with uncommitted changes")
+        return
+    listing = subprocess.run(["git", "status", "--porcelain=v1", "--"] + list(paths),
+                             capture_output=True, text=True, cwd=root)
+    if listing.returncode != 0:
+        print("the battery cannot ask git whether the checkout is clean: "
+              + (listing.stdout + listing.stderr).strip()[-300:])
+        sys.exit(1)
+    dirty = dirty_among(paths, listing.stdout)
+    if dirty:
+        print("these files carry changes the battery has not seen committed, so a planted")
+        print("mutation would be indistinguishable from somebody's work:")
+        for name in dirty:
+            print("        %s" % name)
+        print("commit or stash them first, or pass --allow-dirty if you are the one")
+        print("watching the terminal and nothing else writes into this checkout.")
+        sys.exit(1)
+
+
 def gate_failed(gate):
     # A gate that runs the battery as one of its own checks has to be told not to
     # ask back, which is what the flags carried with each gate are for.
@@ -2061,6 +2115,8 @@ def main():
         keep = sys.argv[sys.argv.index("--keep-broken") + 1]
     if "--no-audit-recursion" in sys.argv:
         print("(audit recursion suppressed: this run was started by the audit)")
+
+    refuse_a_dirty_checkout(sorted({entry[1] for entry in MUTATIONS}))
 
     original = {entry[1]: open(entry[1], encoding="utf-8").read()
                 for entry in MUTATIONS}

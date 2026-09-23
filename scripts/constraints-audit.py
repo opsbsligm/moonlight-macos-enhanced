@@ -1906,6 +1906,56 @@ check(len(discarded_tripped) == 1 and not stored_cleaned and not split_cleaned,
       "the discarded token rule answers wrong: discarded=%s stored=%s split=%s"
       % (discarded_tripped, stored_cleaned, split_cleaned))
 
+# The assertion battery writes the shipped files: it plants a defect by editing the real
+# source, runs a gate over it, and restores what it read. A run stopped between the plant
+# and the restore leaves the defect in the tree, and if the file also carried work that was
+# never committed then nothing in the checkout says which of the two wrote what -- which is
+# how one uncommitted fix was found gone, and how a planted late-record was found sitting in
+# `HIDSupport.m` on a file somebody had also touched. So the battery asks git, before its
+# first write, whether any file it is about to edit differs from HEAD.
+
+BATTERY_SCRIPT = os.path.join(root, "scripts", "assertion-battery.py")
+
+def battery_reader():
+    """Load the battery's own judgement rather than restating it here."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("moonlight_assertion_battery",
+                                                  BATTERY_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+battery = battery_reader()
+watched_source = os.path.join(root, "Limelight", "Input", "HIDSupport.m")
+clean_status = ""
+modified_status = " M Limelight/Input/HIDSupport.m\n"
+staged_status = "M  Limelight/Input/HIDSupport.m\n"
+deleted_status = "D  Limelight/Input/HIDSupport.m\n"
+renamed_status = "R  Limelight/Input/Old.m -> Limelight/Input/HIDSupport.m\n"
+elsewhere_status = "?? scripts/constraints-audit.py\n"
+named = ["Limelight/Input/HIDSupport.m"]
+misjudged = [
+    name for name, status, want in (
+        ("clean", clean_status, []),
+        ("modified", modified_status, named),
+        ("staged", staged_status, named),
+        ("deleted", deleted_status, named),
+        ("renamed", renamed_status, named),
+        ("elsewhere", elsewhere_status, []),
+    ) if battery.dirty_among([watched_source], status) != want
+]
+check(not misjudged,
+      "the battery tells a file it may write from a file somebody is editing"
+      if not misjudged else
+      "the dirty-checkout reader answers wrong for: " + ", ".join(misjudged))
+
+battery_text = open(BATTERY_SCRIPT, encoding="utf-8").read()
+check(re.search(r"^\s*refuse_a_dirty_checkout\(", battery_text, re.M) is not None,
+      "the battery asks git before its first write, not after it"
+      if re.search(r"^\s*refuse_a_dirty_checkout\(", battery_text, re.M) is not None else
+      "the check exists but nothing calls it before the battery starts writing")
+
 dealloc_body = method_body(hid_all, "- (void)dealloc")
 check("CFRelease(_hidManager);" in dealloc_body,
       "the HID manager cannot outlive the object its run loop callbacks point into")
