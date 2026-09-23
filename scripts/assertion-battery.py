@@ -129,6 +129,10 @@ GLASS_CONTAINER = os.path.join(root, "Limelight", "macOS", "Views",
                                "GlassOverlayContainer.m")
 VIDEO_PANE = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                           "SettingsVideoPane.swift")
+CAPTURE_SHEET = os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                            "SettingsSharedControls.swift")
+SETTINGS_PAGE = os.path.join(root, "Limelight", "macOS", "ViewControllers", "LiquidGlass",
+                             "SettingsOverlayPresenter.swift")
 
 UP_GUARD = """        if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {
             // The host never saw this key go down, so it must not see it come up
@@ -1502,6 +1506,45 @@ def leave_the_bars_full_of_the_last_frame(text):
                         "passDescriptor.colorAttachments[0].loadAction = MTLLoadActionDontCare;", 1)
 
 
+def close_the_page_over_an_open_capture(text):
+    """The settings page is torn down with a shortcut capture still open.
+
+    One line deleted is the realistic regression, and it is the one no reader catches:
+    the teardown still removes the key monitor it installed, so every word about
+    cleaning up stays in the file, while the sheet's monitor -- the app-level one that
+    answers a key by writing a shortcut -- keeps answering keys in every window.
+    """
+    once(text, "    SettingsKeyCaptureMonitor.end()", "the capture ended by the teardown")
+    return text.replace("    SettingsKeyCaptureMonitor.end()" + chr(10), "", 1)
+
+
+def the_capture_monitor_keeps_recording(text):
+    """The monitor closes over one sheet's handler instead of asking the slot.
+
+    Every line still says the capture can be ended; what stops being true is that ending
+    it silences the monitor, so one registered after an ended capture still swallows a
+    key and still writes the shortcut nobody was recording.
+    """
+    once(text, "SettingsKeyCaptureMonitor.handler?(event) ?? event", "the monitor's read of the slot")
+    return text.replace("SettingsKeyCaptureMonitor.handler?(event) ?? event",
+                        "handler(event) ?? event", 1)
+
+
+def the_view_holds_the_monitor_again(text):
+    """The revert this whole rule exists to refuse: the token goes back into the sheet.
+
+    The words about lifetime stay in the file, and so does the `onDisappear`. What goes
+    back is the arrangement where the only thing between a registered app-level key
+    monitor and a permanently stolen keyboard is a callback SwiftUI may not run.
+    """
+    anchor = ("  /// Which capture this sheet started. The monitor itself is held by" + chr(10)
+              + "  /// ``SettingsKeyCaptureMonitor``, which is why losing this value costs nothing."
+              + chr(10) + "  @SwiftUI.State private var captureGeneration: Int?")
+    once(text, anchor, "the generation the shortcut sheet holds")
+    return text.replace(anchor, anchor + chr(10)
+                        + "  @SwiftUI.State private var eventMonitor: Any?", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-key-cancel", CAPTURE, drop_pending_cancel,
@@ -1757,7 +1800,16 @@ MUTATIONS = [
      AUDIT_GATE),
     ("binary-name-spelled-into-a-consumer", RENDER_PROBE, spell_the_binary_name_again,
      "the probe looks for a binary the product rename stopped producing (issue 41's tail)",
-     AUDIT_GATE),
+     AUDIT_GATE),    ("settings-page-closes-over-an-open-capture", SETTINGS_PAGE,
+     close_the_page_over_an_open_capture,
+     "the settings page is torn down with a shortcut capture still open"),
+    ("settings-capture-monitor-keeps-recording", CAPTURE_SHEET,
+     the_capture_monitor_keeps_recording,
+     "an ended shortcut capture still answers keys because the monitor kept one handler"),
+    ("settings-capture-monitor-held-by-the-view", CAPTURE_SHEET,
+     the_view_holds_the_monitor_again,
+     "a capture sheet holds its app-level key monitor token in its own storage again"),
+
 ]
 
 

@@ -197,6 +197,13 @@ private final class DismissBox {
       NotificationCenter.default.removeObserver(closeObserver)
       self.closeObserver = nil
     }
+    // A shortcut capture that is still open goes with the page, and it cannot be left
+    // to end itself from here: the page is out of the view tree, and whether SwiftUI
+    // then runs the sheet's `onDisappear` is not a question this file can answer.
+    // Command+W and the host window closing both reach this line with a sheet open, and
+    // a monitor left behind is app-local, so the keys it takes belong to nobody -- or to
+    // a shortcut the player never pressed. See ``SettingsKeyCaptureMonitor``.
+    SettingsKeyCaptureMonitor.end()
 
     window.toolbar?.isVisible = savedToolbarVisible ?? true
     if let savedTitle { window.title = savedTitle }

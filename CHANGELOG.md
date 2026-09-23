@@ -112,6 +112,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A shortcut capture could outlive the page that opened it, and go on
+  writing shortcuts.** Both capture sheets read keys through an app local
+  event monitor, because that is the only thing that sees a chord no control
+  will accept, and each sheet removed its monitor from `onDisappear`.
+  `SettingsOverlayPresenter.dismiss()` takes the page out of the view tree
+  itself, and two of its exits -- Command+W, and the host window closing --
+  arrive while a sheet is open. Whether SwiftUI then runs that sheet's
+  `onDisappear` is a question about the SwiftUI version doing the presenting,
+  and the monitor is app local, so one left behind answers a keyDown by
+  writing a shortcut into the player's settings and swallowing the key, in
+  every window, including the one streaming a game. The token belongs to
+  `SettingsKeyCaptureMonitor` now rather than to a view: the page's teardown
+  ends the capture, a capture takes the slot from whoever held it, and a sheet
+  ending reports which capture it started, so a late `onDisappear` cannot stop
+  the capture the player just began. The monitor asks that type what to do
+  with each key instead of closing over one sheet's handler, which is what
+  makes an ended capture leave a monitor with nothing to say -- the keys go
+  back to the game. Eight rules and three planted defects are in the
+  aggregate, and no claim here depends on what SwiftUI does: the keyboard
+  comes back whichever way that goes.
+
 - **The Command+W fix came with a probe that crashed the runner.** The first
   version asked a second window whether it held a settings page, and the Debug
   probe died on its way to the report, so the fix reached CI with every local

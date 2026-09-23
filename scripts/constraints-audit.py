@@ -551,6 +551,56 @@ check("NSEvent.removeMonitor(commandWMonitor)" in dismiss_body
       and "hosting.removeFromParent()" in dismiss_body,
       "leaving the settings page removes its key monitor, observer and view")
 
+# A shortcut capture has to read every key the app gets, because the chord it records is
+# one no control will accept, and a monitor that outlives the sheet keeps answering keys:
+# `ShortcutCaptureSheet` answers a keyDown by writing a shortcut into the player's
+# settings and swallowing the key, app-wide, while a game streams in another window.
+# The page is taken out of the view tree by hand, so whether SwiftUI runs the sheet's
+# `onDisappear` afterwards is a question about the SwiftUI version doing the presenting.
+# Two things make the keyboard come back whichever answer that is, and both are
+# load-bearing: the page's teardown ends the capture, and the monitor asks this type what
+# to do with each key instead of closing over one sheet's handler, so what is left behind
+# after an end is a monitor with nothing to say.
+controls_path = "Limelight/macOS/ViewControllers/SettingsSharedControls.swift"
+controls_src = open(os.path.join(root, controls_path), encoding="utf-8").read()
+monitor_body = swift_block(controls_src, "enum SettingsKeyCaptureMonitor")
+check(controls_src.count("NSEvent.addLocalMonitorForEvents") == 1
+      and "NSEvent.addLocalMonitorForEvents" in monitor_body,
+      "the settings page registers one app-level key monitor, in the type that owns it"
+      if controls_src.count("NSEvent.addLocalMonitorForEvents") == 1 else
+      "the settings page registers %d app-level key monitors: each one needs its own "
+      "removal, which is the arrangement that leaked"
+      % controls_src.count("NSEvent.addLocalMonitorForEvents"))
+check("SettingsKeyCaptureMonitor.handler?(event) ?? event" in monitor_body,
+      "the key monitor asks the capture type what to do with each key, so an ended "
+      "capture answers nothing even if the monitor is still registered")
+begin_body = swift_block(monitor_body, "static func begin(matching mask")
+check(begin_body.lstrip("{").lstrip().startswith("end()"),
+      "beginning a capture takes the slot from whoever holds it, so two sheets never read "
+      "the same key")
+check("NSEvent.removeMonitor" in monitor_body and "token = nil" in monitor_body,
+      "ending a capture removes the monitor and forgets its token, so it is not removed "
+      "twice")
+check(not re.search(r"@SwiftUI\.State[^\n]*[Mm]onitor", controls_src),
+      "no view holds a key monitor token in its own storage -- a view that goes away "
+      "without being told takes the removal with it")
+check(controls_src.count("SettingsKeyCaptureMonitor.begin(") == 2
+      and controls_src.count("SettingsKeyCaptureMonitor.end(captureGeneration)") == 2,
+      "both capture sheets begin a capture and end the one they began")
+check("SettingsKeyCaptureMonitor.end()" in dismiss_body,
+      "leaving the settings page ends a capture that is still open"
+      if "SettingsKeyCaptureMonitor.end()" in dismiss_body else
+      "the page can close over an open capture -- Command+W and the host window closing "
+      "both reach this line -- and leave the app-level monitor reading every key")
+left_an_open_capture = dismiss_body.replace("SettingsKeyCaptureMonitor.end()", "// x", 1)
+check("SettingsKeyCaptureMonitor.end()" not in left_an_open_capture,
+      "a teardown that leaves a capture open trips the assertion above")
+neutral_monitor = monitor_body.replace(
+    "SettingsKeyCaptureMonitor.handler?(event) ?? event", "handler(event)", 1)
+check("SettingsKeyCaptureMonitor.handler?(event) ?? event" not in neutral_monitor,
+      "a monitor that closes over one handler keeps recording after the capture ends, "
+      "and trips the assertion above")
+
 # The page takes the key focus on the way in. Two things follow, and both are
 # about order rather than presence: the record has to be read before the focus
 # is taken, because reading the first responder afterwards records the page

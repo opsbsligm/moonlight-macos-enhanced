@@ -525,6 +525,69 @@ private struct ShortcutReferenceCard: View {
   }
 }
 
+/// The one app-level key monitor that the settings capture sheets share.
+///
+/// Recording a chord means reading every key the app gets: the chord has to be
+/// recorded whatever control happens to have focus, and a key like Option+F4 is
+/// refused by every control, so an app-local monitor is the only thing that sees it.
+/// That reach is also the hazard. While ``ShortcutCaptureSheet``'s monitor is
+/// registered, a keyDown answers by writing a shortcut into the player's settings and
+/// swallowing the key, and the monitor is app-local, so "the player" includes anybody
+/// streaming in another window.
+///
+/// Each sheet used to hold its own monitor in a `@State` token and remove it from
+/// `onDisappear`. That is one removal per sheet and one owner that cannot be told:
+/// ``SettingsOverlayPresenter`` takes the page out of the view tree itself, and both of
+/// the exits that reach it -- Command+W, and the host window closing -- can arrive while
+/// a sheet is open. Whether SwiftUI then runs the sheet's `onDisappear` is a question
+/// about the SwiftUI version doing the presenting, and a keyboard that sometimes goes on
+/// writing shortcuts is not an answer to write down. So the token is held by a type
+/// rather than by a view; the page's teardown ends the capture; and the monitor asks
+/// this type what to do with each key instead of closing over one sheet's handler, so
+/// after ``end()`` there is nothing to do -- a monitor that somehow outlives its sheet
+/// hands keys back instead of recording a chord nobody is recording.
+@MainActor
+enum SettingsKeyCaptureMonitor {
+  private static var token: Any?
+  private static var handler: ((NSEvent) -> NSEvent?)?
+  private static var generation = 0
+
+  /// Whether a capture sheet holds the keyboard right now. The probe asks.
+  static var isCapturing: Bool { handler != nil }
+
+  /// Takes the keyboard, and returns which capture that was.
+  ///
+  /// One slot is on purpose: only one sheet is on screen, and a second begin takes the
+  /// keyboard from the first rather than leaving two monitors reading the same key. The
+  /// generation is what lets a sheet that is going away release only its own capture --
+  /// a late `onDisappear` from the sheet the player just left must not stop the one
+  /// they just opened.
+  @discardableResult
+  static func begin(matching mask: NSEvent.EventTypeMask,
+                    handler: @escaping (NSEvent) -> NSEvent?) -> Int {
+    end()
+    generation += 1
+    SettingsKeyCaptureMonitor.handler = handler
+    token = NSEvent.addLocalMonitorForEvents(matching: mask) { event in
+      SettingsKeyCaptureMonitor.handler?(event) ?? event
+    }
+    return generation
+  }
+
+  /// Ends a capture. With a generation, a capture that somebody else already took over
+  /// is left alone; without one, this is the teardown answer and the slot goes either
+  /// way, because keeping a keyboard that nobody asked for is the failure this type
+  /// exists to prevent.
+  static func end(_ owned: Int? = nil) {
+    if let owned, owned != generation { return }
+    handler = nil
+    if let token {
+      NSEvent.removeMonitor(token)
+      SettingsKeyCaptureMonitor.token = nil
+    }
+  }
+}
+
 private struct ShortcutCaptureSheet: View {
   @Environment(\.dismiss) private var dismiss
   @ObservedObject var settingsModel: SettingsModel
@@ -532,7 +595,9 @@ private struct ShortcutCaptureSheet: View {
 
   let item: ShortcutReferenceItem
 
-  @SwiftUI.State private var eventMonitor: Any?
+  /// Which capture this sheet started. The monitor itself is held by
+  /// ``SettingsKeyCaptureMonitor``, which is why losing this value costs nothing.
+  @SwiftUI.State private var captureGeneration: Int?
   @SwiftUI.State private var errorKey: String?
 
   init(settingsModel: SettingsModel, item: ShortcutReferenceItem) {
@@ -582,22 +647,23 @@ private struct ShortcutCaptureSheet: View {
     }
     .padding(20)
     .frame(width: 420)
-    .onAppear(perform: installMonitor)
-    .onDisappear(perform: removeMonitor)
+    .onAppear(perform: beginCapture)
+    .onDisappear(perform: endCapture)
   }
 
-  private func installMonitor() {
-    guard eventMonitor == nil else { return }
-    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+  private func beginCapture() {
+    captureGeneration = SettingsKeyCaptureMonitor.begin(
+      matching: [.keyDown, .flagsChanged]
+    ) { event in
       handle(event)
     }
   }
 
-  private func removeMonitor() {
-    if let eventMonitor {
-      NSEvent.removeMonitor(eventMonitor)
-      self.eventMonitor = nil
-    }
+  private func endCapture() {
+    // Ends this sheet's capture and nothing else: if the player has already opened the
+    // next one, its capture is the one still standing.
+    SettingsKeyCaptureMonitor.end(captureGeneration)
+    captureGeneration = nil
   }
 
   private func handle(_ event: NSEvent) -> NSEvent? {
@@ -824,7 +890,8 @@ private struct KeyboardTranslationRuleEditorSheet: View {
   @SwiftUI.State private var remoteOutputShortcut: StreamShortcut
   @SwiftUI.State private var localAction: String
   @SwiftUI.State private var captureTarget: CaptureTarget?
-  @SwiftUI.State private var eventMonitor: Any?
+  /// Which capture this sheet started. See ``SettingsKeyCaptureMonitor``.
+  @SwiftUI.State private var captureGeneration: Int?
   @SwiftUI.State private var errorKey: String?
 
   init(settingsModel: SettingsModel, rule: KeyboardTranslationRule?, isPreset: Bool = false) {
@@ -942,8 +1009,8 @@ private struct KeyboardTranslationRuleEditorSheet: View {
     }
     .padding(20)
     .frame(width: 460)
-    .onAppear(perform: installMonitor)
-    .onDisappear(perform: removeMonitor)
+    .onAppear(perform: beginCapture)
+    .onDisappear(perform: endCapture)
   }
 
   @ViewBuilder
@@ -977,18 +1044,15 @@ private struct KeyboardTranslationRuleEditorSheet: View {
     }
   }
 
-  private func installMonitor() {
-    guard eventMonitor == nil else { return }
-    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+  private func beginCapture() {
+    captureGeneration = SettingsKeyCaptureMonitor.begin(matching: [.keyDown]) { event in
       handle(event)
     }
   }
 
-  private func removeMonitor() {
-    if let eventMonitor {
-      NSEvent.removeMonitor(eventMonitor)
-      self.eventMonitor = nil
-    }
+  private func endCapture() {
+    SettingsKeyCaptureMonitor.end(captureGeneration)
+    captureGeneration = nil
   }
 
   private func handle(_ event: NSEvent) -> NSEvent? {
