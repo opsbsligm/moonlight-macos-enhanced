@@ -19,8 +19,16 @@ import argparse, os, re, sys
 
 GLASS_DIR = "Limelight/macOS/ViewControllers/LiquidGlass"
 COLOUR = re.compile(r"red:\s*([0-9.]+)\s*,\s*green:\s*([0-9.]+)\s*,\s*blue:\s*([0-9.]+)")
+# The glass is the system's to draw, so nothing hand-made may stand in for it. The
+# blur is the spelling that first produced the see-through-the-desktop panel, and a
+# gradient laid over the panel is the same failure in another form: it reads as depth
+# in a screenshot while the panel behind it stops bending what is actually there.
+# Every prohibited spelling has to be listed, because a rule that catches six of nine
+# is a rule a gradient walks through.
 FAKE_GLASS = ("NSVisualEffectView", "UIBlurEffect", ".blur(radius:", ".regularMaterial",
-              ".thinMaterial", ".thickMaterial")
+              ".thinMaterial", ".thickMaterial",
+              "LinearGradient(", "RadialGradient(", "AngularGradient(",
+              ".linearGradient(", ".radialGradient(", ".angularGradient(")
 # Everything that overshoots and settles back. The brief rejects it for glass.
 SPRINGY = re.compile(r"\.bouncy\b|\.spring\s*\(|interpolatingSpring|\bSpring\s*\(|bounce\s*:")
 DURATION = re.compile(r"duration:\s*[0-9.]+")
@@ -48,7 +56,7 @@ def check(files):
 
     for needle in FAKE_GLASS:
         if needle in combined:
-            problems.append("%s stands in for the system material" % needle)
+            problems.append("%s stands in for the system glass" % needle)
 
     for name, text in files.items():
         hit = SPRINGY.search(strip_comments(text))
@@ -128,6 +136,17 @@ def self_test():
                                              "GlassEffectContainer(spacing: 6) {",
                                              "NSVisualEffectView()\n        GlassEffectContainer(spacing: 6) {")
     cases.append(("a hand-made blur replacing the material", fake, True))
+
+    # One fixture per prohibited spelling. A single planted blur proves the loop runs
+    # and nothing about the other needles, which is how three gradient APIs went
+    # undetected while this rule was reported as covering gradients.
+    for needle in FAKE_GLASS:
+        planted = dict(FIXTURE)
+        planted["LiquidGlassTabBar.swift"] = mutate(
+            FIXTURE["LiquidGlassTabBar.swift"],
+            "GlassEffectContainer(spacing: 6) {",
+            "%s\n        GlassEffectContainer(spacing: 6) {" % needle)
+        cases.append(("planted %s" % needle, planted, True))
 
     ungrouped = dict(FIXTURE)
     ungrouped["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],

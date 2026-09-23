@@ -132,6 +132,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refused once `v1.3.9-build19` shipped. Four self-test cases cover the
   transitions: alpha to beta, beta to stable, an alpha sequence going
   backwards, and a beta arriving after the version already shipped.
+- **A gradient could sit on the glass and the audit would call that
+  compliant.** The rule says the glass is the system's to draw, and its list
+  of prohibited spellings stopped at blurs and materials: `LinearGradient`,
+  `RadialGradient`, `AngularGradient` and the `.linearGradient` family of view
+  modifiers were all undetected, so a panel could hold one native effect and
+  paint depth by hand beside it. Every prohibited spelling now has its own
+  fixture -- twelve needles, twelve planted defects -- because one planted
+  blur proves the loop runs and nothing about the needles that come after it.
 - **A missing host identifier would have crashed the page instead of matching nobody, and only a
   warning the local sweep could not run said so.** `TemporaryHost.h` declares `uuid` with no
   nullability annotation, so the importer hands Swift an implicitly unwrapped `String`, and
