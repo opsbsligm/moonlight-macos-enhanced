@@ -105,8 +105,10 @@ app_name=$(./scripts/product-name.sh 2>/dev/null || echo "")
 #
 # Empty means no: the gate reads something only CI produces, and running it with an empty path
 # would report a failure the tree does not have. Three answers below are verified claims about a
-# laptop, not hopes: compile-audit is measured at 56 of 56 sources with no flag, swift-typecheck
-# needs one generated-header root from a build that has happened here, and the warning audit needs
+# laptop, not hopes: compile-audit is measured at 82 of 82 sources with no flag -- macOS,
+# Stream, Network, Database, Crypto, Utility and the one source at the top of Limelight/ --
+# swift-typecheck needs one generated-header root from a build that has happened here,
+# and the warning audit needs
 # the transcript of the build you just ran, because a log from last week would certify a tree it
 # never saw.
 artefact_command() {
@@ -161,7 +163,7 @@ while IFS= read -r cmd; do
     # code, so a gate that had printed "nothing to check" and exited zero arrived as a pass. Two
     # of them sat in that count while a build log carrying a first-party warning swept green --
     # the pairing this script's header says it exists to prevent. Dropping the flag outright is
-    # the other mistake, and costs coverage: compile-audit type-checks all 56 macOS sources from
+    # the other mistake, and costs coverage: compile-audit type-checks all 82 first-party sources from
     # this checkout with no flag at all. So each artefact gate is asked whether it can stand on
     # its own here, and the answer is written down below with its reason rather than inferred.
     *--derived*|*--log*|*--build-log*)

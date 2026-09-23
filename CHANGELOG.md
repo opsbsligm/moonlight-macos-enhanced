@@ -112,7 +112,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A shortcut capture could outlive the page that opened it, and go on
+- - **A shortcut capture could outlive the page that opened it, and go on
   writing shortcuts.** Both capture sheets read keys through an app local
   event monitor, because that is the only thing that sees a chord no control
   will accept, and each sheet removed its monitor from `onDisappear`.
@@ -241,6 +241,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floor.
 
 ### Maintenance
+
+- - **The compile gate now reads the half of the app the fork edits least.**
+  `scripts/compile-audit.py` walked `Limelight/macOS` and `Limelight/Stream`
+  only, which is where most of this fork's work lands, and it reported 56 of
+  56 as though that were the app. Discovery, pairing, the asset retriever, the
+  database and the crypto helpers reached a runner before any local command
+  type-checked them -- including the two files this round's leak fix changed.
+  It now covers Network, Database, Crypto, Utility and the one source at the
+  top of `Limelight/`: 82 of 82, with `CryptoManager.m` reported as skipped on
+  a checkout with no vendored OpenSSL headers rather than counted as clean.
+  `Limelight/Input` stays out on purpose: five of its thirteen sources are
+  iOS-only and ask for UIKit, and a gate that reports failures the build does
+  not have is a gate people stop believing.
 
 - **The sweep now says which skipped gates a laptop really cannot run.** The
   render probe was listed with the ones that need a runner, and it does not:

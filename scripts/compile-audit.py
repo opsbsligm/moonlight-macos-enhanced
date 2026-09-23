@@ -28,8 +28,19 @@ import apple_toolchain
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PREFIX_HEADER = os.path.join(ROOT, "Limelight", "macOS", "Supporting Files",
                              "Limelight-Prefix.pch")
+# Every first-party directory whose sources the shipped target compiles. This list used
+# to be macOS and Stream only, which is where the fork works, and it meant a change to
+# discovery, to the asset retriever or to the crypto helpers reached a runner before
+# anything local said a word about it -- the exact silence this gate exists to close.
+# Limelight/Input is deliberately absent: five of its thirteen sources are iOS-only and
+# ask for UIKit, so type-checking that directory against a macOS SDK would report
+# failures the build does not have, which is how a gate stops being believed.
 TARGETS = (os.path.join("Limelight", "macOS"),
-           os.path.join("Limelight", "Stream"))
+           os.path.join("Limelight", "Stream"),
+           os.path.join("Limelight", "Network"),
+           os.path.join("Limelight", "Database"),
+           os.path.join("Limelight", "Crypto"),
+           os.path.join("Limelight", "Utility"))
 
 
 def deployment_target():
@@ -205,8 +216,13 @@ def compile_flags(sdk, includes):
     ] + includes
 
 
+# One source sits at the top of Limelight/ rather than in one of the directories below
+# it, and adding the whole of Limelight/ would drag in the iOS-only sources beside it.
+EXTRA_SOURCES = (os.path.join("Limelight", "DatabaseSingleton.m"),)
+
+
 def sources():
-    found = []
+    found = list(EXTRA_SOURCES)
     for relative in TARGETS:
         for current, _, files in os.walk(os.path.join(ROOT, relative)):
             found += [os.path.join(current, name) for name in sorted(files) if name.endswith(".m")]
