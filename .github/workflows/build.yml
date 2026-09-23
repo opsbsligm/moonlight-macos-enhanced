@@ -596,6 +596,16 @@ jobs:
         python3 scripts/build-warning-audit.py --self-test
         python3 scripts/build-warning-audit.py --log "build-${{ matrix.variant }}.log"
 
+    - name: Fail on a source file nothing compiled
+      # Membership is the question "will this file ever reach a binary", and this
+      # project's project file cannot answer it: its one membership-exception set is
+      # attached to no target, so those 137 entries neither include nor exclude anything,
+      # and the build log shows all 93 implementation files under them compiling anyway.
+      # The audit reads the transcript when it has one, and this is the only job that has
+      # one -- the audit job's copy of the step settles only what a project file can
+      # prove, which is an exclusion a target really carries.
+      run: python3 scripts/source-membership-audit.py --build-log "build-${{ matrix.variant }}.log"
+
     - name: Verify ${{ matrix.variant }} binary slices
       run: |
         app_bundle="build/Build/Products/Release/${APP_NAME}.app"

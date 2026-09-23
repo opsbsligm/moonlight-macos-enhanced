@@ -212,6 +212,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The membership audit read the project file backwards, and the build log
+  says so.** `Limelight` is a synchronized root group, and its one exception
+  set lists 137 entries, 93 of them implementation files. Exceptions mean "not
+  a member", so the audit had been reading that list as the target's explicit
+  member list -- the only reading under which the tree makes sense. It is not
+  the reading the build gives. Every one of those 93 files appears on a
+  `CompileC` or `ScanDependencies` line, and the linked binary is missing 0 of
+  90 first-party classes, because the target carries no
+  `fileSystemSynchronizedGroups` at all: neither the group nor its exception
+  set is attached to anything, and the target's own sources phase holds three
+  `PBXBuildFile` entries with no file reference behind them. The audit now
+  treats an entry as an exclusion only when that association is present, says
+  out loud when the project carries membership metadata nobody attached, and
+  takes `--build-log` -- which both macOS build jobs now hand it, straight
+  from the step that wrote the transcript -- as the authority for whether a
+  file was ever compiled. Its planted defect changed with the semantics: the
+  old one deleted a line from the list, which under the real rules excludes
+  nothing, and the new one writes the association Xcode writes when a folder
+  joins a target, which makes 127 exclusions real at once and is caught.
 - **The warning rule left the build job's shell and came home to `scripts/build-warning-audit.py.**
   `local-gates.sh` takes its list of gates from the `python3 scripts/*.py` calls in the
   workflow, so a check written as `grep` was never on that list and never ran on a laptop.

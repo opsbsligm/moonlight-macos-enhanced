@@ -1911,7 +1911,7 @@ membership = subprocess.run([sys.executable,
                              os.path.join(root, "scripts", "source-membership-audit.py")],
                             capture_output=True, text=True, cwd=root)
 check(membership.returncode == 0,
-      "every implementation file belongs to a target"
+      "no implementation file is excluded from its target without a reason"
       if membership.returncode == 0 else
       "the source membership audit failed:\n" + membership.stdout[-900:])
 

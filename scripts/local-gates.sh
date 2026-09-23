@@ -118,8 +118,7 @@ artefact_command() {
         derived="$root/Build/Intermediates.noindex/Moonlight.build/Debug/Moonlight for macOS.build/DerivedSources"
         [ -d "$derived" ] && {
           printf 'python3 scripts/swift-typecheck.py . --derived "%s"' "$derived"; return; }
-      done;;
-    *build-warning-audit.py*)
+      done;;    *build-warning-audit.py*)
       # LOCAL_BUILD_LOG is the transcript of this checkout's own build, on purpose: the point of
       # the gate is the warning in the compiler's words, and only the build you just ran has a
       # right to certify the source you just changed.
@@ -147,7 +146,7 @@ while IFS= read -r cmd; do
     # the other mistake, and costs coverage: compile-audit type-checks all 56 macOS sources from
     # this checkout with no flag at all. So each artefact gate is asked whether it can stand on
     # its own here, and the answer is written down below with its reason rather than inferred.
-    *--derived*|*--log*)
+    *--derived*|*--log*|*--build-log*)
       local_cmd=$(artefact_command "$cmd")
       if [ -z "$local_cmd" ]; then
         echo "skip  $cmd (needs a build artefact this sweep was not given: see artefact_command)"

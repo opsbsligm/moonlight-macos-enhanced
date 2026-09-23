@@ -1258,7 +1258,18 @@ def fold_on_prose_again(text):
 # compiled at all, and a missing entry produces no error, no warning and no
 # binary: the feature simply is not in the product. The membership audit reads
 # that file, so the entry has to be loadable.
-GLASS_MEMBER_ENTRY = "\t\t\t\tmacOS/Views/GlassOverlayContainer.m,\n"
+# The app target's dependency list, and the field Xcode writes next to it the moment a
+# synchronized folder is handed to that target. Until that field exists the project's
+# membership exceptions are metadata: the build log shows all 93 implementation files
+# under them being compiled. Writing it is therefore the realistic regression -- a
+# folder joined to a target -- and the audit has to notice that those entries started
+# excluding, which is the moment a file stops reaching the binary.
+TARGET_DEPENDENCIES = ("\t\t\tdependencies = (\n"
+                       "\t\t\t\t4C38E8301FF0C726000425CD /* PBXTargetDependency */,\n"
+                       "\t\t\t);\n")
+SYNCHRONIZED_GROUPS = ("\t\t\tfileSystemSynchronizedGroups = (\n"
+                       "\t\t\t\tA40F5A3F2D432ABE006DA227 /* Limelight */,\n"
+                       "\t\t\t);\n")
 # The internal header declared a property whose class it could not see, so every
 # translation unit that reached it failed to compile and the feature lived in no
 # binary. Only a build of the app itself notices, and this host cannot run one, so
@@ -1286,9 +1297,9 @@ def header_blind_to_its_type(text):
 MEMBERSHIP_STEP = 'os.path.join(root, "scripts", "source-membership-audit.py")'
 
 
-def unlisted_source(text):
-    return once(text, GLASS_MEMBER_ENTRY, "the project file's member list").replace(
-        GLASS_MEMBER_ENTRY, "", 1)
+def membership_becomes_effective(text):
+    return once(text, TARGET_DEPENDENCIES, "the app target's dependency list").replace(
+        TARGET_DEPENDENCIES, TARGET_DEPENDENCIES + SYNCHRONIZED_GROUPS, 1)
 
 
 def aggregate_stops_running_an_audit(text):
@@ -1690,8 +1701,8 @@ MUTATIONS = [
     ("recapture-loses-a-held-modifier", HID, recapture_loses_a_modifier_still_held,
      "capture release clears a hold the player's finger never left",
      SHORTCUT_GATE),
-    ("unlisted-source-file", PBXPROJ, unlisted_source,
-     "a source file belongs to no target, so nothing ever compiles it"),
+    ("membership-exceptions-attached-to-a-target", PBXPROJ, membership_becomes_effective,
+     "a synchronized group joins the target and its exceptions begin excluding real files"),
     ("aggregate-drops-a-ci-audit", AUDIT, aggregate_stops_running_an_audit,
      "the local aggregate stops running an audit that CI still runs"),
     ("header-names-a-type-it-cannot-see", INTERNAL, header_blind_to_its_type,
