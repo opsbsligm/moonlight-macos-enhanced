@@ -617,11 +617,24 @@ struct StreamView: View {
       }
       .padding()
       .onAppear {
+        // These two answers are taken from the model as an argument, not from the
+        // pane. The pane hands the model a closure to call when a value it shows
+        // changes, and the model holds that closure: one that reaches the pane
+        // keeps the pane alive, the pane keeps the model, and the presenter builds
+        // a fresh model for every settings window, so the cycle outlives the window
+        // it was opened from. Reading the model through the closure's own argument
+        // leaves the cycle nowhere to close.
+        func customResolutionShown(for model: SettingsModel) -> Bool {
+          model.selectedResolution == .zero
+        }
+        func customFpsShown(for model: SettingsModel) -> Bool {
+          model.selectedFps == .zero
+        }
         func updateCustomResolutionGroup() {
-          showCustomResolutionGroup = settingsModel.selectedResolution == .zero
+          showCustomResolutionGroup = customResolutionShown(for: settingsModel)
         }
         func updateCustomFpsGroup() {
-          showCustomFpsGroup = settingsModel.selectedFps == .zero
+          showCustomFpsGroup = customFpsShown(for: settingsModel)
         }
         func updateRemoteCustomResolutionGroup() {
           showRemoteCustomResolutionGroup =
@@ -636,14 +649,21 @@ struct StreamView: View {
         updateCustomFpsGroup()
         updateRemoteCustomResolutionGroup()
         updateRemoteCustomFpsGroup()
-        settingsModel.resolutionChangedCallback = {
+        // The two boxes the callbacks write are taken once, as bindings. A closure
+        // that wrote the state through the pane would be holding the pane again,
+        // and the settings model keeps the closure until the next pane replaces it.
+        let resolutionGroupShown = $showCustomResolutionGroup
+        let fpsGroupShown = $showCustomFpsGroup
+        settingsModel.resolutionChangedCallback = { [weak model = settingsModel] in
+          guard let model else { return }
           withAnimation {
-            updateCustomResolutionGroup()
+            resolutionGroupShown.wrappedValue = customResolutionShown(for: model)
           }
         }
-        settingsModel.fpsChangedCallback = {
+        settingsModel.fpsChangedCallback = { [weak model = settingsModel] in
+          guard let model else { return }
           withAnimation {
-            updateCustomFpsGroup()
+            fpsGroupShown.wrappedValue = customFpsShown(for: model)
           }
         }
       }

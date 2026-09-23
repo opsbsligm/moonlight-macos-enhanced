@@ -798,6 +798,24 @@ def run_gamepad_menu_gesture():
           if ran.returncode == 0 else "the gamepad menu gesture gate failed:\n" + chr(10).join(tail))
 
 
+def run_settings_callback_ownership():
+    """Ride the settings callback ownership gate on a macOS job, like its siblings.
+
+    The gate compiles the two closures the settings page hands its model and counts
+    whether the model is released, so it needs a swiftc and an SDK, and a step of its own
+    would need the `workflow` scope this pushing credential does not carry.
+    constraints-audit.py's DRIVEN_BY records the arrangement.
+    """
+    ran = subprocess.run([sys.executable, "scripts/settings-callback-ownership-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "a settings page that closes takes its model with it"
+          if ran.returncode == 0 else
+          "the settings callback ownership gate failed:\n" + chr(10).join(tail))
+
+
+
 def run_command_to_control():
     """Ride the Command mapping gate on a macOS job, the way its siblings do.
 
@@ -877,6 +895,7 @@ def finish():
     run_settings_rebuild_passthrough()
     run_gamepad_menu_gesture()
     run_command_to_control()
+    run_settings_callback_ownership()
     run_sas_preset()
     run_sdr_10bit_codec()
     run_diagnostics_report()

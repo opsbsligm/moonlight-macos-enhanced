@@ -601,6 +601,43 @@ check("SettingsKeyCaptureMonitor.handler?(event) ?? event" not in neutral_monito
       "a monitor that closes over one handler keeps recording after the capture ends, "
       "and trips the assertion above")
 
+# The settings page also hands its model two closures to call when a value the page
+# shows changes, and the model holds them for as long as it lives. A closure written the
+# obvious way reaches the pane for both its state and its model, so the model keeps the
+# pane, the pane keeps the model, and the presenter builds a fresh model for every
+# settings window -- each one opened would leak one. This is the same cycle the block
+# below refuses in Objective-C, arriving from the Swift side, and it is invisible in the
+# one way a leak usually announces itself: nothing about the settings page behaves
+# differently while it leaks. What makes it a claim rather than a hunch is that the
+# ownership shape was compiled and run: capturing the pane left the model's deinit
+# unprinted, capturing the model weakly and writing through a state binding printed it.
+# The rule below keeps a later tidy-up from tidying that back.
+pane_path = "Limelight/macOS/ViewControllers/SettingsStreamPane.swift"
+pane_src = open(os.path.join(root, pane_path), encoding="utf-8").read()
+
+
+def callbacks_held_tightly(src):
+    """The view callbacks a model would keep its own pane alive through."""
+    tight = []
+    for name in re.findall(r"settingsModel\.(\w+Callback) = \{", src):
+        if "[weak" not in swift_block(src, "settingsModel.%s = {" % name):
+            tight.append(name)
+    return tight
+
+
+check(sorted(callbacks_held_tightly(pane_src)) == []
+      and pane_src.count("Callback = {") == 2,
+      "the settings page's model callbacks hold the model weakly and write through bindings"
+      if not callbacks_held_tightly(pane_src) else
+      "%s capture the model through the pane, and the model holds the closure that "
+      "captures it" % ", ".join(callbacks_held_tightly(pane_src)))
+held_tight = pane_src.replace("[weak model = settingsModel]", "[model = settingsModel]")
+check(sorted(callbacks_held_tightly(held_tight)) ==
+      ["fpsChangedCallback", "resolutionChangedCallback"],
+      "a settings callback that keeps the model it belongs to trips the assertion above"
+      if sorted(callbacks_held_tightly(held_tight)) else
+      "the weak-capture rule does not see the cycle it was written for")
+
 # Every back-reference in this tree points at the object that owns the thing holding it: a
 # host cell points at the hosts page, a box-art retriever at the page that asked for the
 # artwork, a service browser at the discovery stack that started it. Held strongly each one
@@ -1683,6 +1720,12 @@ DRIVEN_BY = {
     # It is also the gate that decides whether a pairing PIN can reach an issue, so it rides
     # a driver that runs on every macOS build instead of waiting for a step nobody can add.
     "diagnostics-report-tests.py": "scaling-output-evidence-tests.py",
+    # The two closures the settings page hands its model, compiled as they stand to count
+    # whether the model is released, so it needs a swiftc and an SDK and a step of its own
+    # needs the `workflow` scope this credential does not carry. It rides the driver for
+    # that reason and stays for a better one: this is the gate that says the weak capture
+    # above it is holding up a real cycle rather than satisfying a spelling rule.
+    "settings-callback-ownership-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

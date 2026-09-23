@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A settings callback is now compiled to find out whether its model dies.**
+  `scripts/settings-callback-ownership-tests.py` cuts the two closures out of
+  `SettingsStreamPane.swift`, compiles them unchanged, and runs three shapes:
+  the shipped one, the same code with the weak capture tidied away, and the
+  closure reaching for the pane the way it used to. The model is a stand-in
+  that counts the times it was released; the closures are the ones that ship.
+  Shipped releases the model, the other two do not, and all three write the
+  same answer -- which is the point: behaviour is exactly what a cycle leaves
+  untouched, so a test that only asks the page whether it still works cannot
+  see one. `@State` is not used inside the harness and says why in a comment:
+  a state binding needs a location SwiftUI only hands out while it is
+  rendering the view. It rides `scaling-output-evidence-tests.py` because a
+  step of its own needs a `workflow` scope this credential does not carry.
+
 - **Device attribution gained the entry point the real bus needs, because the composite
   device rule could not be expressed without it.** `MLUSBDeviceIdentityFromRegistryNodes`
   takes the device node plus every interface node hanging off it and returns one identity:
@@ -111,6 +125,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+
+- **The settings page kept its model alive after the window closed.** The
+  presenter builds a fresh `SettingsModel` for every settings window, and the
+  stream pane handed that model two closures to call when a value it shows
+  changes. The model holds them, and each closure reached the pane through a
+  local function -- the pane keeps the model as an environment object, so
+  model held closure held pane held model, and every window a player opened
+  and closed left one behind. Nothing about settings behaved differently while
+  it leaked, which is the usual way a leak is found late: the page answered,
+  animated and closed on cue. The notifications were checked first and are not
+  it -- five are selector-based, which the centre holds weakly, and the block
+  one captures `self` weakly and is removed in `deinit`. The closures now
+  capture the model weakly, read it through their own argument and write the
+  pane's state through a binding, so nothing on that path leads back. The
+  harness added in this round compiles these closures as written and counts
+  releases: as shipped the model goes, with the weak capture removed it does
+  not, and the answer the page shows is identical in all three.
 
 - **Two stores nothing was going to read stayed because a baseline said so.**
   `AppCellView` asked its window for the mouse location, converted the answer
