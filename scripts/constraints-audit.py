@@ -700,6 +700,54 @@ check(unqualified is not None and "weak" not in (unqualified.group("attrs") or "
       "a callback property written without a qualifier is read as strong, which is what "
       "lets the rule above refuse one")
 
+# A trap in shipping code is a decision that whichever input arrives first gets to make.
+# The two storyboard stubs below are traps by construction -- nobody builds those views from
+# a storyboard, and the compiler cannot say so -- and every other one has to be argued for
+# the way a strong back-reference has to be, with a line that has to still be true.
+#
+# `try!` was the only one standing when this rule was written. It sat on the way to
+# installing a privileged helper, and the sentence that justified it -- the property list is a
+# literal of plist-safe types, so it cannot throw -- is a claim about that day's source and
+# not a property of the type: one field added beside it that is not plist-safe (a URL, a date,
+# a value read from disk) turns the promise into an app that stops. The caller already had a
+# failure it could show, so the throwing answer costs nothing and removes the class.
+UNREACHABLE_TRAPS = {
+    # file -> (why this trap cannot be reached, the line that says so)
+    "Limelight/macOS/ViewControllers/ConnectionDetailsViewController.swift": (
+        "two rows AppKit builds programmatically, whose storyboard initialiser has no answer "
+        "that is not a bug -- refusing it in words is the honest answer",
+        'fatalError("init(coder:) has not been implemented")'),
+}
+TRAP = re.compile(r"\btry\s*!|\bas\s*!|\bfatalError\(|\bpreconditionFailure\(")
+trap_problems, swift_files = [], 0
+for directory, _, names in os.walk(os.path.join(root, "Limelight")):
+    if not any(part in ("macOS", "Input") for part in directory.split(os.sep)):
+        continue
+    for name in sorted(names):
+        if not name.endswith(".swift"):
+            continue
+        relative = os.path.relpath(os.path.join(directory, name), root)
+        source = open(os.path.join(root, relative), encoding="utf-8", errors="replace").read()
+        # A comment that names `try!` is not a trap, and the rule that refuses traps must not
+        # be refusible by the sentence that describes one.
+        code = "\n".join(line for line in source.splitlines()
+                         if not line.lstrip().startswith(("//", "///", "*")))
+        swift_files += 1
+        found = len(TRAP.findall(code))
+        reason, needle = UNREACHABLE_TRAPS.get(relative, ("", ""))
+        argued_for = code.count(needle) if needle else 0
+        if found != argued_for:
+            trap_problems.append(
+                "%s traps %d time(s) and argued for %d" % (relative, found, argued_for))
+check(not trap_problems,
+      "no shipping Swift source traps unless it has argued for the trap"
+      if not trap_problems else "; ".join(trap_problems))
+check(swift_files >= 25,
+      "the trap scan really read the Swift sources it counts (%d)" % swift_files)
+trap_probe = "        return try! PropertyListSerialization.data(fromPropertyList: plist)\n"
+check(len(TRAP.findall(trap_probe)) == 1,
+      "a `try!` written the way this tree writes one is read by the scan above")
+
 # The page takes the key focus on the way in. Two things follow, and both are
 # about order rather than presence: the record has to be read before the focus
 # is taken, because reading the first responder afterwards records the page

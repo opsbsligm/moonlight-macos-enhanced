@@ -135,6 +135,7 @@ SETTINGS_PAGE = os.path.join(root, "Limelight", "macOS", "ViewControllers", "Liq
                              "SettingsOverlayPresenter.swift")
 MDNS = os.path.join(root, "Limelight", "Network", "MDNSManager.h")
 ASSET_MANAGER = os.path.join(root, "Limelight", "Network", "AppAssetManager.m")
+MICROPHONE = os.path.join(root, "Limelight", "macOS", "Helpers", "MicrophoneManager.swift")
 
 UP_GUARD = """        if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {
             // The host never saw this key go down, so it must not see it come up
@@ -1586,6 +1587,20 @@ def the_stream_stops_letting_go_of_its_controller(text):
     return text.replace("    self.controllerSupport = nil;" + chr(10), "", 1)
 
 
+def the_helper_plist_traps_again(text):
+    """A `try!` comes back to the path that installs a privileged helper.
+
+    The line still builds the same plist, and the helper still installs, so nothing about
+    the change is visible until the day somebody adds a field that is not plist-safe -- and
+    then the app stops instead of reporting that the helper is not ready. The rule this
+    trips is not about this line: it is about the class.
+    """
+    once(text, "        return try PropertyListSerialization.data(",
+         "the throwing answer that reports a failure")
+    return text.replace("        return try PropertyListSerialization.data(",
+                        "        return try! PropertyListSerialization.data(", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-key-cancel", CAPTURE, drop_pending_cancel,
@@ -1859,6 +1874,9 @@ MUTATIONS = [
     ("stream-controller-nil-drop-removed", STREAM_SVC,
      the_stream_stops_letting_go_of_its_controller,
      "the line that made a strong delegate safe to hold is gone, and the excuse with it"),
+    ("helper-plist-traps-instead-of-reporting", MICROPHONE,
+     the_helper_plist_traps_again,
+     "a try! comes back to the path that installs the privileged helper"),
 
 ]
 

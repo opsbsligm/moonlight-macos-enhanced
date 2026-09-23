@@ -126,6 +126,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because the page nils its controller support on the way out. Three planted
   defects and the scan's own 17 sites are in the aggregate.
 
+- - **Installing the microphone helper could stop the app instead of saying
+  so.** `makeLaunchdPlist` answered with `try!` on the argument that its
+  property list is a literal of plist-safe types and cannot throw. That is a
+  claim about that day's source, not a property of the type: one field added
+  beside it that is not plist-safe, and the trap sits on the way to installing
+  a privileged helper. It throws now, and the caller already had a failure it
+  could show, so the answer costs nothing. No shipping Swift source may trap
+  unless it has argued for the trap; two storyboard `init(coder:)` stubs stand
+  argued for, and the scan reads 33 files.
+
 - **A shortcut capture could outlive the page that opened it, and go on
   writing shortcuts.** Both capture sheets read keys through an app local
   event monitor, because that is the only thing that sees a chord no control

@@ -1202,7 +1202,16 @@ final class AwdlHelperManager: NSObject, ObservableObject {
         return "Moonlight needs administrator permission to install the AWDL helper."
     }
 
-    private func makeLaunchdPlist(label: String) -> Data {
+    /// Builds the launchd property list for the helper.
+    ///
+    /// This used to answer with `try!`, on the argument that the dictionary below is a
+    /// literal of plist-safe types and so cannot throw. That argument is about today's
+    /// source, and a field added beside it later -- a URL, a date, a nested value somebody
+    /// reads from disk -- turns the promise into a trap on the way to installing a
+    /// privileged helper. The caller already reports a failure it can show, so throwing is
+    /// strictly better than the guarantee: a plist that will not build becomes a helper
+    /// that says it is not ready, instead of an app that stops.
+    private func makeLaunchdPlist(label: String) throws -> Data {
         let plist: [String: Any] = [
             "Label": label,
             "ProgramArguments": [Self.installedHelperPath()],
@@ -1210,7 +1219,7 @@ final class AwdlHelperManager: NSObject, ObservableObject {
             "RunAtLoad": true,
         ]
 
-        return try! PropertyListSerialization.data(
+        return try PropertyListSerialization.data(
             fromPropertyList: plist,
             format: .xml,
             options: 0
