@@ -2081,6 +2081,31 @@ check(not stopping_without_release,
       if not stopping_without_release else
       "stops the stream without releasing held keys first: " + "; ".join(stopping_without_release))
 
+# -performClose: hands the keyboard back before the disconnect alert goes up, and that
+# order is what the release-on-uncapture family relies on: a release needs a live input
+# context, and once a panel owns the session nothing after it runs until the player
+# answers. Whether a sheet would keep a key release from arriving at all is a question
+# the probes did not settle -- a bare command line AppKit harness disagreed with itself
+# across revisions (with a sheet attached, one run delivered a synthetic key up to the
+# parent window's focused view and a later run measuring the same shape did not), and the
+# harness is never the active application, so there is no key window to reason about. The
+# rule below therefore pins the order the code has, rather than the physics that might
+# justify it: a refactor that defers the return into the completion handler leaves every
+# key the host was told about down for as long as the alert stays up, which is the exact
+# outcome this family exists to prevent.
+window_modes = open(os.path.join(root, "Limelight/macOS/ViewControllers",
+                                 "StreamViewController+WindowModes.m"),
+                    encoding="utf-8").read()
+close_body = method_body(window_modes, "- (IBAction)performClose:(id)sender")
+close_order = ordered_once(close_body,
+                           '[self uncaptureMouseWithCode:@"MUC301"',
+                           "[alert beginSheetModalForWindow:",
+                           "handing the keyboard back")
+check(close_order is None,
+      "the disconnect alert opens after the keyboard is handed back"
+      if close_order is None else
+      "the alert opens with the keyboard still forwarded: " + close_order)
+
 # A gate nobody wired is worse than no gate: it sits in scripts/ looking like
 # coverage while CI never runs it. Every audit and harness has to be reachable
 # from the workflow, directly or through another reachable script, because one

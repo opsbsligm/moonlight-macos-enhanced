@@ -399,6 +399,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **A new assertion keeps the disconnect alert from opening over a key the
+  host still holds.** `-performClose:` hands the keyboard back before the
+  sheet goes up, and that order is the one the release-on-uncapture family
+  relies on: a release needs a live input context, and once a panel owns the
+  session nothing after it runs until the player answers. It is now an
+  `ordered_once` rule, and its mutant moves the call into the alert's
+  completion handler -- every word stays in the method, while a key held when
+  the close shortcut opened the panel stays down on the host for as long as
+  the panel is up, which is the outcome the family exists to prevent. The rule
+  pins the order the code has rather than a claim about AppKit: probes against
+  a bare command line harness disagreed with themselves about whether a sheet
+  keeps a key up from reaching the window behind it, and that harness is never
+  the active application, so nothing here asserts what a sheet swallows.
+
 - **The CoreFoundation property rule now asks one class, not one repository.**
   It used to join every source into one string and look for `...Release(name)`
   anywhere in it, so a handle was cleared by whoever happened to release one

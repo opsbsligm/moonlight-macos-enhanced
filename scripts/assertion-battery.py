@@ -566,6 +566,8 @@ SWEEP_RULE = "def sweep_health(analyzed, source_count, scan_root=\".\"):\n"
 ADDED_RULE = "if key not in baseline"
 BUILD_VIA_SCRIPT = "else str(build_number())"
 TEARDOWN_BEFORE_STOP = '    [self.hidSupport tearDownKeyboardStateForSessionEnd:"performCloseStreamWindow"];\n'
+UNCAPTURE_BEFORE_ALERT = '    [self uncaptureMouseWithCode:@"MUC301" reason:@"perform-close"];\n'
+ALERT_SESSION_OPENS = "    [alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse returnCode) {\n"
 KEYBOARD_STEP = "      run: python3 scripts/keyboard-concurrency-tests.py\n"
 SHALLOW_GUARD = r'''if [ "${1:-}" = "--print" ] && \
    [ "$("$git" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
@@ -1038,6 +1040,21 @@ def unplug_gate(text):
 def stop_without_release(text):
     once(text, TEARDOWN_BEFORE_STOP, "keyboard teardown before the stop")
     return text.replace(TEARDOWN_BEFORE_STOP, "", 1)
+
+
+def defer_the_keyboard_return_behind_the_alert(text):
+    """Open the disconnect alert while the keyboard is still on its way to the host.
+
+    Moving the uncapture call into the alert's completion handler leaves every word in
+    the method in place and still changes what the player feels: the release only runs
+    once they answer, so a key held when the close shortcut opened the panel stays down
+    on the host for as long as the panel is up, with every click in between carrying a
+    modifier nobody is holding.
+    """
+    once(text, UNCAPTURE_BEFORE_ALERT, "the keyboard return ahead of the alert")
+    once(text, ALERT_SESSION_OPENS, "the alert presentation")
+    text = text.replace(UNCAPTURE_BEFORE_ALERT, "", 1)
+    return text.replace(ALERT_SESSION_OPENS, ALERT_SESSION_OPENS + UNCAPTURE_BEFORE_ALERT, 1)
 
 
 def drop_swift_debug_condition(text):
@@ -1961,6 +1978,8 @@ MUTATIONS = [
      menu_hint_offers_a_word,
      "a bound shortcut shows a hint no keyboard can produce"),
     ("stop-without-release", WINDOW_MODES, stop_without_release, "the stream stops while the host still holds a key"),
+    ("alert-before-return", WINDOW_MODES, defer_the_keyboard_return_behind_the_alert,
+     "the disconnect alert opens while the keyboard is still forwarded to the host"),
     ("swift-debug-condition-gone", PBXPROJ, drop_swift_debug_condition,
      "Debug-only Swift code stops compiling while the Objective-C half keeps calling it"),
     ("matrix-read-while-shut", RENDER_PROBE, read_the_matrix_while_it_is_shut,
