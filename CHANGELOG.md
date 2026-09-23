@@ -399,6 +399,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The control-center shortcut now logs when it has no capture to return.**
+  The hand-back sits inside the capture guard, but `shouldSendInputEvents`
+  turns on as soon as the input context binds -- before any mouse capture --
+  so forwarding without a capture is a state a player can reach, and this
+  entry then opens a panel with no held-key release on the path. Whether that
+  state can strand a key is recorded as open rather than cleared: the
+  synthetic probe delivered a key up to the window behind a sheet in one
+  revision and not in the next, so the code states what it knows -- a debug
+  line with the two numbers, and a warning on the one combination that has
+  nothing to return -- instead of what it cannot prove.
+
 - **A new assertion keeps the disconnect alert from opening over a key the
   host still holds.** `-performClose:` hands the keyboard back before the
   sheet goes up, and that order is the one the release-on-uncapture family

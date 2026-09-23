@@ -63,6 +63,28 @@
 }
 
 - (void)presentControlCenterFromShortcut {
+    // This entry hands the keyboard back a few lines below, the same shape the
+    // option-release and window-close paths use, but the hand-back sits inside the
+    // capture guard, and a key can already be on its way to the host while that
+    // guard is still closed: `shouldSendInputEvents` turns on as soon as the input
+    // context is bound, which happens before any mouse capture. So the state
+    // "forwarding, not captured" is reachable, and reaching it leaves this panel
+    // opening without a return. Whether that state can actually strand a held key
+    // is an open question rather than a cleared one. Probes against a bare command
+    // line AppKit harness disagreed with themselves across revisions -- with a sheet
+    // attached, one run delivered a synthetic key up to the parent window's focused
+    // view and a later run measuring the same shape did not, and the harness is
+    // never the active application, so no key window exists to reason about. Nothing
+    // here claims what a sheet does with a release. What it does is make the shape
+    // visible in the log, because a player report of a key that stayed down after
+    // opening this panel would need exactly these two numbers to be believed.
+    Log(LOG_D, @"[diag] control-center shortcut: captured=%d forwarding=%d",
+        self.isMouseCaptured ? 1 : 0,
+        self.hidSupport.shouldSendInputEvents ? 1 : 0);
+    if (!self.isMouseCaptured && self.hidSupport.shouldSendInputEvents) {
+        Log(LOG_W, @"[diag] control-center shortcut opens a panel while input forwarding "
+                   @"is on without a capture to return: no held-key release on this path");
+    }
     if (self.isMouseCaptured) {
         self.pendingOptionUncaptureToken += 1;
         self.lastOptionUncaptureAtMs = [self nowMs];
