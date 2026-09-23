@@ -112,6 +112,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two stores nothing was going to read stayed because a baseline said so.**
+  `AppCellView` asked its window for the mouse location, converted the answer
+  into the view's own coordinates and never used it, and `mouseModeToggled:`
+  set a menu title that both of its branches then overwrote. Both were on file
+  in `scripts/analyzer-baseline.json` as accepted findings, and that is why
+  they survived every reading of those files: an accepted finding is a claim
+  that somebody looked and chose to keep it, and nothing on disk recorded
+  anybody having done that. Removing them changes no behaviour the analyzer
+  can see, and the sweep went from 41 findings across 19 entries to 39 across
+  17 with no other entry moving, which is the only baseline change that is
+  evidence rather than a refreshed number.
+
 - - **The discovery stack and the apps page were kept alive by their own
   callbacks.** `MDNSManager` was told to report hosts to the
   `DiscoveryManager` that owns it and held that promise strongly, and

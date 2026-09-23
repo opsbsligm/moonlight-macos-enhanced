@@ -3188,14 +3188,16 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
 
 - (void)mouseModeToggled:(BOOL)enabled {
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSString *message = enabled ? @"🖱️ Mouse Mode On" : @"🎮 Mouse Mode Off";
-        // Localize if possible, but icons help universally
+        // The icons carry the meaning across every language, and the words come from the
+        // table. This used to start from an English literal that neither branch could keep,
+        // because both overwrote it -- two strings no translation table was ever asked for.
+        NSString *message;
         if (enabled) {
-               message = [NSString stringWithFormat:@"🖱️ %@", MLString(@"Mouse Mode On", @"Notification")];
-             [self showMouseModeIndicator];
+            message = [NSString stringWithFormat:@"🖱️ %@", MLString(@"Mouse Mode On", @"Notification")];
+            [self showMouseModeIndicator];
         } else {
-               message = [NSString stringWithFormat:@"🎮 %@", MLString(@"Mouse Mode Off", @"Notification")];
-             [self hideMouseModeIndicator];
+            message = [NSString stringWithFormat:@"🎮 %@", MLString(@"Mouse Mode Off", @"Notification")];
+            [self hideMouseModeIndicator];
         }
         [self showNotification:message];
     });
