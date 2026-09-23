@@ -256,9 +256,40 @@ check("./scripts/download-frameworks.sh" in workflow,
 # The publish step has to stay behind the gate. Without it a mistyped tag is
 # published, withdrawn and re-tagged, and every install in between keeps a wrong
 # version string.
-release_job = workflow.split("\n  release:")[-1] if "\n  release:" in workflow else ""
+def job_body(workflow_text, job_name):
+    """One job's own YAML body, from its key up to the next job key.
+
+    Splitting the file on the release key and taking the last piece looked like the
+    same thing and was not: it keeps every byte written after the release job. The
+    day a second job runs the gate for its own reasons -- a rehearsal, a dry run, a
+    rollback -- the check below is satisfied by that job while the release job itself
+    publishes ungated. The jobs in this file are two-space keys, so one body ends at
+    the next of those.
+    """
+    start = re.search(r"^  %s:[ \t]*$" % re.escape(job_name), workflow_text, re.M)
+    if start is None:
+        return ""
+    rest = workflow_text[start.end():]
+    following = re.search(r"^  [A-Za-z_][A-Za-z0-9_.-]*:[ \t]*$", rest, re.M)
+    return rest[:following.start()] if following else rest
+
+
+release_job = job_body(workflow, "release")
 check("scripts/release-gate.py" in release_job,
       "the release job gates the tag before publishing")
+# A boundary that only holds for today's file layout is a comment about tomorrow, so
+# the boundary is exercised: a gate call written into the job that follows release has
+# to stay invisible to the release job, and still be present in the file.
+decoy_workflow = ("  release:\n"
+                  "    steps:\n"
+                  "    - run: echo publishing without a gate\n"
+                  "  rehearsal:\n"
+                  "    steps:\n"
+                  "    - run: python3 scripts/release-gate.py\n")
+check("scripts/release-gate.py" not in job_body(decoy_workflow, "release")
+      and "scripts/release-gate.py" in decoy_workflow
+      and "echo publishing" in job_body(decoy_workflow, "release"),
+      "a gate call in a later job cannot answer for the release job")
 check("scripts/release-gate.py --self-test" in workflow,
       "the release tag rules are exercised on every change")
 

@@ -140,6 +140,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paint depth by hand beside it. Every prohibited spelling now has its own
   fixture -- twelve needles, twelve planted defects -- because one planted
   blur proves the loop runs and nothing about the needles that come after it.
+- **A later job could answer for the release job's own gate.** The workflow
+  check took everything after the release key, which is the whole tail of the
+  file -- correct today only because release is the last job. The day a
+  rehearsal or a dry run calls `scripts/release-gate.py` below it, that check
+  passes while the release job publishes ungated. The audit now reads one job
+  body up to the next key at the same indentation, and exercises the boundary
+  against a fixture whose later job holds the gate call.
 - **A missing host identifier would have crashed the page instead of matching nobody, and only a
   warning the local sweep could not run said so.** `TemporaryHost.h` declares `uuid` with no
   nullability annotation, so the importer hands Swift an implicitly unwrapped `String`, and
