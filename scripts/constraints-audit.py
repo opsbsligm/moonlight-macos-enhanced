@@ -1548,12 +1548,40 @@ undated = [line for line in released
            if not re.match(r"^## \[[\w.\-]+\] - \d{4}-\d{2}-\d{2}$", line)]
 if undated:
     shape_problems.append("a released section lost its date: " + ", ".join(undated))
+# A doubled bullet is the same class of rewrite accident, in a shape none of the
+# rules above can see: a hand-written "- " in front of a generator that already adds
+# one leaves a line no markdown renderer reads as a list item, and three of them
+# survived here while every rule stayed green, because those rules read sentences and
+# section headings and never the bullet itself.
+def doubled_bullets(text):
+    return [n for n, line in enumerate(text.splitlines(), 1) if line.startswith("- - ")]
+
+
+def entry_shape_problems(text):
+    doubled = doubled_bullets(text)
+    if doubled:
+        return ["a changelog entry has a doubled bullet on line%s %s"
+                % ("s" if len(doubled) > 1 else "", ", ".join(str(n) for n in doubled))]
+    return []
+
+
+shape_problems += entry_shape_problems(changelog_text)
 dates = [line[-10:] for line in released]
 if dates != sorted(dates, reverse=True):
     shape_problems.append("the released sections are no longer in date order")
 check(not shape_problems,
       "the changelog has every round once and every release section dated"
       if not shape_problems else "; ".join(shape_problems))
+
+# The changelog is clean today, so a rule that passes on it has proved nothing. The
+# defect gets planted, and the rule has to see exactly it.
+planted = "- - **planted for the rule that looks for this**\n\n" + changelog_text
+check(entry_shape_problems(changelog_text) == [] and
+      len(entry_shape_problems(planted)) == 1 and
+      "line 1" in entry_shape_problems(planted)[0],
+      "a doubled changelog bullet is refused"
+      if entry_shape_problems(planted) and entry_shape_problems(changelog_text) == []
+      else "the doubled-bullet rule does not see the one it was written for")
 
 parity_problems = []
 if not gates_in_workflow:

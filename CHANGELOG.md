@@ -124,7 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   17 with no other entry moving, which is the only baseline change that is
   evidence rather than a refreshed number.
 
-- - **The discovery stack and the apps page were kept alive by their own
+- **The discovery stack and the apps page were kept alive by their own
   callbacks.** `MDNSManager` was told to report hosts to the
   `DiscoveryManager` that owns it and held that promise strongly, and
   `AppAssetManager` did the same to the apps page that asked for box art.
@@ -138,7 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because the page nils its controller support on the way out. Three planted
   defects and the scan's own 17 sites are in the aggregate.
 
-- - **Installing the microphone helper could stop the app instead of saying
+- **Installing the microphone helper could stop the app instead of saying
   so.** `makeLaunchdPlist` answered with `try!` on the argument that its
   property list is a literal of plist-safe types and cannot throw. That is a
   claim about that day's source, not a property of the type: one field added
@@ -278,7 +278,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
-- - **The compile gate now reads the half of the app the fork edits least.**
+- **An accepted analyzer warning now has to carry the reason it was
+  accepted.** `scripts/analyzer-baseline.json` keeps sentences explaining why
+  every tolerated finding is tolerated, and `analyzer-audit.py` pairs a reason
+  to a warning by looking for the reason's key inside the warning text. Read
+  against the tree, none of the four keys on file appear in any of the seven
+  warning shapes, so every accepted class looked unexplained at once and the
+  notice meant to name a finding that had lost its explanation was saying it
+  about every line in the file -- which is the failure mode where the signal
+  stops existing. `--self-test` had been green throughout, because its fixture
+  keys phrases the way the contract asks and only the real data broke the
+  contract. Every reason is now keyed by a phrase from the shape it explains,
+  the built-in table is keyed the same way and tested against that fixture,
+  and a class with no reason on file fails the audit instead of earning a
+  notice. The reasons were rewritten from this round's reading: clang's AST
+  says `@property (nonatomic) IOHIDManagerRef` is `assign ...
+  unsafe_unretained`, so the `CFRelease` in `dealloc` is the one release
+  rather than an over-release, and the eight dead stores are five habits -- a
+  default a later branch recomputes, an argmax cursor whose last write fed
+  only the comparison it lost, a layout cursor advanced past the last control
+  of a row, an iOS-only read the macOS build compiles out, and a block that
+  reads a weak self-reference after the assignment the path model stopped
+  following. `accepted-finding-without-a-why` joins the battery and answers
+  "explained" to everything; it fails three of the self-test assertions, so
+  the new gate is known to be able to fail.
+
+- **A changelog entry cannot lose its bullet twice.** Three entries had become
+  `- - `, which no markdown renderer reads as a list item, and they survived
+  two rounds because every changelog rule reads sentences, round numbers and
+  section headings -- never the bullet itself. `constraints-audit.py` now
+  refuses a doubled bullet, and because the file is clean today it also plants
+  one before it reports success: a rule that passes on a tree with nothing
+  wrong in it has proved nothing.
+
+- **The compile gate now reads the half of the app the fork edits least.**
   `scripts/compile-audit.py` walked `Limelight/macOS` and `Limelight/Stream`
   only, which is where most of this fork's work lands, and it reported 56 of
   56 as though that were the app. Discovery, pairing, the asset retriever, the

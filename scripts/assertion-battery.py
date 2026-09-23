@@ -649,6 +649,13 @@ NORMALISE_Y_HERE = "        CGFloat emulationDeltaY = HIDControllerMouseDeltaFor
 
 
 REASON_PRESERVATION = '    reasons = previous.get("_accepted_reasons") or DEFAULT_ACCEPTED_REASONS\n'
+# The gate that an accepted finding has to have a reason written down. Its anchor is
+# the whole body, because the mutation that matters is answering "explained" no
+# matter what the baseline actually holds.
+REASON_GATE = (
+    '    reasons = (baseline_document or {}).get("_accepted_reasons") or {}\n'
+    '    return unexplained_shapes(findings, reasons)\n'
+)
 
 
 def forget_the_written_reasons(text):
@@ -662,6 +669,21 @@ def forget_the_written_reasons(text):
     once(text, REASON_PRESERVATION, "the refresh keeping the reasons already on file")
     return text.replace(REASON_PRESERVATION,
                         "    reasons = DEFAULT_ACCEPTED_REASONS\n", 1)
+
+
+def explain_any_reason(text):
+    """Report every accepted finding as explained, whatever the baseline says.
+
+    The table of reasons shipped in the tree is what asked for this mutation: four
+    sentences were keyed by phrases that appear in none of the seven shapes they
+    were meant to cover, so all seven looked unexplained at once, the notice a
+    refresh prints could not single out the one that had really lost its reason,
+    and the self test stayed green because its own fixture keyed the phrases the way
+    the contract asks. Only a gate that fails when the reasons explain nothing sees
+    that.
+    """
+    once(text, REASON_GATE, "the rule that an accepted finding needs a reason on file")
+    return text.replace(REASON_GATE, "    return []\n", 1)
 
 
 def truncate_a_stick_frame(text):
@@ -1727,6 +1749,9 @@ MUTATIONS = [
     ("baseline-refresh-forgets-why", ANALYZER, forget_the_written_reasons,
      "regenerating the analyzer baseline deletes the reasons a person wrote for it",
      ANALYZER_GATE),
+     ("accepted-finding-without-a-why", ANALYZER, explain_any_reason,
+      "a tolerated warning nobody read passes as an audited one",
+      ANALYZER_GATE),
     ("unwired-gate", WORKFLOW, unplug_gate, "a gate exists that CI never runs"),
     ("upload-action-split-across-versions", WORKFLOW, drift_one_upload_action,
      "one workflow uses two versions of the same upload action", WF_GATE),

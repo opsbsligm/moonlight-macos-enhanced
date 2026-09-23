@@ -180,23 +180,44 @@ def load_baseline(path):
 # The reasons a person wrote for accepting a finding. Used only when there is no
 # baseline to read them from: a regeneration has to keep what is on file rather than
 # replace it with this.
+#
+# A key has to be a phrase inside the message shape it explains -- that is how the
+# audit finds the reason for a line of the baseline. A key that is not a phrase in a
+# shape explains nothing, and the audit says so instead of pretending otherwise: the
+# first version of this table had four sentences that matched none of the seven shapes
+# on file, so every accepted finding looked unexplained and the notice could not
+# distinguish the one that actually lost its reason.
 DEFAULT_ACCEPTED_REASONS = {
 
-        "NSNumber nil test read as a boolean conversion":
+        "potential leak of an object":
+            "clang does not manage a CoreFoundation reference held in an assign "
+            "property, so it sees a store into a non-owning slot and cannot follow "
+            "the release made in another method. IOHIDManagerRef is that case: "
+            "setupHidManager is called once from init, which has no path that "
+            "returns nil, and the manager is unscheduled, closed and CFRelease'd in "
+            "both tearDownHidManager and dealloc",
+        "incorrect decrement of the reference count":
+            "the same blind spot for an assign property: BackgroundColorView keeps a "
+            "CGColorRef by hand, retains the new one before releasing the old, and "
+            "never releases NULL",
+        "converting a pointer value of type x to a primitive boolean value":
             "the retain-count checker reports any NSNumber in a condition, "
             "including a nil test, and these sites compare or test for nil",
-        "VideoToolbox parameter documented as pass-NULL":
-            "Apple's VTDecompressionSessionCreate says pass NULL for the "
-            "default decoder; the header marks the parameter nonnull",
-        "CoreFoundation reference kept in an assign property":
-            "clang does not manage a CF typed property, so the checker sees a "
-            "store into a non-owning slot and cannot follow the release in "
-            "another method; BackgroundColorView retains before releasing and "
-            "never calls CFRetain or CFRelease with NULL, and HIDSupport "
-            "releases its manager both in tearDownHidManager and in dealloc",
-        "dead store":
-            "a value written and then overwritten or ignored: no behaviour "
-            "depends on it, and removing it changes nothing a test can see",
+        "null passed to a callee that requires a non-null":
+            "Apple's VTDecompressionSessionCreate says pass NULL for the default "
+            "decoder; the header marks the parameter nonnull",
+        "user-facing text should use localized string macro":
+            "wrapping the literal in MLString moved the translation behind a method "
+            "call, which is one the checker does not follow, so these are call sites "
+            "it cannot see through rather than unlocalised text",
+        "value stored to x":
+            "a write no later path reads: a default a following branch overwrites "
+            "(HIDSupport+Scroll), an argmax cursor whose last write only fed the "
+            "comparison it lost (MouseCapture), a layout cursor advanced past the "
+            "last control of a row (Diagnostics), an iOS-only read the macOS build "
+            "compiles out (ControllerSupport), and a block that reads a weak "
+            "self-reference after the assignment the analyzer stopped following "
+            "(StreamViewController)",
 }
 
 
@@ -219,6 +240,17 @@ def unexplained_shapes(findings, reasons):
     keys = [key.lower() for key in reasons]
     return sorted({shape for (_file, _checker, shape) in findings
                    if not any(key in shape.lower() for key in keys)})
+
+
+def reasons_missing(findings, baseline_document):
+    """The accepted findings no reason in the baseline explains.
+
+    This is the gate, as opposed to the notice a refresh prints: a baseline that
+    tolerates a class of warning nobody read is not an audit, it is a way of making
+    the analyzer quiet.
+    """
+    reasons = (baseline_document or {}).get("_accepted_reasons") or {}
+    return unexplained_shapes(findings, reasons)
 
 
 def save_baseline(path, findings, previous_document=None):
@@ -357,6 +389,16 @@ def self_test():
                   "potential leak of an object stored into X": "r",
                   "value stored to x": "r"}) == [],
               "a reason covering every shape leaves nothing pending")
+        check(reasons_missing(FIXTURE_BASELINE,
+                              {"_accepted_reasons": DEFAULT_ACCEPTED_REASONS}) == [],
+              "the reasons a fresh baseline starts with explain every shape it can hold")
+        check(reasons_missing(FIXTURE_BASELINE, None)
+              == sorted({shape for (_file, _checker, shape) in FIXTURE_BASELINE}),
+              "a baseline that explains nothing is reported as explaining nothing")
+        check(reasons_missing(FIXTURE_BASELINE,
+                              {"_accepted_reasons": {"potential leak of an object": "r"}})
+              == ["Value stored to X is never read"],
+              "one reason leaves the class it does not cover unexplained")
         check(load_baseline_document(os.path.join(tmp, "nothing.json")) is None,
               "a missing baseline is not read as an empty one")
         io.open(written_path, "w", encoding="utf-8").write("{not json")
@@ -401,6 +443,13 @@ if write_baseline:
 
 baseline = load_baseline(baseline_path)
 check(bool(baseline) or not findings, "the accepted finding baseline exists")
+
+unexplained = reasons_missing(findings, load_baseline_document(baseline_path))
+for shape in unexplained[:12]:
+    print("::error::an accepted finding has no reason on file: %s" % shape)
+check(not unexplained,
+      "every accepted finding has a reason on file" if not unexplained else
+      "%d accepted finding shape(s) no reason explains" % len(unexplained))
 added, grown, gone = compare(findings, baseline)
 for key, count in sorted(added.items())[:12]:
     print("::error file=%s::new static analyzer finding, %d instance(s): %s"
