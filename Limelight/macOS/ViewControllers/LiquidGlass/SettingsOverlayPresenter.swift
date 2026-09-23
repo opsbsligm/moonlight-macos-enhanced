@@ -237,6 +237,17 @@ private final class DismissBox {
             event.charactersIgnoringModifiers?.lowercased() == "w"
       else { return event }
       let target = event.window ?? NSApp.keyWindow
+      // The monitor is app local, so it sees Command+W in every window the app
+      // owns, not only the one the page is up in. Asking the presenter to close a
+      // page that is not there does nothing, and returning nil here still takes the
+      // key away: a stream window or a log browser then cannot be closed by the
+      // gesture it is bound to. The event goes back to AppKit unless this window is
+      // the one holding the page, which is the same question the accessibility
+      // bridge asks, so the filter and the bridge cannot drift apart.
+      let ownsGesture = MainActor.assumeIsolated {
+        SettingsOverlayPresenter.isPresented(in: target)
+      }
+      guard ownsGesture else { return event }
       MainActor.assumeIsolated {
         SettingsOverlayPresenter.dismiss(from: target)
       }

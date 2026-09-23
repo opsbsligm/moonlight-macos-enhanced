@@ -112,6 +112,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Command+W closed a stream window, and the settings page was not the
+  reason.** The filter that makes the gesture mean "go back" is an app local
+  event monitor, which sees the key in every window the app owns. It asked the
+  presenter to dismiss a page in the window the event named -- which does
+  nothing when that window has no page -- and then returned nil anyway, so the
+  key was gone either way and Window > Close stopped working in every window
+  except the one holding settings. The event now goes back to AppKit unless
+  that window is the one holding the page, asked through the same
+  `isSettingsPresentedInWindow:` the accessibility bridge already uses. The
+  launch probe asserts both halves: the window with the page owns the gesture,
+  and a window that never held a page does not report the gesture as its own.
 - **A missing host identifier would have crashed the page instead of matching nobody, and only a
   warning the local sweep could not run said so.** `TemporaryHost.h` declares `uuid` with no
   nullability annotation, so the importer hands Swift an implicitly unwrapped `String`, and
