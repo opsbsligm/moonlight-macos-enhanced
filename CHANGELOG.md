@@ -231,6 +231,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   old one deleted a line from the list, which under the real rules excludes
   nothing, and the new one writes the association Xcode writes when a folder
   joins a target, which makes 127 exclusions real at once and is caught.
+- **A cancelled job restored the tree and then died reporting a clean
+  restore.** The battery plants each mutation into the real file and puts it
+  back in a `finally`, and a SIGTERM runs the same restore on its way out,
+  emptying the table first. The `finally` then popped a key somebody else had
+  already restored, so a cancelled CI run ended in a traceback after the
+  sources were safely back. It now checks whether the tree is still its job to
+  put back.
 - **The warning rule left the build job's shell and came home to `scripts/build-warning-audit.py.**
   `local-gates.sh` takes its list of gates from the `python3 scripts/*.py` calls in the
   workflow, so a check written as `grep` was never on that list and never ran on a laptop.

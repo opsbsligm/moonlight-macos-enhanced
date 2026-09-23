@@ -1856,9 +1856,15 @@ def main():
             try:
                 failed, detail = gate_failed(gate)
             finally:
-                text = pending.pop(path)
-                with open(path, "w", encoding="utf-8") as handle:
-                    handle.write(text)
+                # A signal that lands while a mutation is planted runs the restore below,
+                # and the restore empties the table on its way out. By the time the frame
+                # unwinds here the tree is already back the way it was, so this has to
+                # notice that rather than insist on a key somebody else just restored --
+                # a cancelled CI job used to end in a traceback after a clean restore.
+                text = pending.pop(path, None)
+                if text is not None:
+                    with open(path, "w", encoding="utf-8") as handle:
+                        handle.write(text)
             caught = "CAUGHT " if failed else "MISSED "
             print("%s %-18s %s" % (caught, name, note))
             if failed and detail:
