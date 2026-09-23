@@ -705,6 +705,9 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
     // Taken before presenting: the presenter is about to rename the window, so a
     // baseline read afterwards is the page own title, which no close can return to.
     NSString *titleBeforePresent = window.title ?: @"";
+    // Read before the present, so one window answers for itself on both sides of the
+    // page: no page in it here, a page in it below.
+    BOOL presentedBeforePresent = [SettingsOverlayPresenter isSettingsPresentedInWindow:window];
 
     [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
     MLProbeSpin(1.0);
@@ -724,23 +727,16 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
     if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
         refuse(@"the presenter did not record settings as presented in the window it was given");
     }
-    // Command+W is filtered by a monitor that is app local, so the claim a player
-    // depends on has two halves: the page has to own the gesture in the window that
-    // holds it, and no other window may lose it. The first half is the check above.
-    // The second one needs a second window, because a build that answers nil for
-    // every Command+W closes a stream window just as neatly as it closes settings,
-    // and only a window that never held a page can tell those two builds apart.
-    NSWindow *untouchedWindow = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(-12000, -12000, 240, 140)
-                  styleMask:NSWindowStyleMaskTitled
-                    backing:NSBackingStoreBuffered
-                      defer:NO];
-    BOOL swallowedElsewhere = [SettingsOverlayPresenter isSettingsPresentedInWindow:untouchedWindow];
-    report[@"settingsReportedInWindowWithoutPage"] = @(swallowedElsewhere);
-    if (swallowedElsewhere) {
-        refuse(@"a window that was never given the settings page reports it as presented, so the Command+W filter swallows the gesture app wide");
+    // The filter that gives Command+W back is an app local monitor, so it sees the
+    // gesture in every window this app owns and may swallow it only where the page is
+    // up. It is asked of the same predicate the accessibility bridge uses, which is what
+    // makes this answer the whole claim: the monitor hands the event back to AppKit
+    // unless that predicate is true. A window that could not answer for a page before
+    // one was shown is the shape that closed a stream window instead of settings.
+    report[@"settingsReportedBeforePresent"] = @(presentedBeforePresent);
+    if (presentedBeforePresent) {
+        refuse(@"the window reported a settings page before one was presented, so the Command+W filter had nothing to hand back");
     }
-    [untouchedWindow close];
 
     NSMutableArray<NSView *> *addedViews = [NSMutableArray array];
     for (NSView *candidate in content.subviews) {

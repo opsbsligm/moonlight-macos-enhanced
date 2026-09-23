@@ -112,6 +112,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Command+W fix came with a probe that crashed the runner.** The first
+  version asked a second window whether it held a settings page, and the Debug
+  probe died on its way to the report, so the fix reached CI with every local
+  gate green -- green because the one gate that reads that page had been filed
+  under "needs a CI build artefact" and skipped. The assertion now asks one
+  window the same question on both sides of the page: no page in it before the
+  present, a page in it after. That is the predicate the filter consults, so
+  it is the answer that decides whether the gesture comes back, and the probe
+  records `settingsReportedBeforePresent` rather than only asserting it.
 - **Command+W closed a stream window, and the settings page was not the
   reason.** The filter that makes the gesture mean "go back" is an app local
   event monitor, which sees the key in every window the app owns. It asked the
