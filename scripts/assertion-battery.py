@@ -548,6 +548,7 @@ def grep_scanned(text):
 EVENT_RELEASE = "    CFRelease(cgEvent);\n"
 PATH_ANNOTATION = " CF_RETURNS_RETAINED {"
 HID_RELEASE = "        CFRelease(_hidManager);\n"
+DISPLAY_RELEASE = "        CVDisplayLinkRelease(_displayLink);\n"
 SWEEP_RULE = "def sweep_health(analyzed, source_count, scan_root=\".\"):\n"
 ADDED_RULE = "if key not in baseline"
 BUILD_VIA_SCRIPT = "else str(build_number())"
@@ -574,6 +575,11 @@ def unowned_path_helper(text):
 def hid_manager_outlives(text):
     once(text, HID_RELEASE, "HID manager release")
     return text.replace(HID_RELEASE, "", 1)
+
+
+def display_link_outlives(text):
+    once(text, DISPLAY_RELEASE, "display link release")
+    return text.replace(DISPLAY_RELEASE, "", 1)
 
 
 def blind_sweep(text):
@@ -1682,6 +1688,8 @@ MUTATIONS = [
     ("leaked-key-event", COLLECTION_VIEW, leak_the_key_event, "a gamepad press leaks its synthesized key event"),
     ("unowned-path-helper", APP_CELL, unowned_path_helper, "a path hands out +1 without saying so"),
     ("hid-manager-outlives", HID, hid_manager_outlives, "the HID manager survives the object its callbacks use"),
+    ("display-link-outlives", HID, display_link_outlives,
+     "the display link keeps firing into an object that is already gone"),
     ("blind-sweep", ANALYZER, blind_sweep, "an analyzer that did not run reads as clean", ANALYZER_GATE),
     ("accept-new-findings", ANALYZER, accept_new_findings, "a new finding class slips past the baseline", ANALYZER_GATE),
     ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),

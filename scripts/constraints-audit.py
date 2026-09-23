@@ -1442,6 +1442,21 @@ problem = ordered_once(dealloc_body, "IOHIDManagerUnscheduleFromRunLoop(",
 check(problem is None, "the HID manager is unscheduled before it is released"
       if problem is None else "the dealloc net is not ordered: " + problem)
 
+# The display link is the same shape of object one property later: an assign CFReference
+# plus a C callback whose context is this object. Its callback runs on the display link's
+# own thread and converts that context back into a strong reference without asking, so a
+# link still running after the object is gone is a crash waiting for a frame rather than
+# a leak. Every path that drops an HIDSupport stops it through tearDownHidManager today,
+# which is why this is a net and not a repair -- and a net is only worth having because
+# "every path" is a claim about code that has not been written yet.
+check("CVDisplayLinkRelease(_displayLink);" in dealloc_body,
+      "the display link cannot outlive the object its callback thread points into")
+stopped_first = ordered_once(dealloc_body, "CVDisplayLinkStop(_displayLink);",
+                             "CVDisplayLinkRelease(_displayLink);",
+                             "stopping the display link")
+check(stopped_first is None, "the display link is stopped before it is released"
+      if stopped_first is None else "the display link net is not ordered: " + stopped_first)
+
 # Every path that stops a stream relies on tearing the keyboard state down
 # first, because -releaseAllHeldKeys needs a live input context to tell the host
 # to let go. All four call sites do that today, and -beginStopStreamIfNeededWith

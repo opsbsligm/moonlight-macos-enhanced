@@ -868,6 +868,21 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
 
 - (void)dealloc {
     [self tearDownCoreHIDMouseDriver];
+    // The display link is the same shape of object as the manager below: a CoreFoundation
+    // reference that an assign property does not own, and a C callback whose context is
+    // this object. It is worse in one respect -- that callback runs on the display link's
+    // own thread and turns its context straight back into a strong reference without
+    // asking whether anybody still holds the object. The stream paths stop it through
+    // tearDownHidManager before dropping their reference, which leaves this NULL; this is
+    // the net for every other path. It is not a thread-safety proof: what keeps the
+    // callback honest is that the teardown happens before the last release, and today
+    // every path that drops an HIDSupport goes through that teardown first.
+    if (_displayLink != NULL) {
+        CVDisplayLinkStop(_displayLink);
+        CVDisplayLinkRelease(_displayLink);
+        _displayLink = NULL;
+    }
+
     // The manager is a CoreFoundation reference that this object owns by hand:
     // clang does not manage a CF typed property, so nothing releases it when we
     // go away. Leaving it alive is worse than the leak, because it is scheduled

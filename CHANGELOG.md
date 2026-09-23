@@ -309,6 +309,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The display link got the net the HID manager already had.** `HIDSupport`
+  releases its CoreFoundation manager in `dealloc`, because four run loop
+  callbacks hold that object as their context and a manager left scheduled is
+  worse than the leak. Its display link is the same shape one property later
+  -- a CF reference an assign property does not own, and a C callback whose
+  context is this object -- and had no such net, because the only stop it has
+  lives in `tearDownHidManager`. That still covers the app today, and this
+  round checked it rather than assumed it: an `HIDSupport` is built once in
+  `prepareForStreaming`, the one call site that rebuilds it stops the previous
+  one first, and the stream controller's `dealloc` stops the last one, so no
+  path drops a running link. So nothing player-visible is repaired here; what
+  changed is that a claim about code that has not been written yet is no
+  longer load-bearing. The callback is the riskier of the two -- it runs on
+  the display link's own thread and converts its context straight back into a
+  strong reference without asking whether anybody still holds the object.
+  `constraints-audit.py` now refuses the release missing or out of order, and
+  `display-link-outlives` joins the battery: taking the release out turns both
+  assertions red, and putting it back turns them green.
+
 - **An accepted analyzer warning now has to carry the reason it was
   accepted.** `scripts/analyzer-baseline.json` keeps sentences explaining why
   every tolerated finding is tolerated, and `analyzer-audit.py` pairs a reason
