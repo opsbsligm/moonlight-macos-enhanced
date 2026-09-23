@@ -1734,6 +1734,178 @@ check(late_only == ["plantedPollTimer"] and not early_too and not single_shot,
       "the reachable stop rule answers wrong: late=%s early=%s one-shot=%s"
       % (late_only, early_too, single_shot))
 
+# Block observers are the fourth handle family, and the one whose owner is wrong: the
+# notification centre holds the block, so the object that registered it is not the thing
+# deciding whether it keeps answering. scripts/notification-observer-tests.py measured
+# what that costs. One post reaches every block registered for a name, so two registrations
+# answer one event twice. Writing a fresh token over an old one leaves the old block
+# registered and unreachable, because the owner has nothing left to name it with. And
+# -removeObserver:name:object: withdraws a selector observer while leaving a tokenless
+# block in place, so a token that was never stored can never be withdrawn.
+#
+# The premise that turns those facts into a defect is that a registration can run twice.
+# It measured that too: the same view controller heard -viewDidAppear once per show across
+# three parent changes, and heard it again after its window was hidden and shown again. Two
+# shipped controllers registered block observers on exactly that path, which is what this
+# rule now refuses. -viewDidLoad is not on the list because nothing measured it, and a rule
+# that refuses a path nobody watched is a rule somebody has to work around later.
+
+REPEATING_LIFECYCLE = re.compile(r"^[-+]\s*\(\s*void\s*\)\s*(viewDidAppear|viewWillAppear)\b")
+BLOCK_REGISTRATION = re.compile(r"addObserverForName:(?:.|\n)*?usingBlock:")
+TOKEN_WITHDRAWAL = re.compile(r"removeObserver:|\[\s*(?:self|weakSelf)\s+\w*[Rr]emove\w*\b")
+
+
+def statement_span(text, index):
+    """The whole message send an observer registration is part of.
+
+    A registration spans lines in this tree -- the receiver sits on the line above the
+    name -- so reading one line either way would call a stored token a discarded one. The
+    span runs back to the last statement boundary and forward to the first semicolon, which
+    is short of a parser but enough to answer the only question asked here: does anything on
+    this statement keep the return value.
+    """
+    end = text.find(";", index)
+    if end < 0:
+        end = len(text)
+    start = index
+    while start > 0 and text[start - 1] not in ";{}\n":
+        start -= 1
+    if not text[start:index].strip():
+        head = index
+        while head > 0 and text[head - 1] not in ";{}":
+            head -= 1
+        start = head
+    return text[start:end]
+
+
+def registration_is_stored(text, index):
+    """Whether the token a registration returns is kept by something."""
+    span = statement_span(text, index)
+    before = span[:span.find("addObserverForName:")]
+    return re.search(r"(?<![=!<>])=(?!=)|\breturn\b", before) is not None
+
+
+def observers_registered_twice(source_path, text):
+    """Block observers registered on a lifecycle path AppKit runs again."""
+    problems = []
+    for body in method_bodies(text):
+        lifecycle = REPEATING_LIFECYCLE.match(body.split("\n")[0])
+        if lifecycle is None:
+            continue
+        offset = text.find(body)
+        for match in BLOCK_REGISTRATION.finditer(body):
+            if TOKEN_WITHDRAWAL.search(body[:match.start()]):
+                continue
+            line = "%s:%d" % (os.path.basename(source_path),
+                              text.count("\n", 0, max(0, offset) + match.start()) + 1)
+            problems.append("%s registers a block observer in -%s without withdrawing the"
+                            " token it already holds" % (line, lifecycle.group(1)))
+    return problems
+
+
+def observers_nobody_can_withdraw(source_path, text):
+    """Block observers whose token was thrown away on the spot."""
+    problems = []
+    for match in re.finditer(r"addObserverForName:", text):
+        if registration_is_stored(text, match.start()):
+            continue
+        problems.append("%s:%d keeps no token for a block observer"
+                        % (os.path.basename(source_path), text.count("\n", 0, match.start()) + 1))
+    return problems
+
+
+twice_registered = [problem
+                    for source_path, text in compiled_sources(root)
+                    for problem in observers_registered_twice(source_path, text)]
+check(not twice_registered,
+      "no block observer is registered on a path AppKit runs a second time without removing"
+      " the one already held" if not twice_registered else
+      "a repeated pass registered a second observer for the same event: "
+      + "; ".join(twice_registered[:4]))
+
+never_withdrawn = [problem
+                   for source_path, text in compiled_sources(root)
+                   for problem in observers_nobody_can_withdraw(source_path, text)]
+check(not never_withdrawn,
+      "every block observer keeps the token it has to be removed with"
+      if not never_withdrawn else
+      "nothing can unregister these, because -removeObserver: does not reach a block: "
+      + "; ".join(never_withdrawn[:4]))
+
+planted_repeat_registration = (
+    "- (void)viewDidAppear\n"
+    "{\n"
+    "    __weak typeof(self) weakSelf = self;\n"
+    "    _plantedObserver = [[NSNotificationCenter defaultCenter]"
+    " addObserverForName:@\"PlantedNotification\"\n"
+    "        object:nil queue:nil usingBlock:^(NSNotification *note) { [weakSelf tick]; }];\n"
+    "}\n")
+planted_withdrawn_registration = (
+    "- (void)viewDidAppear\n"
+    "{\n"
+    "    __weak typeof(self) weakSelf = self;\n"
+    "    if (_plantedObserver != nil) {\n"
+    "        [[NSNotificationCenter defaultCenter] removeObserver:_plantedObserver];\n"
+    "        _plantedObserver = nil;\n"
+    "    }\n"
+    "    _plantedObserver = [[NSNotificationCenter defaultCenter]"
+    " addObserverForName:@\"PlantedNotification\"\n"
+    "        object:nil queue:nil usingBlock:^(NSNotification *note) { [weakSelf tick]; }];\n"
+    "}\n")
+planted_removal_through_a_helper = (
+    "- (void)viewDidAppear\n"
+    "{\n"
+    "    __weak typeof(self) weakSelf = self;\n"
+    "    [self removePlantedObservers];\n"
+    "    _plantedObserver = [[NSNotificationCenter defaultCenter]"
+    " addObserverForName:@\"PlantedNotification\"\n"
+    "        object:nil queue:nil usingBlock:^(NSNotification *note) { [weakSelf tick]; }];\n"
+    "}\n")
+planted_view_did_load = planted_repeat_registration.replace("viewDidAppear", "viewDidLoad")
+planted_discarded_token = (
+    "- (void)startListening\n"
+    "{\n"
+    "    [[NSNotificationCenter defaultCenter] addObserverForName:@\"PlantedNotification\"\n"
+    "        object:nil queue:nil usingBlock:^(NSNotification *note) { [self tick]; }];\n"
+    "}\n")
+planted_stored_token = (
+    "- (void)startListening\n"
+    "{\n"
+    "    _plantedObserver = [[NSNotificationCenter defaultCenter]"
+    " addObserverForName:@\"PlantedNotification\"\n"
+    "        object:nil queue:nil usingBlock:^(NSNotification *note) { [self tick]; }];\n"
+    "}\n")
+planted_stored_on_the_line_above = (
+    "- (void)startListening\n"
+    "{\n"
+    "    _plantedObserver = [[NSNotificationCenter defaultCenter]\n"
+    "        addObserverForName:@\"PlantedNotification\"\n"
+    "        object:nil queue:nil usingBlock:^(NSNotification *note) { [self tick]; }];\n"
+    "}\n")
+
+repeat_tripped = observers_registered_twice("planted.m", planted_repeat_registration)
+repeat_cleaned = observers_registered_twice("planted.m", planted_withdrawn_registration)
+helper_cleaned = observers_registered_twice("planted.m", planted_removal_through_a_helper)
+load_view = observers_registered_twice("planted.m", planted_view_did_load)
+check(len(repeat_tripped) == 1 and not repeat_cleaned and not helper_cleaned
+      and not load_view,
+      "a block observer registered on a second pass without a withdrawal trips the rule"
+      " above, and a withdrawal either way clears it"
+      if len(repeat_tripped) == 1 and not repeat_cleaned and not helper_cleaned
+      and not load_view else
+      "the repeated registration rule answers wrong: raw=%s withdrawn=%s helper=%s"
+      " did-load=%s" % (len(repeat_tripped), repeat_cleaned, helper_cleaned, load_view))
+
+discarded_tripped = observers_nobody_can_withdraw("planted.m", planted_discarded_token)
+stored_cleaned = observers_nobody_can_withdraw("planted.m", planted_stored_token)
+split_cleaned = observers_nobody_can_withdraw("planted.m", planted_stored_on_the_line_above)
+check(len(discarded_tripped) == 1 and not stored_cleaned and not split_cleaned,
+      "a block observer whose token is thrown away trips the rule above, whether the"
+      " assignment sat on the same line or the one before"
+      if len(discarded_tripped) == 1 and not stored_cleaned and not split_cleaned else
+      "the discarded token rule answers wrong: discarded=%s stored=%s split=%s"
+      % (discarded_tripped, stored_cleaned, split_cleaned))
+
 dealloc_body = method_body(hid_all, "- (void)dealloc")
 check("CFRelease(_hidManager);" in dealloc_body,
       "the HID manager cannot outlive the object its run loop callbacks point into")
@@ -2045,6 +2217,11 @@ DRIVEN_BY = {
     # them against a real AppKit, so it needs the macOS job's clang, SDK and run loop, and a
     # step of its own needs the `workflow` scope the pushing credential does not carry.
     "timer-registration-tests.py": "scaling-output-evidence-tests.py",
+    # One gate later and the shape repeats: block observers are counted against a real
+    # AppKit run loop and a real window, so this harness needs the macOS job's clang, SDK
+    # and NSApplication, and a step of its own needs the `workflow` scope this pushing
+    # credential does not carry.
+    "notification-observer-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

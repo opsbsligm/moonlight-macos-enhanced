@@ -833,6 +833,24 @@ def run_timer_registration():
           "the timer registration gate failed:\n" + chr(10).join(tail))
 
 
+def run_notification_observers():
+    """Ride the block observer measurement on a macOS job, beside the timer one.
+
+    The gate compiles and runs block observers and a real NSWindow against a real AppKit,
+    so it needs a clang, an SDK and a run loop, and a step of its own would need the
+    `workflow` scope this pushing credential does not carry. constraints-audit.py's
+    DRIVEN_BY records that, and refuses the entry if the call below ever stops being
+    reachable from this driver's finish.
+    """
+    ran = subprocess.run([sys.executable, "scripts/notification-observer-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "a block observer answers once per event and can be taken back by token"
+          if ran.returncode == 0 else
+          "the notification observer gate failed:\n" + chr(10).join(tail))
+
+
 def run_command_to_control():
     """Ride the Command mapping gate on a macOS job, the way its siblings do.
 
@@ -912,6 +930,7 @@ def finish():
     run_settings_rebuild_passthrough()
     run_gamepad_menu_gesture()
     run_timer_registration()
+    run_notification_observers()
     run_command_to_control()
     run_settings_callback_ownership()
     run_sas_preset()

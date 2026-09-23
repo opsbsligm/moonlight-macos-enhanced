@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Block notification observers are now counted against a real AppKit,
+  because the owner of one is not the object that registered it.**
+  `scripts/notification-observer-tests.py` compiles observers that differ only
+  in the shape the shipped code uses and runs them with a real window: one
+  post reaches every block registered for its name; overwriting a token leaves
+  the previous block registered and unreachable; withdrawing the token first
+  ends at exactly one observer, and withdrawing by token then posts nothing;
+  `-removeObserver:name:object:` removes a selector observer and leaves a
+  tokenless block in place; a strongly capturing block keeps its owner alive
+  and callable, so a stop parked in that owner's `-dealloc` cannot run, while
+  a weakly capturing one releases it. It also counts `-viewDidAppear` reaching
+  one view controller three times over three parent changes and again after a
+  hide and show, which is the path the fix above rests on. Two `constraints-
+  audit.py` rules read the sources: a block observer registered in
+  `-viewDidAppear` without withdrawing the token already held, and a
+  registration that stores no token at all. Both are planted both ways -- each
+  refusal is shown to fire on a planted file and to clear on the shipped
+  shape, including one stored on the line above. `-viewDidLoad` is
+  deliberately outside the first rule: nothing measured it, and a rule that
+  refuses a path nobody watched is one somebody has to work around later. It
+  rides `scaling-output-evidence-tests.py` because a step of its own needs a
+  `workflow` scope this credential does not carry.
+
 
 - **A settings callback is now compiled to find out whether its model dies.**
   `scripts/settings-callback-ownership-tests.py` cuts the two closures out of
