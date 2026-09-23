@@ -1215,19 +1215,33 @@ check(".disabled(!settingsModel.frameInterpolationControlIsEnabled)" in video_pa
 # caller in another file leaked one per shadow refresh), and the HID manager
 # outliving the object that its four run loop callbacks point into.
 def method_bodies(source):
-    """Every method definition with its body, for rules that live per method."""
-    for match in re.finditer(r"^[-+]\s*\([^\n]*?\{", source, re.M):
-        brace = source.index("{", match.start())
-        depth, index = 0, brace
-        while index < len(source):
-            if source[index] == "{":
+    """Every method definition with its body, for rules that live per method.
+
+    This tree writes the opening brace two ways. Counted on the sources as they stand:
+    1315 definitions put it on the signature's own line and 244 put it on the next one, so a
+    reader that asked for the first style reported on three quarters of the file it believed
+    it had read -- and said nothing about the rest. That is the failure mode this repository
+    keeps finding rather than the one it sets out to find: a rule that is quietly blind reads
+    exactly like a rule that is quietly satisfied. So both styles are read here. A signature
+    that runs on into a `;` is a declaration rather than a definition, which is what the
+    class extensions in these files carry, and it is skipped rather than answered.
+    """
+    for match in re.finditer(r"^[-+]\s*\(", source, re.M):
+        start, index = match.start(), match.start()
+        while index < len(source) and source[index] not in "{;":
+            index += 1
+        if index >= len(source) or source[index] == ";":
+            continue
+        depth, brace = 0, index
+        while brace < len(source):
+            if source[brace] == "{":
                 depth += 1
-            elif source[index] == "}":
+            elif source[brace] == "}":
                 depth -= 1
                 if depth == 0:
                     break
-            index += 1
-        yield source[match.start():index + 1]
+            brace += 1
+        yield source[start:brace + 1]
 
 
 # A Debug-only Swift file is only Debug-only if the Swift compiler is told the
@@ -1413,18 +1427,61 @@ def compiled_sources(scan_root):
 
 
 CREATED = re.compile(r"(\w+)\s*=\s*CG\w*(?:Create|Copy)\w*\(")
-unowned = []
-for source_path, text in compiled_sources(root):
+
+
+def unowned_creations(source_path, text):
+    """CoreFoundation references this file takes without saying who owes them back.
+
+    A Create or Copy has three honest endings. It is released before the method that took it
+    ends; it is returned by a method that says it hands over a +1; or it is stored where the
+    object keeps it -- an ivar -- with a release somewhere else in the same file. The third is
+    what the renderer's colour spaces do, one teardown per prepare, and no rule here had ever
+    seen that ending, because those methods open their brace on the line after the signature
+    and the reader used to stop at the signature. They appeared as three unaccounted
+    references the moment the other style became readable, which is the same blind spot seen
+    from the side it hurts.
+    """
+    problems = []
     for body in method_bodies(text):
         signature = body.split("\n")[0]
         for name in set(CREATED.findall(body)):
             released = re.search(r"\w*Release\(\s*%s\s*\)" % re.escape(name), body)
             returned = re.search(r"return\s+%s\s*;" % re.escape(name), body)
-            if not released and not (returned and "CF_RETURNS_RETAINED" in signature):
-                unowned.append("%s: %s is created and then neither released nor "
-                               "declared owned" % (os.path.relpath(source_path, root), name))
+            kept = (name.startswith("_")
+                    and re.search(r"\w*Release\(\s*%s\s*\)" % re.escape(name), text))
+            if not released and not kept and not (returned and "CF_RETURNS_RETAINED" in signature):
+                problems.append("%s: %s is created and then neither released nor "
+                                "declared owned" % (os.path.relpath(source_path, root), name))
+    return problems
+
+
+unowned = [problem
+           for source_path, text in compiled_sources(root)
+           for problem in unowned_creations(source_path, text)]
 check(not unowned, "every CoreFoundation reference created here is accounted for"
       if not unowned else "; ".join(unowned[:3]))
+
+planted_stored_space = ("- (void)keepThePlantedColorSpace\n"
+                        "{\n"
+                        "    _plantedColorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);\n"
+                        "}\n"
+                        "- (void)releaseThePlantedColorSpace\n"
+                        "{\n"
+                        "    CGColorSpaceRelease(_plantedColorSpace);\n"
+                        "    _plantedColorSpace = NULL;\n"
+                        "}\n")
+planted_dropped_space = ("- (void)keepThePlantedColorSpace\n"
+                         "{\n"
+                         "    _plantedColorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);\n"
+                         "}\n")
+kept_space = unowned_creations("planted.m", planted_stored_space)
+dropped_space = unowned_creations("planted.m", planted_dropped_space)
+check(not kept_space and len(dropped_space) == 1,
+      "a reference an object stores and releases elsewhere in the file is accounted for,"
+      " and one it stores and never releases is not"
+      if not kept_space and len(dropped_space) == 1 else
+      "the stored-reference pair answers wrong: kept=%s dropped=%s"
+      % (kept_space, dropped_space))
 
 unannotated = ["%s: %s" % (os.path.relpath(source_path, root), body.split("\n")[0].strip())
                for source_path, text in compiled_sources(root)
@@ -1501,6 +1558,163 @@ check(not unowned_properties,
 check(unreleased_cf_properties(["@property (nonatomic) CFReadStreamRef plantedStream;"])
       == ["CFReadStreamRef plantedStream"],
       "a CF property nobody releases trips the rule above")
+
+# Repeating timers are a third handle family that fails silently, and silently in a
+# way the two above do not: nothing leaks, the poll just stops answering.
+#
+# A repeating timer fires only while its run loop runs in a mode it was added to.
+# +scheduledTimerWithTimeInterval: adds to the current run loop in NSDefaultRunLoopMode,
+# and this app leaves that mode mid-session by name: a modal session runs in
+# NSModalPanelRunLoopMode and a menu or a window drag in NSEventTrackingRunLoopMode.
+# The counts are scripts/timer-registration-tests.py -- 15 ticks in 300ms for a poll
+# added to the main run loop in the common modes, 0 for one left in the default mode,
+# both measured against the same 15 while the loop runs in the default mode.
+
+REPEATING = re.compile(r"repeats:YES")
+NAMED_TIMER = re.compile(r"([*]?[A-Za-z_][\w.]*)\s*=\s*$")
+
+
+def unregistered_repeating_timers(source_path, text):
+    """Repeating timers that cannot fire in every mode the app runs its loop in."""
+    problems = []
+    for match in REPEATING.finditer(text):
+        head = text.rfind("[NSTimer", 0, match.start())
+        line = "%s:%d" % (os.path.basename(source_path), text.count("\n", 0, head) + 1)
+        if head == -1:
+            problems.append("%s repeats:YES with no [NSTimer creation in front of it" % line)
+            continue
+        if "scheduledTimerWithTimeInterval" in text[head:match.end()]:
+            problems.append("%s schedules a repeating timer, which registers it in one"
+                            " run loop mode" % line)
+            continue
+        named = NAMED_TIMER.search(text[max(0, head - 120):head])
+        following = text[match.end():match.end() + 500]
+        if named is None:
+            problems.append("%s builds a repeating timer that nothing names" % line)
+        elif not (re.search(r"addTimer:\s*%s\b" % re.escape(named.group(1).lstrip("*")),
+                            following)
+                  and "NSRunLoopCommonModes" in following):
+            problems.append("%s adds a repeating timer outside the common modes" % line)
+    return problems
+
+
+mode_limited = [problem
+                for source_path, text in compiled_sources(root)
+                for problem in unregistered_repeating_timers(source_path, text)]
+check(not mode_limited,
+      "every repeating timer is added to a run loop in the modes this app leaves the"
+      " default one for" if not mode_limited else
+      "a repeating timer cannot fire in a mode it was not added to: "
+      + "; ".join(mode_limited[:4]))
+
+planted_scheduled_poll = ("- (void)startThePlantedPoll\n"
+                         "{\n"
+                         "    _plantedPollTimer = [NSTimer scheduledTimerWithTimeInterval:1.0\n"
+                         "                                                          target:self\n"
+                         "                                                        selector:@selector(tick:)\n"
+                         "                                                        userInfo:nil\n"
+                         "                                                         repeats:YES];\n"
+                         "}\n")
+planted_common_poll = ("- (void)startThePlantedPoll\n"
+                       "{\n"
+                       "    NSTimer *plantedPollTimer = [NSTimer timerWithTimeInterval:1.0\n"
+                       "      repeats:YES block:^(NSTimer *timer) { }];\n"
+                       "    [[NSRunLoop mainRunLoop] addTimer:plantedPollTimer\n"
+                       "                              forMode:NSRunLoopCommonModes];\n"
+                       "}\n")
+scheduled_tripped = unregistered_repeating_timers("planted.m", planted_scheduled_poll)
+common_cleaned = unregistered_repeating_timers("planted.m", planted_common_poll)
+check(len(scheduled_tripped) == 1 and not common_cleaned,
+      "a repeating timer left in one run loop mode trips the rule above"
+      if len(scheduled_tripped) == 1 and not common_cleaned else
+      "the run loop mode rule does not see the poll it was written for")
+
+# The other half of the same family is who a repeating timer outlives. The run loop
+# retains a timer that repeats, and that timer retains the object it names as its
+# target, so an object polled by its own repeating timer cannot reach dealloc to stop
+# it -- scripts/timer-registration-tests.py measured the target of one alive and still
+# ticking after the last reference outside the timer went away. A stop that lives only
+# in dealloc is therefore not a stop; it is a claim about a path that does not run.
+
+CREATED_TIMER = re.compile(r"(?<![\w*.])([A-Za-z_]\w*(?:\.[A-Za-z_]\w+)?)\s*=\s*\[NSTimer")
+STOPPED_TIMER = re.compile(r"\[(?:self\.|_)?(\w*[Tt]imer\w*)\s+invalidate\]")
+
+
+def held_timer_names(text):
+    """Names an object keeps a repeating timer under.
+
+    The obvious shape is `self.statsTimer = [NSTimer ...]`. The shape that matters just as
+    much is the one the fix for the pointer poll uses: build the timer as a local so the
+    block can name it, hand it to the run loop, then store it -- `_mouseTimer = pointerPoll;`.
+    Reading only the creation would call that local invisible and let the object hold a
+    repeating timer with no name attached, which is the case a stop path has to be found for.
+    """
+    held = set()
+    for name in CREATED_TIMER.findall(text):
+        held.add(name[5:] if name.startswith("self.") else name.lstrip("_"))
+    for match in REPEATING.finditer(text):
+        head = text.rfind("[NSTimer", 0, match.start())
+        named = NAMED_TIMER.search(text[max(0, head - 120):head]) if head != -1 else None
+        if named is None or "*" not in named.group(1) and not named.group(1).startswith("*"):
+            continue          # only a local, `NSTimer *name = `, hands a timer to a store
+        local = named.group(1).lstrip("*")
+        stored = re.search(r"(?<![\w*.])([A-Za-z_]\w*(?:\.[A-Za-z_]\w+)?)\s*=\s*%s\s*;"
+                           % re.escape(local), text[match.end():match.end() + 800])
+        if stored is not None:
+            name = stored.group(1)
+            held.add(name[5:] if name.startswith("self.") else name.lstrip("_"))
+    return held
+
+
+def timers_without_a_reachable_stop(pairs):
+    """Timers an owner holds, stopped nowhere but in its own dealloc."""
+    held, stopped_early, stopped_late = set(), set(), set()
+    for source_path, text in pairs:
+        held.update(held_timer_names(text))
+        for body in method_bodies(text):
+            stopped = STOPPED_TIMER.findall(body)
+            if not stopped:
+                continue
+            if body.split("\n")[0].startswith("- (void)dealloc"):
+                stopped_late.update(stopped)
+            else:
+                stopped_early.update(stopped)
+    return sorted(name for name in held if name not in stopped_early)
+
+
+never_stopped = timers_without_a_reachable_stop(list(compiled_sources(root)))
+check(not never_stopped,
+      "an object holding a repeating timer stops it on a path that can run"
+      if not never_stopped else
+      "only a dealloc that cannot run stops: " + ", ".join(never_stopped[:4]))
+
+planted_late_stop = ("- (void)startThePlantedPoll\n"
+                     "{\n"
+                     "    _plantedPollTimer = [NSTimer timerWithTimeInterval:1.0 repeats:YES\n"
+                     "                              block:^(NSTimer *timer) { }];\n"
+                     "    [[NSRunLoop mainRunLoop] addTimer:_plantedPollTimer\n"
+                     "                              forMode:NSRunLoopCommonModes];\n"
+                     "}\n"
+                     "- (void)dealloc\n"
+                     "{\n"
+                     "    [_plantedPollTimer invalidate];\n"
+                     "}\n")
+planted_early_stop = ("- (void)stopThePlantedPoll\n"
+                      "{\n"
+                      "    [_plantedPollTimer invalidate];\n"
+                      "    _plantedPollTimer = nil;\n"
+                      "}\n"
+                      "- (void)dealloc\n"
+                      "{\n"
+                      "    [_plantedPollTimer invalidate];\n"
+                      "}\n")
+late_only = timers_without_a_reachable_stop([("planted.m", planted_late_stop)])
+early_too = timers_without_a_reachable_stop([("planted.m", planted_early_stop)])
+check(late_only == ["plantedPollTimer"] and not early_too,
+      "a repeating timer stopped only by a dealloc that cannot run trips the rule above"
+      if late_only == ["plantedPollTimer"] and not early_too else
+      "the reachable stop rule does not see the poll it was written for: %s / %s"
+      % (late_only, early_too))
 
 dealloc_body = method_body(hid_all, "- (void)dealloc")
 check("CFRelease(_hidManager);" in dealloc_body,
@@ -1809,6 +2023,10 @@ DRIVEN_BY = {
     # that reason and stays for a better one: this is the gate that says the weak capture
     # above it is holding up a real cycle rather than satisfying a spelling rule.
     "settings-callback-ownership-tests.py": "scaling-output-evidence-tests.py",
+    # Same arrangement again, one gate later: this one compiles four repeating timers and runs
+    # them against a real AppKit, so it needs the macOS job's clang, SDK and run loop, and a
+    # step of its own needs the `workflow` scope the pushing credential does not carry.
+    "timer-registration-tests.py": "scaling-output-evidence-tests.py",
 }
 named_by_a_step = {name for name in gate_names
                    if re.search(r"scripts/" + re.escape(name), pipeline) is not None}

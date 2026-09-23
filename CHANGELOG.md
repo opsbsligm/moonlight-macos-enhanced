@@ -126,6 +126,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The audit's method reader could not see a method whose brace was on the
+  next line.** `method_bodies` asked for the signature and its `{` on one
+  line, and the tree writes both ways: 1315 definitions put the brace on the
+  signature's line and 244 put it on the line after. Every rule that lives per
+  method had been reporting on the first group and calling the second group
+  clean -- including the IOKit iterator rule added the round before, which is
+  the same blind spot one day old. It surfaced the wrong way round: the moment
+  the reader could see the other style, the CoreFoundation rule reported three
+  colour spaces in `VideoDecoderRenderer.m` as taken and never accounted for.
+  Reading them says the code is right -- each `prepare` calls its own
+  `teardown` first, which releases the previous value and clears it -- and the
+  rule was wrong, because it knew two honest endings for a Create (release
+  before the method ends, return from a method annotated
+  `CF_RETURNS_RETAINED`) and colour spaces have a third: store it in an ivar
+  and release it in the teardown. That ending is now accepted when the same
+  file really does release that ivar, and it comes with a planted pair instead
+  of a promise: stored-and-released reads clean, stored-and-never-released
+  reads dirty, and both are asserted every run. The whole audit was then re-
+  read against the fixed reader rather than assumed: 0 failures, and the only
+  findings it produced were the three above.
+
 - **The gamepad pointer stopped answering whenever the Mac took over the run
   loop.** The pointer poll was scheduled, and scheduling registers a repeating
   timer in `NSDefaultRunLoopMode` only. A modal session runs in
@@ -334,6 +355,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floor.
 
 ### Maintenance
+
+- **Two timer rules, and the measurement that says they are not guesses.**
+  `constraints-audit.py` now refuses a repeating timer that names one run loop
+  mode -- which includes `+scheduledTimerWithTimeInterval:` -- and refuses a
+  repeating timer whose only stop is its owner's `dealloc`, which is not a
+  stop, because a repeating timer keeps the object it polls alive and that
+  object therefore cannot reach the code that would end it. Both land with
+  zero exemptions: six repeating timers exist, all six now name the common
+  modes, and five of them are stopped on a path that runs. Each carries its
+  own planted counter-example, and the measurement behind both is
+  `scripts/timer-registration-tests.py`, which compiles and runs the shapes
+  rather than quoting the docs. Three mutations join the battery: putting the
+  pointer poll back into one mode, taking out its stop, and -- aimed at the
+  new harness itself -- having it drain the default mode and report the count
+  as the modal one. 128 mutations become 131.
 
 - **Two more kinds of handle the app borrows from the system now have to give
   it back.** An IOKit registry iterator and a CoreFoundation-typed property

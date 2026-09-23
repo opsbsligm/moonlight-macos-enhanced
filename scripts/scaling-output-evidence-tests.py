@@ -816,6 +816,23 @@ def run_settings_callback_ownership():
 
 
 
+def run_timer_registration():
+    """Ride the run loop timer measurement on a macOS job, like the gates above it.
+
+    The gate compiles and runs four repeating timers against a real AppKit, so it needs a
+    clang, an SDK and a run loop, and a step of its own would need the `workflow` scope this
+    pushing credential does not carry. constraints-audit.py's DRIVEN_BY records that, and
+    refuses the entry if the call below ever stops being reachable from this driver's finish.
+    """
+    ran = subprocess.run([sys.executable, "scripts/timer-registration-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "a repeating timer fires in every mode the app runs its loop in during a stream"
+          if ran.returncode == 0 else
+          "the timer registration gate failed:\n" + chr(10).join(tail))
+
+
 def run_command_to_control():
     """Ride the Command mapping gate on a macOS job, the way its siblings do.
 
@@ -894,6 +911,7 @@ def finish():
     run_hdr_sdr_exposure()
     run_settings_rebuild_passthrough()
     run_gamepad_menu_gesture()
+    run_timer_registration()
     run_command_to_control()
     run_settings_callback_ownership()
     run_sas_preset()

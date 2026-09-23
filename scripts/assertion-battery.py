@@ -81,6 +81,11 @@ SPACE_HELD_GATE = (os.path.join(root, "scripts", "space-transition-held-key-test
 NAVIGATION_GATE = (os.path.join(root, "scripts", "controller-key-navigation-tests.py"), [])
 VIDEO_GATE = (os.path.join(root, "scripts", "video-enhancement-tests.py"), [])
 ASPECT_GATE = (os.path.join(root, "scripts", "aspect-fit-presentation-tests.py"), [])
+# The run loop timer measurement is its own harness: it compiles four repeating timers and
+# asks AppKit which of them fired, so it is the only gate that can notice the probe having
+# stopped asking the question it was written to ask.
+TIMER_HARNESS = os.path.join(root, "scripts", "timer-registration-tests.py")
+TIMER_GATE = (TIMER_HARNESS, [])
 # The workflow audit reads the pipeline that runs every other gate, so a mutation of
 # the pipeline itself is judged by it and by nothing else.
 WF_GATE = (os.path.join(root, "scripts", "workflow-audit.py"), [])
@@ -601,6 +606,35 @@ def blind_cf_property_rule(text):
     """The CF property rule, told to hand back nothing."""
     once(text, CF_GUARD, "CF property guard")
     return text.replace(CF_GUARD, BLIND_GUARD, 1)
+
+
+# The three lines the repeating timer rules and their measurement are written against,
+# read from the files rather than retyped, so a rewrite of any of them lands here as a
+# missing anchor -- which is counted apart -- instead of a mutation that silently does
+# nothing.
+POLL_MODE = '        [[NSRunLoop mainRunLoop] addTimer:pointerPoll forMode:NSRunLoopCommonModes];\n'
+POLL_ONE_MODE = '        [[NSRunLoop mainRunLoop] addTimer:pointerPoll forMode:NSDefaultRunLoopMode];\n'
+POLL_STOP = '        [_mouseTimer invalidate];\n'
+DRAIN_MODAL = '        Drain(NSModalPanelRunLoopMode, 300);\n'
+DRAIN_AS_MODAL = '        Drain(NSDefaultRunLoopMode, 300);\n'
+
+
+def poll_fires_in_one_mode_only(text):
+    """Put the pointer poll back into the mode a modal session does not run in."""
+    once(text, POLL_MODE, "the pointer poll's run loop modes")
+    return text.replace(POLL_MODE, POLL_ONE_MODE, 1)
+
+
+def poll_stopped_nowhere(text):
+    """Take out the stop, leaving only a dealloc that cannot run to end the poll."""
+    once(text, POLL_STOP, "the pointer poll's stop")
+    return text.replace(POLL_STOP, '', 1)
+
+
+def timer_modes_measured_blind(text):
+    """Have the probe drain the default mode and call it the modal one."""
+    once(text, DRAIN_MODAL, "the probe draining the modal mode")
+    return text.replace(DRAIN_MODAL, DRAIN_AS_MODAL, 1)
 
 
 def blind_sweep(text):
@@ -1717,6 +1751,13 @@ MUTATIONS = [
     ("cf-property-rule-blinded", AUDIT, blind_cf_property_rule,
      "the rule that asks who releases a CoreFoundation property stops asking,"
      " so the property it planted stops tripping it", AUDIT_GATE),
+    ("pointer-poll-in-one-mode", CONTROLLER_FILE, poll_fires_in_one_mode_only,
+     "the gamepad pointer stops answering the moment the app opens a menu or a modal"),
+    ("pointer-poll-outlives-its-owner", CONTROLLER_FILE, poll_stopped_nowhere,
+     "nothing on a path that can run ends the poll, so it outlives what it polls"),
+    ("timer-modes-measured-blind", TIMER_HARNESS, timer_modes_measured_blind,
+     "the probe drains the default mode and reports the count as the modal one",
+     TIMER_GATE),
     ("blind-sweep", ANALYZER, blind_sweep, "an analyzer that did not run reads as clean", ANALYZER_GATE),
     ("accept-new-findings", ANALYZER, accept_new_findings, "a new finding class slips past the baseline", ANALYZER_GATE),
     ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),
