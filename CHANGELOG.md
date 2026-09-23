@@ -123,6 +123,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `isSettingsPresentedInWindow:` the accessibility bridge already uses. The
   launch probe asserts both halves: the window with the page owns the gesture,
   and a window that never held a page does not report the gesture as its own.
+- **`v1.4.0-beta.1` lost to `v1.4.0-alpha.9`, so a version could not mature.**
+  The tag grammar accepts `-alpha.N` and `-beta.N`, and the ordering folded
+  all three suffixes into one counter, so the highest prerelease already in
+  the tree had to be beaten by number alone. A channel rank now comes before
+  the number inside it -- alpha, beta, then stable -- while a bare version
+  still sorts below every build of itself, which is what keeps `v1.3.9`
+  refused once `v1.3.9-build19` shipped. Four self-test cases cover the
+  transitions: alpha to beta, beta to stable, an alpha sequence going
+  backwards, and a beta arriving after the version already shipped.
 - **A missing host identifier would have crashed the page instead of matching nobody, and only a
   warning the local sweep could not run said so.** `TemporaryHost.h` declares `uuid` with no
   nullability annotation, so the importer hands Swift an implicitly unwrapped `String`, and

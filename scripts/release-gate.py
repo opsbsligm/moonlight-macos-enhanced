@@ -26,16 +26,34 @@ def marketing_versions(project_text):
     return set(re.findall(r"MARKETING_VERSION\s*=\s*([^;]+);", project_text))
 
 
+# Where a suffix sits on the road to a shipped build. An alpha and a beta are not two
+# spellings of one counter: -alpha.9 is earlier than -beta.1 even though 9 > 1, so the
+# channel has to be compared before the number inside it. A bare version and a -buildN
+# share the stable channel, and the bare one sorts first, which is what keeps a release
+# of v1.3.9 refused once v1.3.9-build19 is already out.
+CHANNEL_RANK = {"alpha": 0, "beta": 1, "stable": 2}
+
+
 def parse_tag(tag):
     match = TAG_RE.match(tag)
     if match is None:
         return None
-    build = match.group("build") or match.group("alpha") or match.group("beta")
+    build = match.group("build")
+    if build is not None:
+        channel, sequence = "stable", int(build)
+    elif match.group("alpha") is not None:
+        channel, sequence = "alpha", int(match.group("alpha"))
+    elif match.group("beta") is not None:
+        channel, sequence = "beta", int(match.group("beta"))
+    else:
+        channel, sequence = "stable", 0
     return {
         "base": (int(match.group("major")), int(match.group("minor")), int(match.group("patch"))),
         "version": match.group(0)[1:],
-        "build": int(build) if build else 0,
-        "prerelease": match.group("kind") is not None and not match.group("build"),
+        "build": int(build) if build is not None else 0,
+        "prerelease": match.group("kind") is not None and build is None,
+        "channel": channel,
+        "order": (CHANNEL_RANK[channel], sequence),
     }
 
 
@@ -49,7 +67,7 @@ def highest(parsed_tags):
         entry = parse_tag(tag.strip())
         if entry is None:
             continue
-        if best is None or (entry["base"], entry["build"]) > (best["base"], best["build"]):
+        if best is None or (entry["base"], entry["order"]) > (best["base"], best["order"]):
             best = entry
     return best
 
@@ -87,16 +105,21 @@ def evaluate(tag, versions, build_number, changelog_text, existing_tags):
         if parsed["base"] < top["base"]:
             reasons.append("%s is older than the released %d.%d.%d"
                            % (parsed["version"], top["base"][0], top["base"][1], top["base"][2]))
-        elif (parsed["base"], parsed["build"]) <= (top["base"], top["build"]):
-            reasons.append("release %s is not newer than build %d of the same version"
-                           % (parsed["version"], top["build"]))
+        elif parsed["order"] <= top["order"]:
+            # A released build is named by its number, which is what a player sees in
+            # the release title; a prerelease is named by its whole tag, because
+            # "build 9" would describe a -build9 that does not exist.
+            ahead = ("build %d" % top["build"]) if top["channel"] == "stable" and top["build"] \
+                else top["version"]
+            reasons.append("release %s is not newer than %s of the same version"
+                           % (parsed["version"], ahead))
     return reasons
 
 
 def self_test():
     fixture_project = "MARKETING_VERSION = 1.3.9;"
     fixture_log = ("## [Unreleased]\n\n## [1.3.9]\n\n## [1.3.9-build19]\n"
-                   "\n## [1.3.9-build20]\n")
+                   "\n## [1.3.9-build20]\n\n## [1.3.9-alpha.3]\n\n## [1.3.9-beta.1]\n")
     cases = [
         ("v1.3.9-build20", ["v1.3.9-build19"], True, None, "newer build of the shipped version"),
         ("v1.3.9-build20", ["v1.3.9-build19", "v1.3.9-build20"], True, None,
@@ -109,6 +132,14 @@ def self_test():
         ("v1.3.9-build99", ["v1.3.9-build19"], False, "build 99 but this commit builds 20", "a build number that is not this commit"),
         ("v1.3.9-chore19", ["v1.3.9-build19"], False, "is not vMAJOR.MINOR.PATCH", "an unknown suffix"),
         ("v1.4.0", ["v1.3.9"], False, "no [1.4.0] section", "a version with no changelog section"),
+        # The channel cases. Comparing the suffix number alone passed every one of the
+        # rules above while rejecting the ordinary way a version matures.
+        ("v1.3.9-beta.1", ["v1.3.9-alpha.9"], True, None, "a beta after the alphas of it"),
+        ("v1.3.9-build20", ["v1.3.9-beta.3"], True, None, "the stable build after a beta"),
+        ("v1.3.9-alpha.3", ["v1.3.9-alpha.9"], False, "not newer than 1.3.9-alpha.9",
+         "an alpha sequence that goes backwards"),
+        ("v1.3.9-beta.1", ["v1.3.9-build20"], False, "not newer than build 20",
+         "a beta after the version already shipped"),
     ]
     failures = 0
     for tag, existing, expected_ok, reason_fragment, what in cases:
