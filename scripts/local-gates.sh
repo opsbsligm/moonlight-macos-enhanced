@@ -179,7 +179,13 @@ while IFS= read -r cmd; do
       echo "skip  $cmd (needs a value only CI computes)"; skipped=$((skipped+1)); continue;;
   esac
   case "$cmd" in
-    *analyzer-audit*|*compiled-source-audit*|*launch-code-audit*|*render-probe*)
+    *render-probe*)
+      # Filing this one in with the gates that need a runner was a small lie with a
+      # twenty-minute price: the script builds its own Debug binary and measures the page
+      # inside the app, so a laptop can run it -- it is slow, not impossible. Say which.
+      echo "skip  $cmd (runnable here: python3 scripts/render-probe.py builds its own Debug binary, about twenty minutes)"
+      skipped=$((skipped+1)); continue;;
+    *analyzer-audit*|*compiled-source-audit*|*launch-code-audit*)
       echo "skip  $cmd (needs a CI build artefact)"; skipped=$((skipped+1)); continue;;
     *constraints-audit.py*)
       [ "$all" = 1 ] || cmd="$cmd --no-battery";;

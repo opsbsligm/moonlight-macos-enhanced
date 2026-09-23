@@ -221,6 +221,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The sweep now says which skipped gates a laptop really cannot run.** The
+  render probe was listed with the ones that need a runner, and it does not:
+  it builds its own Debug binary and measures the page inside the app, which
+  is exactly the check a change to the probe owes itself before a push. Twenty
+  minutes is a reason to skip it on every save and no reason to claim it
+  cannot be run, so the skip line names the command.
 - **The membership audit read the project file backwards, and the build log
   says so.** `Limelight` is a synchronized root group, and its one exception
   set lists 137 entries, 93 of them implementation files. Exceptions mean "not
