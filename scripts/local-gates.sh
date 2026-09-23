@@ -114,11 +114,29 @@ artefact_command() {
     *compile-audit.py*)
       printf '%s' "$1" | sed 's/ --derived.*//';;
     *swift-typecheck.py*)
+      # The generated header is per configuration, and which one exists is decided by
+      # how this checkout was last built: a laptop building Release and CI's analyze job
+      # running Debug are the same project with different paths. Probing one of the two
+      # skipped the gate for whoever built the other way, which is the silence this
+      # function exists to remove.
       for root in build-analyze build-header-check build build-probe; do
-        derived="$root/Build/Intermediates.noindex/Moonlight.build/Debug/Moonlight for macOS.build/DerivedSources"
-        [ -d "$derived" ] && {
-          printf 'python3 scripts/swift-typecheck.py . --derived "%s"' "$derived"; return; }
-      done;;    *build-warning-audit.py*)
+        for configuration in Release Debug; do
+          derived="$root/Build/Intermediates.noindex/Moonlight.build/$configuration/Moonlight for macOS.build/DerivedSources"
+          [ -d "$derived" ] && {
+            printf 'python3 scripts/swift-typecheck.py . --derived "%s"' "$derived"; return; }
+        done
+      done;;
+    *source-membership-audit.py*)
+      # The transcript is the only authority that can say whether a file was compiled.
+      # LOCAL_BUILD_LOG is this checkout's transcript -- the same one the warning gate
+      # reads -- and without it the audit says so instead of guessing from a project
+      # file whose membership metadata belongs to no target.
+      if [ -n "${LOCAL_BUILD_LOG:-}" ] && [ -f "${LOCAL_BUILD_LOG}" ]; then
+        printf 'python3 scripts/source-membership-audit.py --build-log "%s"' "${LOCAL_BUILD_LOG}"
+      else
+        printf ''
+      fi;;
+    *build-warning-audit.py*)
       # LOCAL_BUILD_LOG is the transcript of this checkout's own build, on purpose: the point of
       # the gate is the warning in the compiler's words, and only the build you just ran has a
       # right to certify the source you just changed.

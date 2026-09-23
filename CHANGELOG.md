@@ -238,6 +238,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already restored, so a cancelled CI run ended in a traceback after the
   sources were safely back. It now checks whether the tree is still its job to
   put back.
+- **The generated header was looked for in one configuration only.** `local-
+  gates.sh` hands `swift-typecheck.py` the header map a build left behind, and
+  it probed only the Debug intermediates -- so a laptop that had just built
+  Release, which is what the build job's own command line asks for, was told
+  the gate needed an artefact it had just written, and the type-check gate
+  left the local count silently. It probes both configurations now, Release
+  first, because that is the order a build most often leaves them in.
 - **The warning rule left the build job's shell and came home to `scripts/build-warning-audit.py.**
   `local-gates.sh` takes its list of gates from the `python3 scripts/*.py` calls in the
   workflow, so a check written as `grep` was never on that list and never ran on a laptop.
