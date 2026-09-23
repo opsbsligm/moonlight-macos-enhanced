@@ -91,6 +91,9 @@ TIMER_GATE = (TIMER_HARNESS, [])
 # notice the probe having stopped asking.
 OBSERVER_HARNESS = os.path.join(root, "scripts", "notification-observer-tests.py")
 OBSERVER_GATE = (OBSERVER_HARNESS, [])
+# The battery edits itself when its own guard is what is being tested: the gate that reads
+# the guard is the audit, and the file it reads is this one.
+BATTERY_SELF = os.path.join(root, "scripts", "assertion-battery.py")
 # The workflow audit reads the pipeline that runs every other gate, so a mutation of
 # the pipeline itself is judged by it and by nothing else.
 WF_GATE = (os.path.join(root, "scripts", "workflow-audit.py"), [])
@@ -631,6 +634,8 @@ OBSERVER_WITHDRAWAL = ('    // one observer.\n'
                        '    [self removeStreamSettingsObservers];\n')
 OBSERVER_STORED_TOKEN = ('self.localNetworkTriggerObserver = [[NSNotificationCenter')
 OBSERVER_HIDE_WINDOW = '        [window orderOut:nil];\n'
+BATTERY_GUARD_CALL = ('    refuse_a_dirty_checkout(sorted({entry[1] for entry in MUTATIONS}))'
+                      '\n\n')
 LIFECYCLE_READER = 'REPEATING_LIFECYCLE = re.compile(r"^[-+]\\s*\\(\\s*void\\s*\\)\\s*(viewDidAppear|viewWillAppear)\\b")'
 TOKEN_READER_RETURN = '    return re.search(r"(?<![=!<>])=(?!=)|\\breturn\\b", before) is not None'
 
@@ -669,6 +674,12 @@ def never_hide_the_window(text):
     """Stop hiding the window, so the probe never asks whether -viewDidAppear returns."""
     once(text, OBSERVER_HIDE_WINDOW, "the probe hiding the window it re-shows")
     return text.replace(OBSERVER_HIDE_WINDOW, "", 1)
+
+
+def skip_the_dirty_checkout(text):
+    """Take out the guard, leaving every word that argues for it."""
+    once(text, BATTERY_GUARD_CALL, "the guard ahead of the battery's first write")
+    return text.replace(BATTERY_GUARD_CALL, "", 1)
 
 
 def blind_lifecycle_reader(text):
@@ -1821,6 +1832,9 @@ MUTATIONS = [
     ("observer-token-rule-blinded", AUDIT, blind_token_reader,
      "the rule that asks whether a registration keeps its token answers yes without looking",
      AUDIT_GATE),
+    ("dirty-checkout-guard-never-called", BATTERY_SELF, skip_the_dirty_checkout,
+     "the battery defines a guard against writing into somebody's uncommitted work and then"
+     " writes anyway", AUDIT_GATE),
     ("blind-sweep", ANALYZER, blind_sweep, "an analyzer that did not run reads as clean", ANALYZER_GATE),
     ("accept-new-findings", ANALYZER, accept_new_findings, "a new finding class slips past the baseline", ANALYZER_GATE),
     ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),
