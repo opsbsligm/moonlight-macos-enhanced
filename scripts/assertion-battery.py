@@ -582,6 +582,27 @@ def display_link_outlives(text):
     return text.replace(DISPLAY_RELEASE, "", 1)
 
 
+# Two guards of the aggregate gate, quoted from the gate itself so that a rewrite
+# of either one fails the battery loudly instead of quietly. Blinding a guard makes
+# the rule hand back nothing, which is what each rule's planted counter-example is
+# there to notice.
+IOKIT_GUARD = '                   if not re.search(r"IOObjectRelease\\(\\s*%s\\s*\\)" % re.escape(name), body)})'
+CF_GUARD = '                   if not re.search(r"\\w*Release\\(\\s*(?:self\\.|_)?%s\\s*\\)" % re.escape(name),\n                                    every)})'
+BLIND_GUARD = '                   if False})'
+
+
+def blind_iookit_rule(text):
+    """The IOKit rule, told to hand back nothing."""
+    once(text, IOKIT_GUARD, "IOKit iterator guard")
+    return text.replace(IOKIT_GUARD, BLIND_GUARD, 1)
+
+
+def blind_cf_property_rule(text):
+    """The CF property rule, told to hand back nothing."""
+    once(text, CF_GUARD, "CF property guard")
+    return text.replace(CF_GUARD, BLIND_GUARD, 1)
+
+
 def blind_sweep(text):
     once(text, SWEEP_RULE, "sweep health rule")
     return text.replace(SWEEP_RULE, SWEEP_RULE + "    return None\n", 1)
@@ -1690,6 +1711,12 @@ MUTATIONS = [
     ("hid-manager-outlives", HID, hid_manager_outlives, "the HID manager survives the object its callbacks use"),
     ("display-link-outlives", HID, display_link_outlives,
      "the display link keeps firing into an object that is already gone"),
+    ("iookit-rule-blinded", AUDIT, blind_iookit_rule,
+     "the rule that counts a registry walk which never returns its iterator"
+     " stops counting, so the walk it planted stops tripping it", AUDIT_GATE),
+    ("cf-property-rule-blinded", AUDIT, blind_cf_property_rule,
+     "the rule that asks who releases a CoreFoundation property stops asking,"
+     " so the property it planted stops tripping it", AUDIT_GATE),
     ("blind-sweep", ANALYZER, blind_sweep, "an analyzer that did not run reads as clean", ANALYZER_GATE),
     ("accept-new-findings", ANALYZER, accept_new_findings, "a new finding class slips past the baseline", ANALYZER_GATE),
     ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),

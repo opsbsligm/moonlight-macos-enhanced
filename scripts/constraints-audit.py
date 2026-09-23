@@ -1434,6 +1434,74 @@ unannotated = ["%s: %s" % (os.path.relpath(source_path, root), body.split("\n")[
 check(not unannotated, "a path handed to a caller says who owns it"
       if not unannotated else "CF_RETURNS_RETAINED is missing: " + "; ".join(unannotated[:3]))
 
+# Two more handle families are as unmanaged as the ones above and equally silent when
+# wrong, and neither was read by any rule until now: an IOKit registry walk, and a
+# CoreFoundation-typed property. Both were read by hand this round -- six IOKit locals in
+# the one file that touches the registry, every one released; three CF-typed properties,
+# every one released -- and "read by hand" is a statement about today. The registry
+# iterator is the nastier of the two: what a leaked io_iterator_t pins is a walk over the
+# live registry rather than one block of memory, so it accumulates against the kernel's
+# own map rather than against the heap.
+
+IOKIT_LOCAL = re.compile(
+    r"\b(?:io_iterator_t|io_service_t|io_registry_entry_t|io_object_t)\s+(\w+)\s*(?:=|;)")
+
+
+def unheld_iookit_locals(body):
+    """IOKit registry handles a method takes from the kernel and never gives back."""
+    return sorted({name for name in IOKIT_LOCAL.findall(body)
+                   if not re.search(r"IOObjectRelease\(\s*%s\s*\)" % re.escape(name), body)})
+
+
+unreleased_iookit = ["%s: %s" % (os.path.relpath(source_path, root), name)
+                     for source_path, text in compiled_sources(root)
+                     for body in method_bodies(text)
+                     for name in unheld_iookit_locals(body)]
+check(not unreleased_iookit,
+      "every IOKit registry handle a method takes is released in that method"
+      if not unreleased_iookit else
+      "no IOObjectRelease for: " + ", ".join(unreleased_iookit[:4]))
+planted_walk = ("- (void)walkTheRegistry\n"
+                "{\n"
+                "    io_iterator_t plantedIterator = IO_OBJECT_NULL;\n"
+                "    IOServiceGetMatchingServices(kIOMainPortDefault, match, &plantedIterator);\n"
+                "}\n")
+check(unheld_iookit_locals(planted_walk) == ["plantedIterator"],
+      "a registry walk that never releases its iterator trips the rule above"
+      if unheld_iookit_locals(planted_walk) == ["plantedIterator"] else
+      "the IOKit rule does not see the leak it was written for")
+
+CF_PROPERTY = re.compile(r"@property[^(]*\([^)]*\)\s+(\w+Ref)\s+(\w+)\s*;")
+
+
+def unreleased_cf_properties(texts):
+    """CF-typed properties nobody releases.
+
+    clang gives a property of a CoreFoundation type no reference at all -- the AST calls
+    `@property (nonatomic) IOHIDManagerRef` an assign -- so nobody releasing it is not a
+    leak the analyzer will always catch: it catches the store it cannot follow, not the
+    owner that never hands it back.
+    """
+    every = "\n".join(texts)
+    return sorted({"%s %s" % (type_name, name)
+                   for type_name, name in CF_PROPERTY.findall(every)
+                   if not re.search(r"\w*Release\(\s*(?:self\.|_)?%s\s*\)" % re.escape(name),
+                                    every)})
+
+
+objc_texts = [text for _path, text in compiled_sources(root)] + \
+             [open(os.path.join(directory, name), encoding="utf-8").read()
+              for directory, _, names in os.walk(os.path.join(root, "Limelight"))
+              for name in sorted(names) if name.endswith(".h")]
+unowned_properties = unreleased_cf_properties(objc_texts)
+check(not unowned_properties,
+      "a CoreFoundation-typed property is released by whoever owns the object"
+      if not unowned_properties else
+      "nobody releases: " + ", ".join(unowned_properties[:4]))
+check(unreleased_cf_properties(["@property (nonatomic) CFReadStreamRef plantedStream;"])
+      == ["CFReadStreamRef plantedStream"],
+      "a CF property nobody releases trips the rule above")
+
 dealloc_body = method_body(hid_all, "- (void)dealloc")
 check("CFRelease(_hidManager);" in dealloc_body,
       "the HID manager cannot outlive the object its run loop callbacks point into")

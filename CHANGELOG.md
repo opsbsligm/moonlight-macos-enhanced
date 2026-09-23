@@ -309,6 +309,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **Two more kinds of handle the app borrows from the system now have to give
+  it back.** An IOKit registry iterator and a CoreFoundation-typed property
+  were both read by hand this round -- six IOKit locals in `USBBusSnapshot`,
+  the only file that walks the registry, every one released, and three CF-
+  typed properties, every one released -- and "read by hand" describes today.
+  clang's AST calls `@property (nonatomic) IOHIDManagerRef` an assign, so ARC
+  does not own a reference like that, and the analyzer catches the store it
+  cannot follow, not the owner that never hands it back. A leaked
+  `io_iterator_t` is worse than a leaked block: it pins a walk over the live
+  registry, so it accumulates against the kernel's map. Each rule now carries
+  a planted counter-example that has to stay red -- a walk that never releases
+  its iterator, and a `CFReadStreamRef plantedStream` nobody releases --
+  because a rule that only ever answers "clean" is the defect it was written
+  to catch. `iookit-rule-blinded` and `cf-property-rule-blinded` join the
+  battery: each blinds its guard so the rule returns nothing, which turns the
+  planted case green and the gate red. 128 mutations, 128 caught.
+
 - **The display link got the net the HID manager already had.** `HIDSupport`
   releases its CoreFoundation manager in `dealloc`, because four run loop
   callbacks hold that object as their context and a manager left scheduled is
