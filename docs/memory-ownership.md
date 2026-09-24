@@ -15,7 +15,12 @@
 > half that never needed a session: the Debug build now reports who keeps a host alive, three
 > shapes with two controls, and the holder rule refuses a `weak` back-pointer while any
 > assignment hands out an app without handing out its host. (That same rule corrected one row
-> of the section 4 table: the box-art retriever does hold its host.)
+> of the section 4 table: the box-art retriever does hold its host.) Section 11 corrects a
+> measurement error that section 10 filed: a private `HOME` does not give a probe a private
+> database — the support directory resolves out of the account, not out of `$HOME` — so the CI
+> runner's ownership reading had been measuring the host the memory sweep planted a step earlier,
+> and this laptop's real library had a probe's host in it. Probes now count the library by who
+> wrote it and reap only what they can prove is theirs, and the two counts have to reconcile.
 
 ## 1. 实测结论
 
@@ -299,12 +304,13 @@ app 页各读各的），而每次读会遍历当时库里的全部主机。这�
 - 「只有 app 时 host 一定活着」这一条，正是 §4 那张表所说的「今天全靠这条强反向指针续命」——现在它是量出来的，不是读出来的。
 - 形状定义写进 `shape_contract`：手工形状若悄悄变成「只有反向指针」，两条图的一致就退化成同一种形状自己跟自己一致，所以 `appListCount` 不对就整轮拒绝。
 
-**CI 第一次跑到走的是另一条路**（run `36015387603`，arm64 与 x86_64）：runner 没有 LAN，
-库里只有**种子写下的那 1 台**（`seedHosts.status = seeded`），
-两条 arch 报出**逐字相同**的三行读数——production `appList 3` / hand-built `1` / back-pointer `0`，
-前两行 yes+yes、第三行 yes+no——以及同样的「3 个赋值点、1 个已配对」。
-本机那份是 `existing-hosts`（真库），runner 那份是 `seeded`（自己写的图），
-**同一张表在两种来源下都成立**，这正是「测的是代码而不是某人的局域网」的证据。
+**CI 第一次跑到的读数**（run `36015387603`，arm64 与 x86_64）：两条 arch 报出**逐字相同**的三行
+——production `appList 3` / hand-built `1` / back-pointer `0`，前两行 yes+yes、第三行 yes+no——
+以及同样的「3 个赋值点、1 个已配对」。**这一节当初把它的来源写错了**：它记成 runner 自己
+`seeded` 了一台，而真机打印（run `36019606141`）两条 arch 都是 `existing-hosts`。
+抄错的原因是同一个作业里前一步内存扫掠的 `seeded` 被当成了这一步的读数，
+而真相是三步共库：runner 上那 1 台 host 是**上一步种的**，不是这一步种的。详见 §11。
+本节其余推论不受影响——`appList 3` 无论是种子还是真库给的，三形状读数的**一致性**都成立。
 门禁因此把来源打在绿字里（`N host(s) in the library, seed status …`）：
 「量的是自己种的图」与「量的是别人的库」是两个不同的断言，而日志的读者没法去摸那台机器。
 
@@ -339,3 +345,58 @@ app 页各读各的），而每次读会遍历当时库里的全部主机。这�
 - 探针种下的主机走的是生产 `DataManager` 写路径，但**不经过 discovery**，所以「mDNS 应答拼出来的 host 与其 appList 的所有权」依旧没测；
 - `AppCell`/`StreamViewController` 补上 host 属性之后会不会引入新的循环（cell ← app → host ← cell？）没测——
   这条在补的那一轮必须一起量，量法就是本节这张表加一条新形状。
+
+## 11. 「自己的 HOME」不是自己的库：一次把 CI 记录纠正过来（2026-09-25）
+
+§10 那份 CI 记录里写着一句「runner 自己 `seeded` 了 1 台」。它是错的，而且错得有价值——
+顺着它查下去，撞到的是这条路径上**每一个探针都当作前提**的一件事。
+
+**实测（一步定死）**：把 `HOME` 指向一个**空的**临时目录，启动 ownership 探针，
+它报出 `2 host(s) in the library` ——本机的真库。
+原因写在 `DatabaseSingleton.m:100`：`URLsForDirectory:NSApplicationSupportDirectory
+inDomains:NSUserDomainMask` 从**账号记录**解析，不看 `$HOME`。
+所以「给探针一个私有 HOME，于是它有私有的库与偏好」这句话在 render-probe 的注释里、
+在两个审计的 `rmtree` 注释里都成立过，其实一次都没成立过；
+审计删掉的那个 HOME 目录，从来就不是它写数据的地方。
+
+**两条后果**：
+
+1. **CI 里三步共库**。扫掠那一步没有 LAN，于是它 `seeded` 1 台；紧接着的 ownership 那一步
+   打开同一个文件，看见这 1 台，判成「这是别人的库」→ `existing-hosts`，
+   然后**把上一步留下的图当作生产图量了一遍**。它没有量错形状（形状就是那张形状），
+   但它对「这一步种了什么」的陈述是假的——而这正是那一节要区分的两个断言。
+2. **本机真库被污染**。第一条 reap 报 `mixed`：2 台里有 1 台带种子前缀，
+   是更早某次扫掠在「HOME 会隔离」的信念下写进去的。
+
+**处置**（全部 Debug-only，生产行为一字未动）：
+
+| 东西 | 作用 |
+|:---|:---|
+| `MLProbeHostUuidPrefix` | 种子 uuid 的前缀只剩一个定义：播种、按来源计数、回收三处必须说同一种话 |
+| `MLCountLibraryHosts` | 把库按**谁写进去的**分开数：库里几台、其中几台是探针种的 |
+| `ML_PROBE_REAP_OWN_HOSTS` | 播种前先回收**只属于探针**的 host，走生产 `-[DataManager removeHost:]` 并回读校验。整库皆探针 → `reaped`；库空 → `empty`；库里没有探针的 → `kept`；**混着别人的 → `mixed`，判红** |
+| `ML_PROBE_REMOVE_OWN_HOSTS` | 第二把旗号，只由人对自己机器按下：删掉带前缀的那些，不碰别人的。本机那 1 台就是这么清掉的（清完剩 1 台，是真机） |
+
+`mixed` 之所以是红而不是「跳过」：**猜错的代价是把某人的 GameStream 主机从列表里删掉**。
+默认路径不许猜；要清库存，得有人明确按下第二把旗号。
+
+**顺手抓到一个我自己上一轮写的 bug**：形状循环在选中第一台带 app 的 host 后 `break`，
+而「库里几台是探针种的」那段计数就长在同一个循环里 → 计数被 `break` 截断。
+真机当场露馅：`probeOwnedHosts = 0` 与 reap 的 `probeOwned = 1` 并排出现。
+于是门禁加了一条**经播种量对齐**的一致性规则：
+`测量时探针自有数 == 回收后剩余自有数 + 本轮播种数`，对不上即红——
+两个数取自同一进程对同一个库的两次看，本不可能不一致。
+
+**门禁现状**：31 条 fixture、红队 12 条，其中红队现在读**两份真记录并各自核对期望**：
+本轮记录必须被**接受**，`36019606141` 那份必须**只**因缺 `reapedHosts` 被拒——
+且**补齐该字段后必须转绿**（否则那记拒绝就是在拒绝形状，而不是在拒绝缺失的证据）。
+
+**清理后的实测**：reap `kept`(found 1 / probeOwned 0)、seed `existing-hosts`、
+三形状逐字同于前一日（production 3 / hand-built 1 / back-pointer 0，yes+yes / yes+yes / yes+no）；
+`leak-audit` 重跑 **0 failure**，增长 **384 B/visit/host**、扇出 **3.0**，
+即「谁持有谁」被改口了，而「每进出一次付多少」一分未变。
+
+**没测到 / 盲区**：
+- `removeHost:` 删的是 host 记录；种子挂在 host 上的 **app 记录是否随之消失**，取决于 Core Data 的删除规则，本轮没量（回收后的回读只数 host）；
+- HOME 隔离失效同样意味着**在本机上**，render-probe 与内存扫掠一直是**在真实库上**跑的。已核对其断言不依赖空库（它们要的是「页面画出来了」「我们的对象没多漏」），但「私有 HOME」这句话以后不许再写；
+- 真串流会话里 `self.app.host` 的读数照旧没有；被 reap 掉的 host 其 `appList` 是否连带释放，也没测。

@@ -594,7 +594,10 @@ jobs:
       # no second window, the page inside that same window's content, the fade
       # finished, dismissal clean, real pixels drawn, and a Core Animation
       # backdrop layer present so a glass material is actually composited. The run
-      # gets its own HOME, so its database and preferences are its own.
+      # gets its own HOME, which -- measured on 2026-09-25 -- does not give it its own database:
+      # the support directory resolves out of the account record rather than out of `$HOME`, so
+      # every probe on a machine opens the one library. What that library holds is named by the
+      # step below, and the ownership probe reaps only hosts it can prove it planted.
       run: python3 scripts/render-probe.py --timeout 1500
 
     - name: Verify the settings page leaks nothing new, per visit
@@ -644,6 +647,10 @@ jobs:
       # of starting the app. It answers for the object graph and nothing else: the stream's own
       # host holder is a property no experiment builds, and the audit says so in the same breath
       # as its verdict.
+      # It reaps first, and only its own: the steps of a job share one database, so the host the
+      # sweep above planted would otherwise be the graph this step measured, reported as an
+      # existing library. That is what the runner was doing until 2026-09-25, and it is why the
+      # reading it filed said `seeded` when the run itself said `existing-hosts`.
       run: python3 scripts/ownership-audit.py --timeout 120
 
     - name: Verify video enhancement paths

@@ -1,37 +1,43 @@
 {
-  "failures": [],
-  "ownership": {
-    "holder": "app-only",
-    "libraryHosts": 2,
-    "productionHostUuid": "ownership-sample-host",
-    "seedHosts": {
-      "existing": 2,
-      "requested": 1,
-      "seeded": 0,
-      "status": "existing-hosts"
-    },
-    "shapes": {
-      "backpointerOnly": {
-        "appAliveWithNoHolder": 0,
-        "appHostReadableWhileAppHeld": 1,
-        "appListCount": 0,
-        "hostAliveWhileAppHeld": 1,
-        "hostAliveWithNoHolder": 0
-      },
-      "handBuiltGraph": {
-        "appAliveWithNoHolder": 1,
-        "appHostReadableWhileAppHeld": 1,
-        "appListCount": 1,
-        "hostAliveWhileAppHeld": 1,
-        "hostAliveWithNoHolder": 1
-      },
-      "productionGraph": {
-        "appAliveWithNoHolder": 1,
-        "appHostReadableWhileAppHeld": 1,
-        "appListCount": 3,
-        "hostAliveWhileAppHeld": 1,
-        "hostAliveWithNoHolder": 1
-      }
-    }
+ "ownership": {
+  "shapes": {
+   "handBuiltGraph": {
+    "hostAliveWhileAppHeld": 1,
+    "appAliveWithNoHolder": 1,
+    "hostAliveWithNoHolder": 1,
+    "appHostReadableWhileAppHeld": 1,
+    "appListCount": 1
+   },
+   "backpointerOnly": {
+    "hostAliveWhileAppHeld": 1,
+    "appAliveWithNoHolder": 0,
+    "hostAliveWithNoHolder": 0,
+    "appHostReadableWhileAppHeld": 1,
+    "appListCount": 0
+   },
+   "productionGraph": {
+    "hostAliveWhileAppHeld": 1,
+    "appAliveWithNoHolder": 1,
+    "hostAliveWithNoHolder": 1,
+    "appHostReadableWhileAppHeld": 1,
+    "appListCount": 3
+   }
+  },
+  "holder": "app-only",
+  "productionHostUuid": "ownership-sample-host",
+  "libraryHosts": 1,
+  "seedHosts": {
+   "status": "existing-hosts",
+   "existing": 1,
+   "requested": 1,
+   "seeded": 0
+  },
+  "probeOwnedHosts": 0,
+  "reapedHosts": {
+   "found": 1,
+   "probeOwned": 0,
+   "status": "kept"
   }
+ },
+ "failures": []
 }
