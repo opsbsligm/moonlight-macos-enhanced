@@ -39,6 +39,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the corrected call-site count, sixteen in production code rather than the seventeen an earlier
   section estimated -- and the gate there will turn red first and demand the reason.
 
+  Chasing the three reads turned up something the counting was not looking for: the first two
+  lines of `SettingsModel.hosts` -- the static computed property whose getter is one of those three
+  reads -- are `let dataMan = DataManager()` and `dataMan.removeHostsWithEmptyUuid()`. Looking at
+  the device list therefore writes before it reads, and since the deletion rule filed in the
+  previous entry is `Cascade`, a saved host that is briefly stored with an empty uuid (a half
+  update, a rename, a profile switch) is deleted along with the app records somebody configured,
+  on any trip to the settings page, rather than being left alone until its uuid arrives. The path
+  was read rather than imagined: `ServerInfoResponse.m:22` assigns `host.uuid` from the
+  `UNIQUE_ID` tag with no guard, and `TemporaryHost.m:79` writes it into the store with no guard
+  either, even though every other field in that same method -- `address`, `externalAddress`,
+  `localAddress`, `ipv6Address`, `mac`, `serverCert` -- is assigned inside `if (self.x != nil)`.
+  Recorded as the next thing to measure, with the measurement designed to reuse this round's and
+  the previous round's machinery: plant a host with a uuid and three apps, run one
+  `populateHost:` over a response with no `UNIQUE_ID`, and count the uuid and the app records on
+  both sides, where the shipped code is expected to clear the uuid and then lose the apps past the
+  reach of the clean-up flag. Whether a real host ever answers without that tag cannot be tested
+  here -- there is no machine to connect to -- so it is a registered question rather than a
+  conclusion, and it is not coded here because every fix changes behaviour instead of measuring it.
+
 - **Where a deleted host's app records go is now measured, and the Core Data model is on the hook
   for its answer.** `-[DataManager removeHost:]` deletes a host and nothing else, so the fate of the
   app rows hangs on `Host.appList`'s deletion rule -- a fact about `Limelight.xcdatamodeld` rather
