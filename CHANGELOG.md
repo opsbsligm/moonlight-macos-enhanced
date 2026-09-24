@@ -487,7 +487,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   visit, 23 at sixteen -- 14 against 15 entitled and 24 allowed, 358 bytes per visit per host, and
   a fan-out that stayed at 3.0. What has not been measured: the mechanism behind the three-graph
   spread (nobody has found which release's timing is moving, and the rule tolerates it rather than
-  explaining it), and this rule has not yet met a runner -- the next CI round is that meeting.
+  explaining it), and this rule met a runner the same day. Run 36066100563 took fifteen extra
+  visits on one host and reported 12 extra graphs on arm64 (10 rising to 22) and 16 on x86_64
+  (8 rising to 24) against the 15 the reads entitled: x86_64 sits above the count the old rule
+  demanded -- its fourth refusal of honest code, issued at a slope of 1.07 by the very job that
+  issued the first two -- and inside the rate this one allows. Both architectures green, byte
+  rates 307.2 and 409.6 against the 1100 ceiling, fan-out 3.0 in all four sweeps.
 - **`--growth` stopped paying for a third sweep, and stopped destroying the evidence with it.**
   `main()` captured one sweep before the growth branch captured its own two, so three sweeps ran
   and two of them wrote the same `build/leaks-sweep.txt`. During this investigation the artifact
