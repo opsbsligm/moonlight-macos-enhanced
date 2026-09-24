@@ -452,6 +452,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **A host-info response with no hostname could no longer leave a saved machine as an unlabelled row
+  in the device list.** `propagateChangesToParent:` had one bare assignment left after the previous
+  entry, and `-[ServerInfoResponse populateHost:]` overwrites the name of the temporary host it is
+  handed, so a body that omitted `hostname` emptied the stored name of a host that had one -- and
+  `-[TemporaryHost displayName]` answers with the empty string unless a custom name sits behind it.
+  Measured on a live store with a new experiment that matches the row by uuid rather than by the
+  fall-back, so the two defects are never measured in each other's presence: the name came back empty,
+  the display name came back as `""`, and the host and app counts did not move at all. That last
+  reading is the one that says what this defect is -- an unlabelled machine, not a lost one -- and the
+  rule refuses it anyway, because the method promises not to overwrite with nil and a promise kept for
+  six fields and broken for two is not a promise. Chasing it settled something a tidier change would
+  have broken: the three fields do not mean the same thing by an absent value. `uuid` and `name` are
+  both overwritten by `populateHost:` and neither has a legitimate way to be empty -- the reader
+  treats an empty uuid as trash to delete, and a server that renames itself arrives with a name -- so
+  both are guarded now. `customName` is not, and must not be: `populateHost:` never assigns it, a
+  temporary host read out of the store already carries it, and the rename sheet
+  (`HostsViewController.m:473`) expresses "the person cleared their custom name" by assigning nil, so
+  a guard there would make the field impossible to unset. That distinction is written into the method
+  and into the wording of the rule, because "just make them consistent" is exactly the change that
+  would break a working feature. The second record is asked for by the same `--require-partial` the
+  first one is, judged together with it rather than beside it, so a run that grew one experiment and
+  lost the other is named for it: six fixtures and two red-team injections were added (one made from
+  the record this repository filed while the name was still being written away), the filed record was
+  re-run to carry both experiments, and the four older records gained a second absence they are
+  expected to be refused for -- and still nothing else, green once the entry is supplied.
 - **A host-info response without a unique id could no longer delete a paired machine and the apps
   added to it.** `-[DataManager getHostForTemporaryHost:withHostRecords:]` carries a branch commented
   "Fallback matching when UUID is missing" and finds the stored host by mac, address or name instead,

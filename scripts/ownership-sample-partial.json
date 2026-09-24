@@ -1,5 +1,36 @@
 {
   "ownership" : {
+    "holder" : "app-only",
+    "partialHostName" : {
+      "nameAfterPropagate" : "Probe Host Named",
+      "parsedName" : "<absent>",
+      "hostsAfter" : 2,
+      "cleanedUp" : "by-the-probe",
+      "plantedName" : "Probe Host Named",
+      "probeOwnedAfter" : 1,
+      "plantedUuid" : "probe-host-named",
+      "parsedUuid" : "probe-host-named",
+      "appsBefore" : 3,
+      "displayNameAfterPropagate" : "Probe Host Named",
+      "appsAfter" : 3,
+      "status" : "measured"
+    },
+    "partialHostInfo" : {
+      "hostsBeforeCleanup" : 2,
+      "uuidAfterPropagate" : "probe-host-partial",
+      "parsedMac" : "aa:bb:cc:dd:ee:f0",
+      "parsedName" : "Probe Host Partial",
+      "hostsAfterCleanup" : 2,
+      "cleanedUp" : "by-the-probe",
+      "probeOwnedBeforeCleanup" : 1,
+      "plantedUuid" : "probe-host-partial",
+      "rowAfterPropagate" : true,
+      "parsedUuid" : "<absent>",
+      "appsBefore" : 6,
+      "probeOwnedAfterCleanup" : 1,
+      "status" : "measured",
+      "appsAfterCleanup" : 6
+    },
     "shapes" : {
       "handBuiltGraph" : {
         "hostAliveWhileAppHeld" : 1,
@@ -23,31 +54,14 @@
         "appListCount" : 3
       }
     },
-    "holder" : "app-only",
-    "partialHostInfo" : {
-      "hostsBeforeCleanup" : 2,
-      "uuidAfterPropagate" : "probe-host-partial",
-      "parsedMac" : "aa:bb:cc:dd:ee:f0",
-      "parsedName" : "Probe Host Partial",
-      "hostsAfterCleanup" : 2,
-      "cleanedUp" : "by-the-probe",
-      "probeOwnedBeforeCleanup" : 1,
-      "plantedUuid" : "probe-host-partial",
-      "rowAfterPropagate" : true,
-      "parsedUuid" : "<absent>",
-      "appsBefore" : 6,
-      "probeOwnedAfterCleanup" : 1,
-      "status" : "measured",
-      "appsAfterCleanup" : 6
-    },
     "productionHostUuid" : "86D1F81F-4D3D-E306-D694-EFDFE6BCD6CE",
-    "libraryHosts" : 1,
     "seedHosts" : {
       "status" : "existing-hosts",
       "existing" : 1,
       "requested" : 1,
       "seeded" : 0
     },
+    "libraryHosts" : 1,
     "reapedHosts" : {
       "probeOwned" : 0,
       "appRecordsBefore" : 3,

@@ -652,18 +652,20 @@ jobs:
       # existing library. That is what the runner was doing until 2026-09-25, and it is why the
       # reading it filed said `seeded` when the run itself said `existing-hosts`.
       #
-      # The step also asks for one experiment by name: plant a host that has a unique id and three
-      # of the user's apps, feed the production parser a server-info body that carries every field a
-      # paired machine sends except `uniqueid`, and let the production write path take its turn. A
+      # The step also asks for two experiments by name. The first plants a host that has a unique id
+      # and three of the user's apps, feeds the production parser a server-info body that carries
+      # every field a paired machine sends except `uniqueid`, and lets the production write path take
+      # its turn. The second asks the same question of the host's name, on a row matched by its uuid
+      # rather than by the fall-back, so the two defects are never measured in each other's presence. A
       # host that answers without its id is expected often enough that `getHostForTemporaryHost:`
       # codes a fall-back match for it, and until 2026-09-25 `propagateChangesToParent:` wrote the
       # missing id back over the stored one -- every other field in that method is nil-guarded by
       # the comment above them, `uuid` was not. The device list then deletes whatever has no id, and
       # `Host.appList` cascades, so the applications somebody added went with the host: measured on
       # a live store at 2 to 1 hosts and 6 to 3 apps, for one response that omitted one tag. Asking
-      # for the record with `--require-partial` is what stops the step from going green on a build
-      # that ignored the flag, which is the same control the reap has -- and the audit raises that
-      # probe flag itself rather than trusting this file to set it, because the local gates replay
+      # for those records with `--require-partial` is what stops the step from going green on a build
+      # that ignored the flags, which is the same control the reap has -- and the audit raises those
+      # probe flags itself rather than trusting this file to set them, because the local gates replay
       # this command line and nothing else, and a control split between a step's environment and
       # its arguments is one they can only fail for the wrong reason.
       run: python3 scripts/ownership-audit.py --timeout 120 --require-partial

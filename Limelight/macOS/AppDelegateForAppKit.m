@@ -1126,6 +1126,108 @@ static void MLOwnershipBuildBackpointerPair(TemporaryHost **hostSlot,
     *appListCountSlot = host.appList.count;
 }
 
+// The same question asked of the host's name, because the method answers it bare.
+//
+// `propagateChangesToParent:` assigns `name` the way `uuid` used to be assigned, and
+// `-[ServerInfoResponse populateHost:]` overwrites the stored temporary host's name with whatever the
+// response carried -- so a body with no `hostname` empties the name of a host that already had one,
+// and `-[TemporaryHost displayName]` falls back to the empty string when there is no custom name
+// behind it. The damage stops there: an empty name deletes nothing, and the row keeps its uuid, which
+// is why this one costs a blank row in the device list rather than the loss of somebody's apps. It is
+// filed and measured anyway for the reason the uuid case was -- the method promises not to overwrite
+// with nil, and a promise kept for six fields and broken for two is not a promise.
+//
+// One field is deliberately left bare, and saying so is part of the record. `customName` is written
+// with `setValue:forKey:` and no guard, because the rename sheet at `HostsViewController.m:473`
+// expresses "the person cleared their custom name" by assigning nil, and a guard there would make the
+// field impossible to clear. `populateHost:` never touches `customName`, and a temporary host read
+// out of the store carries it (`TemporaryHost.m:35`), so the discovery path writes the same value
+// back rather than an absent one. That is the difference between the three fields, and it is why the
+// two guards went where they did and the third did not go at all.
+static void MLProbeMissingHostNameIfRequested(NSMutableDictionary *report, void (^refuse)(NSString *)) {
+    if (getenv("ML_PROBE_PARTIAL_HOST_NAME") == NULL) {
+        return;
+    }
+    NSMutableDictionary *record = [NSMutableDictionary dictionary];
+    report[@"partialHostName"] = record;
+
+    NSString *plantedUuid = [NSString stringWithFormat:@"%@named", MLProbeHostUuidPrefix];
+    NSString *plantedName = @"Probe Host Named";
+    DataManager *store = [[DataManager alloc] init];
+
+    TemporaryHost *host = [[TemporaryHost alloc] init];
+    host.name = plantedName;
+    host.uuid = plantedUuid;
+    host.address = @"192.0.2.98";
+    [store updateHost:host];
+
+    long appsBefore = 0;
+    NSString *countProblem = nil;
+    MLCountAppRecords(&appsBefore, NULL, &countProblem);
+    record[@"appsBefore"] = @(appsBefore);
+    record[@"plantedUuid"] = plantedUuid;
+    record[@"plantedName"] = plantedName;
+
+    // The uuid is present and correct here, so the write lands on the planted row through the
+    // primary match rather than the fall-back: the question is what a missing name does, and the two
+    // questions must not be measured in the same run.
+    NSString *body = [NSString stringWithFormat:@"<hc><uniqueid>%@</uniqueid>"
+                                                @"<PairStatus>1</PairStatus></hc>", plantedUuid];
+    ServerInfoResponse *response = [[ServerInfoResponse alloc] init];
+    [response populateWithData:[body dataUsingEncoding:NSUTF8StringEncoding]];
+    TemporaryHost *partial = [[TemporaryHost alloc] init];
+    partial.address = @"192.0.2.98";
+    [response populateHost:partial];
+    record[@"parsedName"] = partial.name ?: @"<absent>";
+    record[@"parsedUuid"] = partial.uuid ?: @"<absent>";
+    if (partial.name != nil || partial.uuid.length == 0) {
+        record[@"status"] = @"body-did-not-parse-as-intended";
+        refuse(@"a server-info body without a hostname did not parse into a host with no name and"
+               @" the planted uuid, so the write below would not be the one a machine answers with"
+               @" when it leaves its name out");
+        return;
+    }
+
+    [store updateHost:partial];
+
+    NSString *nameAfter = nil;
+    for (TemporaryHost *readBack in [store getHosts]) {
+        if ([readBack.uuid isEqualToString:plantedUuid]) {
+            nameAfter = readBack.name;
+            break;
+        }
+    }
+    record[@"nameAfterPropagate"] = nameAfter.length > 0 ? nameAfter : @"<empty>";
+    record[@"displayNameAfterPropagate"] = ^{
+        for (TemporaryHost *readBack in [store getHosts]) {
+            if ([readBack.uuid isEqualToString:plantedUuid]) {
+                return readBack.displayName ?: @"";
+            }
+        }
+        return @"<row gone>";
+    }();
+
+    long hostsAfter = 0;
+    long oursAfter = 0;
+    MLCountLibraryHosts(store, &hostsAfter, &oursAfter);
+    long appsAfter = 0;
+    countProblem = nil;
+    MLCountAppRecords(&appsAfter, NULL, &countProblem);
+    record[@"hostsAfter"] = @(hostsAfter);
+    record[@"probeOwnedAfter"] = @(oursAfter);
+    record[@"appsAfter"] = @(appsAfter);
+    if (countProblem != nil) {
+        record[@"appRecordProblem"] = countProblem;
+    }
+    record[@"status"] = @"measured";
+
+    TemporaryHost *retire = [[TemporaryHost alloc] init];
+    retire.uuid = plantedUuid;
+    [store removeHost:retire];
+    record[@"cleanedUp"] = @"by-the-probe";
+}
+
+
 // One server-info response with its unique id missing, measured against a host that has one.
 //
 // The reason this probe exists is a pair of facts read out of the shipping code rather than
@@ -1294,6 +1396,7 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
     // Before the reap, so a host this measurement removed is not also blamed on the reap, and a
     // host it left behind still gets swept by the flag that exists for that job.
     MLProbePartialHostInfoIfRequested(ownership, refuse);
+    MLProbeMissingHostNameIfRequested(ownership, refuse);
     MLReapProbeOwnedHostsIfRequested(ownership, refuse);
 
     // One host through the production write path, exactly as the memory sweep seeds one. A

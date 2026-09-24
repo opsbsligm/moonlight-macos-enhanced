@@ -11,19 +11,23 @@
  },
  "filed_record_refusals": {
   "ownership-sample-cascade.json": [
-   "no partialHostInfo"
+   "no partialHostInfo",
+   "no partialHostName"
   ],
   "ownership-sample-cleaned.json": [
    "not counted on both sides",
-   "no partialHostInfo"
+   "no partialHostInfo",
+   "no partialHostName"
   ],
   "ownership-sample-partial.json": [],
   "ownership-sample-prereap.json": [
    "no reapedHosts",
-   "no partialHostInfo"
+   "no partialHostInfo",
+   "no partialHostName"
   ],
   "ownership-sample.json": [
-   "no partialHostInfo"
+   "no partialHostInfo",
+   "no partialHostName"
   ]
  },
  "filed_record_refusals_note": "One entry per record filed in `scripts`, keyed by file name, and the value is the list of refusals that file must draw. `ownership-sample.json` is the run of 2026-09-25 on this laptop after the reap landed: one host in the library, none of them the probe's, the reap keeping them, and the shapes unchanged from the run before it -- so it has to draw nothing. `ownership-sample-prereap.json` is run 36019606141, filed a day earlier: the CI runner's reading, whose library was the memory sweep's leftover, and it must draw the refusal naming the field that run's build could not have recorded. The red team also fills that field in and requires the older record to go green, which is what makes the refusal a verdict about the reap rather than a coincidence of shape. `ownership-sample-cleaned.json` is the run that pressed `ML_PROBE_REMOVE_OWN_HOSTS` on this laptop: two hosts found, one of them the seed's, that one removed through the app's own deletion path and the other left standing -- `removed-some`, which is the one reap status a human sets rather than a job. Expectations move when records arrive, which keeps relaxing a rule and filing a record two different edits. `ownership-sample-cleaned.json` predates the app-record counting, so it must draw the refusal for a deletion whose rows were never counted -- and the red team fills the count in from the seed's own fan-out and requires it to go green, so the refusal stays about the missing evidence. `ownership-sample-cascade.json` is the run that answered the Core Data question: a planted host was removed and its three app records went with it (six rows before, three after, none of them orphaned), so the model's `Cascade` is a measurement and not a grep. Records filed before ML_PROBE_PARTIAL_HOST_INFO existed are expected to be refused for that absence and for nothing else: filled in, they go green again.",
