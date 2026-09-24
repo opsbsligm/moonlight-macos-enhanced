@@ -8,9 +8,15 @@ while the gates stayed green -- a green gate that cannot see is not a gate.
 The app carries a Debug-only entry point, inert unless ML_RENDER_PROBE is set,
 that drives the production presenter through the production call against a window
 of its own and then measures what happened. This script builds that Debug binary,
-runs it with HOME pointed at a scratch directory so the database and preferences
-under test are the probe's own and nobody's real settings are touched, and reads
-the report back.
+runs it with HOME pointed at a scratch directory and reads the report back. That
+scratch home is not the isolation it was described as for four rounds: the support
+directory the app opens resolves out of the account record rather than out of
+`$HOME` (`DatabaseSingleton.m:100`, measured 2026-09-25 by an empty temporary home
+that still reported the machine's own library), so the probe reads and writes the
+real store. For this probe that is harmless -- it opens the settings page, draws it,
+and asks for no hosts -- but it is why the probe must never be given a flag that
+deletes or plants anything, and why the seed and the reap live in the two probes that
+count the library by who wrote it.
 
 What it proves:
   * presenting settings does not open a window (the page lives in the window it

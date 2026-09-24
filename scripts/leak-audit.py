@@ -936,11 +936,16 @@ def capture(timeout, report_path=None, cycles=None):
             return None, None
         probe = read_probe_record(out)
     finally:
-        # The gate that looks for leaks is not allowed to leave any of its own behind:
-        # the probe writes screenshots into its output directory and a database into the
-        # HOME it was given, and both belong to this function. render-probe.py has always
-        # cleared its own; this one did not, and a laptop that ran the sweep a dozen times
-        # today found out by filling up.
+        # The gate that looks for leaks is not allowed to leave any of its own behind, and
+        # the output directory is genuinely its own: that is where the probe writes its
+        # screenshots and its report, and a laptop that ran the sweep a dozen times today
+        # found out by filling up. The `home` below is worth removing for tidiness and is
+        # not what kept this sweep out of the machine's library: the support directory the
+        # app resolves comes out of the account record, not out of `$HOME`
+        # (`DatabaseSingleton.m:100`), so the graph this sweep seeds is planted in -- and
+        # read back out of -- the one store every probe on the machine shares. The ownership
+        # probe reaps hosts it can prove it planted; this one leaves its host behind for the
+        # life of the runner.
         shutil.rmtree(home, ignore_errors=True)
         shutil.rmtree(out, ignore_errors=True)
     # Two things have to be true before any of this report is worth judging, and both come
