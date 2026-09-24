@@ -1426,6 +1426,11 @@ def compiled_sources(scan_root):
                 yield path, open(path, encoding="utf-8").read()
 
 
+# A take is seen only when a CG...Create/Copy sits directly right of the `=`: a cast in
+# between (`_x = (CGColorSpaceRef)CGColorSpaceCreateWithName(...)` is one way to write it)
+# hides the acquisition from this reader. Measured over the compiled sources: zero
+# occurrences, which is why the reader is not widened here -- refusing a shape nobody has
+# ever written is a rule somebody else has to work around later, with no defect behind it.
 CREATED = re.compile(r"(\w+)\s*=\s*CG\w*(?:Create|Copy)\w*\(")
 
 CLASS_BLOCK = re.compile(r"^(?:@interface|@implementation)\s+([A-Za-z_]\w*)", re.M)
