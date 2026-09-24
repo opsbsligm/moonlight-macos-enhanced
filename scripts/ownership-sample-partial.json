@@ -1,0 +1,63 @@
+{
+  "ownership" : {
+    "shapes" : {
+      "handBuiltGraph" : {
+        "hostAliveWhileAppHeld" : 1,
+        "appAliveWithNoHolder" : 1,
+        "hostAliveWithNoHolder" : 1,
+        "appHostReadableWhileAppHeld" : 1,
+        "appListCount" : 1
+      },
+      "backpointerOnly" : {
+        "hostAliveWhileAppHeld" : 1,
+        "appAliveWithNoHolder" : 0,
+        "hostAliveWithNoHolder" : 0,
+        "appHostReadableWhileAppHeld" : 1,
+        "appListCount" : 0
+      },
+      "productionGraph" : {
+        "hostAliveWhileAppHeld" : 1,
+        "appAliveWithNoHolder" : 1,
+        "hostAliveWithNoHolder" : 1,
+        "appHostReadableWhileAppHeld" : 1,
+        "appListCount" : 3
+      }
+    },
+    "holder" : "app-only",
+    "partialHostInfo" : {
+      "hostsBeforeCleanup" : 2,
+      "uuidAfterPropagate" : "probe-host-partial",
+      "parsedMac" : "aa:bb:cc:dd:ee:f0",
+      "parsedName" : "Probe Host Partial",
+      "hostsAfterCleanup" : 2,
+      "cleanedUp" : "by-the-probe",
+      "probeOwnedBeforeCleanup" : 1,
+      "plantedUuid" : "probe-host-partial",
+      "rowAfterPropagate" : true,
+      "parsedUuid" : "<absent>",
+      "appsBefore" : 6,
+      "probeOwnedAfterCleanup" : 1,
+      "status" : "measured",
+      "appsAfterCleanup" : 6
+    },
+    "productionHostUuid" : "86D1F81F-4D3D-E306-D694-EFDFE6BCD6CE",
+    "libraryHosts" : 1,
+    "seedHosts" : {
+      "status" : "existing-hosts",
+      "existing" : 1,
+      "requested" : 1,
+      "seeded" : 0
+    },
+    "reapedHosts" : {
+      "probeOwned" : 0,
+      "appRecordsBefore" : 3,
+      "found" : 1,
+      "status" : "kept",
+      "orphanAppRecordsBefore" : 0
+    },
+    "probeOwnedHosts" : 0
+  },
+  "failures" : [
+
+  ]
+}

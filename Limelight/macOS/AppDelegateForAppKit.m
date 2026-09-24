@@ -20,6 +20,7 @@
 #import "AppsViewController.h"
 #import "AppsWorkspaceViewController.h"
 #import "TemporaryHost.h"
+#import "ServerInfoResponse.h"
 #import "Moonlight-Swift.h"
 #import "DataManager.h"
 #import <objc/runtime.h>
@@ -1125,6 +1126,146 @@ static void MLOwnershipBuildBackpointerPair(TemporaryHost **hostSlot,
     *appListCountSlot = host.appList.count;
 }
 
+// One server-info response with its unique id missing, measured against a host that has one.
+//
+// The reason this probe exists is a pair of facts read out of the shipping code rather than
+// inferred. `-[DataManager getHostForTemporaryHost:withHostRecords:]` carries a branch commented
+// "Fallback matching when UUID is missing", which matches a temporary host to a stored one by mac,
+// address or name -- so the code does not merely tolerate a discovery response that arrived without
+// a uuid, it expects one often enough to look the machine up without it. `-[TemporaryHost
+// propagateChangesToParent:]` then writes that missing uuid back: the method opens with "Avoid
+// overwriting existing data with nil if we don't have everything populated in the temporary host",
+// guards `address`, `externalAddress`, `localAddress`, `ipv6Address`, `mac` and `serverCert` with
+// exactly that intent, and assigns `uuid` bare. The fallback finds the paired host; the write
+// clears the uuid that identified it.
+//
+// What turns that from a bad row into lost work is the deletion rule measured in section 12 of
+// `docs/memory-ownership.md`: `Host.appList` is `Cascade`, so a host that disappears takes the app
+// records under it with it -- the applications somebody added. The read path also deletes:
+// `SettingsModel.hosts` calls `removeHostsWithEmptyUuid` before it reads a single row, and so does
+// the device sidebar, so the row is not left to be repaired by the next good response. Looking at
+// the device list is what removes it.
+//
+// This function therefore does what the app does, in the app's own order, and reports every number
+// without judging them: plant a host with a uuid and three apps, feed the production parser a body
+// with every field a paired machine sends except `uniqueid`, let the production `updateHost:` find
+// the row and write into it, then read the device list the way the settings page does. The verdict
+// belongs to `scripts/ownership-audit.py`, which is where the expected shape is written down, so a
+// change to the code turns a record red rather than turning this function off.
+static void MLProbePartialHostInfoIfRequested(NSMutableDictionary *report, void (^refuse)(NSString *)) {
+    if (getenv("ML_PROBE_PARTIAL_HOST_INFO") == NULL) {
+        return;
+    }
+    NSMutableDictionary *record = [NSMutableDictionary dictionary];
+    report[@"partialHostInfo"] = record;
+
+    NSString *plantedUuid = [NSString stringWithFormat:@"%@partial", MLProbeHostUuidPrefix];
+    NSString *plantedName = @"Probe Host Partial";
+    NSString *plantedMac = @"aa:bb:cc:dd:ee:f0";
+    DataManager *store = [[DataManager alloc] init];
+
+    TemporaryHost *host = [[TemporaryHost alloc] init];
+    host.name = plantedName;
+    host.uuid = plantedUuid;
+    host.mac = plantedMac;
+    host.address = @"192.0.2.99";
+    [store updateHost:host];
+
+    NSMutableSet *plantedApps = [NSMutableSet set];
+    for (long appNumber = 0; appNumber < 3; appNumber++) {
+        TemporaryApp *app = [[TemporaryApp alloc] init];
+        app.id = [NSString stringWithFormat:@"%ld", 950000 + appNumber];
+        app.name = [NSString stringWithFormat:@"Probe Partial App %ld", appNumber + 1];
+        app.host = host;
+        [plantedApps addObject:app];
+    }
+    host.appList = plantedApps;
+    // The same call the app pane makes after a box answers, so the apps hang off the host the way
+    // a person's do -- and so the cascade, if it runs, has something of the user's to take.
+    [store updateAppsForExistingHost:host];
+
+    long appsBefore = 0;
+    NSString *countProblem = nil;
+    MLCountAppRecords(&appsBefore, NULL, &countProblem);
+    record[@"appsBefore"] = @(appsBefore);
+    record[@"plantedUuid"] = plantedUuid;
+
+    // Every tag a paired machine sends, minus `uniqueid`. Handing the parser a body of the shape it
+    // really receives is the point: the bug being measured lives in what the code does with a tag it
+    // did not get, not in a hand-built object that skipped one.
+    NSString *body = @"<hc><hostname>Probe Host Partial</hostname>"
+                     @"<mac>aa:bb:cc:dd:ee:f0</mac><PairStatus>1</PairStatus></hc>";
+    ServerInfoResponse *response = [[ServerInfoResponse alloc] init];
+    [response populateWithData:[body dataUsingEncoding:NSUTF8StringEncoding]];
+    TemporaryHost *partial = [[TemporaryHost alloc] init];
+    [response populateHost:partial];
+    record[@"parsedName"] = partial.name ?: @"<absent>";
+    record[@"parsedMac"] = partial.mac ?: @"<absent>";
+    record[@"parsedUuid"] = partial.uuid ?: @"<absent>";
+    if (partial.name.length == 0 || partial.mac.length == 0 || partial.uuid != nil) {
+        // The body failed to say what the measurement needs it to say, so nothing below this point
+        // would be about a missing unique id at all. Say so and stop rather than measure an object
+        // that was never the thing under test.
+        record[@"status"] = @"body-did-not-parse-as-intended";
+        refuse(@"a server-info body without a unique id did not parse into a host with a name and"
+               @" mac and no uuid, so the fall-back match below would not be the one the shipping"
+               @" code reaches when a machine answers without its id");
+    } else {
+        [store updateHost:partial];
+
+        // Read the row back the way the app does -- out of `getHosts`, by the name the response
+        // carried -- rather than by the uuid that is the thing in question. Matching by uuid could
+        // not tell "the uuid is gone" from "this row is gone", and those two are the difference
+        // between a damaged row and a deleted one.
+        NSString *uuidAfterPropagate = nil;
+        BOOL rowStillThere = NO;
+        for (TemporaryHost *readBack in [store getHosts]) {
+            if ([readBack.name isEqualToString:plantedName]) {
+                rowStillThere = YES;
+                uuidAfterPropagate = readBack.uuid;
+                break;
+            }
+        }
+        record[@"rowAfterPropagate"] = @(rowStillThere);
+        record[@"uuidAfterPropagate"] = uuidAfterPropagate.length > 0 ? uuidAfterPropagate : @"<empty>";
+
+        // Now look at the device list, which is what an ordinary person does next and what removes
+        // anything whose uuid went missing.
+        long hostsBeforeCleanup = 0;
+        long oursBeforeCleanup = 0;
+        MLCountLibraryHosts(store, &hostsBeforeCleanup, &oursBeforeCleanup);
+        [store removeHostsWithEmptyUuid];
+        long hostsAfterCleanup = 0;
+        long oursAfterCleanup = 0;
+        MLCountLibraryHosts(store, &hostsAfterCleanup, &oursAfterCleanup);
+        long appsAfterCleanup = 0;
+        countProblem = nil;
+        MLCountAppRecords(&appsAfterCleanup, NULL, &countProblem);
+        record[@"hostsBeforeCleanup"] = @(hostsBeforeCleanup);
+        record[@"hostsAfterCleanup"] = @(hostsAfterCleanup);
+        record[@"probeOwnedBeforeCleanup"] = @(oursBeforeCleanup);
+        record[@"probeOwnedAfterCleanup"] = @(oursAfterCleanup);
+        record[@"appsAfterCleanup"] = @(appsAfterCleanup);
+        if (countProblem != nil) {
+            record[@"appRecordProblem"] = countProblem;
+        }
+        record[@"status"] = @"measured";
+
+        // Leave nothing behind when the app did not already do it for us. If the row is gone the
+        // measurement is that the app deleted its own host, and there is nothing to clean -- the
+        // absence is the answer, so it is reported rather than hidden by a re-plant.
+        if (rowStillThere && uuidAfterPropagate.length > 0) {
+            TemporaryHost *retire = [[TemporaryHost alloc] init];
+            retire.uuid = plantedUuid;
+            [store removeHost:retire];
+            record[@"cleanedUp"] = @"by-the-probe";
+        } else {
+            record[@"cleanedUp"] = @"by-the-app";
+        }
+    }
+}
+
+
 static void MLRunOwnershipProbeAndExitIfRequested(void) {
     if (getenv("ML_OWNERSHIP_PROBE") == NULL) {
         return;
@@ -1150,6 +1291,9 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
     // the memory sweep left in the same database one step earlier -- the same shape, the same
     // three apps, and a `seed status` of existing-hosts rather than seeded, which is the only
     // clue that the room was not clean. A person's own library is left exactly as it was.
+    // Before the reap, so a host this measurement removed is not also blamed on the reap, and a
+    // host it left behind still gets swept by the flag that exists for that job.
+    MLProbePartialHostInfoIfRequested(ownership, refuse);
     MLReapProbeOwnedHostsIfRequested(ownership, refuse);
 
     // One host through the production write path, exactly as the memory sweep seeds one. A

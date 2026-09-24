@@ -76,7 +76,22 @@
     }
     parentHost.name = self.name;
     [parentHost setValue:self.customName forKey:@"customName"];
-    parentHost.uuid = self.uuid;
+    // The guard every field above this one carries, extended to the field where its absence cost
+    // the most. `-[DataManager getHostForTemporaryHost:withHostRecords:]` has a branch commented
+    // "Fallback matching when UUID is missing" and looks the stored host up by mac, address or name
+    // instead, so a discovery response that arrived without a `uniqueid` is expected often enough
+    // to be coded for -- and it reaches the paired host. Assigning the missing value here used to
+    // take that host's identifier off. Nothing repairs it later: `SettingsModel.hosts` and the
+    // device sidebar both call `removeHostsWithEmptyUuid` before they read a row, so the next look
+    // at the device list deletes the host, and `Host.appList` is `Cascade` -- measured against a
+    // live store, with the apps going 6 to 3 and the host going 2 to 1 for one response that simply
+    // did not carry the tag -- so the applications somebody added to that machine went with it.
+    // An empty id is refused for the same reason as a nil one: `<uniqueid></uniqueid>` parses to an
+    // empty string, and an empty string deletes the row just as completely. No legitimate flow sets
+    // a host's uuid to empty, because the code that reads the list treats empty as trash to remove.
+    if (self.uuid != nil && self.uuid.length > 0) {
+        parentHost.uuid = self.uuid;
+    }
     parentHost.serverCodecModeSupport = self.serverCodecModeSupport;
     parentHost.pairState = [NSNumber numberWithInt:self.pairState];
 }

@@ -9,6 +9,25 @@
   "app.host": "strong",
   "host.appList": "strong"
  },
+ "filed_record_refusals": {
+  "ownership-sample-cascade.json": [
+   "no partialHostInfo"
+  ],
+  "ownership-sample-cleaned.json": [
+   "not counted on both sides",
+   "no partialHostInfo"
+  ],
+  "ownership-sample-partial.json": [],
+  "ownership-sample-prereap.json": [
+   "no reapedHosts",
+   "no partialHostInfo"
+  ],
+  "ownership-sample.json": [
+   "no partialHostInfo"
+  ]
+ },
+ "filed_record_refusals_note": "One entry per record filed in `scripts`, keyed by file name, and the value is the list of refusals that file must draw. `ownership-sample.json` is the run of 2026-09-25 on this laptop after the reap landed: one host in the library, none of them the probe's, the reap keeping them, and the shapes unchanged from the run before it -- so it has to draw nothing. `ownership-sample-prereap.json` is run 36019606141, filed a day earlier: the CI runner's reading, whose library was the memory sweep's leftover, and it must draw the refusal naming the field that run's build could not have recorded. The red team also fills that field in and requires the older record to go green, which is what makes the refusal a verdict about the reap rather than a coincidence of shape. `ownership-sample-cleaned.json` is the run that pressed `ML_PROBE_REMOVE_OWN_HOSTS` on this laptop: two hosts found, one of them the seed's, that one removed through the app's own deletion path and the other left standing -- `removed-some`, which is the one reap status a human sets rather than a job. Expectations move when records arrive, which keeps relaxing a rule and filing a record two different edits. `ownership-sample-cleaned.json` predates the app-record counting, so it must draw the refusal for a deletion whose rows were never counted -- and the red team fills the count in from the seed's own fan-out and requires it to go green, so the refusal stays about the missing evidence. `ownership-sample-cascade.json` is the run that answered the Core Data question: a planted host was removed and its three app records went with it (six rows before, three after, none of them orphaned), so the model's `Cascade` is a measurement and not a grep. Records filed before ML_PROBE_PARTIAL_HOST_INFO existed are expected to be refused for that absence and for nothing else: filled in, they go green again.",
+ "library_sharing": "One database per machine, not one per probe. `DatabaseSingleton` resolves its store under `NSApplicationSupportDirectory` in `NSUserDomainMask`, which comes out of the account record and not out of `$HOME`, so a Debug probe started with a private temporary home still opens the same SQLite file as the app a person uses. Measured, not inferred: an empty temporary `HOME`, a probe asked to seed one host, and a report of the laptop's own two hosts. Every probe in this repository had assumed the opposite, and one of them was deleting the directory it believed it had written to. What follows from it: the steps of one CI job share a library, and a run that measures `the library` without asking who put hosts in it may be measuring the previous run. `ML_PROBE_REAP_OWN_HOSTS` and `probeOwnedHosts` are what turns that from an assumption into a reading.",
  "observed": {
   "app_asset_retriever_correction": "docs/memory-ownership.md section 4 recorded the box-art path as a holder with no host. It has one: AppAssetRetriever.h:15 declares a TemporaryHost property and AppAssetManager.m:59 assigns it beside retriever.app, so the asynchronous boxArtPathForApp: read of app.host.uuid is over a host the request itself is holding. Section 5 step 3 is therefore already done for that path, and the two sites above are the whole of what steps 2 and 3 still owe.",
   "ci_runner": {
@@ -38,9 +57,11 @@
     },
     "sitesAlsoGivenAHost": 1
    },
+   "correction_seed_status": "WRONG IN THE FIRST FILING, corrected from the run's own log. This block used to say both arches reported seed status `seeded`. The first ownership print appeared in run 36019606141 and both arches read `1 host(s) in the library, seed status existing-hosts`. The `seeded` had been carried over from the memory sweep's line in the same job, which does seed a host: the sweep runs a step earlier, and the probe that came to measure a graph it would plant itself found the sweep's host already in the database. Two readings of two steps had been merged into one record, which is the mistake this file exists to make expensive.",
    "identical_across_both_arches": true,
    "measured_on": "2026-09-25, run 36029410301, GitHub macOS runners, arm64 and x86_64, word for word alike: 1 host in the library and 1 of them planted by a probe, the reap reporting `reaped`, the seed then reporting `seeded`, and the three shapes reading as they had on the laptop -- production appList 3 and both objects alive with nobody holding them, hand-built the same at appList 1, and the lone back-pointer going back. This is the first ownership run on a runner that measured a graph it made itself.",
    "runs": 3,
+   "seeded_then_existing_in_one_job": "The memory sweep prints its own seed status three times in one job and they are not all the same line: `seeded`, then `existing-hosts` twice. That is the shared library again rather than a change of shape -- the first sweep of the pair plants the host and the sweeps after it find what the first one wrote. The growth judgement compares two sweeps over that one library, which is what it wants; what is no longer allowed anywhere is a reading that calls such a leftover `somebody's library` without saying so, which is why the ownership probe now reaps first and prints whose host it measured.",
    "what_still_needs_a_thing_we_do_not_have": "a live stream session. The runners judge the object graph and the assignments; nobody has yet watched a running stream read `app.host`, and the holder rule is a guarantee about the source until somebody does.",
    "what_the_runners_add": "The seed path, genuinely this time. A runner has nothing to discover, so the graph it measures is one a probe wrote through the production `DataManager` -- and, since the reap, the graph the ownership probe wrote and not the one the sweep left. The laptop reaches the same table through `existing-hosts` over a real library, which is the point: the reading does not depend on whose LAN answered, and it no longer depends on which step ran first.",
    "x86_64": {
@@ -68,9 +89,7 @@
      "hostAliveWithNoHolder": true
     },
     "sitesAlsoGivenAHost": 1
-   },
-   "correction_seed_status": "WRONG IN THE FIRST FILING, corrected from the run's own log. This block used to say both arches reported seed status `seeded`. The first ownership print appeared in run 36019606141 and both arches read `1 host(s) in the library, seed status existing-hosts`. The `seeded` had been carried over from the memory sweep's line in the same job, which does seed a host: the sweep runs a step earlier, and the probe that came to measure a graph it would plant itself found the sweep's host already in the database. Two readings of two steps had been merged into one record, which is the mistake this file exists to make expensive.",
-   "seeded_then_existing_in_one_job": "The memory sweep prints its own seed status three times in one job and they are not all the same line: `seeded`, then `existing-hosts` twice. That is the shared library again rather than a change of shape -- the first sweep of the pair plants the host and the sweeps after it find what the first one wrote. The growth judgement compares two sweeps over that one library, which is what it wants; what is no longer allowed anywhere is a reading that calls such a leftover `somebody's library` without saying so, which is why the ownership probe now reaps first and prints whose host it measured."
+   }
   },
   "laptop": {
    "backpointer_only_survives_with_no_holder": false,
@@ -146,17 +165,5 @@
    "appListCount": 1
   },
   "why": "the counts are the definition of the shapes, not a property of the library. A hand-built graph with no app pointing back is the third shape wearing the second shape's name, and the agreement between the two graphs -- the control that says nothing outside the pair is retaining it -- would then be an agreement between two copies of the same shape."
- },
- "filed_record_refusals": {
-  "ownership-sample.json": [],
-  "ownership-sample-cleaned.json": [
-   "not counted on both sides"
-  ],
-  "ownership-sample-cascade.json": [],
-  "ownership-sample-prereap.json": [
-   "no reapedHosts"
-  ]
- },
- "filed_record_refusals_note": "One entry per record filed in `scripts`, keyed by file name, and the value is the list of refusals that file must draw. `ownership-sample.json` is the run of 2026-09-25 on this laptop after the reap landed: one host in the library, none of them the probe's, the reap keeping them, and the shapes unchanged from the run before it -- so it has to draw nothing. `ownership-sample-prereap.json` is run 36019606141, filed a day earlier: the CI runner's reading, whose library was the memory sweep's leftover, and it must draw the refusal naming the field that run's build could not have recorded. The red team also fills that field in and requires the older record to go green, which is what makes the refusal a verdict about the reap rather than a coincidence of shape. `ownership-sample-cleaned.json` is the run that pressed `ML_PROBE_REMOVE_OWN_HOSTS` on this laptop: two hosts found, one of them the seed's, that one removed through the app's own deletion path and the other left standing -- `removed-some`, which is the one reap status a human sets rather than a job. Expectations move when records arrive, which keeps relaxing a rule and filing a record two different edits. `ownership-sample-cleaned.json` predates the app-record counting, so it must draw the refusal for a deletion whose rows were never counted -- and the red team fills the count in from the seed's own fan-out and requires it to go green, so the refusal stays about the missing evidence. `ownership-sample-cascade.json` is the run that answered the Core Data question: a planted host was removed and its three app records went with it (six rows before, three after, none of them orphaned), so the model's `Cascade` is a measurement and not a grep.",
- "library_sharing": "One database per machine, not one per probe. `DatabaseSingleton` resolves its store under `NSApplicationSupportDirectory` in `NSUserDomainMask`, which comes out of the account record and not out of `$HOME`, so a Debug probe started with a private temporary home still opens the same SQLite file as the app a person uses. Measured, not inferred: an empty temporary `HOME`, a probe asked to seed one host, and a report of the laptop's own two hosts. Every probe in this repository had assumed the opposite, and one of them was deleting the directory it believed it had written to. What follows from it: the steps of one CI job share a library, and a run that measures `the library` without asking who put hosts in it may be measuring the previous run. `ML_PROBE_REAP_OWN_HOSTS` and `probeOwnedHosts` are what turns that from an assumption into a reading."
+ }
 }

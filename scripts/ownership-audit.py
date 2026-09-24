@@ -219,7 +219,7 @@ def judge_pairing(sites, decls, baseline):
     return problems, notes
 
 
-def probe_problems(report, require_reap=True, rules=None):
+def probe_problems(report, require_reap=True, rules=None, require_partial=False):
     """Why this run may not be judged at all, read out of the probe's own record.
 
     Kept apart from `capture()` so the fixtures can drive every one of these: each is a shape a
@@ -251,6 +251,7 @@ def probe_problems(report, require_reap=True, rules=None):
         problems.append("the audit asked for a host graph and got status %r, so the production"
                         " shape was never there to hold" % seed.get("status"))
     problems.extend(reap_problems(ownership, seed, require_reap, rules))
+    problems.extend(partial_host_problems(ownership, require_partial))
     shapes = ownership.get("shapes")
     if not isinstance(shapes, dict):
         problems.append("the probe recorded no shapes, so there is no control and no reading")
@@ -593,6 +594,82 @@ def app_record_problems(reap, rules=None):
                         " neither the app count (%d) nor the orphan count, so the store did"
                         " something the model does not describe"
                         % (rules["Host.appList"], removed, before))
+    return problems
+
+
+def partial_host_problems(ownership, require_partial=False):
+    """Judge what one host-info response without a unique id did to a host that has one.
+
+    The shipping code expects a response like this: `-[DataManager
+    getHostForTemporaryHost:withHostRecords:]` carries a branch commented "Fallback matching when
+    UUID is missing" and finds the stored host by mac, address or name instead. Until 2026-09-25
+    `-[TemporaryHost propagateChangesToParent:]` then wrote the missing value back -- every other
+    field in that method is guarded by the nil check the method's own comment asks for, and `uuid`
+    was not -- which took the identifier off a paired machine. Nothing repaired it afterwards:
+    `SettingsModel.hosts` and the device sidebar both call `removeHostsWithEmptyUuid` before they
+    read a row, so the next look at the device list deleted the host, and `Host.appList` is
+    `Cascade`, so the applications somebody added to that machine were deleted with it. Measured on
+    a live store: hosts 2 to 1, apps 6 to 3, for one response that simply omitted a tag.
+
+    These rules therefore refuse the outcome and not merely the missing evidence: a uuid that went
+    empty, a host count that dropped across a look at the device list, or app records that went
+    with it, are each a refusal. A record that is absent when the step was asked for is also a
+    refusal, because a flag that reached a build which ignores it is the one failure mode a green
+    would otherwise cover for.
+    """
+    partial = ownership.get("partialHostInfo")
+    if not isinstance(partial, dict):
+        if require_partial:
+            return ["the audit set ML_PROBE_PARTIAL_HOST_INFO and the probe recorded no"
+                    " partialHostInfo, so the flag reached a build that ignores it and no run here"
+                    " says what a response without a unique id does to a paired host"]
+        return []
+    problems = []
+    status = partial.get("status")
+    if status != "measured":
+        problems.append("the partial-response run recorded status %r instead of measuring, so the"
+                        " server-info body never became the host this rule is about" % status)
+        return problems
+    planted = partial.get("plantedUuid") or ""
+    if not planted.startswith("probe-host-"):
+        problems.append("the partial-response run planted %r, which is not a probe-owned uuid, so"
+                        " it was measuring somebody's real host and any number below it belongs to"
+                        " that person's library rather than to this test" % planted)
+    if partial.get("parsedUuid") != "<absent>":
+        problems.append("the server-info body the probe parsed carried a uuid (%r), so the"
+                        " fall-back branch was never reached and this run measured a normal"
+                        " response instead of the one being asked about" % partial.get("parsedUuid"))
+    for field in ("parsedName", "parsedMac"):
+        value = partial.get(field)
+        if not value or value == "<absent>":
+            problems.append("the body parsed to no %s, so the host the fall-back matched on was"
+                            " not the host that was planted and the write below it landed"
+                            " somewhere else" % field)
+    survived = partial.get("uuidAfterPropagate")
+    if survived != planted:
+        problems.append("a response without a unique id left the stored host's uuid as %r where the"
+                        " planted one was %r: writing the missing identifier back is what starts"
+                        " the sequence this rule exists for, because the next read of the device"
+                        " list deletes a row with no uuid" % (survived, planted))
+    if partial.get("hostsAfterCleanup") != partial.get("hostsBeforeCleanup"):
+        problems.append("looking at the device list took the library from %s host(s) to %s, so the"
+                        " read deleted a host -- which is only survivable if nothing hung off it,"
+                        " and the app count below says whether anything did"
+                        % (partial.get("hostsBeforeCleanup"), partial.get("hostsAfterCleanup")))
+    if partial.get("appsAfterCleanup") != partial.get("appsBefore"):
+        problems.append("app records went from %s to %s across one look at the device list, so the"
+                        " cascade that follows a deleted host took user configuration with it --"
+                        " these are the applications somebody added, not probe scratch that can be"
+                        " re-made" % (partial.get("appsBefore"), partial.get("appsAfterCleanup")))
+    if partial.get("cleanedUp") != "by-the-probe":
+        problems.append("the probe reports it left the host it planted as %r, so either the"
+                        " measurement deleted its own subject or something else did, and the"
+                        " library the next run reads is not the one this one started from"
+                        % partial.get("cleanedUp"))
+    if partial.get("appRecordProblem"):
+        problems.append("the app records could not be counted while judging the partial response"
+                        " (%s), so the cascade above is unmeasured rather than absent"
+                        % partial["appRecordProblem"])
     return problems
 
 
@@ -950,6 +1027,77 @@ def self_test(baseline):
             print("ok   fixture: %s" % label)
         total += 1
 
+    # The response that arrived without a unique id. Driven on its own because the flag that asks
+    # for it changes what an absent record means: unasked, no record is the run minding its own
+    # business; asked and unanswered, it is a flag that reached a build which ignores it -- and that
+    # is the one failure a green would otherwise be covering for.
+    CLEAN = {"status": "measured", "plantedUuid": "probe-host-partial", "parsedName": "Probe Host"
+                                                                          " Partial",
+             "parsedMac": "aa:bb:cc:dd:ee:f0", "parsedUuid": "<absent>",
+             "uuidAfterPropagate": "probe-host-partial", "rowAfterPropagate": True,
+             "hostsBeforeCleanup": 2, "hostsAfterCleanup": 2, "appsBefore": 6,
+             "appsAfterCleanup": 6, "cleanedUp": "by-the-probe"}
+
+    def partial_case(**changes):
+        return report_with(shipped_report(), partialHostInfo=dict(CLEAN, **changes))
+
+    partials = [
+        # Measured on 2026-09-25 after the guard went in: the uuid survived, the library kept its
+        # host across a look at the device list, and the six app rows were still six. Both footings
+        # are here on purpose -- asked for by name, and not asked for at all -- because the record
+        # means different things to a CI job and to a laptop that never set the flag.
+        ("the guarded write, as measured", partial_case(), True, []),
+        ("the same record on a run nobody asked", partial_case(), False, []),
+        # The record this laptop filed before the guard existed: the uuid gone, the host deleted by
+        # the read, and three of somebody's applications gone with it. Every one of those three is
+        # refused on its own, because each is a separate thing a future change can break.
+        ("the uuid written away", partial_case(uuidAfterPropagate="<empty>"), True,
+         ["left the stored host's uuid"]),
+        ("a device list that deletes",
+         partial_case(uuidAfterPropagate="<empty>", hostsBeforeCleanup=2, hostsAfterCleanup=1),
+         True, ["took the library from"]),
+        ("the cascade taking user configuration",
+         partial_case(uuidAfterPropagate="<empty>", hostsBeforeCleanup=2, hostsAfterCleanup=1,
+                      appsAfterCleanup=3),
+         True, ["cascade that follows"]),
+        # The premise. A body that carried its uuid never reaches the fall-back branch, so the run
+        # below it would be measuring an ordinary response and reporting it as this one.
+        ("a body that was not the one being asked about",
+         partial_case(parsedUuid="probe-host-partial"), True, ["never reached"]),
+        ("a body that parsed to nothing matchable", partial_case(parsedMac="<absent>"), True,
+         ["parsed to no parsedMac"]),
+        ("a run that planted somebody's real host",
+         partial_case(plantedUuid="1c9d0e2f-3a4b-5c6d"), True, ["not a probe-owned uuid"]),
+        ("a probe that could not count the rows",
+         partial_case(appRecordProblem="counting failed: locked store"), True,
+         ["could not be counted"]),
+        ("a probe that left its subject behind", partial_case(cleanedUp="by-the-app"), True,
+         ["left the host it planted"]),
+        ("a status that measured nothing", partial_case(status="body-did-not-parse-as-intended"),
+         True, ["instead of measuring"]),
+        ("the flag reaching a build that ignores it", report_with(shipped_report(),
+                                                                  partialHostInfo=None),
+         True, ["reached a build that ignores it"]),
+        # Nobody asked, nobody reports: the local run and the shape loops must not start refusing
+        # over a step only CI sets.
+        ("no record when nobody asked for one", shipped_report(), False, []),
+    ]
+    for label, report, require_partial, expected in partials:
+        problems = partial_host_problems(report["ownership"], require_partial)
+        total += 1
+        if expected and not problems:
+            print("FAIL fixture: %s passed, and it should have been refused" % label)
+            failures += 1
+        elif expected and expected[0] not in "; ".join(problems):
+            print("FAIL fixture: %s refused for the wrong reason: wanted %r, got %s"
+                  % (label, expected[0], problems[0][:160]))
+            failures += 1
+        elif not expected and problems:
+            print("FAIL fixture: %s was refused: %s" % (label, problems[0][:200]))
+            failures += 1
+        else:
+            print("ok   fixture: %s" % label)
+
     return failures, len(cases) + total
 
 
@@ -988,7 +1136,8 @@ def mutate(report, shape, **changes):
 
 # The mutations that test a missing-evidence rule have to keep the evidence missing, or the repair
 # below hands it back and the rule the case exists to prove bites never opens its mouth.
-MISSING_EVIDENCE_WANTS = ("no reapedHosts", "not counted on both sides")
+MISSING_EVIDENCE_WANTS = ("no reapedHosts", "not counted on both sides",
+                               "no partialHostInfo")
 
 
 def with_filed_app_counts(report):
@@ -1032,6 +1181,33 @@ def with_filed_reap(report):
 # ---------------------------------------------------------------------------
 # The red team: break a real record and check that the rules bite on it
 # ---------------------------------------------------------------------------
+def with_filed_partial(report):
+    """The same run with the partial-response step's record filled in.
+
+    Records filed before a step existed cannot carry it, and the refusal for that absence has to be
+    about the absence: hand the run the record it would have written had the step been there, and it
+    must go green. Without this check the rule reads as "those runs were wrong", when what it says
+    is "those runs did not look".
+    """
+    report = json.loads(json.dumps(report))
+    ownership = report.get("ownership")
+    if not isinstance(ownership, dict):
+        return report
+    if isinstance(ownership.get("partialHostInfo"), dict):
+        # Filling in means supplying what was never looked at. A record that did look -- including
+        # one the red team just broke -- keeps what it saw, or the repair would erase the mutation
+        # it exists to test, which is exactly how a red team reports bites it never proved.
+        return report
+    ownership["partialHostInfo"] = {
+        "status": "measured", "plantedUuid": "probe-host-partial",
+        "parsedName": "Probe Host Partial", "parsedMac": "aa:bb:cc:dd:ee:f0",
+        "parsedUuid": "<absent>", "uuidAfterPropagate": "probe-host-partial",
+        "rowAfterPropagate": True, "hostsBeforeCleanup": 2, "hostsAfterCleanup": 2,
+        "appsBefore": 6, "appsAfterCleanup": 6, "cleanedUp": "by-the-probe",
+    }
+    return report
+
+
 def red_team(sample_path, baseline, decls):
     """Mutate the committed record of a real run rather than an invented one.
 
@@ -1056,6 +1232,19 @@ def red_team(sample_path, baseline, decls):
         ("the production graph quietly becoming the hand-built one",
          lambda report: mutate(report, "handBuiltGraph", appListCount=0),
          "handBuiltGraph.appListCount"),
+        # The guard coming back off. This is the shape a real store reported before the guard
+        # existed -- uuid empty, one host gone across a look at the list, three user applications
+        # gone with it -- so the mutation is not invented, it is the record this repository filed.
+        ("a response without an id writing the identifier away",
+         lambda report: report_with(report, partialHostInfo={
+             "status": "measured", "plantedUuid": "probe-host-partial",
+             "parsedName": "Probe Host Partial", "parsedMac": "aa:bb:cc:dd:ee:f0",
+             "parsedUuid": "<absent>", "uuidAfterPropagate": "<empty>", "rowAfterPropagate": True,
+             "hostsBeforeCleanup": 2, "hostsAfterCleanup": 1, "appsBefore": 6,
+             "appsAfterCleanup": 3, "cleanedUp": "by-the-app"}),
+         "left the stored host's uuid"),
+        ("the partial-response step silently not running",
+         lambda report: report_with(report, partialHostInfo=None), "no partialHostInfo"),
         ("the seed flag reaching a build that ignored it",
          lambda report: report_with(report, seedHosts=None),
          "no seedHosts"),
@@ -1112,8 +1301,11 @@ def red_team(sample_path, baseline, decls):
             # of its own, so it is spelled out here -- the record gains the reap entry that run
             # would have written for the library it found, and nothing else is touched. The one
             # case that tests the missing field keeps it missing.
-            report = with_filed_reap(report)
-        problems = probe_problems(report)
+            report = with_filed_reap(with_filed_partial(report))
+        # CI runs this audit with the partial-response step asked for by name, so the red team
+        # bites on CI's footing: a rule that only fires under a flag nobody passes in a fixture is
+        # a rule nobody has watched fire.
+        problems = probe_problems(report, require_partial=True)
         if not problems:
             problems, _notes = judge(report, decls, baseline)
         if not problems:
@@ -1147,7 +1339,7 @@ def red_team(sample_path, baseline, decls):
                 print("FAIL red team: the baseline names %s and it cannot be read (%s)" % (name, error))
                 failures += 1
                 continue
-            said = "; ".join(probe_problems(filed))
+            said = "; ".join(probe_problems(filed, require_partial=True))
             if want:
                 missing = [expected for expected in want if expected not in said]
                 if missing:
@@ -1155,13 +1347,14 @@ def red_team(sample_path, baseline, decls):
                           % (name, missing[0], said[:200] or "no complaints at all"))
                     failures += 1
                     continue
-                # And the refusal has to be about that and nothing else: give the old run the"
+                # And the refusal has to be about that and nothing else: give the old run the
                 # record it would have written and it must go green, or the rule is refusing the
                 # shape rather than the missing evidence.
-                quiet = probe_problems(with_filed_reap(json.loads(json.dumps(filed))))
+                repaired = with_filed_reap(with_filed_partial(json.loads(json.dumps(filed))))
+                quiet = probe_problems(repaired, require_partial=True)
                 if quiet:
-                    print("FAIL red team: %s is still refused after the reap entry it predates is"
-                          " filled in, so the refusal was not about the reap: %s"
+                    print("FAIL red team: %s is still refused after the entries it predates are"
+                          " filled in, so the refusal was not about the missing evidence: %s"
                           % (name, quiet[0][:180]))
                     failures += 1
                     continue
@@ -1228,7 +1421,7 @@ def read_probe_record(output_directory):
         return None
 
 
-def capture(timeout, reap=True):
+def capture(timeout, reap=True, partial=False):
     """Ask the Debug build who holds what, and hand back what it recorded.
 
     It needs the product `render-probe.py` builds and nothing else: no `leaks`, no page, no
@@ -1250,6 +1443,14 @@ def capture(timeout, reap=True):
         # the previous run left it. Leaving it off always would keep the gate blind to the one
         # thing the private `HOME` cannot do: give this run a database of its own.
         env["ML_PROBE_REAP_OWN_HOSTS"] = "1"
+    if partial:
+        # The flag that produces the record travels with the judgement that requires it, rather
+        # than living in the workflow beside the `--require-partial` that asks for it. The local
+        # gates replay the command line a job runs and nothing else, so a pair split between a
+        # step's environment and its arguments is a pair the local run can only fail: it asked the
+        # probe for a record it had never told the probe to write, and went red on its own harness
+        # rather than on the code. One owner, one truth.
+        env["ML_PROBE_PARTIAL_HOST_INFO"] = "1"
     try:
         try:
             subprocess.run([binary], capture_output=True, text=True, env=env, timeout=timeout,
@@ -1291,6 +1492,8 @@ def parse(arguments):
             index += 2
         elif arguments[index] == "--no-reap":
             index += 1
+        elif arguments[index] == "--require-partial":
+            index += 1
         elif arguments[index] == "--sample":
             sample = arguments[index + 1]
             index += 2
@@ -1317,8 +1520,9 @@ def main():
         return 1 if red_team(sample, baseline, decls) else 0
 
     reap = "--no-reap" not in arguments
-    report = capture(timeout, reap=reap)
-    problems = probe_problems(report, require_reap=reap)
+    partial = "--require-partial" in arguments
+    report = capture(timeout, reap=reap, partial=partial)
+    problems = probe_problems(report, require_reap=reap, require_partial=partial)
     notes = []
     if not problems:
         problems, notes = judge(report, decls, baseline)
