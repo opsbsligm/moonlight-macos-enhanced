@@ -28,12 +28,29 @@
 | `compile-audit.py` | 每个源文件在每个受支持 SDK 下都能通过类型检查（本机实测 82/82；`Limelight/Crypto/CryptoManager.m` 因需要先跑 `download-frameworks.sh` 才有 vendored 头文件，未准备 `libs/` 的检出会把它记成 SKIP 并明说，而不是算成通过） |
 | `swift-typecheck.py` | Swift 侧全树类型检查，并要求它报告的失败形状确实能失败 |
 | `constraints-audit.py` | 跨文件的行为约束（配对/输入/生命周期/签名/发布），当前 0 failures |
-| `assertion-battery.py` | 行为断言电池：逐条植入本该被拒绝的形状，验证门控真的变红（本机实测 140/140 caught，exit 0） |
+| `assertion-battery.py` | 行为断言电池：逐条植入本该被拒绝的形状，验证门控真的变红（本机实测 144/144 caught，exit 0） |
 | `l10n-audit.py` | 语言表覆盖率、表对称性、UI 出口不得出现未翻译文本、日志正文不得写成某种语言 |
 | `workflow-audit.py` / `source-membership-audit.py` | 工作流本身是否真的跑，以及有没有源文件被静默排除在构建之外 |
 | `credential-scan-audit.py` | 密钥、令牌、私钥不得进仓库 |
 
 因此「CI 绿了」在这里不是装饰性检查全绿，而是：这些门控都在跑，而且都抓到了自己植入的缺陷。
+
+### 本地全量扫描的计数随调用方式变化
+
+`scripts/local-gates.sh` 的门禁清单直接取自 workflow，因此它报出的 passed 数**取决于你给了它什么**，
+裸报一个数字是不可复现的断言。同一棵树上实测过的三种给法：
+
+| 给法 | 结果 |
+|:---|:---|
+| 不给构建转录 | 41 passed / 0 failed / 12 需 CI 产物 |
+| `LOCAL_BUILD_LOG=<本次构建自己的 xcodebuild 转录>` | 43 passed / 0 failed / 10 需 CI 产物 |
+| `LOCAL_BUILD_LOG=<一份旧的转录>` | 42 passed / **1 failed** / 10 |
+
+差的那 2 项是 `build-warning-audit.py` 与 `source-membership-audit.py`——它们只在
+`LOCAL_BUILD_LOG` 指向存在的文件时才跑。旧转录会让后者判红（实测：一份 9 月 13 日的转录
+对不上当天的文件，报「named by no compile line in the build log」），**这正是该门禁的职责**：
+成员问题的唯一权威是本次构建的转录，不是项目文件里的成员元数据。所以要么给一次
+`clean build` 的转录，要么就报 41/12，不要把两种口径的数字混着用。
 
 ## 本地化的守护方式
 
