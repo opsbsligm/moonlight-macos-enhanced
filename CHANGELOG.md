@@ -399,6 +399,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The permissions section now carries the limit of its own measurement, and
+  a gate checks the report's claims against the tree instead of trusting the
+  prose.** `screen recording: not granted` has two readings that send a player
+  to different places -- they refused a prompt, or this build never asked --
+  and the line printed one answer with no way to tell which. A probe was
+  written under `spikes/` to find out, and it falsified two things I had
+  assumed before writing either: this machine has *granted* every one of these
+  permissions, so the ungranted branch could not be observed at all, and
+  `CGWindowListCopyWindowInfo` simply does not list a window that has not been
+  mapped yet (33 entries with `own=no` before the window is on screen, 35 with
+  `own=YES` after), which means `isWindowInCurrentSpace` is not broken and was
+  never about to be fixed on a false premise. What the probe could not measure
+  is now printed in the report rather than left for the reader to invent. The
+  line also asserts the build calls no capture API, so the new assertion walks
+  `Limelight/` and refuses the sentence the moment any of nine capture entry
+  points appears in code -- the same shape as the rule that rejects a
+  changelog sentence about a build step the workflow does not contain. Two
+  mutations registered; a comment naming an API does not trip it, because the
+  rule reads code with comments stripped.
+
 - **The upstream issue table now says how far its own titles can be trusted.**
   Three of the issues it covers are titled nothing but `[Bug]`, so the English
   column is this page summarising the thread, and saying so stops a reader

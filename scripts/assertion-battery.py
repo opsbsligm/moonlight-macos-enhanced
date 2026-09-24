@@ -1081,6 +1081,38 @@ def report_enumerates_the_bus_it_says_it_skipped(text):
     return text.replace(BUS_ANSWER_BOUNDARY, '@"" : @" (scanned for this report)"', 1)
 
 
+SCREEN_CAVEAT = '" the one window-list call compares its own window number,"\n                                                   @" and the ungranted case is not measured here)",'
+SCREEN_TAIL = '@" and the ungranted case is not measured here)"'
+
+
+def report_drops_what_it_never_measured(text):
+    """Print the permission answer and drop the sentence about its own limits.
+
+    The line still says something true -- the preflight really did answer -- but a bare
+    `screen recording: not granted` reads as a refusal the player made, and the fix is to go
+    switch something this build never requested. spikes/permission-probe/ could not measure
+    the ungranted case at all, because the machine it ran on had already granted everything;
+    that absence is the information the caveat carries.
+    """
+    once(text, SCREEN_TAIL, "the measured-no-further caveat")
+    return text.replace(SCREEN_TAIL, "@"",", 1)
+
+
+def report_answers_for_a_capture_api_it_never_calls(text):
+    """Call a capture API while the report keeps claiming that the build calls none.
+
+    The claim now lives in a sentence and in a gate, and the gate reads the tree rather than
+    the sentence. This is the mutation that separates the two: the report text is untouched,
+    so every check on the wording still passes, and only a rule that actually walks Limelight
+    notices the build stopped matching its own description.
+    """
+    head = "+ (DiagnosticsReportSection *)permissionsSection {"
+    once(text, head, "the permissions section builder")
+    return text.replace(head,
+                        head + "\n    CGImageRef *unusedProbe = (CGImageRef *)CGDisplayCreateImage(CGRectZero);\n"
+                               "    (void)unusedProbe;", 1)
+
+
 def drop_swift_debug_condition(text):
     """Stop compiling the Debug-only Swift code, while its caller stays.
 
@@ -2012,6 +2044,12 @@ MUTATIONS = [
      "the video page recomputes the enhancement rule instead of asking the model"),
     ("unadvertised-section", MENU, unadvertise_section,
      "a submenu stops advertising the section the overlay addresses it by"),
+    ("report-drops-what-it-never-measured", REPORT_BUILDER,
+     report_drops_what_it_never_measured,
+     "the permissions section prints a yes/no and deletes the sentence about its limits"),
+    ("report-answers-for-a-capture-api-it-never-calls", REPORT_BUILDER,
+     report_answers_for_a_capture_api_it_never_calls,
+     "the build starts calling a capture API while the report still says it calls none"),
     ("report-enumerates-the-bus-it-says-it-skipped", REPORT_BUILDER,
      report_enumerates_the_bus_it_says_it_skipped,
      "the report scans the bus while still printing that a report never scans it"),
