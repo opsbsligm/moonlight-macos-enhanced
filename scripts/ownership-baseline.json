@@ -12,25 +12,31 @@
  "filed_record_refusals": {
   "ownership-sample-cascade.json": [
    "no partialHostInfo",
-   "no partialHostName"
+   "no partialHostName",
+   "no severedBackpointerAppOnlyHolder",
+   "no severedBackpointerPairedHolder"
   ],
   "ownership-sample-cleaned.json": [
    "not counted on both sides",
    "no partialHostInfo",
-   "no partialHostName"
+   "no partialHostName",
+   "no severedBackpointerAppOnlyHolder",
+   "no severedBackpointerPairedHolder"
   ],
-  "ownership-sample-partial.json": [],
+  "ownership-sample-partial.json": [
+   "no severedBackpointerAppOnlyHolder",
+   "no severedBackpointerPairedHolder"
+  ],
   "ownership-sample-prereap.json": [
    "no reapedHosts",
    "no partialHostInfo",
-   "no partialHostName"
+   "no partialHostName",
+   "no severedBackpointerAppOnlyHolder",
+   "no severedBackpointerPairedHolder"
   ],
-  "ownership-sample.json": [
-   "no partialHostInfo",
-   "no partialHostName"
-  ]
+  "ownership-sample.json": []
  },
- "filed_record_refusals_note": "One entry per record filed in `scripts`, keyed by file name, and the value is the list of refusals that file must draw. `ownership-sample.json` is the run of 2026-09-25 on this laptop after the reap landed: one host in the library, none of them the probe's, the reap keeping them, and the shapes unchanged from the run before it -- so it has to draw nothing. `ownership-sample-prereap.json` is run 36019606141, filed a day earlier: the CI runner's reading, whose library was the memory sweep's leftover, and it must draw the refusal naming the field that run's build could not have recorded. The red team also fills that field in and requires the older record to go green, which is what makes the refusal a verdict about the reap rather than a coincidence of shape. `ownership-sample-cleaned.json` is the run that pressed `ML_PROBE_REMOVE_OWN_HOSTS` on this laptop: two hosts found, one of them the seed's, that one removed through the app's own deletion path and the other left standing -- `removed-some`, which is the one reap status a human sets rather than a job. Expectations move when records arrive, which keeps relaxing a rule and filing a record two different edits. `ownership-sample-cleaned.json` predates the app-record counting, so it must draw the refusal for a deletion whose rows were never counted -- and the red team fills the count in from the seed's own fan-out and requires it to go green, so the refusal stays about the missing evidence. `ownership-sample-cascade.json` is the run that answered the Core Data question: a planted host was removed and its three app records went with it (six rows before, three after, none of them orphaned), so the model's `Cascade` is a measurement and not a grep. Records filed before ML_PROBE_PARTIAL_HOST_INFO existed are expected to be refused for that absence and for nothing else: filled in, they go green again.",
+ "filed_record_refusals_note": "One entry per record filed in `scripts`, keyed by file name, and the value is the list of refusals that file must draw. `ownership-sample.json` is the run of 2026-09-25 on this laptop after the reap landed: one host in the library, none of them the probe's, the reap keeping them, and the shapes unchanged from the run before it -- so it has to draw nothing. `ownership-sample-prereap.json` is run 36019606141, filed a day earlier: the CI runner's reading, whose library was the memory sweep's leftover, and it must draw the refusal naming the field that run's build could not have recorded. The red team also fills that field in and requires the older record to go green, which is what makes the refusal a verdict about the reap rather than a coincidence of shape. `ownership-sample-cleaned.json` is the run that pressed `ML_PROBE_REMOVE_OWN_HOSTS` on this laptop: two hosts found, one of them the seed's, that one removed through the app's own deletion path and the other left standing -- `removed-some`, which is the one reap status a human sets rather than a job. Expectations move when records arrive, which keeps relaxing a rule and filing a record two different edits. `ownership-sample-cleaned.json` predates the app-record counting, so it must draw the refusal for a deletion whose rows were never counted -- and the red team fills the count in from the seed's own fan-out and requires it to go green, so the refusal stays about the missing evidence. `ownership-sample-cascade.json` is the run that answered the Core Data question: a planted host was removed and its three app records went with it (six rows before, three after, none of them orphaned), so the model's `Cascade` is a measurement and not a grep. Records filed before ML_PROBE_PARTIAL_HOST_INFO existed are expected to be refused for that absence and for nothing else: filled in, they go green again. The four older records gained two more refusals each on 2026-09-25, and no rule was relaxed to admit them: the run that measured the two holder shapes is what makes a record from before it incomplete, so `ownership-sample.json` -- re-filed from that run -- is the one record that now draws nothing, and the repair that fills the two shapes back in is what proves the older records are refused for the absence rather than for their library, their reap, or their date.",
  "library_sharing": "One database per machine, not one per probe. `DatabaseSingleton` resolves its store under `NSApplicationSupportDirectory` in `NSUserDomainMask`, which comes out of the account record and not out of `$HOME`, so a Debug probe started with a private temporary home still opens the same SQLite file as the app a person uses. Measured, not inferred: an empty temporary `HOME`, a probe asked to seed one host, and a report of the laptop's own two hosts. Every probe in this repository had assumed the opposite, and one of them was deleting the directory it believed it had written to. What follows from it: the steps of one CI job share a library, and a run that measures `the library` without asking who put hosts in it may be measuring the previous run. `ML_PROBE_REAP_OWN_HOSTS` and `probeOwnedHosts` are what turns that from an assumption into a reading.",
  "observed": {
   "app_asset_retriever_correction": "docs/memory-ownership.md section 4 recorded the box-art path as a holder with no host. It has one: AppAssetRetriever.h:15 declares a TemporaryHost property and AppAssetManager.m:59 assigns it beside retriever.app, so the asynchronous boxArtPathForApp: read of app.host.uuid is over a host the request itself is holding. Section 5 step 3 is therefore already done for that path, and the two sites above are the whole of what steps 2 and 3 still owe.",
@@ -134,6 +140,24 @@
      "appHostReadableWhileAppHeld": true,
      "hostAliveWhileAppHeld": true,
      "hostAliveWithNoHolder": true
+    },
+    "severedBackpointerAppOnlyHolder": {
+     "holderKind": "app-only",
+     "backpointerSevered": true,
+     "hostAliveWhileHeldByHolder": false,
+     "appAliveWhileHeldByHolder": true,
+     "holderAliveWithNoHolder": false,
+     "hostAliveWithNoHolder": false,
+     "appAliveWithNoHolder": false
+    },
+    "severedBackpointerPairedHolder": {
+     "holderKind": "app-and-host",
+     "backpointerSevered": true,
+     "hostAliveWhileHeldByHolder": true,
+     "appAliveWhileHeldByHolder": true,
+     "holderAliveWithNoHolder": false,
+     "hostAliveWithNoHolder": false,
+     "appAliveWithNoHolder": false
     }
    }
   },
@@ -157,6 +181,24 @@
      "appHostReadableWhileAppHeld": false,
      "hostAliveWhileAppHeld": false,
      "hostAliveWithNoHolder": false
+    },
+    "severedBackpointerAppOnlyHolder": {
+     "holderKind": "app-only",
+     "backpointerSevered": true,
+     "hostAliveWhileHeldByHolder": false,
+     "appAliveWhileHeldByHolder": true,
+     "holderAliveWithNoHolder": false,
+     "hostAliveWithNoHolder": false,
+     "appAliveWithNoHolder": false
+    },
+    "severedBackpointerPairedHolder": {
+     "holderKind": "app-and-host",
+     "backpointerSevered": true,
+     "hostAliveWhileHeldByHolder": true,
+     "appAliveWhileHeldByHolder": true,
+     "holderAliveWithNoHolder": false,
+     "hostAliveWithNoHolder": false,
+     "appAliveWithNoHolder": false
     }
    }
   }
@@ -168,6 +210,36 @@
   "handBuiltGraph": {
    "appListCount": 1
   },
-  "why": "the counts are the definition of the shapes, not a property of the library. A hand-built graph with no app pointing back is the third shape wearing the second shape's name, and the agreement between the two graphs -- the control that says nothing outside the pair is retaining it -- would then be an agreement between two copies of the same shape."
+  "why": "the counts are the definition of the shapes, not a property of the library. A hand-built graph with no app pointing back is the third shape wearing the second shape's name, and the agreement between the two graphs -- the control that says nothing outside the pair is retaining it -- would then be an agreement between two copies of the same shape. The holder shapes carry no `appListCount`, because the host is not reachable from the holder through the graph they are defined by: what makes one of them the shape it names is what the holder was given, so `holderKind` is its definition and a paired holder reporting itself app-only is the same quiet swap as a hand-built graph with no app pointing back.",
+  "severedBackpointerAppOnlyHolder": {
+   "holderKind": "app-only"
+  },
+  "severedBackpointerPairedHolder": {
+   "holderKind": "app-and-host"
+  }
+ },
+ "holder_shapes": {
+  "name": "The two shapes that watch a holder which is not the app, and the difference between them -- the pairing's contribution, measured on 2026-09-25 instead of argued off the header.",
+  "measured_on": "2026-09-25, the same Debug probe build and the same library as the `laptop` record below, in the same run: five shapes, one process, and the three graph readings unchanged from the run before them.",
+  "readings": {
+   "severedBackpointerAppOnlyHolder": {
+    "hostAliveWhileHeldByHolder": false,
+    "appAliveWhileHeldByHolder": true,
+    "holderAliveWithNoHolder": false,
+    "hostAliveWithNoHolder": false,
+    "appAliveWithNoHolder": false
+   },
+   "severedBackpointerPairedHolder": {
+    "hostAliveWhileHeldByHolder": true,
+    "appAliveWhileHeldByHolder": true,
+    "holderAliveWithNoHolder": false,
+    "hostAliveWithNoHolder": false,
+    "appAliveWithNoHolder": false
+   }
+  },
+  "what_the_difference_says": "Both shapes build the graph the way `-[TemporaryHost initFromHost:]` leaves it, both cut the back-pointer by hand (`app.host = nil`), and both then let the probe's own references go, so the holder outside the graph is the only hand left on the pair. The holder given the app alone lost the host; the holder given the app and the host kept it. That gap is the whole of step 2 and step 3 of section 5: a holder that is handed its host by name does keep it, and a holder that is not loses it. Until today this was read out of `App.h` and `Host.h`; it is now a number, and it is the number the fix has to reproduce when the declaration changes.",
+  "what_the_controls_prove": "Both holders died when the probe dropped them (`holderAliveWithNoHolder` false in both), which is what makes the two readings belong to the holder rather than to the harness. The pair died with them in both shapes, so nothing in the process outlived the last holder. A harness that leaked here would make the paired shape's `yes` meaningless, which is why the audit refuses the control rather than warning about it.",
+  "why_it_does_not_depend_on_the_declaration": "The shapes sever the edge themselves, so the reading is the contribution of that edge held fixed, not a prediction about a future build. That is also why both profiles in `profiles` expect the same readings from them: a fixer who flips `app.host` to weak and finds these numbers unchanged has confirmed the pairing does the job, and one who edits the expectation instead has edited the experiment.",
+  "what_this_still_does_not_measure": "A live stream session. The probe constructs no `StreamViewController` and no `AppCell`, and the session's own references are in no process this run can see, so these shapes say what a holder that is given a host is worth and nothing about whether every holder in the app will be given one. The holder rule read off the tree is what judges the second half, and it refuses an unpaired holder under a weak back-pointer outright."
  }
 }

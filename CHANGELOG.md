@@ -8,6 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Whether a holder that is *given* its host keeps it is now a reading, not an inference.** Section
+  5 of `docs/memory-ownership.md` asks for two things before `app.host` can turn weak: every holder
+  that today reaches its host through the strong back-pointer has to be handed a host of its own, and
+  the pairing has to be worth the change. The first half has been watched from the source since
+  round 74 -- `ownership-audit.py` refuses a site that takes an app and no host -- but the second
+  half had never been measured, because the ownership probe's three shapes all hold the pair through
+  the app, which is the thing under study rather than a variable. The probe now adds a fourth and
+  fifth shape: both build the graph `-[TemporaryHost initFromHost:]` leaves, both cut the
+  back-pointer by hand (`app.host = nil`, reported as `backpointerSevered`), and both then let the
+  probe's own references go so that a holder outside the graph is the only hand left on the pair. One
+  holder is given the app alone -- where `prepareForSegue:` leaves a stream today -- and the other is
+  given the app and the host, which is where step 2 and step 3 would put them. Measured on a live
+  one-host library: the app-only holder **lost** the host, the paired holder **kept** it, and both
+  holders died when the probe dropped them, which is the control that says those two readings belong
+  to the holder rather than to the harness. The only thing differing between the two shapes is the
+  host in the holder, and it decided whether a host lived -- so the pairing's contribution, which the
+  fix has rested on as an argument off `App.h`, is now a number the gate requires on every run. The
+  audit refuses the shapes being absent (no flag gates them), refuses a run that did not really sever
+  the edge, refuses a holder that will not die, refuses an app-only holder that kept the host (that
+  would mean a holder nobody can see is doing the retaining and the whole report is describing
+  something else), and refuses a paired holder that lost it (that would refute the fix's premise
+  rather than record an outcome). Both declaration profiles expect the same readings from these two
+  shapes on purpose: the probe cuts the edge itself, so what the header declares cannot move the
+  number, and a fixer who edits the expectation instead of reproducing the reading has edited the
+  experiment. A shape the audit has no rule for is now refused outright, so a future shape cannot
+  arrive as a green that judges nothing. `ownership-audit --self-test` grew 62 -> 71 cases (all
+  green), the red team grew seven mutations beside the five filed records -- which the new shapes
+  make incomplete, and which go green again once the repair supplies only the absent record -- and a
+  real run passed under both the default and the strictest `--require-partial` footing. Section 5's
+  verdict is unchanged: `app.host` is still strong, and the commit that flips it still has to hand a
+  host to every holder in the same commit. What changed is the evidence behind the sentence, not the
+  sentence.
 - **How many times a page reads the library is now a counted number, so the leak rate finally has
   a source.** `-[DataManager getHosts]` builds a fresh `TemporaryHost`/`TemporaryApp` graph per row
   on every call, which makes one formula the whole story: graphs orphaned by a visit equal the reads

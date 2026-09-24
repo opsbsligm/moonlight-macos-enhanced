@@ -856,3 +856,103 @@ uuid 精确命中、不走 fallback，以免与 §14 那个实验混在一起）
   造图后由谁在什么时候放手，而不是把噪声当错误压掉。
 * 短窗口拒绝这条规则依赖 `--growth-cycles ≥ 11`。CI 与 `local-gates.sh` 都由 build.yml 那一行取命令，
   所以想改窗口只有一处可改；把它改小会让门禁拒绝，而不是悄悄变绿。
+
+## 17. 反向指针之外的手：把「配对能替它续命」从推断变成读数（2026-09-25）
+
+### §10 量不到的那一半
+
+§10 让「谁在给 host 续命」变成了一次进程内测量，但它的三个形状有一个共同前提：
+**库外的持有者永远就是那个 app**（`productionGraph` 与 `handBuiltGraph` 都是 app 在持 host，
+`backpointerOnly` 则是除 app 外无人持 host）。这个前提正是被研究对象本身，于是它没法回答
+§5 的 step 2 与 step 3 真正依赖的那句话：
+
+> 今天 `streamVC.app`、`item.app` 这些只拿到 app 的持有者能读到 host，是因为 app 里那条强反向指针
+> 在替 host 续命；把 host 按名字交给持有者之后，就不需要它了。
+
+前半句此前只从 `App.h` 的 `strong` 读出来，后半句从未被验证过——如果配对并不能续命，
+§5 的修法本身就站不住。本轮补的形状就是为了让这两句各自有一个数字。
+
+### 做法：切一刀，再从外面伸手
+
+`Limelight/macOS/AppDelegateForAppKit.m` 的 `MLOwnershipMeasureHolderShape(holderKeepsHost,
+severBackpointer)` 按 `-[TemporaryHost initFromHost:]` 留下的样子造好这一对，然后**手工**执行
+`app.host = nil`——它不代表声明已经改成 `weak`，只代表「这条边的贡献」被固定住，
+于是可以和保留这条边的形状并列比较。之后把对象交给一个库外的持有者（一个 `NSMutableArray`
+充当 streamVC 的替身）：
+
+* `severedBackpointerAppOnlyHolder`：holder 只装 app，等价于今天 `prepareForSegue:` 交给 stream 的状态；
+* `severedBackpointerPairedHolder`：holder 同时装 app 和 host，等价于 step 2/3 要改成的状态。
+
+holder 自己也被 `__weak` 见证：探针放手之后它必须死。**这是这两个形状唯一的控制**——
+holder 若死不掉，下面所有 `yes` 都属于 harness，整轮作废（§10 的 `backpointerOnly` 是同一个道理）。
+
+### 实测（本机，2026-09-25，与 §16 同一份库、同一次运行）
+
+| 形状 | holder 持有什么 | 持有时 host 活着 | 持有时 app 活着 | 放手后 holder 活着 | 放手后 host 活着 |
+|:---|:---|:---:|:---:|:---:|:---:|
+| `severedBackpointerAppOnlyHolder` | 只有 app | **no** | yes | **no** | no |
+| `severedBackpointerPairedHolder` | app + host | **yes** | yes | **no** | no |
+
+两个 holder 放手后都死了（控制成立），两个形状里的 host 与 app 也都随 holder 一起消失，
+所以这两行读数属于 holder，不属于探针。**唯一差别就是 holder 里多出来的那个 host，
+而它决定了 host 活不活**——这就是配对的贡献，量出来的，不是论证出来的。
+
+同一次运行里三个旧形状读数与前一天完全一致（`productionGraph` appList 3、`handBuiltGraph` 1、
+`backpointerOnly` 0，`failures: []`，`seed: existing-hosts`，`libraryHosts: 1`），
+这本身就是「加一个形状不会改变旧形状」的检查。
+
+### 这两个形状能说什么，不能说什么
+
+**能说**：反向指针被切断之后，只持 app 的持有者留不住 host；同时被给了 host 的持有者留得住。
+因此 §5 登记里那两条推论——「今天全靠这条边续命」与「配对属性可以替它」——现在都是数字，
+且**不需要真机串流会话**，也不需要先落地 `weak` 声明。
+
+**不能说**：
+
+* 它不构造 `StreamViewController`，也不构造 `AppCell`。真会话自己持有的引用不在这个进程里，
+  所以「每一个只拿 app 的持有者都会被配上 host」这半边仍然只能由 `ownership-audit.py`
+  从源码读的 holder 规则判定（把 app 交给持有者却没给 host 的站点，`weak` 之下直接拒绝）。
+* 它不是「改完之后的构建」的读数：切边是手工的、且被 `backpointerSevered: true` 如实记录，
+  读者不会把它误当成已经声明 `weak` 的那次运行。
+
+### 接线：新读数不允许「读不到就是绿」
+
+`scripts/ownership-audit.py` 里这批形状没有任何开关，所以**每次运行都必须出现**：
+
+1. 两个形状缺任一 → 拒绝（`no severedBackpointerAppOnlyHolder` / `...PairedHolder`）；字段缺失同样拒绝。
+2. **形状自身**：`backpointerSevered` 必须为真（没切边＝ graph 形状换了个名字）；
+   `holderKind` 与形状名一致（写进 `shape_contract`，与 `appListCount` 同级）。
+3. **控制**：`holderAliveWithNoHolder` 必须为假，否则整轮作废；`appAliveWhileHeldByHolder` 必须为真，
+   否则「外面根本没有持有者」，两行的相等毫无意义。
+4. **差值本身**：app-only 必须读不到 host（若读到＝存在 `app.host` 之外的隐藏持有者，
+   整份报告关于「谁持有什么」的陈述都作废）；paired 必须读得到 host（若读不到＝配对不能续命，
+   §5 的修法前提被否，直接拒绝而不是记录）。
+5. `host.appList` 那类「声明与观测对齐」的环**不遍历**这两个形状（它们的字段名不同、
+   观察对象不同），但 `profiles` 比对环遍历它们。两个 profile 期望**同一组读数**——
+   因为切边是手工的，声明怎么改都动不了这个数；改期望等于改实验，所以两条路径写死成一样。
+6. 通用洞：报告里出现审计不认识的形状名 → 拒绝（`does not know`）。否则将来加形状而漏写规则，
+   就会变成「读不到就是绿」的另一个版本。
+
+### 已归档记录被追认的拒绝
+
+四份早于本轮的记录（`ownership-sample-cascade/-cleaned/-partial/-prereap.json`）各自多两条拒绝。
+没有为了放进它们放宽任何规则：是「测量本身到来了」让旧记录变成不完整。
+红队同时把这两个形状**填回**去（`with_filed_holder_shapes`，只在缺失时填、绝不覆盖已记录的），
+四份记录随即转绿——这证明拒绝针对的是缺失，而不是它们的库、reap 或日期。
+`ownership-sample.json` 则用本轮真记录重新归档（五个形状齐备），成为当前唯一一条什么都不引的绿基线。
+
+### 测试
+
+* `ownership-audit --self-test` **62 → 71** 全绿（新增 9 条：两形状缺失、没切边、holder 不死、
+  holder 没接住 app、app-only 竟留住 host、paired 留不住 host、形状随 holder 泄漏、
+  未知形状名、`holderKind` 与形状名不符）。
+* `--red-team` 新增 7 条 mutation（上述破坏的真记录版本）＋ 5 份归档记录的期望，全绿。
+* 真跑两个口径：默认与最严的 `--require-partial`，各 **0 failure**；绿线现在会直接打印
+  `severed back-pointer, app-only: host held=no vs app+host: host held=yes`。
+
+### 登记
+
+* §5 的判定**没有**因为本轮改变：`app.host` 仍是 `strong`，`section5_status` 仍要求
+  「翻转反向指针的那一次提交必须同时把 host 交给每一个持有者」。本轮改变的是那句话的证据等级。
+* 仍然没有「真会话里 streamVC 读 `app.host`」的直接观测——这需要一次真实串流，
+  在能跑真机会话之前，它由源码侧 holder 规则代管，这一边界在探针注释、baseline 与本文三处都写着。

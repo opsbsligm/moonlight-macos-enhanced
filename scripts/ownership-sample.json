@@ -1,12 +1,52 @@
 {
  "ownership": {
+  "holder": "app-only",
+  "partialHostName": {
+   "nameAfterPropagate": "Probe Host Named",
+   "parsedName": "<absent>",
+   "hostsAfter": 2,
+   "cleanedUp": "by-the-probe",
+   "plantedName": "Probe Host Named",
+   "probeOwnedAfter": 1,
+   "plantedUuid": "probe-host-named",
+   "parsedUuid": "probe-host-named",
+   "appsBefore": 3,
+   "displayNameAfterPropagate": "Probe Host Named",
+   "appsAfter": 3,
+   "status": "measured"
+  },
+  "partialHostInfo": {
+   "hostsBeforeCleanup": 2,
+   "uuidAfterPropagate": "probe-host-partial",
+   "parsedMac": "aa:bb:cc:dd:ee:f0",
+   "parsedName": "Probe Host Partial",
+   "hostsAfterCleanup": 2,
+   "cleanedUp": "by-the-probe",
+   "probeOwnedBeforeCleanup": 1,
+   "plantedUuid": "probe-host-partial",
+   "rowAfterPropagate": true,
+   "parsedUuid": "<absent>",
+   "appsBefore": 6,
+   "probeOwnedAfterCleanup": 1,
+   "status": "measured",
+   "appsAfterCleanup": 6
+  },
   "shapes": {
-   "handBuiltGraph": {
+   "productionGraph": {
     "hostAliveWhileAppHeld": 1,
     "appAliveWithNoHolder": 1,
     "hostAliveWithNoHolder": 1,
     "appHostReadableWhileAppHeld": 1,
-    "appListCount": 1
+    "appListCount": 3
+   },
+   "severedBackpointerPairedHolder": {
+    "backpointerSevered": true,
+    "holderAliveWithNoHolder": 0,
+    "hostAliveWithNoHolder": 0,
+    "appAliveWhileHeldByHolder": 1,
+    "appAliveWithNoHolder": 0,
+    "hostAliveWhileHeldByHolder": 1,
+    "holderKind": "app-and-host"
    },
    "backpointerOnly": {
     "hostAliveWhileAppHeld": 1,
@@ -15,29 +55,39 @@
     "appHostReadableWhileAppHeld": 1,
     "appListCount": 0
    },
-   "productionGraph": {
+   "severedBackpointerAppOnlyHolder": {
+    "backpointerSevered": true,
+    "holderAliveWithNoHolder": 0,
+    "hostAliveWithNoHolder": 0,
+    "appAliveWhileHeldByHolder": 1,
+    "appAliveWithNoHolder": 0,
+    "hostAliveWhileHeldByHolder": 0,
+    "holderKind": "app-only"
+   },
+   "handBuiltGraph": {
     "hostAliveWhileAppHeld": 1,
     "appAliveWithNoHolder": 1,
     "hostAliveWithNoHolder": 1,
     "appHostReadableWhileAppHeld": 1,
-    "appListCount": 3
+    "appListCount": 1
    }
   },
-  "holder": "app-only",
   "productionHostUuid": "ownership-sample-host",
-  "libraryHosts": 1,
   "seedHosts": {
    "status": "existing-hosts",
    "existing": 1,
    "requested": 1,
    "seeded": 0
   },
-  "probeOwnedHosts": 0,
+  "libraryHosts": 1,
   "reapedHosts": {
-   "found": 1,
    "probeOwned": 0,
-   "status": "kept"
-  }
+   "appRecordsBefore": 3,
+   "found": 1,
+   "status": "kept",
+   "orphanAppRecordsBefore": 0
+  },
+  "probeOwnedHosts": 0
  },
  "failures": []
 }
