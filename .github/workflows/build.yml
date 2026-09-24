@@ -610,17 +610,22 @@ jobs:
       # host to discover is no longer the empty room it used to be: the sweep asks the probe to
       # seed one host and three apps through the production DataManager, so the graph, the
       # fan-out and the per-host byte budget are all judged here rather than waved past.
-      # --growth runs the sweep twice, once at one visit through the page and once at six, and
-      # divides the difference by the extra visits and the hosts in the library. That is the
+      # --growth runs the sweep twice, once at one visit through the page and once at sixteen,
+      # and divides the difference by the extra visits and the hosts in the library. That is the
       # only shape in which "this page orphans a graph every time somebody opens it" and "this
       # page orphans one graph once per run" differ -- and only the first gets worse over an
-      # evening. The ceiling on it is a doubling sentinel (three graphs per visit per host,
-      # where the measured spread on an unchanged build is 192 to 499 bytes), because how often
-      # the page reads the library inside one visit is not a number this repository owns; the
-      # blind spot is written into the fixtures rather than a comment.
+      # evening. The ceiling on the bytes is a doubling sentinel (three graphs per visit per
+      # host, where the measured spread on an unchanged build is 192 to 499 bytes), because how
+      # often the page reads the library inside one visit is not a number this repository owns.
+      # The graph count is judged as a rate over the same window rather than as a count, and the
+      # window is fifteen extra visits instead of five because six sweeps of unchanged code put
+      # the difference between the two sweeps anywhere from 3 to 6 graphs where the reads entitled
+      # 5 -- a count rule refused this job twice on 2026-09-25 (run 36058010642, both variants)
+      # for a snapshot, not a leak. See growth_graph_rule_reason in the baseline; the blind spot
+      # the ratio leaves is a fixture, not a comment.
       # One line, not a folded one: scripts/local-gates.sh builds its list out of this file
       # line by line, and a flag on its own line is a flag the local sweep never passes.
-      run: python3 scripts/leak-audit.py --timeout 900 --growth --growth-cycles 6 --report build/leaks-sweep.txt
+      run: python3 scripts/leak-audit.py --timeout 900 --growth --growth-cycles 16 --report build/leaks-sweep.txt
 
     - name: Upload ${{ matrix.variant }} leak sweep
       # The refusal names the rule and prints the offending blocks; the report is the part
@@ -628,11 +633,15 @@ jobs:
       # exists by the time the log is read. `if: always()` so the report survives the very
       # run that needs it, and `warn` rather than `error` because a host with no `leaks`
       # refuses before any report is written, and that refusal must stay the failure.
+      # The glob is the point: `--growth` writes the longer sweep next to the shorter one (see
+      # sibling_report), and the run of 2026-09-25 that refused correct code could only be
+      # attributed an hour later because the artifact carried the 1-visit sweep while the surplus
+      # lived in the 6-visit one, which was never uploaded and is unreproducible after the runner.
       if: always()
       uses: actions/upload-artifact@v7
       with:
         name: Moonlight-macOS-leaks-${{ matrix.variant }}
-        path: build/leaks-sweep.txt
+        path: build/leaks-sweep*.txt
         if-no-files-found: warn
         retention-days: 7
 

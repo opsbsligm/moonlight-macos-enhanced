@@ -452,6 +452,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **The growth gate refused correct code, and the reason says more about `leaks` than about the
+  app.** `ad2d35a` wrote the rule that the extra leaked `TemporaryHost` graphs may not exceed the
+  library reads the extra visits performed multiplied by the hosts in the library, and the first
+  runner it met it refused: run 36058010642 reported 6 graphs built where the reads entitled 5 on
+  arm64 (6 leaked at one visit, 12 at six) and the same 6 against 5 on x86_64 (8 leaked, then 14).
+  The same build was green on the laptop (9 leaked, then 14 -- a difference of exactly the 5 the
+  reads could name), and the run before it had been green on both architectures with those very
+  laptop numbers. Nothing in the app had changed in the direction of leaks: the uuid guard that was
+  in the diff lives in `propagateChangesToParent:`, which a memory sweep never calls because it
+  sets no `ML_PROBE_PARTIAL_*` and has no server to answer it. What had changed was the luck of a
+  snapshot. Six CI sweeps of unchanged code put the one-visit leaked graph count anywhere in 6, 8
+  and 9, and the difference between the one-visit and six-visit sweeps anywhere in 3, 4, 5, 6 and 7
+  where the reads entitled 5 (runs 36000138662, 36051089381, 36058010642, plus four laptop sweeps
+  read out of their byte totals at 384 bytes a graph, which spread 3, 6, 7 and 7). `leaks` answers
+  what is still orphaned at one instant after the process stops, not what was ever built, and how
+  many of a read's graphs are still standing at that instant depends on when the read ran and what
+  drained afterwards -- none of which this repository owns. A rule written against the count was
+  therefore refusing the snapshot, and it did so twice on a runner and once on a laptop in a day.
+- **The count is now judged as a slope over a window long enough to carry one, which is a
+  tightening rather than the loosening it looks like.** Fewer than `growth_graph_rule_min_visits`
+  (10) extra visits is refused outright -- the snapshot noise is about three graphs per sweep no
+  matter how long the window is, so a short window cannot tell a second creator from the run it
+  arrived in, and the gate now says so instead of guessing. The surplus is refused above
+  `growth_graph_count_ratio` (1.6) times the read rate, and 1.6 is measured: the largest surplus
+  ever recorded was 7 graphs against an entitled 5 (a ratio of 1.4), while three graphs of noise
+  over fifteen visits is a slope noise of 0.2. The CI sweep went from six visits to sixteen so the
+  rule gets its fifteen. Under the old rule a doubling of the graph rate was the *recorded blind
+  spot* at five visits -- the rule could not see it without also refusing honest code; under this
+  one, two graphs per visit per host is a refusal (60 leaked against the 48 allowed). The blind
+  spot is now a creator adding less than 60% on top of the read rate, and it is a green fixture
+  case (`the measured blind spot`), not a sentence in a comment. The byte ceiling is untouched and
+  still independent. Measured end to end on the laptop with the new window: 9 leaked graphs at one
+  visit, 23 at sixteen -- 14 against 15 entitled and 24 allowed, 358 bytes per visit per host, and
+  a fan-out that stayed at 3.0. What has not been measured: the mechanism behind the three-graph
+  spread (nobody has found which release's timing is moving, and the rule tolerates it rather than
+  explaining it), and this rule has not yet met a runner -- the next CI round is that meeting.
+- **`--growth` stopped paying for a third sweep, and stopped destroying the evidence with it.**
+  `main()` captured one sweep before the growth branch captured its own two, so three sweeps ran
+  and two of them wrote the same `build/leaks-sweep.txt`. During this investigation the artifact
+  that came back was the overwritten copy: the sweep that actually contained the surplus was never
+  uploaded, and the attribution had to be rebuilt an hour later from log numbers. The growth branch
+  now runs only its own two sweeps (about 70 seconds off every runner), and the artifact is a glob
+  (`build/leaks-sweep*.txt`) so the longer sweep's report survives the run that needed it. A
+  refusal also prints what it was compared against -- `entitled`, `allowed` and the ratio -- where
+  it used to print one number and make the reader reconstruct the arithmetic.
 - **A host-info response with no hostname could no longer leave a saved machine as an unlabelled row
   in the device list.** `propagateChangesToParent:` had one bare assignment left after the previous
   entry, and `-[ServerInfoResponse populateHost:]` overwrites the name of the temporary host it is

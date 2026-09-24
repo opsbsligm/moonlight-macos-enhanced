@@ -754,9 +754,12 @@ def host_reads_per_visit(probe):
     `getHosts` builds a fresh `TemporaryHost` per row on every call (`DataManager.m:205`), so
     the read count is the reason the sweep sees graphs at all: one visit reads the library N
     times, each read materialises one graph per host in the library, and those graphs are the
-    leaked objects this file counts. Measured on 2026-09-25 by three runs of one build, the
-    settings root reads once per visit at both 3 and 6 cycles. None is returned when the run
-    recorded nothing, which is a different fact from zero.
+    objects this file counts. It is a rate and not a prediction of the leaked count -- how many
+    of the graphs a read builds are still standing when `leaks` takes its one snapshot is not
+    fixed, which is why the rule that uses this number compares slopes over a long window
+    (`judge_growth`). Measured on 2026-09-25 by three runs of one build, the settings root reads
+    once per visit at both 3 and 6 cycles. None is returned when the run recorded nothing, which
+    is a different fact from zero.
     """
     cycles = (probe or {}).get("memoryCycles")
     if not isinstance(cycles, dict):
@@ -800,28 +803,50 @@ def judge_growth(shorter, longer, baseline):
           % (visits, shorter["ours"], longer["ours"], per_cycle, per_cycle_per_host, hosts,
              ", graphs leaked %d then %d" % (shorter["hosts"], longer["hosts"])
              if shorter.get("hosts") is not None else ""))
-    # How many graphs the extra visits left behind, against how many the reads could build.
-    # The byte ceiling above can absorb a doubling -- five unmodified runs of this build came
-    # back spread over 192 to 461 bytes per visit per host -- so it is not the rule that ought
-    # to notice a second creator of the same graph. The read count is: it says exactly how many
-    # graphs per host the page is entitled to orphan, and it is measured in the run rather than
-    # remembered here.
+    # How many graphs the extra visits left behind, against the rate the reads can name. The
+    # byte ceiling below can absorb a doubling -- five unmodified runs of this build came back
+    # spread over 192 to 461 bytes per visit per host -- so it is not the rule that ought to
+    # notice a second creator of the same graph. The read count is that rule, and it can only be
+    # compared as a rate, never as a count: `leaks` answers what is still orphaned at one
+    # instant, and how many of the graphs a read builds are still standing when that instant
+    # arrives is not a number this repository controls. Measured on one build with one host in
+    # the library, the one-visit sweep has come back at 6, 8 and 9 leaked graphs, and the
+    # difference between the two sweeps came back 3, 4, 5, 6 and 7 over five extra visits (CI
+    # runs 36000138662, 36051089381 and 36058010642, both architectures each, and four laptop
+    # sweeps). A rule that refused anything above the entitled count therefore refused the
+    # shipped code twice on a runner and once on a laptop: it was refusing the snapshot, not the
+    # leak. So the window has to be long enough for a slope to mean something, and what gets
+    # refused is a slope above the read rate rather than any surplus at all. The blind spot that
+    # leaves -- a creator adding less than the ratio on top of the read rate -- is recorded in
+    # the baseline as growth_graph_rule_reason and reproduced as a fixture, not left implied.
     built = None
     if shorter.get("hosts") is not None and longer.get("hosts") is not None:
         built = longer["hosts"] - shorter["hosts"]
         reads = longer.get("reads")
-        if built > 0 and reads is not None:
+        minimum = baseline.get("growth_graph_rule_min_visits")
+        ratio = baseline.get("growth_graph_count_ratio")
+        if reads is not None and minimum is not None and visits < int(minimum):
+            problems.append(
+                "the two sweeps are %d visit(s) apart, which is fewer than the %d this gate"
+                " needs before it will judge leaked graphs at all. The leaked graph count is a"
+                " snapshot and not a sum: one build, one host, and the difference over five"
+                " visits has come back 3, 4, 5, 6 and 7, so a window that short cannot tell a"
+                " second creator from the run it arrived in (2026-09-25 run 36058010642 is the"
+                " record of what the short window does to correct code). Raise `--growth-cycles`"
+                " rather than the ceiling" % (visits, int(minimum)))
+        elif built > 0 and reads is not None and ratio is not None:
             entitled = reads * visits * hosts
-            if built > entitled:
+            allowed = int(-(-(entitled * float(ratio)) // 1))  # ceil: a partial graph is one
+            if built > allowed:
                 problems.append(
-                    "the extra visits left %d more leaked %s graph(s) than the %s library"
-                    " read(s) per visit can account for across %d host(s) (%d extra visits, %d to"
-                    " %d graphs, %s entitled). One read builds one graph per host, so the surplus"
-                    " has another creator this gate cannot name -- either something reads the"
-                    " library outside the path the probe counts, or a graph is retained per visit"
-                    " by something other than the read"
-                    % (built, baseline.get("host_class"), reads, hosts, visits,
-                       shorter["hosts"], longer["hosts"], entitled))
+                    "the extra visits left %d more leaked %s graph(s) behind than the %s library"
+                    " read(s) per visit can name across %d host(s) (%d extra visits, %d to %d"
+                    " graphs, %s entitled, %d allowed at the %s ratio). One read builds one graph"
+                    " per host, so a slope above the ratio has another creator this gate cannot"
+                    " name -- either something reads the library outside the path the probe"
+                    " counts, or a graph is retained per visit by something other than the read"
+                    % (built, baseline.get("host_class"), reads, hosts, visits, shorter["hosts"],
+                       longer["hosts"], entitled, allowed, ratio))
     if per_cycle < 0:
         notes.append("the page leaked %d fewer bytes over %d extra visits than it did over %d:"
                      " the rate went down. That is a fix, and the ceiling in the baseline is"
@@ -837,74 +862,112 @@ def judge_growth(shorter, longer, baseline):
             % (per_cycle_per_host, ceiling, hosts, visits, shorter["ours"], longer["ours"],
                ", ".join(str(value) for value in (measured or []))))
     if built is not None:
-        notes.append("the %d extra leaked graph(s) across %d host(s) are inside what the %s"
-                     " library read(s) per visit are entitled to orphan (%d of them), so the"
-                     " growth has a named source rather than only a ceiling"
-                     % (built, hosts, longer.get("reads"),
-                        longer.get("reads") * visits * hosts if longer.get("reads") is not None else 0))
+        reads = longer.get("reads")
+        ratio = baseline.get("growth_graph_count_ratio")
+        notes.append("the %d extra leaked graph(s) across %d host(s) sit inside %sx the rate the"
+                     " %s library read(s) per visit name (%s entitled over %d visit(s)), so the"
+                     " growth has a named source rather than only a byte ceiling; what the ratio"
+                     " cannot see is written up in the baseline as growth_graph_rule_reason"
+                     % (built, hosts, ratio, reads,
+                        reads * visits * hosts if reads is not None else 0, visits))
     return problems, notes
 
 
 def growth_fixture():
-    """The rate rule, driven without a process.
+    """The slope rule, driven without a process.
 
-    The number that matters here is the one that cannot be seen in a single sweep: a page
-    that orphans one graph per visit and a page that orphans one graph per launch look the
-    same to a run that visits once, and only the first gets worse while somebody is using
-    it. The cases below are the two shapes plus the ways the measurement itself can lie --
-    no extra visits, no hosts to divide by -- and the one that has to stay green, a rate
-    that fell.
+    The number that matters here is the one that cannot be seen in a single sweep: a page that
+    orphans one graph per visit and a page that orphans one graph per launch look the same to a
+    run that visits once, and only the first gets worse while somebody is using it. The cases
+    below are the two shapes, the ways the measurement itself can lie -- no extra visits, no
+    hosts to divide by, a window too short to carry a slope -- and the one that has to stay
+    green, a rate that fell. Two of them are the literal CI shapes of 2026-09-25: the surplus
+    that refused correct code over five visits, and the same surplus at a window that can name
+    it.
     """
     base = {"growth_bytes_per_cycle_per_host": 1100.0,
-            "observed": {"growth_bytes_per_cycle_per_host": [192, 461]}}
+            "observed": {"growth_bytes_per_cycle_per_host": [192, 461]},
+            "growth_graph_rule_min_visits": 10,
+            "growth_graph_count_ratio": 1.6}
     one_host = {"cycles": 1, "library": 2, "ours": 6912, "hosts": 18, "reads": 1.0}
-    def after(visits, bytes_leaked):
-        longer = dict(one_host, cycles=visits, ours=bytes_leaked, hosts=18 + visits)
-        return longer
+    # Fifteen extra visits, because that is the shortest window the rule will judge: the leaked
+    # graph count is a snapshot, and the noise in it is a constant number of graphs per sweep
+    # rather than a fraction of the visits, so the longer the window the less the snapshot counts
+    # for. Every case below that is about a rate is measured over the same 15 visits so the
+    # arithmetic in the comments can be checked by hand.
+    window = 16
+    def after(graphs_per_visit_per_host, bytes_per_visit=302, visits=window, hosts=2):
+        extra = visits - 1
+        return dict(one_host, cycles=visits,
+                    ours=6912 + int(extra * hosts * bytes_per_visit),
+                    hosts=18 + int(extra * hosts * graphs_per_visit_per_host))
     cases = [
-        # Measured on the shipped code: 6,912 bytes at one visit, 11,136 at eight, over two
-        # hosts -- 302 bytes per visit per host.
-        ("the shipped rate is inside its ceiling", after(8, 11136), 0, None),
-        # One whole graph per host per visit -- 384 bytes -- is inside the measured spread,
-        # which is what the spread is: five runs of this build, unmodified, came back at 192,
-        # 384, 422, 461 and 461 bytes per visit per host, because how many times the page
-        # reads the library during a visit is not a number this repository controls.
-        ("a visit orphans one graph per host", after(8, 6912 + 7 * 2 * 384), 0, None),
-        # Two graphs per visit per host passes too, and that gap is the rule's real limit:
-        # 768 sits inside the spread a doubling could hide in. Recording it as a case keeps
-        # the blind spot in the fixtures, where a future run has to read it, rather than in
-        # a comment nobody opens.
-        ("a visit orphans two graphs per host -- the measured blind spot",
-         after(8, 6912 + 7 * 2 * 2 * 384), 0, None),
-        # Three graphs a visit is a second owner of the same cycle, and that is what this
-        # rule is for.
-        ("a visit orphans three graphs per host", after(8, 6912 + 7 * 2 * 3 * 384), 1,
-         "per visit per host"),
-        # The fix, which must not be refused for going the right way: one visit's worth of
-        # objects came back, which is what a real repair of the ownership cycle looks like.
-        ("the rate fell because somebody fixed it", after(8, 5912), 0, "went down"),
-        # Zero is not a fall and is not a refusal either: the page stopped growing, and the
-        # note that says so is the one above. This case keeps "flat" from being read as a
-        # regression by a rule written with the wrong sign.
-        ("the rate is flat across visits", after(8, 6912), 0, None),
-        # The rule the byte ceiling cannot do: 7 extra visits, one read each, two hosts in the
-        # library, so 14 graphs are entitled to survive. This shape orphans 32, which is a
-        # second creator of the same graph -- and 32 graphs at 384 bytes is 1228 bytes per
-        # visit per host, which the ceiling above would also catch. The point is the surplus is
-        # refused as a surplus, named, rather than as bytes that happen to be too large.
+        # Measured on the shipped code: 302 first-party bytes per visit per host, and roughly one
+        # leaked graph per visit, which is what one read per visit across two hosts looks like.
+        ("the shipped rate is inside its ceiling", after(1.0), 0, None),
+        # One whole graph per host per visit -- 384 bytes -- is inside the measured spread, and
+        # 30 leaked graphs against the 30 the reads are entitled to name cannot be a surplus.
+        ("a visit orphans one graph per host", after(1.0, 384), 0, None),
+        # The blind spot, written as a case rather than as a comment: 1.5 graphs per visit per
+        # host is 45 against the 48 the ratio allows, so a creator adding half again on top of the
+        # read rate walks through this gate. It is refused by the byte ceiling only above 1100
+        # bytes per visit per host (2.9 graphs), so the gap between 1.5 and 2.9 graphs is the
+        # price of a rule that does not refuse a snapshot. Shrinking it means a longer window or
+        # a ratio somebody can defend against the measured noise, not a quieter message.
+        ("the measured blind spot: 1.5 graphs per visit per host", after(1.5, 576), 0,
+         "sit inside 1.6x the rate"),
+        # Two graphs per visit per host used to be the recorded blind spot of the count rule, and
+        # 60 leaked graphs against 48 allowed is what the slope rule makes of it now: the change
+        # of rule tightened this case rather than loosening it, and the refusal is named as a
+        # surplus of graphs instead of as bytes that happen to be large (768 bytes is inside the
+        # byte ceiling).
+        ("a visit orphans two graphs per host", after(2.0, 768), 1, "another creator"),
+        # Three graphs a visit is a second owner of the same cycle by both rules at once: 90
+        # graphs against 48 allowed, and 1152 bytes against the 1100 ceiling.
+        ("a visit orphans three graphs per host", after(3.0, 1152), 1, "per visit per host"),
+        # The fix, which must not be refused for going the right way: one visit's worth of objects
+        # came back, which is what a real repair of the ownership cycle looks like.
+        ("the rate fell because somebody fixed it",
+         dict(one_host, cycles=window, ours=5912, hosts=18), 0, "went down"),
+        # Zero is not a fall and is not a refusal either: the page stopped growing, and the note
+        # that says so is the one above. This case keeps "flat" from being read as a regression by
+        # a rule written with the wrong sign.
+        ("the rate is flat across visits", dict(one_host, cycles=window, ours=6912, hosts=18),
+         0, None),
+        # The rule the byte ceiling cannot do: 15 extra visits, one read each, two hosts in the
+        # library, so 30 graphs are entitled to survive and 48 are allowed. This shape orphans 90.
+        # The point is the surplus is refused as a surplus, named, rather than as bytes that
+        # happen to be too large.
         ("a visit orphans more graphs than its reads can explain",
-         dict(one_host, cycles=8, ours=9000, hosts=18 + 4 * 8), 1, "another creator"),
+         dict(one_host, cycles=window, ours=9000, hosts=18 + 4 * 15), 1, "another creator"),
         # A run whose probe predates the counter, or whose counter was compiled out, is not
         # refused by this rule -- `probe_problems()` refuses it for missing the record, and a
         # growth rule that also fired would hide that sharper message behind a vaguer one.
-        ("no read count recorded", dict(one_host, cycles=8, ours=9000, reads=None), 0, None),
+        ("no read count recorded",
+         dict(one_host, cycles=window, ours=9000, hosts=78, reads=None), 0, None),
         ("no extra visits to divide by", dict(one_host, cycles=1), 1, "no extra visiting"),
-        ("no host in either sweep", dict(one_host, cycles=8, ours=9000, library=0), 1,
-         "no per-host"),
+        ("no host in either sweep",
+         dict(one_host, cycles=window, ours=9000, hosts=78, library=0), 1, "no per-host"),
+        # The window refusal, which is the shape that refused correct code: five extra visits on
+        # one host is the CI command of 2026-09-25, and the graph numbers are that run's arm64
+        # sweep exactly (6 graphs at one visit, 12 at six). Nothing is wrong with the app here --
+        # what is wrong is the denominator, and the gate has to say so instead of refusing the
+        # code twice on a runner and once on a laptop.
+        ("five visits is too short a window to name a creator",
+         dict(one_host, library=1, ours=2304, hosts=6),
+         dict(one_host, library=1, cycles=6, ours=4608, hosts=12), 1, "fewer than the 10"),
     ]
     failures = 0
-    for label, longer, want_problems, want_text in cases:
-        problems, notes = judge_growth(one_host, longer, base)
+    for case in cases:
+        # A case names both sweeps when the shorter one is part of what is being tested -- the
+        # short-window case below is the CI pair of 2026-09-25 exactly -- and names only the
+        # longer one when it is testing a rate the first sweep merely provides.
+        if len(case) == 5:
+            label, shorter, longer, want_problems, want_text = case
+        else:
+            label, longer, want_problems, want_text = case
+            shorter = one_host
+        problems, notes = judge_growth(shorter, longer, base)
         if bool(problems) != bool(want_problems):
             print("FAIL %s: expected %s, got %s"
                   % (label, "a refusal" if want_problems else "a pass",
@@ -1130,7 +1193,13 @@ def main():
             print("FAIL --growth needs at least 2 visits in the longer sweep to divide by --"
                   " it was given %d, which is the shorter sweep again" % growth_cycles)
         return 1
-    if text is None:
+    # `--growth` runs two sweeps of its own below and judges each one on its own, so the sweep
+    # this used to take first was a third full sweep whose only visible effect was to write the
+    # shorter sweep's report file twice. On 2026-09-25 the artefact that came back from a red
+    # growth run was the overwritten one, and the sweep that had produced the surplus the rule
+    # was refusing had been replaced in the file by the time anybody could read it. Skipping the
+    # extra sweep leaves one writer per report and saves the runner a sweep.
+    if text is None and "--growth" not in arguments:
         text, _probe = capture(timeout, report_path)
         if text is None:
             return 1
