@@ -1,7 +1,25 @@
 {
- "classes": {
-  "TemporaryApp": 18,
-  "TemporaryHost": 6
+ "apps_per_host": {
+  "TemporaryApp": 3
  },
- "total_bytes": 17700
+ "byte_floor": 2000,
+ "byte_floor_measured": false,
+ "bytes_per_host": 2500,
+ "host_class": "TemporaryHost",
+ "observed": {
+  "apps_per_host": [
+   3
+  ],
+  "bytes_per_host_max": 1968,
+  "bytes_per_host_min": 1418,
+  "hosts_seen": [
+   4,
+   5,
+   6,
+   8
+  ],
+  "measured_on": "2026-09-24, one Debug probe build, nine sweeps, one laptop, no code change between them",
+  "runs": 9
+ },
+ "slack_per_host": 1
 }
