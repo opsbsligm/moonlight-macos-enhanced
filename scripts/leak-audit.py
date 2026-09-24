@@ -54,6 +54,8 @@ Usage:
                                            break a captured report one way at a time and
                                            check every break is refused: no process, no
                                            baseline file, runs on any host that has python
+  leak-audit.py [root] --report <file>     also write the raw sweep report there, so a red
+                                           run on a runner leaves the whole thing behind
   leak-audit.py [root] --write-baseline    raise the ceiling where this run exceeded it
   leak-audit.py [root] --self-test         fixtures only, no process, no baseline file
 Exit 0 only when the sweep really ran and first-party leaks stayed inside the ceiling.
@@ -499,8 +501,13 @@ def red_team(text, baseline, objc_names, module):
     return failures
 
 
-def capture(timeout):
-    """Run the Debug probe under `leaks` and hand back its report."""
+def capture(timeout, report_path=None):
+    """Run the Debug probe under `leaks` and hand back its report.
+
+    `--report` exists because a runner that refuses a leak leaves nothing else behind: the
+    summary line says how many, the audit says which rule broke, but only the report says
+    which objects, and nobody can re-run a memory sweep from a log once the machine is gone.
+    """
     tool = shutil.which("leaks")
     if tool is None:
         print("FAIL no `leaks` on this host -- install the Xcode command line tools."
@@ -540,6 +547,13 @@ def capture(timeout):
         shutil.rmtree(home, ignore_errors=True)
         shutil.rmtree(out, ignore_errors=True)
     # `leaks` exits 1 when it found leaks, which is the normal answer for a real app.
+    if report_path:
+        directory = os.path.dirname(os.path.abspath(report_path))
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(report_path, "w", encoding="utf-8") as handle:
+            handle.write(proc.stdout)
+        print("wrote the raw sweep to %s (%d bytes)" % (report_path, len(proc.stdout)))
     if SUMMARY.search(proc.stdout) is None:
         print("FAIL `leaks` produced no summary (exit %d):\n%s"
               % (proc.returncode, proc.stdout[-400:]))
@@ -550,14 +564,16 @@ def capture(timeout):
 # A flag's value is not a positional, and the mistake of treating it as one is worth
 # naming: `--log leaks-arm64.log` would otherwise be read as the repository to scan, the
 # scan would find no classes at all, and the gate would pass every leak in the file.
-VALUE_FLAGS = ("--timeout", "--log")
+VALUE_FLAGS = ("--timeout", "--log", "--report")
 
 
 def parse(arguments):
-    """(root, timeout, log path or None), keeping flag values out of the positionals."""
+    """(root, timeout, log path or None, report path or None), keeping each flag's value
+    attached to its flag and out of the positionals."""
     root = ROOT
     timeout = 900
     log = None
+    report = None
     index = 0
     while index < len(arguments):
         argument = arguments[index]
@@ -565,19 +581,24 @@ def parse(arguments):
             value = arguments[index + 1]
             if argument == "--timeout":
                 timeout = int(value)
-            else:
+            elif argument == "--log":
                 log = value
+            else:
+                report = value
             index += 2
             continue
         if not argument.startswith("--"):
             root = argument
         index += 1
-    return root, timeout, log
+    return root, timeout, log, report
 
 
 def main():
     arguments = sys.argv[1:]
-    root, timeout, log = parse(arguments)
+    # `report` is also the name of the function that prints the verdict below, so the flag
+    # value is not allowed to answer to it here: the first run of `--report` shadowed the
+    # printer with a None and died on the way to reporting a leak.
+    root, timeout, log, report_path = parse(arguments)
     text = None
     if log is not None:
         text = open(log, encoding="utf-8", errors="replace").read()
@@ -586,7 +607,7 @@ def main():
         print("%d leak-audit fixture failure(s)" % failures)
         return 1 if failures else 0
     if text is None:
-        text = capture(timeout)
+        text = capture(timeout, report_path)
         if text is None:
             return 1
     module = project_identity.product_name()
@@ -642,6 +663,21 @@ def main():
         return 0
     for problem in problems:
         print("FAIL %s" % problem)
+    if problems:
+        # The rule says what broke; the blocks say what to go and look at. A red run on a
+        # runner is otherwise a red run somebody has to reproduce locally to learn
+        # anything, and the whole reason to run it on the runner is that the machine it
+        # describes is not the one reading the log.
+        ours = [line for line in text.splitlines()
+                if LEAK_LINE.match(line)
+                and is_first_party(LEAK_LINE.match(line).group(2), objc_names, module)]
+        for line in ours[:20]:
+            print("      %s" % line)
+        if len(ours) > 20:
+            print("      ... and %d more first-party block(s)%s"
+                  % (len(ours) - 20,
+                     ", all of them in the report `--report` wrote" if report_path
+                     else ""))
     print("%d leak-audit failure(s)" % len(problems))
     return 1 if problems else 0
 

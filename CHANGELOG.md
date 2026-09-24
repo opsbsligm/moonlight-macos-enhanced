@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A refused ceiling now names the objects, and wiring that up caught a shadowing bug in
+  the gate itself.** `leak-audit.py --report <file>` keeps the raw sweep beside the verdict,
+  and a refusal now prints the first-party blocks it judged (twenty of them, then the count
+  of the rest), because the runner that refuses a leak describes a machine that is gone by
+  the time anybody reads the log. The first `--report` run died with `'NoneType' object is
+  not callable` before it could print anything: the flag's value was bound to a local named
+  `report`, which is also the function that prints the verdict. What found it was a planted
+  report -- twenty-five extra `TemporaryApp` blocks with the summary count raised to match --
+  so the refusal had to be exercised before it was trusted, exactly as the tree report had
+  taught a few hours earlier. The sweep's report now rides the build as a seven-day artifact
+  under `if: always()`, so the run that refused is the run that keeps the evidence, and the
+  step is written on one line because `local-gates.sh` reads commands out of this file line
+  by line: a flag on a line of its own is a flag the local sweep never passes.
+
+
 - **The memory ceiling counted instances, went red twice over numbers no commit had moved,
   and was rebuilt to judge the shape instead of the count.** Nine sweeps of one Debug probe
   build on one laptop, with nothing changed in between, leaked 4, 5, 5, 5, 6, 6, 6, 6 and 8
