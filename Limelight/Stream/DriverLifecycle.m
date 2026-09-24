@@ -43,6 +43,7 @@ NSString *MLDriverLifecycleStopName(MLDriverLifecycleStop stop) {
         case MLDriverLifecycleStopNotActive: return @"not-active";
         case MLDriverLifecycleStopDeviceNotLeased: return @"device-not-leased";
         case MLDriverLifecycleStopDeviceUnknown: return @"device-unknown";
+        case MLDriverLifecycleStopBuildCannotLoadExtension: return @"build-cannot-load-extension";
     }
     return @"unknown-stop";
 }
@@ -128,6 +129,19 @@ NSString *MLDriverLifecycleStopName(MLDriverLifecycleStop stop) {
     // player may still press the button; a session that pressed it for them is the thing refused.
     return [self lifecycleByCarryingPhase:MLDriverExtensionPhaseNotInstalled
                                      stop:MLDriverLifecycleStopUserDeclined
+                              crashBudget:YES];
+}
+
+- (instancetype)lifecycleByRecordingBuildRefusal {
+    // Asked from `not-installed` or while a request is in flight, which are the only two places a
+    // refusal can arrive. From `active` there is nothing to refuse -- the extension loaded -- and
+    // overwriting that phase with a refusal would tell a player their working driver is gone.
+    if (self.phase != MLDriverExtensionPhaseNotInstalled &&
+        self.phase != MLDriverExtensionPhaseInstalling) {
+        return [self lifecycleByRefusing];
+    }
+    return [self lifecycleByCarryingPhase:MLDriverExtensionPhaseHeldBack
+                                     stop:MLDriverLifecycleStopBuildCannotLoadExtension
                               crashBudget:YES];
 }
 

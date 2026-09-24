@@ -28,6 +28,16 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW = os.path.join(".github", "workflows", "build.yml")
 ENTITLEMENTS = "Moonlight.entitlements"
+PROJECT = "Moonlight.xcodeproj/project.pbxproj"
+
+# The staged half of stage 3. `Limelight/` is a file-system-synchronised group, so anything under
+# it is compiled into the product whether or not anybody wired it -- which means "not shipped" has
+# to be spelled as "outside that group", and an audit has to keep it there. Files under this prefix
+# are allowed to name the system-extension API, because the gate that reads them compiles them
+# against the SDK headers the build uses (scripts/driver-extension-activation-tests.py). What they
+# are not allowed to do is reach the product, or stop announcing that they are unfinished.
+STAGED_PREFIX = "staging/driver-extension/"
+UNLOCK_MARKER = "UNLOCK(stage3)"
 
 # What has to be true of the build before a loadable extension can come out of it. Each entry is
 # a requirement plus the thing a maintainer would type: a gap that does not name the file to edit
@@ -71,8 +81,13 @@ def extension_evidence(root, files):
     """
     targets = [path for path in files
                if ".dext" in path or path.endswith(".systemextension")]
+    staged = [path for path in files if path.startswith(STAGED_PREFIX)]
+    targets = [path for path in targets if not path.startswith(STAGED_PREFIX)]
     sources, requests, entitlements = [], [], []
     for path in files:
+        if path.startswith(STAGED_PREFIX):
+            continue
+
         if path.endswith((".h", ".m", ".mm", ".c", ".swift")):
             text = read(root, path)
             if re.search(r"#import\s*<(DriverKit|IOKit/IOCFPlugin)\b|OSBundleLibrary|<os/libdeclaration\.h>",
@@ -83,11 +98,44 @@ def extension_evidence(root, files):
         elif path.endswith(".entitlements") and "com.apple.developer.driverkit" in read(root, path):
             entitlements.append(path)
     return {"targets": targets, "sources": sources, "requests": requests,
-            "entitlements": entitlements}
+            "entitlements": entitlements, "staged": staged}
 
 
 def has_stage3(evidence):
+    """Something in the tree would end up in a shipping artifact."""
     return any(evidence[key] for key in ("targets", "sources", "requests", "entitlements"))
+
+
+def signing_arrived(workflow_text):
+    return all(pattern.search(workflow_text) is not None for _, pattern, _ in REQUIREMENTS)
+
+
+def staged_problems(evidence, workflow_text, project_text, source_texts):
+    """What staged stage-3 code is not allowed to look like.
+
+    Three shapes are refused, and each is a different mistake. Staged code that reaches the project
+    file is compiled into the product while no extension target exists, which is the artifact this
+    gate exists to refuse. Staged code that stopped carrying the marker is a placeholder that no
+    longer says it is one. And staged code that is still staged *after* the signing arrived is the
+    opposite failure -- the prerequisite landed and the feature quietly did not.
+    """
+    staged = evidence.get("staged") or []
+    if not staged:
+        return []
+    problems = []
+    if signing_arrived(workflow_text):
+        problems.append(
+            "the signing prerequisites have arrived but stage 3 is still staged: %s -- move these "
+            "sources into the extension target, or say in the workflow why they stay outside it"
+            % ", ".join(sorted(staged)))
+    for path in sorted(staged):
+        if path.split("/")[-1] in project_text or path in project_text:
+            problems.append("%s is referenced by %s, so staged code is compiled into the product "
+                            "while no extension target exists" % (path, PROJECT))
+        if UNLOCK_MARKER not in source_texts.get(path, ""):
+            problems.append("%s carries stage 3 code without the %s marker, so the placeholder no "
+                            "longer announces itself" % (path, UNLOCK_MARKER))
+    return problems
 
 
 def gaps(evidence, workflow_text, workflow_name=WORKFLOW):
@@ -107,8 +155,9 @@ def describe(evidence):
     parts = []
     for key, label in (("targets", "extension targets"), ("sources", "DriverKit sources"),
                        ("requests", "system-extension requests"),
-                       ("entitlements", "DriverKit entitlements")):
-        if evidence[key]:
+                       ("entitlements", "DriverKit entitlements"),
+                       ("staged", "staged sources outside the product")):
+        if evidence.get(key):
             parts.append("%s %s" % (label, ", ".join(sorted(evidence[key])[:3])))
     return "; ".join(parts)
 
@@ -165,6 +214,27 @@ def self_test():
           "the DriverKit entitlement is treated as a promise that a signed build follows")
     check(gaps(entitlements, signed) == [],
           "the entitlement is fine once the signing exists to back it")
+    # The staged half, and its two colours. Today's tree is the green one: the staged sources name
+    # the activation API, no signing exists, and the project file does not know about them. Each of
+    # the three refusals below was planted to show that this green is a reading and not a silence.
+    staged_path = STAGED_PREFIX + "MLDriverExtensionActivation.m"
+    staged_evidence = dict(empty, staged=[staged_path])
+    staged_texts = {staged_path: "// %s\n" % UNLOCK_MARKER}
+    naked_project = "isa = PBXNativeTarget;\n		name = Moonlight;\n"
+    check(gaps(staged_evidence, "") == [],
+          "staged stage 3 asks for no signing step, because nothing stages it into an artifact")
+    check(staged_problems(staged_evidence, "", naked_project, staged_texts) == [],
+          "staged sources outside the project file, with the marker, pass today")
+    signed_in_project = naked_project + "\t\tpath = %s;\n" % staged_path
+    in_project = staged_problems(staged_evidence, "", signed_in_project, staged_texts)
+    check(len(in_project) == 1 and PROJECT in in_project[0],
+          "staged code that reaches the project file is refused, naming %s" % PROJECT)
+    unmarked = staged_problems(staged_evidence, "", naked_project, {staged_path: "// nothing here"})
+    check(len(unmarked) == 1 and UNLOCK_MARKER in unmarked[0],
+          "staged code without the placeholder marker is refused, naming the marker")
+    arrived = staged_problems(staged_evidence, signed, naked_project, staged_texts)
+    check(len(arrived) == 1 and staged_path in arrived[0] and "signing" in arrived[0].lower(),
+          "staged code that outlived the signing prerequisites is refused by name")
     print("%s (%d checks)" % ("RUN FAILED" if failures else "RUN PASSED", checks_run))
     return 1 if failures else 0
 
@@ -196,6 +266,13 @@ def main():
     print("stage 3 traces: %s" % (describe(evidence) or "none in the tree"))
     present = [what for what, pattern, _ in REQUIREMENTS if pattern.search(workflow)]
     print("signing steps in the workflow: %s" % (", ".join(present) if present else "none"))
+
+    staged = evidence.get("staged") or []
+    staged_problems_found = staged_problems(
+        evidence, workflow, read(root, PROJECT),
+        {path: read(root, path) for path in staged})
+    for problem in staged_problems_found:
+        print("::error file=%s::%s" % (staged[0] if staged else STAGED_PREFIX, problem))
 
     problems = 0
     gaps_found = gaps(evidence, workflow)

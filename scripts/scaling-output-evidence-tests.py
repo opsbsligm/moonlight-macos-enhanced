@@ -678,6 +678,24 @@ def run_driver_lifecycle():
           "the driver lifecycle gate failed:\n" + chr(10).join(tail))
 
 
+def run_driver_extension_activation():
+    """What Apple's activation callbacks may be read as saying, against the SDK's own headers.
+
+    The staged half of stage 3 -- the reading of a refusal, not the refusal. It lives outside
+    `Limelight/` because that directory is a synchronised folder group, so the only thing that
+    keeps it out of the product is a gate that reads the project file, and that is one of the
+    assertions below. Objective-C against the macOS SDK plus SystemExtensions.framework, and no
+    `workflow` scope for a step of its own -- the same two reasons as the gates beside it.
+    """
+    ran = subprocess.run([sys.executable, "scripts/driver-extension-activation-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "an activation callback is never read as more than it said"
+          if ran.returncode == 0 else
+          "the activation reading gate failed:\n" + chr(10).join(tail))
+
+
 def run_usb_bus_snapshot():
     """Which registry nodes belong to one device, checked against the bus the runner has.
 
@@ -922,6 +940,7 @@ def finish():
     run_usb_device_enumeration()
     run_device_redirection_session()
     run_driver_lifecycle()
+    run_driver_extension_activation()
     run_usb_bus_snapshot()
     run_code_signature_profile()
     run_device_redirection_panel_model()

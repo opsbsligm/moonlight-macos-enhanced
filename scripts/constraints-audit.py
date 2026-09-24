@@ -2336,6 +2336,12 @@ DRIVEN_BY = {
     # entry below it -- that one refuses an unsigned artefact, this one refuses a lifecycle that
     # would pretend an artefact nobody can load is working.
     "driver-lifecycle-tests.py": "scaling-output-evidence-tests.py",
+    # The staged half of the same stage: Apple's activation callbacks read into that lifecycle,
+    # compiled against the SDK headers the build uses, and asserted to stay out of the product
+    # while the certificate is missing. Same two reasons for riding, and one more: the gate that
+    # refuses an unsigned artefact and the gate that refuses a misread callback have to disagree
+    # about nothing, or the panel shows one spelling and the log another.
+    "driver-extension-activation-tests.py": "scaling-output-evidence-tests.py",
     # The measurement that says the obvious implementation is wrong -- the interface iterator
     # returned 11 of the 16 interfaces the devices named under themselves -- is Objective-C
     # against a live bus, so it needs the macOS clang, SDK, and hardware, and a step of its own

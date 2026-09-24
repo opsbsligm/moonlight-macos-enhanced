@@ -399,6 +399,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **Stage 3's activation callbacks are now read by a gate, and the staged half
+  is held staged.** `staging/driver-
+  extension/MLDriverExtensionActivation.{h,m}` translates Apple's activation
+  delegate into `MLDriverLifecycle`: `Completed` activates, while
+  `WillCompleteAfterReboot`, `requestNeedsUserApproval:`, the replacement
+  question, a canceled or superseded request, and every shape nobody
+  recognised -- a code off the list, an error from another domain, a failure
+  that carried no error, a callback value this switch does not carry -- change
+  no phase, because none of them is evidence that anything is installed.
+  `MLDriverLifecycle` gained one stop, `build-cannot-load-extension`: eight of
+  the error codes are about this build -- no entitlement, a signature the
+  system will not accept, a bundle it cannot find -- and reading them as
+  `user-declined` blames a player who never saw a dialog for a certificate,
+  then lets the retry path ask again for a result that cannot change. The
+  source sits outside `Limelight/` because that group is file-system-
+  synchronised, so anything dropped under it is compiled into the product
+  whether or not anybody wired it; `driver-extension-signing-audit.py` now
+  reads the project file and refuses staged code that reaches it, staged code
+  that lost its `UNLOCK(stage3)` marker, and staged code that outlived the
+  signing prerequisites (self-test 10 -> 15). `scripts/driver-extension-
+  activation-tests.py` compiles the pair against the SDK headers the build
+  itself uses -- 54 compiled assertions, 12 planted defects, and every
+  `OSSystemExtension*` name checked against that header, so naming a method
+  Apple does not have is a build failure -- and the three Apple calls that
+  need a loadable extension to answer are compile-verified rather than
+  claimed. One citation is also corrected: `driver-lifecycle-tests.py`'s
+  header credited design 2.3 with an
+  `OSSystemExtensionErrorAuthorizationFailed` measurement it does not contain
+  and this SDK's error enum does not name.
+
 - **The control-center shortcut now logs when it has no capture to return.**
   The hand-back sits inside the capture guard, but `shouldSendInputEvents`
   turns on as soon as the input context binds -- before any mouse capture --

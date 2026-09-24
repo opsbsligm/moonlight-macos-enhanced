@@ -107,7 +107,7 @@
 Stage 0  决策与协商（纯本地、零设备访问）        ← 已实现
 Stage 1  设备枚举可见性与诊断（只读，本机关）        ← 已实现（不含 UI）
 Stage 2  语义旁路（新消息类型 + 能力位，需主机契约）  ← 客户端半边已实现（有意未接线，见 9.4）
-Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）  ← 生命周期逻辑已实现（扩展本体受阻，见 9.5/9.6）
+Stage 3  设备直通（DEXT + 主机虚拟设备 + 签名公证）  ← 生命周期与回调读法已实现并进门禁，激活代码暂存于 `staging/`（扩展本体受阻，见 9.5/9.6/9.8）
 ```
 
 | Stage | 内容 | 前置条件 | 交付物 | 主要风险 |
@@ -354,6 +354,49 @@ A→D 的顺序由风险决定：A 让后面几批的取证前提不会悄悄过
 测试永远看不见它。现在模型自己也会裁（不为调用方的自觉买单），并加了 4 条用例与 1 个植入缺陷，其中一条专门保证
 裁空白不会把 `"10"` 裁成 `"1"`。同一个比较还有第二个洞：存库 uuid 缺失与应答缺失是两个「缺失」，可选值相等会
 把陌生机器的能力位记到所选主机头上——现在没学到的身份谁也不匹配。四项各是一个可评审提交，不是一个「顺手做完」。
+
+### 9.8 批 F 交付了什么：把 Apple 的答复读成它说过的话，一行都不多
+
+三件事一起落地，任何一件单独做都会变成又一次"看起来做完了"。
+
+**`staging/driver-extension/MLDriverExtensionActivation.{h,m}` + `scripts/driver-extension-activation-tests.py`（编译出 54 条断言，12 个植入缺陷全抓）。**
+
+放在 `Limelight/` 之外不是风格问题：`Moonlight.xcodeproj/project.pbxproj` 里 `Limelight` 是
+`PBXFileSystemSynchronizedRootGroup`，**任何落在它下面的源文件都会被编进产品，无论有没有人接线**。
+所以"还没出厂"在这座仓库里只能写成"在那个目录之外"，而这件事必须由门禁读工程文件来钉住——
+`driver-extension-signing-audit.py` 现在做三向判定：暂存代码不得出现在工程文件里；不得丢掉
+`UNLOCK(stage3)` 标记；**签名一旦到位、代码却还在暂存区，也要红**（前置到了而功能没到，是最难被发现的那种静默失败）。
+自测从 10 条增至 15 条，三条 refusal 各有植入验证。
+
+**读法本身**（`MLDriverExtensionApplyCallback`，纯函数、不读时钟、不发消息）：
+
+| Apple 的答复 | 本项目的读法 | 为什么不能读成别的 |
+|---|---|---|
+| `didFinishWithResult: Completed` | 记 activation | 唯一一条能说"在跑"的答复 |
+| `didFinishWithResult: WillCompleteAfterReboot` | **不改相位**，留在 `installing` | 记成 active 就是把设备交给一个"下次开机才存在"的驱动；留在 installing 也不是拖延——调用方的安装计时器会把永不到来的答复落成 `install-unanswered` |
+| `requestNeedsUserApproval:` | **不改相位** | 弹窗打开了不等于批准了，也不等于拒绝；`DriverLifecycle` 早就拒绝过"弹窗关闭即已加载"这种读法 |
+| `actionForReplacingExtension:` | 只记一次决定 | 回答版本替换问题不产生任何加载事实 |
+| 缺 entitlement / 签名不被接受 / 校验失败 / 找不到扩展包 等 8 个码 | `build-cannot-load-extension` + `held-back` | 见下一段 |
+| 策略禁止 / 需要授权 | 记 user decline，交回玩家 | 这两个真的在等人做决定 |
+| 请求被取消 / 被替代 | **不改相位** | "这个请求不算了"推不出"什么都没装" |
+| 没在表里的码、别的 domain 的 error、没有 error 的失败、switch 不认识的回调 | 各自一个 `unmapped-*` / `failed-*` 名字，**不改相位** | 没人认得的报文不是任何状态的证据；伸手去够最近的那个 case，正是本轮 12 个植入缺陷的形状 |
+
+**`MLDriverLifecycle` 新增一条 stop：`build-cannot-load-extension`。**
+它值一个提交的原因是：加这 8 个错误码之前，唯一看起来合适的读法是 `user-declined`——
+把一张证书的问题写成"玩家点了不允许"，还会顺手让重试路径去求一个永远不会变的结果。
+`lifecycleByRecordingBuildRefusal` 只在 `not-installed`/`installing` 生效，
+从 `active` 收到拒绝**必须被拒绝**（一个已经跑起来的驱动不能因为一条迟到答复被卸载），这条也有植入。
+
+**如实记录没有做的**：
+
+- `.dext` 目标本体不存在，`Moonlight.entitlements` 也没有 DriverKit 权限位——这两项由批 D 的审计双向钉住。
+- `MLSystemExtensionPort` 那三行 Apple API 只做**编译验证**：提交激活请求要问系统守护进程"你能不能加载这个扩展包"，而仓库里没有可加载的扩展包可问。它编译用的是构建真正使用的那份 SDK 头文件，所以"写一个 Apple 没有的方法"在门禁里就是编译失败；另外 harness 断言暂存源码里出现的每一个 `OSSystemExtension*` 名字都能在那份头文件里找到。
+- 驱动回调时传的是"不会答话"的假对象：被测的这几个回调从不向 request 发消息，一旦哪个实现开始发，就当场以 unrecognized selector 死掉——这条死亡就是断言本身，不是意外。
+
+**顺带改正一处旧断言的依据。** `scripts/driver-lifecycle-tests.py` 的文件头曾写"2.3 实测：ad-hoc 签名的扩展被 `OSSystemExtensionErrorAuthorizationFailed` 拒绝"。
+2.3 里没有这条实测（它写的是结构性结论：ad-hoc 产物 + `TeamIdentifier=not set` → DEXT 装不上），
+而本机 macOS 27.2 的 SDK 里 `OSSystemExtensionErrorCode` 一共 13 个 case，**没有这个名字**。
+判据引用一条不存在的实测，比不引用更糟：它让下一个人以为那个数字被量过。现已改为引用 2.3 实际写了的东西。
 
 ### 9.3 两个物理前置：缺时必须红，到位时按清单解锁
 

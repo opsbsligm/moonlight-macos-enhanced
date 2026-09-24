@@ -2,8 +2,12 @@
 """Prove that a driver extension nobody has shipped cannot be relied on by accident.
 
 Stage 3 of docs/usb-redirection-design.md is blocked on a signing identity and a notarisation
-pipeline, both recorded as missing in 2.3 -- and measured there: an ad-hoc signed extension is
-refused with `OSSystemExtensionErrorAuthorizationFailed` on macOS 27.2. What is not blocked is the
+pipeline, both recorded as missing in 2.3, which measures the shipping product's own identity
+(`Signature=adhoc`, `TeamIdentifier=not set`) instead of guessing at it. An earlier version of
+this header cited an `OSSystemExtensionErrorAuthorizationFailed` measurement that 2.3 does not
+contain and that this SDK's `OSSystemExtensionErrorCode` does not name -- thirteen cases, none
+of them that one -- so the citation is gone and the structural reason stands. What is not
+blocked is the
 logic around that wall, so this gate covers it: what happens between asking for an extension and
 trusting it, and between a device being handed over and the thing holding it dying.
 

@@ -64,6 +64,12 @@ typedef NS_ENUM(NSInteger, MLDriverLifecycleStop) {
     /// The host asked about a device this lifecycle has never seen. Answering from a stale
     /// table is the hot-plug bug this file exists to prevent.
     MLDriverLifecycleStopDeviceUnknown = 8,
+    /// The system refused to load the extension because of something about *this build*: no
+    /// entitlement, a code signature it will not accept, a bundle it cannot find in the product.
+    /// It is not `user-declined`, because a player who never saw a dialog would be blamed for a
+    /// certificate, and it is not `install-unanswered`, because the system did answer. Nothing in
+    /// this session should ask again, which is why the phase is held-back.
+    MLDriverLifecycleStopBuildCannotLoadExtension = 9,
 };
 
 FOUNDATION_EXPORT NSString *MLDriverExtensionPhaseName(MLDriverExtensionPhase phase);
@@ -96,6 +102,9 @@ FOUNDATION_EXPORT NSString *MLDriverLifecycleStopName(MLDriverLifecycleStop stop
 - (instancetype)lifecycleByRequestingInstall;
 - (instancetype)lifecycleByRecordingUserApproval;
 - (instancetype)lifecycleByRecordingUserDecline;
+/// The system refused this build. Held-back with its own reason, so a missing signing identity is
+/// never reported as a player who pressed "Don't allow", and never retried by the app on its own.
+- (instancetype)lifecycleByRecordingBuildRefusal;
 - (instancetype)lifecycleByRecordingActivation;
 - (instancetype)lifecycleByRecordingCrash;
 - (instancetype)lifecycleByRequestingRemoval;
