@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step is written on one line because `local-gates.sh` reads commands out of this file line
   by line: a flag on a line of its own is a flag the local sweep never passes.
 
+  Both macOS jobs and the audits job ran green on the first CI attempt, and the runners
+  settled the open question with their own logs: `leaks` runs there, both architectures
+  discovered no GameStream host, no first-party class leaked, and the run said so -- 287 and
+  288 system blocks, 18,720 and 18,816 bytes, byte budget explicitly unjudged. So CI's green
+  means one thing and the baseline now records it as measured rather than inferred: no new
+  first-party class started leaking. The cycle in section 5 of ``docs/memory-ownership.md``
+  is not reproduced there, and closing that gap means seeding a host in the Debug probe so
+  the graph exists on a runner -- a Debug-only change with its own round, and its own
+  baseline edit, rather than a claim made now.
+
 
 - **The memory ceiling counted instances, went red twice over numbers no commit had moved,
   and was rebuilt to judge the shape instead of the count.** Nine sweeps of one Debug probe
