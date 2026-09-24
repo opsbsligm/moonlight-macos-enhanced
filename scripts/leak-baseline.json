@@ -12,6 +12,24 @@
   ],
   "bytes_per_host_max": 1968,
   "bytes_per_host_min": 1418,
+  "ci_runner": {
+   "blocks_seen": [
+    287,
+    288
+   ],
+   "byte_budget": "unjudged there -- the run says so in its own note",
+   "bytes_seen": [
+    18720,
+    18816
+   ],
+   "first_party_classes": "none",
+   "hosts_seen": [
+    0,
+    0
+   ],
+   "measured_on": "2026-09-24, run 35977080604, arm64 and x86_64, GitHub macOS runners",
+   "runs": 2
+  },
   "hosts_seen": [
    4,
    5,
