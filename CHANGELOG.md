@@ -399,6 +399,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The diagnostics report now says what the devices panel says, and names
+  which of its silences were its own choice.** `SettingsDevicesPane` could
+  already report the four preconditions, the rule count, the unreadable
+  records and whatever the host had answered, while `DiagnosticsReportBuilder`
+  assembled eight sections and none of them mentioned device redirection. The
+  answer that decides whether a player can redirect anything was therefore the
+  one answer that never left the machine, and an issue saying "devices do not
+  work" got triaged by guessing. The report now repeats the panel's own
+  `auditLine` instead of restating it in words free to drift. Two boundaries
+  are printed into the report itself: it never asks a host, and it never
+  enumerates the bus. Both fail quietly otherwise -- a device section that
+  reads as an empty list blames a cable somebody already unplugged, and a host
+  that was never asked reads as a host that refused. Four assertions hold the
+  line, one of them checked against code rather than prose after this file's
+  own explanatory comment naming the scanning selector turned the rule red:
+  that is the difference between "nobody calls this" and "nobody mentions
+  this". A planted mutation reproduces the failure and is registered in the
+  battery.
+
 - **A documentation rewrite is a chance for numbers to go stale quietly, so
   the moved page was re-counted.** `docs/contributing.md` came out of
   `README.md` carrying two gate figures that had already expired the day it
