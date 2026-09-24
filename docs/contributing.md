@@ -46,6 +46,18 @@
 | 不给构建转录 | 41 passed / 0 failed / 12 需 CI 产物 |
 | `LOCAL_BUILD_LOG=<本次构建自己的 xcodebuild 转录>` | 43 passed / 0 failed / 10 需 CI 产物 |
 | `LOCAL_BUILD_LOG=<一份旧的转录>` | 42 passed / **1 failed** / 10 |
+| `LOCAL_BUILD_LOG=<本次构建转录>` **且** render-probe 的 Debug 产物在盘上 | **46** passed / 0 failed / 10 需 CI 产物 |
+
+前三行是 2026-09-24 当天上午（`leak-audit.py` 进 workflow **之前**）测的，清单比今天少 3 条命令。
+当天下午内存上限门禁进去之后，同一棵树实测 56 条命令 / 46 跑 / 0 失败 / 10 需 CI 产物。
+新增的 3 条里 `--self-test` 与 `--red-team` 在任何有 python 的地方都能跑；
+第三条（把 app 跑在 Apple `leaks` 下的真扫描）**额外**要求 `build-render-probe/Build/Products/Debug/*.app`
+——那是 `render-probe.py` 留下的产物，本扫描不自己构建它（那要二十分钟），但产物在盘上时它会就地跑掉（约四十秒），
+产物不在时 `local-gates.sh` 报 skip 并指名缺的是哪一样，而不是静默计成通过。
+
+同一个下午 `assertion-battery.py` 实测 144/144，**这个数字没有包含内存门禁**：
+它的植入形状活在自己的 `--red-team` 里（6 条破坏，逐条要求拒得有理，其中「真的修好一类」必须放行），
+由 `constraints-audit.py` 直接跑，因此报 144 时口径是中央电池，报 6 时口径是红证，两者不要相加。
 
 差的那 2 项是 `build-warning-audit.py` 与 `source-membership-audit.py`——它们只在
 `LOCAL_BUILD_LOG` 指向存在的文件时才跑。旧转录会让后者判红（实测：一份 9 月 13 日的转录
