@@ -219,7 +219,7 @@ def judge_pairing(sites, decls, baseline):
     return problems, notes
 
 
-def probe_problems(report, require_reap=True):
+def probe_problems(report, require_reap=True, rules=None):
     """Why this run may not be judged at all, read out of the probe's own record.
 
     Kept apart from `capture()` so the fixtures can drive every one of these: each is a shape a
@@ -250,7 +250,7 @@ def probe_problems(report, require_reap=True):
     elif seed.get("status") not in ("seeded", "existing-hosts"):
         problems.append("the audit asked for a host graph and got status %r, so the production"
                         " shape was never there to hold" % seed.get("status"))
-    problems.extend(reap_problems(ownership, seed, require_reap))
+    problems.extend(reap_problems(ownership, seed, require_reap, rules))
     shapes = ownership.get("shapes")
     if not isinstance(shapes, dict):
         problems.append("the probe recorded no shapes, so there is no control and no reading")
@@ -504,7 +504,99 @@ def section5_status(report, decls):
 REAP_STATUSES = ("empty", "kept", "reaped", "removed-some")
 
 
-def reap_problems(ownership, seed, require_reap=True):
+MODEL_DIR = os.path.join(ROOT, "Limelight", "Limelight.xcdatamodeld")
+CURRENT_VERSION = os.path.join(MODEL_DIR, ".xccurrentversion")
+
+
+def deletion_rules(root=ROOT):
+    """Read the Core Data deletion rules out of the model the store actually opens.
+
+    `-[DataManager removeHost:]` deletes a host and nothing else. Whether the apps that host was
+    holding go with it is not a fact about any line of Objective-C in this repository: it is the
+    `deletionRule` on `Host.appList`, inside whichever `.xcdatamodel` the `.xccurrentversion` file
+    names -- there are nine model versions in this tree, so reading the wrong one is reading a
+    model the app never opens. The probe counts what the store did; this says what the rule claims;
+    the two are then required to agree.
+    """
+    out = {"model": "unknown", "Host.appList": "unknown", "App.host": "unknown"}
+    try:
+        with open(CURRENT_VERSION, encoding="utf-8") as handle:
+            version = handle.read()
+    except OSError as error:
+        out["error"] = "cannot read %s (%s)" % (CURRENT_VERSION, error)
+        return out
+    named = re.search(r"<string>([^<]+\.xcdatamodel)</string>", version)
+    if not named:
+        out["error"] = "%s does not name a current model" % CURRENT_VERSION
+        return out
+    out["model"] = named.group(1)
+    contents = os.path.join(MODEL_DIR, named.group(1), "contents")
+    try:
+        with open(contents, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError as error:
+        out["error"] = "cannot read %s (%s)" % (contents, error)
+        return out
+    for entity, name, key in (("Host", "appList", "Host.appList"),
+                              ("App", "host", "App.host")):
+        found = re.search(r'<relationship\s+name="%s"[^>]*deletionRule="([^"]+)"' % name, text)
+        if not found:
+            out["error"] = "%s declares no deletionRule on %s.%s" % (out["model"], entity, name)
+            return out
+        out[key] = found.group(1)
+    return out
+
+
+def app_record_problems(reap, rules=None):
+    """Reconcile a removal against what the model says a removal does to the app rows.
+
+    Only runs when the reap actually deleted something. An app record whose host is gone is worse
+    than a leaked object, because it is invisible to every production read -- `getHosts` reaches
+    apps through hosts -- so nothing in the app can list it or delete it, while the store keeps
+    paying for it. A cascade that removed nothing is the other direction of the same mistake: the
+    store is not running the model this file just read, and every claim built on the model is
+    floating.
+    """
+    problems = []
+    removed = reap.get("removed")
+    if not isinstance(removed, int) or removed == 0:
+        return problems
+    before = reap.get("appRecordsBefore")
+    after = reap.get("appRecordsAfter")
+    orphans = reap.get("orphanAppRecordsAfter")
+    if reap.get("appRecordProblem") or before is None or after is None or orphans is None:
+        problems.append("the reap removed %d host(s) and the app records were not counted on both"
+                        " sides of it (%s), so nothing here may claim the deletion was clean"
+                        % (removed, reap.get("appRecordProblem") or "no count recorded"))
+        return problems
+    if rules is None:
+        rules = deletion_rules()
+    if "error" in rules or "unknown" in (rules["Host.appList"], rules["App.host"]):
+        problems.append("the deletion rule under test could not be read out of the model (%s), so"
+                        " the %d host(s) removed here cannot be called clean: the model decides"
+                        " where the app rows go, and this run cannot say which model the store"
+                        " opened" % (rules.get("error", rules["model"]), removed))
+        return problems
+    if orphans > 0:
+        problems.append("removing %d host(s) left %d app record(s) belonging to no host, and a row"
+                        " whose host is gone is invisible to `getHosts` and therefore undeletable"
+                        " through the app: nothing lists it and nothing removes it"
+                        % (removed, orphans))
+    if rules["Host.appList"] == "Cascade" and after >= before:
+        problems.append("the model says `Host.appList` cascades, yet removing %d host(s) took the"
+                        " app records from %d to %d, so either the store is not running the model"
+                        " `.xccurrentversion` names (%s) or those apps were never attached to the"
+                        " host that was deleted -- and the seed attaches three"
+                        % (removed, before, after, rules["model"]))
+    if rules["Host.appList"] != "Cascade" and after == before and orphans == 0:
+        problems.append("the model says `Host.appList` is `%s`, but removing %d host(s) changed"
+                        " neither the app count (%d) nor the orphan count, so the store did"
+                        " something the model does not describe"
+                        % (rules["Host.appList"], removed, before))
+    return problems
+
+
+def reap_problems(ownership, seed, require_reap=True, rules=None):
     """Judge what the probe did about the library it found itself in.
 
     The reason these rules exist is that handing a probe a private `HOME` does not give it a
@@ -546,6 +638,7 @@ def reap_problems(ownership, seed, require_reap=True):
                         % reap.get("remaining"))
     if status == "empty" and found != 0:
         problems.append("the reap called a library of %d host(s) empty" % found)
+    problems.extend(app_record_problems(reap, rules))
     library = int(ownership.get("libraryHosts") or 0)
     probe_owned = int(ownership.get("probeOwnedHosts") or 0)
     if not isinstance(reap, dict):
@@ -723,14 +816,16 @@ def self_test(baseline):
         ("a clean-up that left somebody's host standing",
          report_with(shipped_report(), libraryHosts=1, probeOwnedHosts=0,
                      reapedHosts={"status": "removed-some", "found": 2, "probeOwned": 1,
-                                  "removed": 1, "remaining": 1},
+                                  "removed": 1, "remaining": 1, "appRecordsBefore": 3,
+                                  "appRecordsAfter": 0, "orphanAppRecordsAfter": 0},
                      seedHosts={"status": "existing-hosts", "requested": 1, "existing": 1,
                                 "seeded": 0}),
          strong, baseline, []),
         ("a clean-up that left one of its own behind",
          report_with(shipped_report(), libraryHosts=1, probeOwnedHosts=1,
                      reapedHosts={"status": "removed-some", "found": 2, "probeOwned": 1,
-                                  "removed": 1, "remaining": 1},
+                                  "removed": 1, "remaining": 1, "appRecordsBefore": 3,
+                                  "appRecordsAfter": 0, "orphanAppRecordsAfter": 0},
                      seedHosts={"status": "existing-hosts", "requested": 1, "existing": 1,
                                 "seeded": 0}),
          strong, baseline, ["not the 0 the reap left"]),
@@ -783,16 +878,64 @@ def self_test(baseline):
     # be refused for a missing reap entry has to pass when nobody asked for one -- and the leftover
     # rule, which needs no reap verdict at all, must still refuse it.
     total = 0
+    CASCADE = {"model": "fixture", "Host.appList": "Cascade", "App.host": "Nullify"}
+    NULLIFY = {"model": "fixture", "Host.appList": "Nullify", "App.host": "Nullify"}
+    UNREADABLE = {"model": "unknown", "Host.appList": "unknown", "App.host": "unknown",
+                  "error": "the fixture cannot read a model"}
+
+    def reap_case(before, after, orphans):
+        """A reap that removed one host and took the app rows with it, or did not."""
+        return report_with(shipped_report(), libraryHosts=1, probeOwnedHosts=1,
+                           reapedHosts={"status": "reaped", "found": 1, "probeOwned": 1,
+                                        "removed": 1, "remaining": 0,
+                                        "appRecordsBefore": before,
+                                        "appRecordsAfter": after,
+                                        "orphanAppRecordsBefore": 0,
+                                        "orphanAppRecordsAfter": orphans},
+                           seedHosts={"status": "seeded", "requested": 1, "seeded": 1})
+
+    # The Core Data question, tested against the rule it is supposed to match. These cases inject
+    # the model rather than reading it, because the point is the reconciliation: the same numbers
+    # are a clean deletion under one rule and a refusal under another, and the file has to know
+    # which rule the store is running to tell them apart.
     diagnosis = [
-        ("the escape hatch, opened", shipped_report(), False, []),
+        ("the escape hatch, opened", shipped_report(), False, None, []),
         ("the escape hatch, with a leftover library",
          report_with(shipped_report(), libraryHosts=2, probeOwnedHosts=2,
                      seedHosts={"status": "existing-hosts", "requested": 1, "existing": 2,
                                 "seeded": 0}),
-         False, ["not clean"]),
+         False, None, ["not clean"]),
+        # What this laptop actually measured on 2026-09-25: six app rows, one host removed, three
+        # rows left and none of them orphaned. `Cascade` in the model, three rows gone in the
+        # store. The same numbers under any other rule would be a lie about the model.
+        ("the cascade the store performed", reap_case(6, 3, 0), True, CASCADE, []),
+        ("a cascade that removed no rows", reap_case(6, 6, 0), True, CASCADE,
+         ["cascades, yet"]),
+        ("rows left with no host", reap_case(6, 6, 3), True, CASCADE,
+         ["belonging to no host"]),
+        ("a deletion the run never counted",
+         report_with(shipped_report(), libraryHosts=1, probeOwnedHosts=0,
+                     reapedHosts={"status": "reaped", "found": 1, "probeOwned": 1,
+                                  "removed": 1, "remaining": 0},
+                     seedHosts={"status": "seeded", "requested": 1, "seeded": 1}),
+         True, CASCADE, ["not counted on both sides"]),
+        ("a store that will not answer the orphan question",
+         report_with(shipped_report(), libraryHosts=1, probeOwnedHosts=0,
+                     reapedHosts={"status": "reaped", "found": 1, "probeOwned": 1,
+                                  "removed": 1, "remaining": 0,
+                                  "appRecordProblem": "counting failed: locked store"},
+                     seedHosts={"status": "seeded", "requested": 1, "seeded": 1}),
+         True, CASCADE, ["not counted on both sides"]),
+        ("a model that cannot be read", reap_case(6, 3, 0), True, UNREADABLE,
+         ["could not be read out of the model"]),
+        # The same three rows leaving under a rule that says they should stay: green by count
+        # alone, red because the store then is not running the model the audit read.
+        ("rows vanishing under a non-cascade rule", reap_case(6, 3, 0), True, NULLIFY, []),
+        ("rows staying under a non-cascade rule", reap_case(6, 6, 0), True, NULLIFY,
+         ["something the model does not describe"]),
     ]
-    for label, report, require_reap, expected in diagnosis:
-        problems = probe_problems(report, require_reap=require_reap)
+    for label, report, require_reap, rules, expected in diagnosis:
+        problems = probe_problems(report, require_reap=require_reap, rules=rules)
         if expected and not problems:
             print("FAIL fixture: %s passed, and it should have been refused" % label)
             failures += 1
@@ -843,6 +986,33 @@ def mutate(report, shape, **changes):
     return report_with(report, shapes=shapes)
 
 
+# The mutations that test a missing-evidence rule have to keep the evidence missing, or the repair
+# below hands it back and the rule the case exists to prove bites never opens its mouth.
+MISSING_EVIDENCE_WANTS = ("no reapedHosts", "not counted on both sides")
+
+
+def with_filed_app_counts(report):
+    """The app-record counts a pre-counting run would have written, from the seed's own fan-out.
+
+    A record written before the app rows were counted cannot say how many there were, so the fill
+    is an inference and is labelled as one: the seed attaches three apps to every host it plants,
+    so a run that removed N hosts and left no orphans would have reported 3N rows going to 0. The
+    number is only ever used to prove that a refusal came from the missing field -- if the filed
+    record still fails once the field is filled, the rule is refusing something real.
+    """
+    reap = report["ownership"].get("reapedHosts")
+    if not isinstance(reap, dict):
+        return report
+    removed = reap.get("removed")
+    if not isinstance(removed, int) or removed == 0:
+        return report
+    if reap.get("appRecordsBefore") is not None or reap.get("appRecordsAfter") is not None:
+        return report
+    filled = dict(reap, appRecordsBefore=3 * removed, appRecordsAfter=0,
+                  orphanAppRecordsBefore=0, orphanAppRecordsAfter=0)
+    return report_with(report, reapedHosts=filled)
+
+
 def with_filed_reap(report):
     """The reap entry a pre-reap run would have written for the library it actually found.
 
@@ -851,7 +1021,7 @@ def with_filed_reap(report):
     asks, and the rules it is trying to prove bite never get to open their mouths.
     """
     if isinstance(report["ownership"].get("reapedHosts"), dict):
-        return report
+        return with_filed_app_counts(report)
     total = int(report["ownership"].get("libraryHosts") or 0)
     owned = int(report["ownership"].get("probeOwnedHosts") or 0)
     status = "empty" if total == 0 else ("kept" if owned == 0 else "mixed")
@@ -912,6 +1082,17 @@ def red_team(sample_path, baseline, decls):
          "no reapedHosts"),
         # The clean-up flag reported honestly once and can report dishonestly the same way: the
         # verdict says the probe's own hosts are gone while the library still counts one of them.
+        # The model's own rule, broken the way a migration would break it: the store stops
+        # honouring `Cascade` and the rows simply stay, attached to a host that no longer exists.
+        ("a removal that left every app row behind while the model cascades",
+         lambda report: report_with(report, reapedHosts={
+             "status": "reaped", "found": 1, "probeOwned": 1, "removed": 1, "remaining": 0,
+             "appRecordsBefore": 6, "appRecordsAfter": 6, "orphanAppRecordsAfter": 0}),
+         "cascades, yet"),
+        ("a removal whose app rows were never counted",
+         lambda report: report_with(report, reapedHosts={
+             "status": "reaped", "found": 1, "probeOwned": 1, "removed": 1, "remaining": 0}),
+         "not counted on both sides"),
         ("a clean-up that claimed to finish and did not",
          lambda report: report_with(
              report, libraryHosts=1, probeOwnedHosts=1,
@@ -924,7 +1105,7 @@ def red_team(sample_path, baseline, decls):
     failures = 0
     for label, change, want in mutations:
         report = change(json.loads(json.dumps(sample)))
-        if want != "no reapedHosts":
+        if want not in MISSING_EVIDENCE_WANTS:
             # The filed record predates the reap, so every mutation of it would otherwise be
             # refused for the missing field and the rules underneath would go untested: the red
             # team would report nine bites while proving one. Filling the field in is a mutation
@@ -1169,6 +1350,14 @@ def main():
           " status %s"
           % (ownership.get("libraryHosts", 0), ownership.get("probeOwnedHosts", "unrecorded"),
              seed.get("status", "unrecorded"), reap.get("status", "unrecorded")))
+    if isinstance(reap.get("removed"), int) and reap["removed"]:
+        # Named because the host count going to zero does not say the app rows went with it, and
+        # an app row whose host is gone can never be listed or deleted through the app again.
+        print("ownership: removing %d host(s) took the app records from %s to %s, with %s of them"
+              " left belonging to no host"
+              % (reap["removed"], reap.get("appRecordsBefore", "unrecorded"),
+                 reap.get("appRecordsAfter", "unrecorded"),
+                 reap.get("orphanAppRecordsAfter", "unrecorded")))
     print("ownership: %s" % summary(ownership))
     print("ownership: %d site(s) hand an app to a holder"
           % len(app_assignment_sites(first_party_sources())))

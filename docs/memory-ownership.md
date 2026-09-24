@@ -20,7 +20,10 @@
 > database — the support directory resolves out of the account, not out of `$HOME` — so the CI
 > runner's ownership reading had been measuring the host the memory sweep planted a step earlier,
 > and this laptop's real library had a probe's host in it. Probes now count the library by who
-> wrote it and reap only what they can prove is theirs, and the two counts have to reconcile.
+> wrote it and reap only what they can prove is theirs, and the two counts have to reconcile. Section 12 (next day) asks the question that left open -- where a
+> deleted host's app records go -- and answers it by deleting a planted host and counting the rows:
+> six to three, none orphaned. That is the model's `Cascade` measured rather than grepped, and it
+> is reconciled on every push, because the reap on a runner deletes something every single time.
 
 ## 1. 实测结论
 
@@ -417,3 +420,50 @@ growth 判的就是这一份库上的两遍扫掠（正是它要的），但**�
 - HOME 隔离失效同样意味着**在本机上**，render-probe 与内存扫掠一直是**在真实库上**跑的。已核对其断言不依赖空库（它们要的是「页面画出来了」「我们的对象没多漏」），但「私有 HOME」这句话以后不许再写；
 - 同一句话在**配对私钥**上同样成立：`CryptoManager.m:211` 用 `NSDocumentDirectory` 解析路径，也是从账号而不是从 `$HOME`。目前没有任何探针走到配对写入，所以这条只是给后来人的护栏——**别把会写 Documents 的旗号交给「有私有 HOME」的脚本**；
 - 真串流会话里 `self.app.host` 的读数照旧没有；被 reap 掉的 host 其 `appList` 是否连带释放，也没测。
+
+## 12. 删一台 host 时它的 app 记录去哪了：把上一节的盲区量掉（2026-09-25）
+
+§11 留了一句「`removeHost:` 删的是 host 记录，种子挂的 app 记录是否随之消失，取决于 Core Data
+的删除规则，本轮没量」。本轮去问了。
+
+**先读**：当前模型由 `Limelight.xcdatamodeld/.xccurrentversion` 指定为 `Moonlight v1.6.xcdatamodel`
+（树里一共 **9 个模型版本** —— 读错版本等于读一份 app 永远不会打开的模型），里面写着
+`Host.appList` 的 `deletionRule="Cascade"`、`App.host` 是 `Nullify`。
+读到这里还不能算：声明是声明，**store 实际怎么执行是另一件事**（迁移过库的机器尤其如此）。
+
+**实测（真删一次，两侧计数）**：
+用现成的 `ML_RENDER_PROBE_SEED_IGNORE_EXISTING` 在真库上种 1 台探针 host（带 3 个 app，走生产
+`updateAppsForExistingHost:`），app 记录从 3 变 **6**；再用 `ML_PROBE_REMOVE_OWN_HOSTS` 删掉它 →
+app 记录 **6 → 3**，`orphanAppRecordsAfter = 0`。
+⇒ **`Cascade` 是量出来的**：删 host 连带带走它的 3 条 app 记录，库里不留任何「没有 host 的 app 行」。
+
+这条为什么值得当成一件事：**一条 host 已不存在的 app 行，生产代码再也看不见它**
+（`getHosts` 只能顺着 host 走到 app），于是既列不出来也删不掉，而 store 一直为它付空间。
+它比一个泄漏对象更糟，因为泄漏对象至少在 `leaks` 里看得见。
+
+**计数为什么新开一个 context**：`DataManager` 跑在自己的 private-queue context 上，
+`DatabaseSingleton` 又对外暴露另一个 context，两者都不保证无 refresh 就看见对方已提交的行 ——
+用旧 context 数出来的「3」可能是某个更早时刻的 3，**那种数恰好会跟模型声明对得上，从而永远绿**。
+所以新开一个绑在同一 `NSPersistentStoreCoordinator` 上的 context，读 SQLite 里已提交的内容。
+
+**门禁把「声明」与「实测」对上账**（`scripts/ownership-audit.py` 读 `.xccurrentversion` 指向的那个模型）：
+
+| 情形 | 判定 |
+|:---|:---|
+| 模型说 `Cascade`，删完 app 行数没少 | **红**：store 跑的不是这个模型，或那些 app 从没挂上去 |
+| 模型说的不是 `Cascade`，可删完行数与孤儿都没变 | **红**：store 做了模型没描述的事 |
+| 删完出现「没有 host 的 app 行」 | **红**（无论规则是什么，这种行都删不掉） |
+| 删了但两侧没计数 / store 拒绝回答孤儿问题 | **红**：不许宣称「删干净了」 |
+| 读不到当前模型或删除规则 | **红**：读不到前提，就没资格下结论 |
+
+**CI 每次都真跑到**：runner 上没有 LAN，扫掠那一步种 1 台（带 3 个 app），紧接着 ownership 的
+reap 把它删掉 —— 所以这张对账表**不是本机专属**，每次 push 都在两 arch 上执行一次真实删除。
+
+**测试**：fixture 43 条（新增 9 条，其中「非 Cascade 规则下行数照消失」这类靠**注入模型**来测，
+测的是对账而不是某个具体模型），红队 18 条（新增 3 条：级联失效 / 没计数 / 清理谎报完成）。
+入档真记录四份，各自在 baseline 里声明期望：新记录必须被接受，
+而上一轮那份清理记录**如实改成必须被拒**（它删的时候 app 计数还不存在），
+并且「按种子扇出补齐计数后必须转绿」——拒绝的仍是缺失的证据，不是形状。
+
+**没测到**：孤儿判定依赖 `host == nil` 谓词在该 store 上的行为；若 store 拒绝这个谓词，
+探针记 `appRecordProblem` 并判红，不猜。真串流会话里 `self.app.host` 的读数照旧没有。
