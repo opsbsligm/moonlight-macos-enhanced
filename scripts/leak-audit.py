@@ -1027,6 +1027,18 @@ def main():
                     + probe_record_fixture())
         print("%d leak-audit fixture failure(s)" % failures)
         return 1 if failures else 0
+    # Both refusals belong here rather than inside the growth branch below: after them sits
+    # the sweep, and a forty-second memory sweep spent before the gate says the request could
+    # not be answered is not merely slow. It is worse than slow -- the run prints "sweep ran on
+    # a graph of ..." first, so the refusal arrives under a line that reads like a result.
+    if "--growth" in arguments and (log is not None or growth_cycles < 2):
+        if log is not None:
+            print("FAIL --growth measures a rate across two sweeps it runs itself, and `--log`"
+                  " hands it one captured sweep. Drop the log and let it visit the page.")
+        else:
+            print("FAIL --growth needs at least 2 visits in the longer sweep to divide by --"
+                  " it was given %d, which is the shorter sweep again" % growth_cycles)
+        return 1
     if text is None:
         text, _probe = capture(timeout, report_path)
         if text is None:
@@ -1047,14 +1059,6 @@ def main():
         print("%d leak-audit red-team failure(s)" % failures)
         return 1 if failures else 0
     if "--growth" in arguments:
-        if log is not None:
-            print("FAIL --growth measures a rate across two sweeps it runs itself, and `--log`"
-                  " hands it one captured sweep. Drop the log and let it visit the page.")
-            return 1
-        if growth_cycles < 2:
-            print("FAIL --growth needs at least 2 visits in the longer sweep to divide by --"
-                  " it was given %d, which is the shorter sweep again" % growth_cycles)
-            return 1
         # Both halves are judged on their own before the difference between them is judged:
         # a growth run that quietly stops checking the ceiling would be a weaker gate hiding
         # inside a stronger-sounding one.
