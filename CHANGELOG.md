@@ -399,6 +399,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The README is a reader's page now, and the round-by-round detail has a
+  home.** The top-level file had grown past two hundred lines of gate tables,
+  project trees and version history, which is the same content `CHANGELOG.md`
+  carries in a form a reviewer can bisect. `README.md` keeps what a person
+  choosing this build needs -- what it is, how it differs, how to install,
+  what it cannot do yet -- and `docs/README.md` indexes the rest by reader.
+  The gate table, contribution rules and report fields moved to
+  `docs/contributing.md` and `docs/diagnostics-report.md`, the keyboard-
+  mapping rationale to `docs/input-mapping-design.md`, and the version-
+  numbered behaviour notes to `docs/history/rounds.md`, which says plainly
+  that `CHANGELOG.md` is the only per-round source of truth rather than
+  copying it. All 41 relative links resolve; the two lines the identity rules
+  read -- the product name a DMG installs and the bundle identifier behind the
+  `issue #41` warning -- are unchanged.
+
 - **Stage 3's activation callbacks are now read by a gate, and the staged half
   is held staged.** `staging/driver-
   extension/MLDriverExtensionActivation.{h,m}` translates Apple's activation
