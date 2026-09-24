@@ -2,16 +2,14 @@
  "apps_per_host": {
   "TemporaryApp": 3
  },
- "byte_floor": 2000,
- "byte_floor_measured": false,
- "bytes_per_host": 2500,
+ "first_party_bytes_floor": 128,
+ "first_party_bytes_floor_measured": false,
+ "first_party_bytes_per_host": 512,
  "host_class": "TemporaryHost",
  "observed": {
   "apps_per_host": [
    3
   ],
-  "bytes_per_host_max": 1968,
-  "bytes_per_host_min": 1418,
   "ci_runner": {
    "blocks_seen": [
     287,
@@ -30,6 +28,11 @@
    "measured_on": "2026-09-24, run 35977080604, arm64 and x86_64, GitHub macOS runners",
    "runs": 2
   },
+  "first_party_bytes_floor_note": "unmeasured: no sweep has yet leaked a first-party object that is not part of a host graph, so nothing has needed the floor",
+  "first_party_bytes_measured_on": "2026-09-24, the committed sweep scripts/leak-sample.txt: 2,304 of 11,792 leaked bytes are ours, over 6 hosts; 1 TemporaryHost + 3 TemporaryApp per host",
+  "first_party_bytes_per_host": [
+   384
+  ],
   "hosts_seen": [
    4,
    5,
@@ -37,7 +40,14 @@
    8
   ],
   "measured_on": "2026-09-24, one Debug probe build, nine sweeps, one laptop, no code change between them",
-  "runs": 9
+  "runs": 9,
+  "total_bytes": {
+   "laptop_max": 15696,
+   "laptop_min": 6176,
+   "runner_arm64": 18720,
+   "runner_x86_64": 18816,
+   "why_it_is_not_a_ceiling": "the report's total is every leaked object in the process: on the laptop 80% of it was CoreFoundation strings, sets and dictionaries, and a GitHub runner reports ~18.7k of it with not one first-party object among them. Budgeting that against the host count is budgeting the machine"
+  }
  },
  "slack_per_host": 1
 }

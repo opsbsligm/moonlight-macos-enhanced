@@ -654,6 +654,103 @@ static NSWindow *MLProbeWindow = nil;
 static NSView *MLProbeBackdrop = nil;
 static BOOL MLProbeArmed = NO;
 
+// Seed a host graph for the memory sweep, and only for the memory sweep.
+//
+// `leaks` answers for the graph the settings page built, and that page builds one temporary
+// host graph per host the machine can see. A CI runner has no LAN to browse, so it sees no
+// host, builds no graph, and the memory gate can only report "nothing of ours started
+// leaking" over an empty room -- a green that says less than it looks like. So the sweep
+// asks for a host, and this writes one through the production `DataManager`, the way
+// discovery writes one when a box answers. It is not a stand-in object: the settings page
+// then reads it back through the production `getHosts`, which is the ownership path that
+// leaked in the first place.
+//
+// What that measures is the graph and the code that owns it. What it does not measure is the
+// discovery path that builds a host out of a live box, and it is not what a user's library
+// holds. The visual probe leaves the flag unset so its pixel asserts keep facing the empty
+// library they were written against, and a machine with hosts of its own is left alone -- so
+// the apps-per-host ratio the gate judges stays the library's rather than this seed's.
+//
+// The status is recorded rather than assumed, because the failure this gate exists to catch
+// is a sweep that judged an empty room and called it clean: a flag that asked for a graph and
+// silently got none has to be visible in the report the audit reads.
+static void MLSeedHostsForMemorySweep(NSMutableDictionary *report, void (^refuse)(NSString *)) {
+    const char *requested = getenv("ML_RENDER_PROBE_SEED_HOSTS");
+    if (requested == NULL) {
+        return;
+    }
+
+    char *end = NULL;
+    long wanted = strtol(requested, &end, 10);
+    NSMutableDictionary *record = [NSMutableDictionary dictionary];
+    record[@"requested"] = [NSString stringWithUTF8String:requested];
+    report[@"seedHosts"] = record;
+
+    if (end == requested || *end != '\0' || wanted < 1 || wanted > 16) {
+        record[@"status"] = @"invalid";
+        refuse([NSString stringWithFormat:@"ML_RENDER_PROBE_SEED_HOSTS asks for %s, which is not a"
+                @" whole host count between 1 and 16, so the sweep would judge a graph of unknown"
+                @" size", requested]);
+        return;
+    }
+
+    DataManager *store = [[DataManager alloc] init];
+    long existing = (long)[[store getHosts] count];
+    // `ML_RENDER_PROBE_SEED_IGNORE_EXISTING` exists so the seeding branch can be executed at
+    // all by a person with a working LAN. Without it the branch only runs where nothing
+    // answers mDNS -- which is the CI runner, so the code that hands the runner a graph would
+    // have been read and never run. With it, the same machine adds the probe hosts on top of
+    // the discovered ones and the ratio the gate judges is still three apps to a host. It
+    // ships off, and the sweep does not set it: a runner that seeded on top of a real library
+    // would be judging a library nobody has.
+    BOOL ignoreExisting = getenv("ML_RENDER_PROBE_SEED_IGNORE_EXISTING") != NULL;
+    if (ignoreExisting) {
+        record[@"ignoredExisting"] = @(existing);
+    }
+    if (existing != 0 && !ignoreExisting) {
+        // Somebody's real library. Seeding it would measure the seed instead of the library,
+        // and the ratio the ceiling was fitted to is the library's.
+        record[@"status"] = @"existing-hosts";
+        record[@"existing"] = @(existing);
+        record[@"seeded"] = @0;
+        return;
+    }
+
+    // Three apps each, because three is the fan-out nine sweeps of a real library measured.
+    // The address is in 192.0.2.0/24, a documentation range that routes nowhere, and the host
+    // stays unpaired with no certificate, so nothing here can reach a machine.
+    for (long hostNumber = 0; hostNumber < wanted; hostNumber++) {
+        TemporaryHost *host = [[TemporaryHost alloc] init];
+        host.name = [NSString stringWithFormat:@"Probe Host %ld", hostNumber + 1];
+        host.uuid = [NSString stringWithFormat:@"probe-host-%ld", hostNumber + 1];
+        host.address = [NSString stringWithFormat:@"192.0.2.%ld", 10 + hostNumber];
+        [store updateHost:host];
+
+        NSMutableSet *apps = [NSMutableSet set];
+        for (long appNumber = 0; appNumber < 3; appNumber++) {
+            TemporaryApp *app = [[TemporaryApp alloc] init];
+            app.id = [NSString stringWithFormat:@"%ld", 900000 + hostNumber * 10 + appNumber];
+            app.name = [NSString stringWithFormat:@"Probe App %ld", appNumber + 1];
+            app.host = host;
+            [apps addObject:app];
+        }
+        host.appList = apps;
+        // The apps reach the library only through this call, which is the one the app pane
+        // makes after a box answers, so the parent lookup has to work for the seed to exist.
+        [store updateAppsForExistingHost:host];
+    }
+
+    long readBack = (long)[[store getHosts] count];
+    record[@"seeded"] = @(readBack);
+    if (readBack < wanted) {
+        record[@"status"] = @"did-not-read-back";
+        refuse([NSString stringWithFormat:@"seeded %ld host(s) but the library reads back %ld, so"
+                @" the sweep would judge a graph that is not there", wanted, readBack]);
+        return;
+    }
+    record[@"status"] = @"seeded";
+}
+
 static void MLRunRenderProbeAndExitIfRequested(void) {
     if (getenv("ML_RENDER_PROBE") == NULL) {
         return;
@@ -699,6 +796,10 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
     report[@"backdropBlocksBeforePresent"] = MLProbeBlockAnalysis(
         beforeRep, NSMakeRange(0, (NSUInteger)content.bounds.size.width),
         NSMakeRange(0, (NSUInteger)content.bounds.size.height));
+
+    // Seeded before the page opens: the page is what reads the library, and a graph that
+    // arrives after the first read is a graph the sweep never saw.
+    MLSeedHostsForMemorySweep(report, refuse);
 
     NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
     NSSet<NSView *> *subviewsBefore = [NSSet setWithArray:content.subviews];
