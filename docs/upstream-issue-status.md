@@ -17,6 +17,12 @@ may conclude from an open issue upstream, and how far that conclusion can be tru
 2. This branch was searched for a commit, a gate, or a released artefact that touches the
    surface the issue describes (`git log`, `CHANGELOG.md`, `scripts/*-tests.py`).
 3. A verdict was assigned only at the level the evidence supports.
+4. Coverage was counted, not assumed. The table below covers all 20 issues upstream had open
+   when this was last checked, and #44, #45 and #47 are pull requests rather than issues --
+   which is why they sit in a row of their own instead of being counted as reports.
+5. The Issue column names the thread; it does not quote it. Three of the open issues are titled
+   nothing but `[Bug]`, and several others are a short Chinese phrase, so the English words here
+   are this page's summary of the report. The number identifies the issue; the title does not.
 
 Verdicts:
 

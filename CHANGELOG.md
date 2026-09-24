@@ -399,6 +399,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The upstream issue table now says how far its own titles can be trusted.**
+  Three of the issues it covers are titled nothing but `[Bug]`, so the English
+  column is this page summarising the thread, and saying so stops a reader
+  treating the wording as a quotation. Coverage is stated as a count -- all 20
+  issues upstream had open at the time of checking -- because a table that
+  does not say it is complete invites the question of what is missing.
+
 - **The page that describes the report caught up with the section the report
   now carries.** `docs/diagnostics-report.md` was written before the devices
   section existed and its opening still promised the move had "left the facts
