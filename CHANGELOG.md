@@ -399,6 +399,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The page that describes the report caught up with the section the report
+  now carries.** `docs/diagnostics-report.md` was written before the devices
+  section existed and its opening still promised the move had "left the facts
+  untouched", which two earlier commits had already shown to be an unreliable
+  claim. While re-reading it against the code, two redaction behaviours turned
+  out to be undocumented and both are the kind a privacy reviewer asks about:
+  the home directory is replaced by exact match against the one this run
+  resolved, not only by a `/Users/...` prefix -- so a home outside `/Users`,
+  which is what a developer's machine and a CI runner look like, is still
+  caught -- and `/private/var/folders/...` becomes `[redacted-path]`, the
+  shape App Translocation leaves behind. The third addition is the one that
+  matters most to trust rather than to leakage: when a redaction regex fails
+  to build, the report appends `[redaction rule unavailable]` instead of
+  looking clean. An unusable scan is never read as an empty one.
+
 - **The English README became an entry point, and one sentence in both of them
   was found to be describing a state the code does not have.** `README.en.md`
   still carried the pre-restructure page, including the two gate counts that
