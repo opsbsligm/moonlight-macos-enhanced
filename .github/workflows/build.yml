@@ -103,6 +103,25 @@ jobs:
       # any given commit the real tree usually refuses every candidate tag.
       run: python3 scripts/release-gate.py --self-test
 
+    - name: Verify the memory ceiling's own rules
+      # `leaks` needs a macOS runner and a built app, so the ceiling itself is judged
+      # there. What can be judged anywhere is whether the reader and its rules still
+      # work, and that is the half that rots silently: a report format that changes under
+      # the reader makes it count zero leaks, which is a green check over a leaking app.
+      # Measured -- the first report this gate was pointed at was `leaks`' default tree,
+      # whose summary counted 105 leaks while its body drew a graph, and the audit said
+      # "first-party classes: none" and exited zero.
+      run: python3 scripts/leak-audit.py --self-test
+
+    - name: Verify the memory ceiling still refuses what it must refuse
+      # A gate nobody has seen fail is a gate nobody can trust. These breaks are made in
+      # scripts/leak-sample.txt, a real captured sweep of the settings page with this
+      # machine's identifiers stripped, so the class tokens, sizes and block counts are
+      # `leaks`' own, not written to match this script's regular expressions. Each break
+      # has to be refused for its own reason; the last one has to pass, because a ceiling
+      # that cannot tell a fixed leak from a broken report is a ceiling somebody mutes.
+      run: python3 scripts/leak-audit.py --log scripts/leak-sample.txt --red-team
+
     - name: Verify the workflow can actually run
       # A plain yaml.safe_load accepts a step whose run: key was dropped, and a
       # step with two run: keys. GitHub accepts neither: the run turns red before
@@ -559,6 +578,16 @@ jobs:
       # backdrop layer present so a glass material is actually composited. The run
       # gets its own HOME, so its database and preferences are its own.
       run: python3 scripts/render-probe.py --timeout 1500
+
+    - name: Verify the settings page leaks nothing new
+      # The probe build the step above just compiled is run again under `leaks`, which
+      # attributes every leaked object it can see, and first-party leaks are judged
+      # against scripts/leak-baseline.json -- the retain cycle in TemporaryHost/
+      # TemporaryApp is in that file because it was measured here, not assumed. A host
+      # with no configured GameStream host leaks none of that graph, so the rule is a
+      # ceiling rather than an equality; what never varies is a class outside the ceiling
+      # or above it. Needs no new build: the Debug product is already on disk.
+      run: python3 scripts/leak-audit.py --timeout 900
 
     - name: Verify video enhancement paths
       # MetalFX scaling and VT frame interpolation are both object-creation

@@ -2239,6 +2239,30 @@ stale_excuses = [name for name, marker in sorted(CI_ONLY.items())
                  if name in gates_in_workflow
                  and marker not in open(os.path.join(scripts_dir, name),
                                         encoding="utf-8").read()]
+# The leak reader is run here, not excused. Two of its three shapes need nothing but
+# python: the fixtures, and the red team, which breaks scripts/leak-sample.txt -- a real
+# captured sweep of the settings page with this machine's identifiers stripped -- and
+# checks that each break comes back refused. The third shape drives the app under Apple's
+# `leaks` and belongs on a runner, so the aggregate runs the half that answers the question
+# a local developer can ask ("does the ceiling gate still see leaks at all?") and the
+# workflow runs the sweep. A leak gate whose reader stopped matching the report format
+# counts zero leaks and passes, which is the one failure mode a memory gate has that looks
+# like success; these two lines are what says the reader still reads, on a laptop, before a
+# runner exists to find out.
+for leak_shape, leak_answer in (("--self-test", "its fixtures"),
+                                ("--log|sample|--red-team",
+                                 "the red team on a real captured report")):
+    leak_arguments = (["--self-test"] if "sample" not in leak_shape else
+                      ["--log", os.path.join(scripts_dir, "leak-sample.txt"), "--red-team"])
+    leak_run = subprocess.run([sys.executable,
+                               os.path.join(scripts_dir, "leak-audit.py")] + leak_arguments,
+                              capture_output=True, text=True, cwd=root)
+    check(leak_run.returncode == 0,
+          "the leak reader passes %s" % leak_answer
+          if leak_run.returncode == 0 else
+          "the leak reader failed %s: %s"
+          % (leak_answer, (leak_run.stdout + leak_run.stderr).strip().splitlines()[-1:]))
+
 # A changelog round that says a script "is now a step in both macOS build jobs" is a
 # claim about the pipeline, and one made exactly that claim while the step existed in
 # neither the commit nor the file: the reachability rule above accepts the assertion

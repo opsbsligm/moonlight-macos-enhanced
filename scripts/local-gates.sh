@@ -113,6 +113,13 @@ app_name=$(./scripts/product-name.sh 2>/dev/null || echo "")
 # never saw.
 artefact_command() {
   case "$1" in
+    *leak-audit.py*--red-team*)
+      # The flag says --log, but the report it names lives in this tree, so the CI form
+      # of this command is the local form: no build artefact is involved and nothing here
+      # needs rewriting. It is spelled out rather than left to fall through, because a
+      # red team that quietly skipped is the same silence as a red team that quietly
+      # passed, and it is the only thing that says the leak reader still reads.
+      printf '%s' "$1";;
     *compile-audit.py*)
       printf '%s' "$1" | sed 's/ --derived.*//';;
     *swift-typecheck.py*)
@@ -189,6 +196,22 @@ while IFS= read -r cmd; do
       skipped=$((skipped+1)); continue;;
     *analyzer-audit*|*compiled-source-audit*|*launch-code-audit*)
       echo "skip  $cmd (needs a CI build artefact)"; skipped=$((skipped+1)); continue;;
+    *leak-audit.py*)
+      # Two of its three shapes run anywhere: the fixtures and the red team judge a report
+      # that lives in this tree. The third drives the app under Apple's `leaks`, so it
+      # wants the Debug product render-probe.py leaves behind -- which this sweep does not
+      # build (that build is the twenty-minute price) but has no need to rebuild either.
+      # So the question goes to the disk instead of being written down as a permanent
+      # excuse: with the product on disk the sweep runs here in about forty seconds, and
+      # without it the line says which of the two is missing.
+      case "$cmd" in
+        *--self-test*|*--red-team*|*--log*) ;;
+        *)
+          if ! compgen -G "build-render-probe/Build/Products/Debug/*.app" > /dev/null; then
+            echo "skip  $cmd (wants the Debug product render-probe.py builds; once it is on disk this gate runs here in about forty seconds)"
+            skipped=$((skipped+1)); continue
+          fi;;
+      esac;;
     *constraints-audit.py*)
       [ "$all" = 1 ] || cmd="$cmd --no-battery";;
   esac
