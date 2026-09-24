@@ -1,284 +1,109 @@
-# Moonlight macOS Enhanced
+# Moonlight for macOS — Enhanced Edition
 
-<div align="center">
+[![Build](https://github.com/opsbsligm/moonlight-macos-enhanced/actions/workflows/build.yml/badge.svg)](https://github.com/opsbsligm/moonlight-macos-enhanced/actions/workflows/build.yml)
+[![Release](https://github.com/opsbsligm/moonlight-macos-enhanced)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/opsbsligm/moonlight-macos-enhanced/total)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey)](https://developer.apple.com/macos/)
+[![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 
-[![Build](https://github.com/opsbsligm/moonlight-macos-enhanced/actions/workflows/build.yml/badge.svg)](https://github.com/opsbsligm/moonlight-macos-enhanced/actions/workflows/build.yml) [![Release](https://img.shields.io/github/v/release/opsbsligm/moonlight-macos-enhanced)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest) [![Downloads](https://img.shields.io/github/downloads/opsbsligm/moonlight-macos-enhanced/total)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases) [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-Native-orange.svg)]() [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE.txt)
+A fork of [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced), which itself derives from the [Moonlight Game Streaming Project](https://github.com/moonlight-stream).
 
-**Native Moonlight macOS / Moonlight for macOS Client**
+**What differs from upstream, in one line**: keyboard and mouse input follow the same industrial-standard mapping used by Parsec, UU Remote and Steam Link, and that mapping is testable and diagnosable. Everything else — codecs, HDR, audio, controllers — comes from upstream. The mapping table, the design rules and the root causes behind the fixed issues are in [`docs/input-mapping-design.md`](docs/input-mapping-design.md); the head-to-head comparison is in [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md).
 
-`Moonlight macOS Enhanced` is a native macOS streaming client for Sunshine, Foundation Sunshine, and compatible GameStream hosts. It is built with AppKit / SwiftUI and continuously tuned for both Apple Silicon and Intel Macs.
+## What it does
 
-This repository is a fork of [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) that publishes its own signed images and gates every one of them; see [What this fork verifies](#-what-this-fork-verifies) for what that means in practice.
+- GameStream / Sunshine host discovery and pairing
+- H.265/HEVC and AV1 hardware decoding
+- HDR, with a choice of HDR→SDR tone-mapping strategies (including a `No Exposure Shift` option)
+- Multi-channel audio plus microphone streaming
+- Virtual Xbox 360 controller, with device-identification fixes for Xbox Elite 2 and Betop Zeus pads
+- Core HID high-precision mouse input, in both locked and free-pointer modes
+- A live performance overlay, plus the real state of the video pipeline — whether MetalFX and VideoToolbox frame interpolation actually took effect
+- Chinese and English interfaces: menus, permission prompts and the log panel are all localised
+- **A devices pane**: lists what is on the local USB bus, attributes each device to a specific reason (reserved class / local input device / no matching rule / precondition unmet), reports whether *this* build's signature could load a driver extension at all, and reads the host's claim as one of four answers — offered, refused, unreachable, or never asked. `unreachable` is deliberately not a refusal: no route, an error status, or an answer signed by a different machine all land there, and calling it a refusal would be reporting a decision nobody heard.
 
-[简体中文](README.md) | English
+## Host compatibility
 
-</div>
-
----
-
-## ✨ Core Capabilities
-
-- **Native macOS client** — AppKit / SwiftUI interface, Apple Silicon and Intel support, dark mode, and bilingual UI
-- **Full streaming feature set** — custom resolution and FPS, AV1 / HEVC / H.264 decode, HDR, YUV 4:4:4, MetalFX / VT enhancement, and auto bitrate
-- **Multiple video renderers** — includes `Native Renderer`, `Metal Renderer`, and `Compatibility Renderer`; `Native Renderer` is the recommended default, while `Metal Renderer` provides deeper HDR and color controls
-- **Clipboard support** — when paired with Foundation Sunshine, Moonlight supports bidirectional copy and paste for text and single-image items, with stream-window focus deciding which session owns clipboard sync
-- **Input and control upgrades** — built around a `CoreHID` low-latency, high-polling mouse input path for more direct and more precise relative movement; Free Mouse moves naturally across displays, while Locked Mouse is better suited for games and sustained relative input, with configurable stream shortcuts and controller enhancements
-- **Audio and media improvements** — uses a lower-latency `Core Audio` local playback path with multi-channel receive and playback, plus client-side audio enhancement, EQ control, and improved microphone uplink
-- **Connectivity and stability** — per-host connection methods, custom ports / IPv6 / domains, performance overlay, diagnostics, and AWDL stability helpers
-
-<details>
-<summary><strong>Video / HDR / renderer pipeline</strong></summary>
-
-- Video negotiation covers `AV1 / HEVC / H.264`, HDR, YUV `4:4:4`, remote resolution / FPS overrides, and adaptive bitrate control
-- Provides three video playback paths: `Native Renderer`, `Metal Renderer`, and `Compatibility Renderer`
-- `Native Renderer` uses `VideoToolbox decode + native sample-buffer presentation` and is the recommended default for lower latency, higher default color accuracy, and stable HDR playback
-- `Metal Renderer` uses a deeper `Metal / EDR` presentation path with `HLG / PQ`, HDR metadata source, client HDR profile, luminance parameters, optical output scale, HLG viewing environment, EDR strategy, and tone-mapping policy
-- `Metal Renderer` also exposes presentation-timing controls such as display sync, frame queue target, responsiveness bias, and drawable-timeout behavior
-- `Compatibility Renderer` keeps the legacy presentation path for older systems, compatibility issues, and recovery scenarios
-- The enhancement stack can use `VT Low-Latency Super Resolution`, `VT Quality Super Resolution`, `MetalFX`, `Basic Scaling`, and `VT Low-Latency Frame Interpolation`, with automatic fallback when needed
-
-</details>
-
-<details>
-<summary><strong>Audio / microphone pipeline</strong></summary>
-
-- The default playback path uses a more direct `Core Audio` low-latency local renderer to reduce extra buffering and unnecessary handoff while keeping playback stable
-- Supports host `Opus multistream` receive, local decode, negotiation, and playback for `2ch / 5.1 / 7.1 / 7.1.4`
-- Real multi-channel devices keep their channel semantics whenever possible; headphones and `2.0 / 2.1` speakers can switch to `Audio Enhancement` for a client-side rerender better suited to stereo listening devices
-- `Audio Enhancement` includes presets, EQ, spatial feel, soundstage, and other listening controls for headphones and stereo speakers
-- When paired with a compatible Foundation Sunshine host, Moonlight can use the fuller multi-channel negotiation path, microphone uplink, and related enhancement flows
-
-</details>
-
-<details>
-<summary><strong>Host integration / input / diagnostics</strong></summary>
-
-- Mouse input is built around a `CoreHID` low-latency, high-polling path for more direct, more responsive relative movement and a stronger game-control feel
-- `Free Mouse` is better for remote desktop, desktop apps, and multi-display setups, letting you move naturally onto other displays; `Locked Mouse` is better for games, FPS titles, and sustained relative input
-- The input stack covers `Free Mouse / Locked Mouse`, keyboard shortcut translation, separate physical wheel / smoothed wheel / trackpad strategies, multi-controller support, rumble, Guide emulation, and controller mouse
-- Can send Foundation Sunshine host-display extension parameters and let you choose the target display, streaming mode, `display_name`, `useVdd`, `customScreenMode`, and HDR display-profile overrides from host settings or when starting a stream
-- When paired with Foundation Sunshine, Moonlight can also use bidirectional clipboard sync for text and single-image items, with stream-window focus deciding which session owns clipboard sync
-- Host and network integration also includes per-host connection methods, custom ports, IPv6, domains, `AWDL`, performance overlay, connection warnings, input diagnostics, and both raw and curated logs
-- The `Devices` page lists what is on this Mac's USB bus and attributes each device to the reason it cannot be handed over -- reserved class, local input device, no matching rule, or an unmet precondition -- reports whether this build's own signature could load a driver extension at all, and reads the host's claim as four states: supported, unsupported, explicitly refused, and never answered. **It diagnoses only**: redirection also needs a Developer ID signature and a host-side virtual bus, and neither exists yet, so the page promises no handover
-
-</details>
-
-## 🖥️ Host Compatibility
-
-| Host Software | Compatibility | Notes |
+| Host software | Compatibility | Notes |
 |---------------|---------------|-------|
-| [Foundation Sunshine](https://github.com/qiin2333/foundation-sunshine) | ⭐ Recommended | Best support for microphone, YUV 4:4:4, multi-channel audio, and bidirectional clipboard sync for text and single-image items |
+| [Foundation Sunshine](https://github.com/qiin2333/foundation-sunshine) | ⭐ Recommended | Best support for microphone uplink, YUV 4:4:4, multi-channel audio and two-way clipboard for text and single images |
 | [Sunshine (LizardByte)](https://github.com/LizardByte/Sunshine) | ✅ Supported | Most features work; some advanced paths are limited |
-| GeForce Experience | ⚠️ Basic | Deprecated and missing newer features such as microphone uplink |
+| GeForce Experience | ⚠️ Basic | Deprecated, and missing newer features such as microphone uplink |
 
-> 💡 Microphone, YUV 4:4:4, and some enhanced input or audio behaviors work best with [Foundation Sunshine](https://github.com/qiin2333/foundation-sunshine).
+## What it does not do yet
 
-## 📦 Downloads
+- **No USB device redirection.** The devices pane diagnoses only. Redirection still needs a Developer ID signature and a host-side virtual bus, and neither is in place, so it promises no handover will succeed. The trade-off is in [`docs/usb-redirection-design.md`](docs/usb-redirection-design.md) and the host side would have to agree to [`docs/usb-redirection-host-contract.md`](docs/usb-redirection-host-contract.md).
+- **macOS 26.0 or newer at runtime.** `MACOSX_DEPLOYMENT_TARGET = 26.0`, because the Liquid Glass window layer needs it. What supporting macOS 15/12 would take (upstream issue #26) is in [`docs/contributing.md`](docs/contributing.md).
+- **Every build carries an install step.** These builds are ad-hoc signed, so the first launch needs an allowance under System Settings → Privacy & Security.
 
-- Get the latest build from [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest)
-- Each release provides `universal`, `arm64`, and `x86_64` packages, each with its own `sha256`
-- If you are not sure which one to choose, start with `universal`
+## Download and install
 
-## 🧪 What this fork verifies
+1. Take the newest image from [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest): `Moonlight-macOS-Enhanced-{arm64,x86_64,universal}.dmg`, each with a matching `.sha256`. Images are named per architecture rather than per version — the version is checked inside the image against the build number CI computed, not against a filename. If you are unsure, take `universal`.
+2. Open the DMG and drag `MoonlightEnhanced.app` into Applications. In Finder, the Dock and the Force Quit list it appears as 「Moonlight 增强版」.
+3. On first launch, allow it under System Settings → Privacy & Security.
 
-Every push and pull request runs the gates in `scripts/`. What makes them more than a green
-ribbon is that each gate has to prove it can fail: a gate ships with a self-test that plants
-several shapes it is supposed to refuse, and a gate that catches none of them is reported as
-broken rather than as passing.
+> ℹ️ This build installs as `MoonlightEnhanced.app`, so it no longer replaces the Qt client's `Moonlight.app` (issue #41) and the two can live side by side. If `/Applications` still holds a `Moonlight.app` installed by an earlier build of *this* repository, delete it first: both carry the same bundle identifier (`std.skyhua.MoonlightMac2`), so LaunchServices may keep launching the stale copy and the permissions follow the old path.
 
-| Gate | What it holds |
-|------|---------------|
-| `release-gate.py` | The publish switch: tag, version and changelog all describing one tree |
-| `dmg-audit.py` | The image a user downloads -- architecture, version, checksum, and the localisation tables inside it |
-| `compile-audit.py` | Every source file type-checks against every supported SDK (49/49 today) |
-| `constraints-audit.py` | The behavioural battery (108/108 planted defects caught today) |
-| `l10n-audit.py` | Table coverage, table symmetry, untranslated text at a UI outlet, and log bodies written in a spoken language |
-| `workflow-audit.py`, `source-membership-audit.py` | Whether the workflow really runs, and whether any source file was silently left out of the build |
+## Building from source
 
-## 📚 Design notes
+```bash
+git clone --recurse-submodules <repo-url>
+cd moonlight-macos-enhanced
+scripts/download-frameworks.sh   # FFmpeg / SDL2 / OpenSSL — required before the first build
+scripts/build.sh
+scripts/package-dmg.sh
+```
 
-- [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md) -- keyboard and mouse mapping compared against Parsec, UU Remote, Citrix and moonlight-qt
-- [`docs/usb-redirection-design.md`](docs/usb-redirection-design.md) and [`docs/usb-redirection-host-contract.md`](docs/usb-redirection-host-contract.md) -- device redirection, and what a host would have to agree to
-- [`docs/upstream-issue-status.md`](docs/upstream-issue-status.md) -- every open upstream issue, and what this branch can actually say about it
-- [`CHANGELOG.md`](CHANGELOG.md) -- per release, with the root cause rather than the conclusion
+Skipping `download-frameworks.sh` makes common-c fail to compile, because `libs/` is gitignored by design. Xcode and deployment-target requirements are in [`docs/contributing.md`](docs/contributing.md).
 
-## 📸 Screenshots
+## Reporting a problem
 
-| Host List | App List |
+**Copy the diagnostics report first.** `Settings → App → Debug Log → Copy Diagnostics Report…` puts a paste-ready report on the clipboard, and the pairing-failure popup carries the same button. If a mouse stopped moving, turn on `Settings → App → Debug Log → Input Diagnostics`, reproduce once, then copy — the switch has to be on during the reproduction, because the ledger records the session that was being watched.
+
+Then add: which host software and version (Sunshine or GeForce Experience), whether Mos / BetterMouse / SteerMouse or another pointer utility is running, and the steps you took next to what you expected. What the report contains, why the switch comes first, and what is redacted before anything leaves the machine is in [`docs/diagnostics-report.md`](docs/diagnostics-report.md).
+
+## Documentation
+
+[`docs/README.md`](docs/README.md) indexes every document by reader, and [`docs/contributing.md`](docs/contributing.md) covers the gates — each one ships with a self-test, because a gate that has never failed is not evidence. Per-release detail with root causes is in [`CHANGELOG.md`](CHANGELOG.md), and the content archived off this page is in [`docs/history/rounds.md`](docs/history/rounds.md).
+
+> Written in English: `input-mapping-benchmark.md`, `upstream-issue-status.md`,
+> `windows-auto-signin-design.md`. Written in Chinese: `docs/README.md` and
+> `contributing.md`, `diagnostics-report.md`, `input-mapping-design.md` and the two
+> `usb-redirection-*.md` documents. A translation pull request for that second group would
+> be genuinely welcome rather than politely declined.
+
+## Screenshots
+
+| Host list | App list |
 |:---------:|:--------:|
 | <img src="readme-assets/images/host-list.png" width="400" alt="Host list"> | <img src="readme-assets/images/app-list.png" width="400" alt="App list"> |
 
-| Performance Overlay | Connection Manager |
+| Performance overlay | Connection manager |
 |:-------------------:|:------------------:|
 | <img src="readme-assets/images/performance-overlay.png" width="400" alt="Performance overlay"> | <img src="readme-assets/images/connection-manager.png" width="400" alt="Connection manager"> |
 
-| Streaming Overlay | Connection Error |
+| Streaming overlay | Connection error |
 |:-----------------:|:----------------:|
 | <img src="readme-assets/images/streaming-overlay.png" width="400" alt="Streaming overlay"> | <img src="readme-assets/images/connection-error.png" width="400" alt="Connection error"> |
 
-| Video Settings | Streaming Settings |
-|:--------------:|:------------------:|
-| <img src="readme-assets/images/settings-video.png" width="400" alt="Video settings"> | <img src="readme-assets/images/settings-streaming.png" width="400" alt="Streaming settings"> |
+## Contributing
 
-## 🔊 Audio and Video
+Fork → feature branch → commit in [Conventional Commits](https://www.conventional-commits.org/) form → pull request. Gate list, commit types and the version/tag convention are in [`docs/contributing.md`](docs/contributing.md).
 
-### Video Pipeline
-- Custom resolution, FPS, remote resolution, and remote FPS overrides
-- Video negotiation for `AV1 / HEVC / H.264`, HDR, YUV `4:4:4`, and adaptive bitrate tuning
-- `Native Renderer / Metal Renderer / Compatibility Renderer` presentation paths
-- `Native Renderer` is aimed at the lowest latency and highest default color accuracy; `Metal Renderer` is aimed at deeper HDR and color control; `Compatibility Renderer` is kept for older systems and recovery cases
-
-### HDR, Color, and Enhancement
-- HDR transfer functions support `HLG / PQ / Auto`, with presentation tuned to the current display path
-- `Metal Renderer` exposes HDR metadata source, client HDR profile, luminance parameters, optical output scale, HLG viewing environment, EDR strategy, and tone-mapping policy
-- The enhancement stack supports `VT Low-Latency Super Resolution`, `VT Quality Super Resolution`, `MetalFX`, and `Basic Scaling`
-- `VT Low-Latency Frame Interpolation` is also integrated into the Metal video path for cadence smoothing on high-refresh displays
-
-### Audio Pipeline
-- The default audio path uses a more direct `Core Audio`-oriented low-latency local renderer
-- Local receive, decode, negotiation, and playback for `2ch / 5.1 / 7.1 / 7.1.4`
-- When the output device supports real multi-channel playback, Moonlight keeps the multichannel layout whenever possible; stereo devices can switch to `Audio Enhancement`
-- `Audio Enhancement` is designed for headphones and `2.0 / 2.1` speakers, with client-side EQ, spatial feel, soundstage, and preset control
-- When paired with a compatible [Foundation Sunshine](https://github.com/qiin2333/foundation-sunshine), Moonlight can use the enhanced microphone uplink and fuller multi-channel negotiation path
-
-## 🖱️ Input and Control
-
-### Defaults
-- **Default mouse mode: Free Mouse**
-- **Default mouse driver: Automatic**
-- **Automatic order: CoreHID → HID → MFI**
-
-### Mouse Modes
-- **Locked Mouse**: better for games and sustained relative motion
-- **Free Mouse**: better for remote control, multi-display use, and desktop apps, with natural movement across other displays
-
-### Mouse and Wheel Pipeline
-- `CoreHID` provides a lower-latency, higher-polling relative mouse experience for more direct control, finer movement detail, and better sustained aiming or camera motion
-- Controls for local cursor, pointer speed, swapped buttons, reverse scroll, and `CoreHID` report-rate cap
-- Separate handling for `physical wheel`, `rewritten / smoothed wheel`, and `trackpad` input sources
-- Physical wheel modes support automatic, high-precision, and notched behavior, with separate distance, speed, and tail-filter tuning
-
-### Keyboard, Controllers, and Shortcuts
-- Keyboard input supports common Windows shortcut translation, custom translation rules, and Moonlight-specific stream shortcuts
-- Controller input supports multi-controller sessions, rumble, Guide emulation, and controller mouse mode
-- Mouse, Keyboard, and Controller settings have been reorganized so the most-used input controls are easier to reach
-
-### Stream Shortcuts
-These Moonlight-specific stream shortcuts can be adjusted in `Settings → Input → Keyboard`:
-
-| Shortcut | Action | Notes |
-|----------|--------|-------|
-| `Ctrl` + `Option` | Release mouse capture | While streaming |
-| `Ctrl` + `Option` + `S` | Toggle performance overlay | While streaming |
-| `Ctrl` + `Option` + `M` | Toggle mouse mode | While streaming |
-| `Ctrl` + `Option` + `G` | Toggle fullscreen control ball | Fullscreen only |
-| `Ctrl` + `Option` + `W` | Disconnect stream | While streaming |
-| `Ctrl` + `Shift` + `W` | Disconnect and quit app | While streaming |
-| `Ctrl` + `Option` + `C` | Open control center | Fullscreen / borderless only |
-| `Ctrl` + `Option` + `Command` + `B` | Toggle borderless / windowed | Advanced fallback shortcut |
-
-> 💡 This list covers Moonlight-specific shortcuts only. Standard macOS shortcuts such as `⌘W` and `⌃⌘F` are not listed here.
-
-## 🔧 Connectivity, Diagnostics, and Stability
-
-- Per-host connection method management
-- Custom ports, IPv6, and domain-based connections
-- Performance overlay, connection warnings, and input diagnostics
-- Both raw logs and curated logs for troubleshooting
-- AWDL stability helper, reconnect behavior, and timeout recovery
-
-## 🛠️ Installation
-
-### Download Release
-Download the latest `.dmg` from [Releases](https://github.com/skyhua0224/moonlight-macos-enhanced/releases).
-
-> ℹ️ This build installs as `MoonlightEnhanced.app`, so it no longer replaces the Qt client's `Moonlight.app` (issue #41) and the two can live side by side. If `/Applications` still holds a `Moonlight.app` installed by an earlier build of *this* repository, delete it first: both carry the same bundle identifier (`std.skyhua.MoonlightMac2`), so LaunchServices may keep launching the stale copy and the permissions follow the old path.
->
-> ⚠️ This app is currently not notarized by Apple. If macOS says `MoonlightEnhanced.app` is damaged or blocks it from launching, that is usually Gatekeeper stopping a non-notarized app, not proof that the file is actually broken.
->
-> Recommended first-launch steps:
-> 1. Right-click the app and choose `Open`
-> 2. Go to **System Settings → Privacy & Security** and click `Open Anyway`
-> 3. If needed, run:
->    `xattr -dr com.apple.quarantine /Applications/MoonlightEnhanced.app`
-
-### Build from Source
-
-```bash
-git clone --recursive https://github.com/skyhua0224/moonlight-macos-enhanced.git
-cd moonlight-macos-enhanced
-
-curl -L -o xcframeworks.zip "https://github.com/coofdy/moonlight-mobile-deps/releases/download/latest/moonlight-apple-xcframeworks.zip"
-unzip -o xcframeworks.zip -d xcframeworks/
-```
-
-Then:
-1. Open `Moonlight.xcodeproj` in Xcode
-2. Set your own Team in **Signing & Capabilities**
-3. Adjust the Bundle Identifier if needed
-4. Run the **Moonlight for macOS** scheme
-
-## 🐛 Reporting Issues
-
-**Copy the diagnostics report first.** `Settings → App → Debug Log → Copy Diagnostics
-Report…` puts a ready-to-paste report on the clipboard, and a pairing failure offers the
-same button in its own alert. One report carries the app version and build, the macOS
-build, the Mac model, whether Gatekeeper is running the app out of a read-only
-translocation mount, the current answers from Input Monitoring / Accessibility / Screen
-Recording, the Bonjour services the bundle declares (including whether `_nvstream._tcp`
-is one of them, which is the first question an "another client finds my host" report
-needs), an `input` block -- the mouse strategy in effect and the value stored for it,
-whether CoreHID was allowed, attempted, delivered movement or failed and why, and which
-sender last handed motion to the host and how long ago -- the hosts in the store with
-their paired and online state, and the tail of the app's own log.
-
-**If the problem is a pointer that stops moving, turn on `Settings → App → Debug Log →
-Input Diagnostics`, reproduce it, and then copy the report.** The per-sender counts inside
-the `input` block are only collected while that switch is on, and the report deliberately
-prints no zeros when it is off: zeros there would read as a pointer that never moved, when
-what happened is that nobody was counting.
-
-The report is redacted before it leaves the app: a pairing PIN, a password or token, a
-certificate-shaped blob, a MAC address, a UUID (its first eight characters stay, so two
-reports about one client can be matched), and your home folder path are replaced with a
-marker such as `[redacted-pin]`. The host MAC address, the pinned certificate and the
-client identifier are never read at all. Host names and addresses are included on
-purpose -- a connection report without them cannot be triaged.
-
-Then add, if you can:
-- Host software and version (Sunshine or GeForce Experience)
-- Whether third-party mouse tools such as Mos, BetterMouse, or SteerMouse are active
-- Reproduction steps
-- What you expected to happen
-
-For input / wheel / mouse bugs, it is especially helpful to include:
-- The log exported from `Settings → App → Debug Log`
-- Whether you used **Free Mouse** or **Locked Mouse**
-- Which path the settings status line names. It credits a sender -- CoreHID, AppKit, GameController or the absolute pointer path -- only after that path has delivered motion, and says `CoreHID stopped` with a reason when nothing has.
-
-## 🤝 Contributing
-
-PRs are welcome. Please try to:
-- Keep Chinese and English user-facing copy in sync
-- Test the core streaming and input paths before submitting
-- Write PR descriptions in user-facing language instead of just pasting commit titles
-
-## 📬 Contact
+## Contact
 
 - 📧 Email: [dev@sky-hua.xyz](mailto:dev@sky-hua.xyz)
 - 💬 Telegram: [@skyhua](https://t.me/skyhua)
 - 🐧 QQ: 2110591491
-- 🔗 GitHub Issues: [Submit Issue](https://github.com/skyhua0224/moonlight-macos-enhanced/issues)
+- 🐙 Issues: [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced/issues)
 
-## 🙏 Acknowledgements
+## Acknowledgements
 
-For the full upstream, ecosystem, and reference list, see [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md).
+- [Moonlight Game Streaming Project](https://github.com/moonlight-stream) — the original upstream
+- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — the author this fork came from
+- [Parsec](https://parsec.app) — reference for keyboard-mapping practice
+- Every contributor and test player
 
-- Direct code foundations: `moonlight-macos`, `moonlight-ios`, `moonlight-common-c`
-- Feature and behavior references: `moonlight-qt`, `qiin2333/moonlight-qt`
-- Host ecosystem references: `Sunshine`, `foundation-sunshine`
-- Input and wheel experience references: `Mos`, `Mouser`
+## License
 
-## 📄 License
-
-This project is licensed under the [GPLv3 License](LICENSE.txt).
+GPL-3.0 — see [LICENSE](LICENSE). Bundled third-party components: moonlight-common-c (GPLv3), OpenSSL (Apache 2.0), FFmpeg (LGPLv2.1+), SDL2 (zlib), MASPreferences (BSD-2-Clause), Roboto Font (Apache 2.0).

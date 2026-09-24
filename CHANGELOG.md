@@ -399,6 +399,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The English README became an entry point, and one sentence in both of them
+  was found to be describing a state the code does not have.** `README.en.md`
+  still carried the pre-restructure page, including the two gate counts that
+  expired the day the Chinese page was rewritten. It is now the same shape as
+  `README.md`, and it keeps what only it had: the host-compatibility table,
+  the screenshots and the contact block. Two claims turned out to be wrong in
+  both languages, not just stale. Images were described as
+  `Moonlight-<version>.dmg`, which is not a name any release has ever used --
+  they are per-architecture, and `dmg-audit.py` checks the version inside the
+  image against the build number CI computed. Worse, the devices pane was said
+  to read the host as "offered, refused, **explicitly declined**, never
+  asked": the fourth answer is `host-unreachable`, and the header of that enum
+  exists specifically to forbid calling it a refusal, because no route, an
+  error status and an answer signed by a different machine all land there and
+  none of them is a host saying no. A player told their host declined goes
+  looking at the host's settings; the fix says unreachable and says why it is
+  not a decision. Whether the documents are Chinese or English was measured
+  rather than assumed -- three are English, six are Chinese, and the page now
+  names which is which instead of generalising.
+
 - **The diagnostics report now says what the devices panel says, and names
   which of its silences were its own choice.** `SettingsDevicesPane` could
   already report the four preconditions, the rule count, the unreadable
