@@ -35,6 +35,31 @@
     2688
    ],
    "first_party_classes": "none in the two runs before the seed; TemporaryApp and TemporaryHost in the two seeded runs, nothing else",
+   "growth": {
+    "bytes_per_visit_per_host": [
+     230,
+     307
+    ],
+    "first_party_bytes_per_graph": 384,
+    "graphs_leaked": {
+     "one_visit": [
+      9,
+      9
+     ],
+     "six_visits": [
+      12,
+      13
+     ]
+    },
+    "inside_the_laptop_spread": "yes: the laptop's five runs were 192, 384, 422, 461 and 461",
+    "library_hosts": [
+     1,
+     1
+    ],
+    "measured_on": "2026-09-24, run 36000138662, arm64 and x86_64, GitHub macOS runners: our objects went 3,456 to 4,608 bytes on arm64 and 3,456 to 4,992 on x86_64 across 5 extra visits, one host in the library either way, 384 bytes per leaked graph in every sweep",
+    "runs": 2,
+    "what_the_two_sweeps_recorded": "the first sweep of each pair seeded the host (status seeded), the second found one already in the library (status existing-hosts) -- discovery reached the database before the seed check did. Which of the two arrives first is not decided by this repository, which is why the denominator is the library read at the end of the run"
+   },
    "hosts_seen": [
     0,
     0,
