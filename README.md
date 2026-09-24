@@ -20,7 +20,7 @@
 - Core HID 高精度鼠标输入，锁鼠/自由鼠标两种模式
 - 实时性能叠加层，以及视频管线的运行时状态（MetalFX、VideoToolbox 插帧是否真的生效）
 - 中英双语界面（菜单、权限弹窗、日志面板都是本地化的）
-- **设备页**：列出本机 USB 总线上的设备，把每台归因到具体原因（保留类别 / 本地输入设备 / 未匹配规则 / 前置条件未满足），报告当前这个包的签名能不能加载驱动扩展，并把主机声明读成四态（支持、不支持、明确拒绝、没有应答）
+- **设备页**：列出本机 USB 总线上的设备，把每台归因到具体原因（保留类别 / 本地输入设备 / 未匹配规则 / 前置条件未满足），报告当前这个包的签名能不能加载驱动扩展，并把主机声明读成四态（支持 / 不支持 / **无法到达** / 还没问过）——「无法到达」不等于「主机拒绝」：请求没走通、状态码是错、或答复由别的机器签名，都落在这一态，而把它说成拒绝会把用户支去翻一台根本没作答复的主机的设置
 
 ## 当前边界（不能做什么）
 
@@ -30,7 +30,7 @@
 
 ## 下载与安装
 
-1. 从 [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest) 下载最新的 `Moonlight-<版本>.dmg`（每个版本提供 arm64、x86_64、universal 三个镜像，各自附带 sha256）
+1. 从 [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest) 下载最新镜像：`Moonlight-macOS-Enhanced-{arm64,x86_64,universal}.dmg`，每个都附带同名 `.sha256`。文件名按架构而不是按版本——版本在镜像内部核对，`dmg-audit.py` 会把它和 CI 算出的构建号对上，不靠文件名对账
 2. 打开 DMG，将 `MoonlightEnhanced.app` 拖入 Applications（访达、Dock 与「强制退出」列表里显示为「Moonlight 增强版」）
 3. 首次运行时，在「系统设置 → 隐私与安全性」中允许运行
 
