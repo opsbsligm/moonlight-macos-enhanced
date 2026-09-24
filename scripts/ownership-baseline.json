@@ -1,0 +1,88 @@
+{
+ "app_asset_retriever_note": "Not on the list, and worth naming because docs/memory-ownership.md section 4 used to claim it was: AppAssetRetriever.h:15 declares a TemporaryHost property and AppAssetManager.m:59 assigns it beside the app, so the asynchronous box-art path (AppAssetRetriever.m:29 reads app.host.uuid through boxArtPathForApp:) already holds its host. Section 5 step 3 is therefore already done for that path, and the two holders above are the whole of what step 2 and step 3 still owe.",
+ "app_assignment_sites": {
+  "AppsViewController.m|item.app": "configureItem: hands an AppCell its app and nothing else. AppCell.h:20 stores the app and declares no host, and AppCell.m:129 reads self.app.host.uuid to look up the artwork dimming for that host. Harmless while the back-pointer is strong -- the app is what keeps the host alive, which is the first observation of this experiment -- and a nil read in a collection view the moment it is not. This is section 5 step 3's shape, in the apps page rather than in the artwork queue.",
+  "AppsViewController.m|streamVC.app": "prepareForSegue: hands a stream its app and nothing else (AppsViewController.m:613). StreamViewController.h:25 declares the app and no host property, and StreamViewController+Diagnostics.m reads self.app.host across the stream's diagnostics, including the address it writes and the settings buckets it reads. Today the stream's host is alive because the stream's own app is holding it."
+ },
+ "app_assignment_sites_note": "The keys are `file|holder.app` rather than line numbers, because line numbers move and a record that has to be edited every time a file above it gains a line stops being a record. The record is the set of holders that lean on the strong back-pointer, and it is only read while `app.host` is strong: the day it turns weak the same rule refuses any site still on this list, which is why the list cannot be quietly widened and cannot be quietly dropped.",
+ "declarations_at_write_time": {
+  "app.host": "strong",
+  "host.appList": "strong"
+ },
+ "observed": {
+  "app_asset_retriever_correction": "docs/memory-ownership.md section 4 recorded the box-art path as a holder with no host. It has one: AppAssetRetriever.h:15 declares a TemporaryHost property and AppAssetManager.m:59 assigns it beside retriever.app, so the asynchronous boxArtPathForApp: read of app.host.uuid is over a host the request itself is holding. Section 5 step 3 is therefore already done for that path, and the two sites above are the whole of what steps 2 and 3 still owe.",
+  "laptop": {
+   "backpointer_only_survives_with_no_holder": false,
+   "library_hosts": 2,
+   "measured_on": "2026-09-24, one Debug probe build, one laptop with a real library: the picked host carried three apps, so the production shape reports appListCount 3 while the hand-built one reports 1",
+   "production_graph": {
+    "appAliveWithNoHolder": true,
+    "appHostReadableWhileAppHeld": true,
+    "appListCount": 3,
+    "hostAliveWhileAppHeld": true,
+    "hostAliveWithNoHolder": true
+   },
+   "seed_status": "existing-hosts"
+  },
+  "unpaired_sites_found": "prepareForSegue: (AppsViewController.m:613, the stream) and configureItem: (AppsViewController.m:724, the AppCell, which reads self.app.host.uuid at AppCell.m:129). Both are alive today because the app is what keeps the host alive, which is the first observation of this experiment rather than an inference.",
+  "what_the_controls_are_for": "handBuiltGraph exists only to agree with productionGraph: if the two disagree, something outside the pair is holding it and no reading in the report describes the app. backpointerOnly has nothing pointing back at the app, so it is required to go back; if it survives, the probe is holding the objects it claims to watch and the leak in the other two shapes is the harness's. Both controls are refused rather than warned about, because they are the only reason the third reading means anything.",
+  "what_this_does_not_measure": "the stream's own holder. StreamViewController stores an app and declares no host (StreamViewController.h:25), and this experiment builds no view controller, so nothing here can watch a live stream read app.host. That half is judged off the tree by the holder rule in scripts/ownership-audit.py -- every statement that hands an app to a holder has to give that holder a host too, refused outright under a weak back-pointer and refused as a new entry while the back-pointer is still strong -- and the two halves together are what section 5 of docs/memory-ownership.md asked for before ownership could change."
+ },
+ "profiles": {
+  "app.host=strong,host.appList=strong": {
+   "name": "shipped today: the cycle is present, and every holder leans on the strong back-pointer",
+   "shapes": {
+    "backpointerOnly": {
+     "appAliveWithNoHolder": false,
+     "appHostReadableWhileAppHeld": true,
+     "hostAliveWhileAppHeld": true,
+     "hostAliveWithNoHolder": false
+    },
+    "handBuiltGraph": {
+     "appAliveWithNoHolder": true,
+     "appHostReadableWhileAppHeld": true,
+     "hostAliveWhileAppHeld": true,
+     "hostAliveWithNoHolder": true
+    },
+    "productionGraph": {
+     "appAliveWithNoHolder": true,
+     "appHostReadableWhileAppHeld": true,
+     "hostAliveWhileAppHeld": true,
+     "hostAliveWithNoHolder": true
+    }
+   }
+  },
+  "app.host=weak,host.appList=strong": {
+   "name": "after the section 5 fix: the cycle is gone, and no holder keeps a host alive by holding its app alone",
+   "shapes": {
+    "backpointerOnly": {
+     "appAliveWithNoHolder": false,
+     "appHostReadableWhileAppHeld": false,
+     "hostAliveWhileAppHeld": false,
+     "hostAliveWithNoHolder": false
+    },
+    "handBuiltGraph": {
+     "appAliveWithNoHolder": false,
+     "appHostReadableWhileAppHeld": false,
+     "hostAliveWhileAppHeld": false,
+     "hostAliveWithNoHolder": false
+    },
+    "productionGraph": {
+     "appAliveWithNoHolder": false,
+     "appHostReadableWhileAppHeld": false,
+     "hostAliveWhileAppHeld": false,
+     "hostAliveWithNoHolder": false
+    }
+   }
+  }
+ },
+ "shape_contract": {
+  "backpointerOnly": {
+   "appListCount": 0
+  },
+  "handBuiltGraph": {
+   "appListCount": 1
+  },
+  "why": "the counts are the definition of the shapes, not a property of the library. A hand-built graph with no app pointing back is the third shape wearing the second shape's name, and the agreement between the two graphs -- the control that says nothing outside the pair is retaining it -- would then be an agreement between two copies of the same shape."
+ }
+}

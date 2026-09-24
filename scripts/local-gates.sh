@@ -214,6 +214,21 @@ while IFS= read -r cmd; do
             skipped=$((skipped+1)); continue
           fi;;
       esac;;
+    *ownership-audit.py*)
+      # Two of its three shapes run anywhere: the fixtures judge refusals that no laptop can
+      # summon on demand, and the red team mutates a record a real app wrote -- the record lives
+      # in this tree, so the claim it tests is the same claim CI makes. The third asks the built
+      # app who is holding what, which needs the Debug product and about two seconds of running
+      # it. The product is on disk or it is not, and the line says which rather than carrying a
+      # permanent excuse the way this script's first version did for the render probe.
+      case "$cmd" in
+        *--self-test*|*--red-team*) ;;
+        *)
+          if ! compgen -G "build-render-probe/Build/Products/Debug/*.app" > /dev/null; then
+            echo "skip  $cmd (wants the Debug product render-probe.py builds; once it is on disk this gate runs here in about two seconds)"
+            skipped=$((skipped+1)); continue
+          fi;;
+      esac;;
     *constraints-audit.py*)
       [ "$all" = 1 ] || cmd="$cmd --no-battery";;
   esac

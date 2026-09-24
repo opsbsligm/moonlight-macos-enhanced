@@ -2263,6 +2263,26 @@ for leak_shape, leak_answer in (("--self-test", "its fixtures"),
           "the leak reader failed %s: %s"
           % (leak_answer, (leak_run.stdout + leak_run.stderr).strip().splitlines()[-1:]))
 
+# The ownership experiment gets the same treatment, and its controls make the reason stronger
+# rather than different: a probe that retains its own pair reports today's retain cycle as a
+# reading of the app, and a build that ignores the flag reports an empty record as a clean graph.
+# Both are green shapes, and a laptop can catch both -- the fixtures drive every refusal the
+# audit can issue, and the red team breaks scripts/ownership-sample.json, a record a real app
+# wrote with this machine's host identifier replaced. The half that needs the built app stays
+# with the two macOS jobs, which is also where its two controls get to disagree with each other.
+for ownership_shape, ownership_answer in (("--self-test", "its fixtures"),
+                                          ("--red-team", "the red team on a real captured record")):
+    ownership_run = subprocess.run([sys.executable,
+                                    os.path.join(scripts_dir, "ownership-audit.py"),
+                                    ownership_shape],
+                                   capture_output=True, text=True, cwd=root)
+    check(ownership_run.returncode == 0,
+          "the ownership experiment passes %s" % ownership_answer
+          if ownership_run.returncode == 0 else
+          "the ownership experiment failed %s: %s"
+          % (ownership_answer, (ownership_run.stdout + ownership_run.stderr).strip()
+             .splitlines()[-1:]))
+
 # A changelog round that says a script "is now a step in both macOS build jobs" is a
 # claim about the pipeline, and one made exactly that claim while the step existed in
 # neither the commit nor the file: the reachability rule above accepts the assertion
