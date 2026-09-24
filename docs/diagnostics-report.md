@@ -10,7 +10,10 @@
 ## 一份报告包含哪些内容
 
 App 版本与构建号、macOS 版本号、机型、是否被 Gatekeeper 以只读转译目录（App Translocation）方式运行、
-输入监控 / 辅助功能 / 屏幕录制当前的授权状态、Info.plist 声明的 Bonjour 服务（其中是否包含
+输入监控 / 辅助功能 / 屏幕录制当前的授权状态（`screen recording` 一项带一条边界：本 build 不调用任何
+像素捕获 API——这一点由门禁对照整棵树核对，而不是让散文自己说——唯一那处
+CGWindowListCopyWindowInfo 也只比对自己的 window number；而**未授予时会怎样，本仓库没有实测**，
+所以它印在行里，免得读的人把 `not granted` 当成玩家拒绝过、去开一个本 build 从没请求的开关。实测依据与它没测到的部分都在 `spikes/permission-probe/`）、Info.plist 声明的 Bonjour 服务（其中是否包含
 `_nvstream._tcp`——“别的客户端能发现主机而这里不能”这类问题最先要看的就是这一条）、
 一个 `input` 段（当前生效的鼠标策略与其存储值、CoreHID 是否被允许 / 是否尝试启动 / 是否真的送出过移动 / 失败原因，
 以及最后一次真正把移动交给主机的发送者是谁、发生在多久之前），

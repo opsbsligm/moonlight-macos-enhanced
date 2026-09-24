@@ -2575,6 +2575,39 @@ check("(a report never asks a host)" in devices_body
 check("[self devicesSection]" in report_builder,
       "the devices section is assembled into the report rather than merely built")
 
+# --- the report may not claim more than the tree supports -------------------
+# The permissions section prints one yes/no for screen recording. Two honest readings of a
+# "not granted" differ completely: the player refused a prompt, or this build never asked.
+# The line now says which of its own readings the measurement stopped short of, and a gate
+# keeps that sentence attached to the answer -- a caveat that can be deleted quietly is a
+# caveat that will be deleted.
+screen_line = report_code[report_code.index("screen recording:"):][:520]
+check("is not measured here" in screen_line,
+      "the screen recording answer travels with the limit of what was measured")
+
+# The line also claims the build calls no capture API. That is a claim about the tree, not
+# about this file, so it is checked against the tree -- the same shape as the changelog rule
+# that refuses a sentence about a build step the workflow does not contain.
+CAPTURE_APIS = ("ScreenCaptureKit", "SCStream", "SCShareableContent", "SCContentFilter",
+                "SCStreamConfiguration", "CGDisplayCreateImage", "CGDisplayCreateImageForRect",
+                "CGDisplayStreamCreate", "CGWindowListCreateImage", "CGRequestScreenCaptureAccess")
+capture_hits = []
+for directory, _, names in os.walk(os.path.join(root, "Limelight")):
+    for name in sorted(names):
+        if not name.endswith((".m", ".mm", ".swift", ".h")):
+            continue
+        source = open(os.path.join(directory, name), encoding="utf-8", errors="replace").read()
+        code = "\n".join(line for line in source.splitlines()
+                          if not line.lstrip().startswith(("//", "///", "*", "/*")))
+        hit = [api for api in CAPTURE_APIS if api in code]
+        if hit:
+            capture_hits.append((os.path.relpath(os.path.join(directory, name), root), hit))
+check(not capture_hits,
+      "the report's 'no capture API' line matches a tree that really calls none"
+      if not capture_hits else
+      "the report still claims no capture API while these files reference one: "
+      + "; ".join("%s (%s)" % pair for pair in capture_hits))
+
 # --- one compiler answer --------------------------------------------------
 # Every behavioural harness needs a clang and an SDK. Four of them wrote the answer
 # themselves and all four asked xcrun, so on a host whose Xcode license has not been

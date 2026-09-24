@@ -189,7 +189,17 @@ static NSString *stringOrNone(NSString *_Nullable value) {
                         CGPreflightListenEventAccess() ? @"yes" : @"no"],
                        [NSString stringWithFormat:@"accessibility: %@",
                         AXIsProcessTrusted() ? @"granted" : @"not granted"],
-                       [NSString stringWithFormat:@"screen recording: %@",
+                       // The preflight answers a yes/no question; the interesting question is what the
+                       // answer means for this build. It calls no capture API at all -- a claim a gate now
+                       // checks against the tree rather than trusting -- and its one CGWindowListCopyWindowInfo
+                       // call only compares its own window number. spikes/permission-probe/ measured that the
+                       // window has to be on screen for that lookup to find it, and did NOT measure the
+                       // ungranted case, because this machine had already granted everything. Printing
+                       // "not granted" alone would let a reader conclude a permission was refused and go
+                       // toggling a switch this build never asked to have.
+                       [NSString stringWithFormat:@"screen recording: %@ (this build calls no capture API;"
+                                                   @" the one window-list call compares its own window number,"
+                                                   @" and the ungranted case is not measured here)",
                         CGPreflightScreenCaptureAccess() ? @"granted" : @"not granted"],
                    ]];
 }
