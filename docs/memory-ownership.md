@@ -399,4 +399,5 @@ inDomains:NSUserDomainMask` 从**账号记录**解析，不看 `$HOME`。
 **没测到 / 盲区**：
 - `removeHost:` 删的是 host 记录；种子挂在 host 上的 **app 记录是否随之消失**，取决于 Core Data 的删除规则，本轮没量（回收后的回读只数 host）；
 - HOME 隔离失效同样意味着**在本机上**，render-probe 与内存扫掠一直是**在真实库上**跑的。已核对其断言不依赖空库（它们要的是「页面画出来了」「我们的对象没多漏」），但「私有 HOME」这句话以后不许再写；
+- 同一句话在**配对私钥**上同样成立：`CryptoManager.m:211` 用 `NSDocumentDirectory` 解析路径，也是从账号而不是从 `$HOME`。目前没有任何探针走到配对写入，所以这条只是给后来人的护栏——**别把会写 Documents 的旗号交给「有私有 HOME」的脚本**；
 - 真串流会话里 `self.app.host` 的读数照旧没有；被 reap 掉的 host 其 `appList` 是否连带释放，也没测。
