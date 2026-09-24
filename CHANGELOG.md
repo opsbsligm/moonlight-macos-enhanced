@@ -399,6 +399,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The user-memory design was re-measured before anyone read it, and its
+  spike is in the repo now.** The design doc arrived carrying citations that
+  had drifted: three gate line numbers pointed one to twenty-one lines away
+  from the assertion each one named, a script count said 66 where `git ls-
+  files scripts/` says 78, and the concurrency section reported a CAS run that
+  survived all 24 rounds while the appendix two pages later printed 22, 22, 23
+  and 21. All four are corrected, and the two findings that were right are
+  left alone. The spike was the bigger problem: its sources lived in `/tmp`,
+  so every line of the appendix was unfalsifiable, and the migration spike had
+  already grown from 26 checks to 29 without the pasted output noticing. They
+  live under `spikes/user-memory/` now, section 10.1 was regenerated from
+  them, and the 14-of-15 mutant result came back unchanged. What is not
+  verified is still marked as not verified, including the one mutation that
+  cannot be told apart and everything section 10.6 lists as unmeasured.
 - **The README is a reader's page now, and the round-by-round detail has a
   home.** The top-level file had grown past two hundred lines of gate tables,
   project trees and version history, which is the same content `CHANGELOG.md`
