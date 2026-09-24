@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Debug probe now seeds a host graph, so the memory gate has something to measure on
+  a runner -- and the byte ceiling had to stop measuring the machine to keep that true.** A
+  CI machine has no LAN to browse, so it discovered no host, built no graph, and the sweep
+  could only report that nothing of ours had started leaking. `ML_RENDER_PROBE_SEED_HOSTS`
+  writes one host with three apps through the production `DataManager`, the way discovery
+  does when a box answers, and the settings page then reads it back through the production
+  `getHosts` -- the ownership path that leaked, not a prop standing in for it. The address is
+  in the documentation range, the host is unpaired with no certificate, the visual probe does
+  not set the flag, and a machine with hosts of its own is left alone. One flag is not
+  evidence, so the sweep now reads the probe's own `report.json` before it cleans up the
+  scratch directory, and refuses outright when there is no record, when the probe refused its
+  own run, or when the seed flag reached a build that ignores it -- the last of those leaves a
+  report full of system blocks and no first-party object in it, which is precisely what a
+  clean run looks like to a reader that never asks. All four shapes are fixtures.
+  `ML_RENDER_PROBE_SEED_IGNORE_EXISTING` exists only so the seeding branch can be run by a
+  person who has a working LAN: without it the code that hands a runner its graph would be
+  code that ships having been read but never executed.
+
+  Three sweeps then agreed: 2,304 of 11,792 bytes ours over 6 hosts, 2,688 of 13,744 over 7,
+  and 6,144 of 21,712 over 16 -- 384 first-party bytes per leaked host every time, a fan-out
+  of 3.0 every time. That number is what killed the old byte rule: it judged the report's
+  total (2,500 per host plus a 2,000 floor), and a runner with one seeded host gets a budget
+  of 4,500 against 18,720 bytes of other people's objects, so it would have gone red no
+  matter what this repository did. The rule now budgets our objects -- 512 bytes per leaked
+  host plus a 128-byte floor nothing has needed yet -- and prints the total as context.
+  A second owner of the same graph still trips it (768 > 512 + 128), and the change of rule
+  carries its own regression: the fixtures hold a runner-shaped report -- one graph of ours
+  inside a machine's noise -- which the old ceiling refused and the new one passes, with a
+  matching pair in the red team, growing one of our blocks refused and growing a `CFString`
+  passed. Section 8 of ``docs/memory-ownership.md`` records what this still cannot see: the
+  floor has never been measured, the seed's first runner run is the push that follows, and
+  the 80% of leaked bytes belonging to classes we do not declare stays unwatched.
+
 - **A refused ceiling now names the objects, and wiring that up caught a shadowing bug in
   the gate itself.** `leak-audit.py --report <file>` keeps the raw sweep beside the verdict,
   and a refusal now prints the first-party blocks it judged (twenty of them, then the count

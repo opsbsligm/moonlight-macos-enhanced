@@ -34,7 +34,22 @@ apps a GameStream box publishes is its owner's library, not our code.
 
 A host count of zero is its own answer and is not treated as a clean one: with no host
 there is no graph, so the byte budget goes unjudged and says so, while apps leaking with no
-host present is refused -- that is a leak with no environment to blame.
+host present is refused -- that is a leak with no environment to blame. That gap is now
+closed rather than described: the Debug probe takes `ML_RENDER_PROBE_SEED_HOSTS` and writes
+one host with three apps through the production `DataManager` before the page opens, so a
+runner with no LAN still has a graph to judge. The sweep sets it, the visual probe does not,
+a machine with hosts of its own is left alone, and the probe records what it did -- a seed
+flag that reached a build which ignores it leaves the report looking exactly like a clean
+run, so `probe_problems()` refuses that rather than reading an empty room as a result.
+
+The byte budget judges our objects, not the machine. What the report totals is every leaked
+object in the process, and the two machines this gate has run on disagree by more than half
+before either has a host in it: 11,792 to 15,696 bytes on a laptop (2,304 of the first of
+those ours -- one host plus its three apps is 384 bytes, every sweep, unchanged) against
+18,720 on a GitHub runner with not one first-party object among them. A ceiling on that
+total is a ceiling on the machine, and it goes red over CoreFoundation, which is how memory
+gates get muted. So the rule is 512 first-party bytes per leaked host plus a 128-byte floor
+that nothing has needed yet, and the report's total is printed as context instead.
 
 The rule that keeps a reader that read nothing from being green: the report's own summary
 says how many blocks leaked, and the audit refuses when it read fewer blocks than that.
@@ -127,17 +142,27 @@ def is_first_party(class_name, objc_names, module):
 
 
 def count_leaks(text, objc_names, module):
-    """(per-class first-party counts, total bytes, summary line or None, blocks read).
+    """(per-class first-party counts, total bytes, summary line or None, blocks read,
+    first-party bytes).
 
     The block count is the reader's own answer to "how many leaked objects did I look at",
     and the judge compares it against the number the report claims. It is returned rather
     than inferred so the fixtures and the red team can drive the rule with a report of
     their own.
+
+    The bytes are totalled twice on purpose. The report's own total is every leaked object
+    in the process -- ours and everybody else's -- and on the machine this was first run on
+    that total was 11,792 bytes of which 2,304 were ours, while a GitHub runner reported
+    18,720 bytes with none of them ours. A ceiling on the total is therefore a ceiling on
+    the machine, and the two machines disagree by 60% before either one has a host in the
+    report. So the rule judges the first-party total and the report's total is printed as
+    context: still worth reading, no longer worth going red over.
     """
     summary = None
     first_party = {}
     total = 0
     blocks = 0
+    ours_bytes = 0
     for line in text.splitlines():
         if summary is None:
             found = SUMMARY.search(line)
@@ -151,10 +176,11 @@ def count_leaks(text, objc_names, module):
         blocks += 1
         if is_first_party(match.group(2), objc_names, module):
             first_party[match.group(2)] = first_party.get(match.group(2), 0) + 1
-    return first_party, total, summary, blocks
+            ours_bytes += int(match.group(1))
+    return first_party, total, summary, blocks, ours_bytes
 
 
-def judge(first_party, total, summary, baseline, blocks):
+def judge(first_party, total, summary, baseline, blocks, ours_bytes=0):
     """The refusals. Kept apart from the reading so the fixtures can drive them."""
     problems = []
     notes = []
@@ -187,9 +213,9 @@ def judge(first_party, total, summary, baseline, blocks):
 
     if host_class and host_class not in first_party:
         notes.append("%s is not leaking in this run, so no host graph was built here: the "
-                     "fan-out ceiling held by having nothing to multiply, and the byte "
-                     "budget went unjudged -- this sweep cannot certify that graph"
-                     % host_class)
+                     "fan-out ceiling held by having nothing to multiply, and the "
+                     "first-party byte budget went unjudged -- this sweep cannot certify "
+                     "that graph" % host_class)
 
     for class_name in sorted(fan_out):
         if class_name not in first_party:
@@ -210,24 +236,32 @@ def judge(first_party, total, summary, baseline, blocks):
                    ", ".join(str(value) for value in measured.get("apps_per_host", [])),
                    measured.get("runs", 0)))
 
-    per_host = baseline.get("bytes_per_host")
+    per_host = baseline.get("first_party_bytes_per_host")
     if per_host is not None and hosts:
-        budget = per_host * hosts + baseline.get("byte_floor", 0)
-        if total > budget:
-            problems.append("the process leaked %d bytes against %d (%d per leaked host plus "
-                            "a %d-byte floor): the host count is accounted for, so this is "
-                            "bytes per host growing"
-                            % (total, budget, per_host, baseline.get("byte_floor", 0)))
+        budget = per_host * hosts + baseline.get("first_party_bytes_floor", 0)
+        if ours_bytes > budget:
+            problems.append(
+                "our own objects leaked %d bytes against %d (%d per leaked host plus a "
+                "%d-byte floor, %d host(s) in the report): the host count is already "
+                "accounted for, so this is bytes per host growing. Measured on the shipped "
+                "code: %s bytes per host. The other %d leaked bytes belong to classes this "
+                "repository does not declare and are reported, not judged"
+                % (ours_bytes, budget, per_host, baseline.get("first_party_bytes_floor", 0),
+                   hosts,
+                   ", ".join(str(value) for value in
+                             measured.get("first_party_bytes_per_host", [])),
+                   max(total - ours_bytes, 0)))
     return problems, notes
 
 
 def report(text, baseline, objc_names, module):
-    first_party, total, summary, blocks = count_leaks(text, objc_names, module)
-    problems, notes = judge(first_party, total, summary, baseline, blocks)
+    first_party, total, summary, blocks, ours_bytes = count_leaks(text, objc_names, module)
+    problems, notes = judge(first_party, total, summary, baseline, blocks, ours_bytes)
     host_class = baseline.get("host_class")
-    print("leak-audit: %d leaked bytes over %d block(s), first-party classes: %s%s"
-          % (total, blocks, ", ".join("%s=%d" % kv for kv in sorted(first_party.items()))
-             or "none",
+    print("leak-audit: %d leaked bytes over %d block(s), %d of them ours, first-party "
+          "classes: %s%s"
+          % (total, blocks, ours_bytes,
+             ", ".join("%s=%d" % kv for kv in sorted(first_party.items())) or "none",
              "" if not host_class else " (fan-out judged against %d leaked %s)"
              % (first_party.get(host_class, 0), host_class)))
     for note in notes:
@@ -281,8 +315,10 @@ def fixtures():
     # one screen: one leaked host, four bytes-per-host of budget, and a fan-out ceiling of
     # three plus a slack of one.
     base = {"host_class": "TemporaryHost", "apps_per_host": {"TemporaryApp": 3},
-            "slack_per_host": 1, "bytes_per_host": 300, "byte_floor": 100,
-            "observed": {"apps_per_host": [3], "runs": 7}}
+            "slack_per_host": 1, "first_party_bytes_per_host": 200,
+            "first_party_bytes_floor": 100,
+            "observed": {"apps_per_host": [3], "runs": 7,
+                         "first_party_bytes_per_host": [192]}}
     clean = ("Process 9: 4 leaks for 300 total leaked bytes\n"
              "Leak: 0x1  size=64  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n"
              "Leak: 0x2  size=64  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n"
@@ -298,7 +334,32 @@ def fixtures():
              + "Leak: 0x1  size=40  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n" * 6
              + "Leak: 0x7  size=40  zone: MallocZone   TemporaryHost  ObjC  MoonlightEnhanced\n"
                "Leak: 0x8  size=60  zone: MallocZone   CFString  ObjC  CoreFoundation\n")
-    heavy = clean.replace("for 300 total leaked", "for 900 total leaked")
+    # Our own host object grew a 436-byte tail, and the report's total moved with it so
+    # the report stays self-consistent: the only reason left to refuse is ours.
+    heavy = clean.replace(
+        "Leak: 0x3  size=64  zone: MallocZone   TemporaryHost  ObjC  MoonlightEnhanced",
+        "Leak: 0x3  size=500  zone: MallocZone   TemporaryHost  ObjC  MoonlightEnhanced"
+    ).replace("for 300 total leaked", "for 736 total leaked")
+    # The shape a CI runner now reports after the Debug probe seeds a host: one graph of
+    # ours -- 1 host + 3 apps, 256 fixture bytes against a 300-byte budget -- wrapped in
+    # a machine's worth of somebody else's objects. Under the ceiling this file carried
+    # until today (2,500 bytes per leaked host plus a 2,000 floor, judged against the
+    # report's total) this report is a refusal, and it would have been a refusal no matter
+    # what this repository's code did, because 18,720 of those bytes are CoreFoundation.
+    # Written as a case rather than argued, because it is the reason the rule changed.
+    runner = ("Process 9: 5 leaks for 3056 total leaked bytes\n"
+              "Leak: 0x1  size=64  zone: MallocZone   TemporaryHost  ObjC  MoonlightEnhanced\n"
+              "Leak: 0x2  size=64  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n"
+              "Leak: 0x3  size=64  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n"
+              "Leak: 0x4  size=64  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n"
+              "Leak: 0x5  size=2800  zone: MallocZone   CFString  ObjC  CoreFoundation\n")
+    # Somebody else's class leaking four times over is a busy machine, not a regression of
+    # ours. Refusing this is how a memory gate gets muted: the ceiling goes red over
+    # CoreFoundation and the next person adds a skip.
+    machine_noise = clean.replace(
+        "Leak: 0x4  size=108  zone: MallocZone   CFString  ObjC  CoreFoundation",
+        "Leak: 0x4  size=4308  zone: MallocZone   CFString  ObjC  CoreFoundation"
+    ).replace("for 300 total leaked", "for 4592 total leaked")
     # Apps with no host in the report: nothing here can be blamed on the LAN, because a
     # graph that was never built cannot have leaked anything.
     hostless = ("Process 9: 3 leaks for 200 total leaked bytes\n"
@@ -322,7 +383,9 @@ def fixtures():
     cases = [("the shipped shape passes", clean, 0, None),
              ("a class nobody budgeted starts leaking", new_class, 1, None),
              ("the fan-out grows past the ceiling", grown, 1, "fan-out"),
-             ("bytes grow past the per-host budget", heavy, 1, "per leaked host"),
+             ("our own bytes grow past the per-host budget", heavy, 1, "per leaked host"),
+             ("another class grows ours not at all", machine_noise, 0, None),
+             ("a runner with one seeded host and a machine's noise around it", runner, 0, None),
              ("apps leak with no host in the report", hostless, 1, "fan-out"),
              ("a report with no summary line", empty, 1, None),
              ("a Swift class is ours too, mangling and all", swift, 1, None),
@@ -332,8 +395,8 @@ def fixtures():
               tree, 1, "never looked at")]
     failures = 0
     for label, text, want_problems, want_note in cases:
-        first_party, total, summary, blocks = count_leaks(text, names, module)
-        problems, notes = judge(first_party, total, summary, base, blocks)
+        first_party, total, summary, blocks, ours_bytes = count_leaks(text, names, module)
+        problems, notes = judge(first_party, total, summary, base, blocks, ours_bytes)
         answer = 0 if not problems else 1
         # A case that expects a refusal also says which words the refusal has to contain:
         # the reason matters as much as the exit code, because a gate that refuses for the
@@ -389,6 +452,36 @@ def flood(text, class_name, copies):
     return text + "".join("\n" + template for _ in range(copies)) + "\n"
 
 
+def resize_block(text, class_name, new_size):
+    """Grow one leaked block of one class and move the report's own total with it.
+
+    The byte rule needs a break that changes the size of a block, not the summary: the
+    summary stopped being the number the rule reads the moment the runner reported 18,720
+    leaked bytes of which none were ours. Moving the total as well keeps the report
+    self-consistent, so a refusal can only come from the budget and not from the report
+    disagreeing with itself.
+    """
+    pattern = re.compile(r"(^Leak: 0x\S+\s+size=)(\d+)(\s+zone: \S+\s+%s\b)"
+                         % re.escape(class_name))
+    moved = []
+
+    def bump(match):
+        moved.append(int(match.group(2)))
+        return "%s%d%s" % (match.group(1), new_size, match.group(3))
+
+    lines = []
+    for line in text.splitlines():
+        if not moved:
+            line = pattern.sub(bump, line, count=1)
+        lines.append(line)
+    if not moved:
+        return None
+    delta = new_size - moved[0]
+    return re.sub(r"( leaks for )(\d+)",
+                  lambda match: "%s%d" % (match.group(1), int(match.group(2)) + delta),
+                  "\n".join(lines) + "\n", count=1)
+
+
 def red_team(text, baseline, objc_names, module):
     """Break a captured report one way at a time and check that each break is refused.
 
@@ -403,7 +496,7 @@ def red_team(text, baseline, objc_names, module):
     Returns the number of breaks that were not refused for the reason they should have
     been.
     """
-    first_party, total, summary, blocks = count_leaks(text, objc_names, module)
+    first_party, total, summary, blocks, ours_bytes = count_leaks(text, objc_names, module)
     blockers = []
     if summary is None:
         blockers.append("the report handed to the red team carries no summary line, so "
@@ -458,13 +551,30 @@ def red_team(text, baseline, objc_names, module):
     planted = flood(text, unbudgeted[0], 1)
     cases.append(("a class nobody budgeted starts leaking",
                   recount(planted, summary[0] + 1), 1, "nobody budgeted"))
-    per_host = baseline.get("bytes_per_host")
+    per_host = baseline.get("first_party_bytes_per_host")
     if per_host:
-        over = per_host * hosts + baseline.get("byte_floor", 0) + 1
-        cases.append(("the bytes per leaked host grow past the budget",
-                      re.sub(r"( leaks for )\d+",
-                             lambda m: "%s%d" % (m.group(1), over), text, count=1), 1,
+        budget = per_host * hosts + baseline.get("first_party_bytes_floor", 0)
+        grown = next((name for name in sorted(first_party) if first_party[name] > 0), None)
+        # One block of ours gets one byte more than the whole budget can carry: the
+        # smallest break that has to be caught, on the smallest block the report has.
+        smallest = min(int(match.group(1)) for match in
+                       (LEAK_LINE.match(line) for line in text.splitlines())
+                       if match and is_first_party(match.group(2), objc_names, module))
+        mutated = resize_block(text, grown, smallest + budget + 1 - ours_bytes)
+        if mutated is None:
+            blockers = ["no first-party block in this report could be resized, so the byte "
+                        "budget cannot be broken here and a green run would not mean one"]
+            for blocker in blockers:
+                print("FAIL red team cannot run: %s" % blocker)
+            return 1
+        cases.append(("our bytes per leaked host grow past the budget", mutated, 1,
                       "per leaked host"))
+        # The mirror image, and the reason the rule stopped reading the report's total: a
+        # system class ballooning is the machine being busy, and a gate that refuses that
+        # is a gate somebody mutes.
+        noisy = resize_block(text, "CFString", 4096)
+        if noisy is not None:
+            cases.append(("a system class leaks a lot more of its own bytes", noisy, 0, None))
     cases.append(("the summary is cut off",
                   "\n".join(line for line in text.splitlines()
                              if SUMMARY.search(line) is None), 1, "no `leaks for"))
@@ -481,10 +591,10 @@ def red_team(text, baseline, objc_names, module):
 
     failures = 0
     for label, mutated, want_problems, want_text in cases:
-        per_class, mutated_total, mutated_summary, mutated_blocks = count_leaks(
-            mutated, objc_names, module)
+        per_class, mutated_total, mutated_summary, mutated_blocks, mutated_ours = \
+            count_leaks(mutated, objc_names, module)
         problems, notes = judge(per_class, mutated_total, mutated_summary, baseline,
-                                mutated_blocks)
+                                mutated_blocks, mutated_ours)
         answer = 0 if not problems else 1
         said = problems if want_problems else notes
         if answer != want_problems:
@@ -492,12 +602,99 @@ def red_team(text, baseline, objc_names, module):
                   % (label, "a refusal" if want_problems else "a pass",
                      "; ".join(problems) or "a clean answer"))
             failures += 1
+        elif want_text is None:
+            print("ok   red team: %s" % label)
         elif not any(want_text in line for line in said):
             print("FAIL red team: %s refused for the wrong reason: %s"
                   % (label, "; ".join(said) or "(nothing)"))
             failures += 1
         else:
             print("ok   red team: %s" % label)
+    return failures
+
+
+def read_probe_record(output_directory):
+    """What the probe believed about its own run, read before the scratch directory goes.
+
+    The probe records its failures in structured form, so the sweep reads that form instead
+    of pattern-matching a sentence printed to stderr. It is read here and nowhere else: the
+    scratch directory is this function's to clean, and once it is gone the claim "the page
+    presented" has no evidence left behind.
+    """
+    path = os.path.join(output_directory, "report.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def probe_problems(probe, returncode=0):
+    """Why this sweep may not be judged, read out of what the probe recorded about itself.
+
+    Kept apart from `capture()` so a fixture can drive it: every one of these refusals is a
+    shape a real run produces (no report, a page that failed to present, a seed flag that
+    reached a build which ignores it), and none of them can be produced on demand at the
+    moment the sweep happens to run. A rule nobody can exercise is a rule nobody can trust.
+    """
+    if probe is None:
+        return ["the probe left no report.json behind, so nothing here says the settings"
+                " page ever presented -- the sweep cannot certify a page it did not see."
+                " Exit %d." % returncode]
+    problems = []
+    failures = probe.get("failures") or []
+    if failures:
+        problems.append("the probe refused its own run, so the sweep would have judged an app"
+                        " that did not present: %s" % "; ".join(str(f) for f in failures[:4]))
+    seed = probe.get("seedHosts")
+    if not isinstance(seed, dict):
+        problems.append("the sweep asked for a seeded host graph and the probe recorded no"
+                        " seedHosts, so the flag reached a build that ignores it -- the graph"
+                        " this gate budgets is unjudged again")
+    elif seed.get("status") not in ("seeded", "existing-hosts"):
+        problems.append("the sweep asked for %s seeded host(s) and got status %r, recorded by"
+                        " the probe itself, so there is no host graph behind these numbers"
+                        % (seed.get("requested"), seed.get("status")))
+    return problems
+
+
+def probe_record_fixture():
+    """A sweep whose probe refused, or whose seed went nowhere, is not a green sweep.
+
+    These four are the shapes `probe_problems()` is meant to catch, and the one that matters
+    most is the missing record: a flag that reached a build which ignores it leaves a report
+    full of system leaks and no first-party object in it, which is exactly what a clean run
+    looks like to a reader that never asks.
+    """
+    cases = [
+        ("no report at all", None, 1, "no report.json"),
+        ("the probe refused its own run", {"failures": ["the settings page did not mount"]},
+         1, "did not present"),
+        ("the seed flag reached a build that ignores it", {"failures": []}, 1,
+         "reached a build that ignores it"),
+        ("the seed recorded a refusal", {"failures": [],
+                                         "seedHosts": {"status": "invalid",
+                                                       "requested": "two"}}, 1,
+         "no host graph"),
+        ("the graph was seeded", {"failures": [],
+                                  "seedHosts": {"status": "seeded", "seeded": 1}}, 0, None),
+        ("the machine had hosts of its own", {"failures": [],
+                                              "seedHosts": {"status": "existing-hosts",
+                                                            "existing": 4}}, 0, None),
+    ]
+    failures = 0
+    for label, probe, want_problems, want_text in cases:
+        problems = probe_problems(probe)
+        if bool(problems) != bool(want_problems):
+            print("FAIL %s: expected %s, got %s"
+                  % (label, "a refusal" if want_problems else "a pass",
+                     "; ".join(problems) or "a clean answer"))
+            failures += 1
+        elif want_text and not any(want_text in problem for problem in problems):
+            print("FAIL %s refused for the wrong reason: %s" % (label, "; ".join(problems)))
+            failures += 1
+        else:
+            print("ok   %s" % label)
     return failures
 
 
@@ -522,7 +719,11 @@ def capture(timeout, report_path=None):
     home = tempfile.mkdtemp(prefix="leak-home.")
     out = tempfile.mkdtemp(prefix="leak-out.")
     binary = os.path.join(app, "Contents", "MacOS", project_identity.bundle_executable(app))
-    env = dict(os.environ, HOME=home, ML_RENDER_PROBE="1", ML_RENDER_PROBE_OUTPUT=out)
+    # The sweep asks for one host to be seeded, because a runner has no LAN to browse and a
+    # sweep with no host has no graph to judge (see MLSeedHostsForMemorySweep). The visual
+    # probe does not set it: its pixel asserts were written against an empty library.
+    env = dict(os.environ, HOME=home, ML_RENDER_PROBE="1", ML_RENDER_PROBE_OUTPUT=out,
+               ML_RENDER_PROBE_SEED_HOSTS="1")
     try:
         try:
             proc = subprocess.run([tool, "--atExit", "--list", "--", binary],
@@ -538,6 +739,7 @@ def capture(timeout, report_path=None):
                   "Raise `--timeout` if this machine is slow; it does not raise the "
                   "ceiling, which lives in the baseline file." % timeout)
             return None
+        probe = read_probe_record(out)
     finally:
         # The gate that looks for leaks is not allowed to leave any of its own behind:
         # the probe writes screenshots into its output directory and a database into the
@@ -546,6 +748,21 @@ def capture(timeout, report_path=None):
         # today found out by filling up.
         shutil.rmtree(home, ignore_errors=True)
         shutil.rmtree(out, ignore_errors=True)
+    # Two things have to be true before any of this report is worth judging, and both come
+    # out of what the probe itself recorded rather than out of the leak counts: the page has
+    # to have presented (a sweep over a page that refused to open judges a broken app and
+    # calls it a memory result), and the host graph this sweep asked for has to exist (a
+    # sweep over no graph is the green that says nothing).
+    refused = probe_problems(probe, proc.returncode)
+    for problem in refused:
+        print("FAIL %s" % problem)
+    if refused:
+        return None
+    seed = probe.get("seedHosts")
+    if isinstance(seed, dict):
+        print("sweep ran on %s host(s) in the library (%s)"
+              % (seed.get("seeded") if seed.get("status") == "seeded"
+                 else seed.get("existing", 0), seed.get("status")))
     # `leaks` exits 1 when it found leaks, which is the normal answer for a real app.
     if report_path:
         directory = os.path.dirname(os.path.abspath(report_path))
@@ -603,7 +820,8 @@ def main():
     if log is not None:
         text = open(log, encoding="utf-8", errors="replace").read()
     if "--self-test" in arguments:
-        failures = fixtures() + class_discovery_fixture()
+        failures = (fixtures() + class_discovery_fixture()
+                    + probe_record_fixture())
         print("%d leak-audit fixture failure(s)" % failures)
         return 1 if failures else 0
     if text is None:
@@ -614,7 +832,7 @@ def main():
     objc_names = first_party_classes(root)
     baseline = (json.load(open(BASELINE, encoding="utf-8"))
                 if os.path.exists(BASELINE) else {"apps_per_host": {}, "host_class": None,
-                                                  "bytes_per_host": None})
+                                                  "first_party_bytes_per_host": None})
     if "--red-team" in arguments:
         if text is None:
             print("FAIL --red-team breaks a captured report and none was given. Pass "
@@ -627,7 +845,8 @@ def main():
         return 1 if failures else 0
     problems = report(text, baseline, objc_names, module)
     if "--write-baseline" in arguments:
-        first_party, total, _summary, _blocks = count_leaks(text, objc_names, module)
+        first_party, total, _summary, _blocks, ours_bytes = count_leaks(
+            text, objc_names, module)
         host_class = baseline.get("host_class")
         hosts = first_party.get(host_class, 0) if host_class else 0
         if not hosts:
@@ -642,14 +861,23 @@ def main():
                 continue
             observed = -(-count // hosts)  # ceil: a partial host is still a whole app
             fan_out[name] = max(observed, fan_out.get(name, 0))
-        observed_bytes = max(total // hosts, baseline.get("bytes_per_host", 0))
+        # Ceil, because a partial host is still a whole host's worth of objects, and the
+        # ceiling being judged is ours: the report's total includes every CoreFoundation
+        # string the machine happened to be holding, and that number is not this
+        # repository's to raise.
+        observed_bytes = -(-ours_bytes // hosts)
+        ceiling = max(observed_bytes, baseline.get("first_party_bytes_per_host", 0))
         baseline = dict(baseline)
         baseline["apps_per_host"] = fan_out
-        baseline["bytes_per_host"] = observed_bytes
+        baseline["first_party_bytes_per_host"] = ceiling
         baseline["observed"] = dict(baseline.get("observed", {}),
                                     hosts_seen=sorted(set(
                                         baseline.get("observed", {}).get("hosts_seen", [])
-                                        + [hosts])))
+                                        + [hosts])),
+                                    first_party_bytes_per_host=sorted(set(
+                                        baseline.get("observed", {}).get(
+                                            "first_party_bytes_per_host", [])
+                                        + [observed_bytes])))
         with open(BASELINE, "w", encoding="utf-8") as handle:
             json.dump(baseline, handle, indent=1, sort_keys=True)
             # The trailing newline is not decoration: without it the writer dirties the
