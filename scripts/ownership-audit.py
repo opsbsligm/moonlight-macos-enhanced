@@ -63,6 +63,18 @@ BASELINE = os.path.join(ROOT, "scripts", "ownership-baseline.json")
 SAMPLE = os.path.join(ROOT, "scripts", "ownership-sample.json")
 
 SHAPES = ("productionGraph", "handBuiltGraph", "backpointerOnly")
+# The two shapes that hand the pair to a holder which is not the app. The three above cannot ask
+# whether a holder can keep a host alive on its own terms, because in every one of them the outside
+# holder *is* the app, which is the thing under study rather than a variable. These two cut the
+# back-pointer by hand and then hold the app alone, or the app and the host, from outside the graph.
+# The difference between the two readings is the pairing's contribution, which is the whole of step
+# 2 and step 3 of the section 5 fix, and it is measured here instead of read off the declarations.
+SEVERED_SHAPES = ("severedBackpointerAppOnlyHolder", "severedBackpointerPairedHolder")
+# Different fields, because they watch a different holder: these record whether the app is alive
+# while a third object holds it, and whether the holder itself dies when the probe lets go.
+SEVERED_OBSERVATIONS = ("holderKind", "backpointerSevered", "hostAliveWhileHeldByHolder",
+                        "appAliveWhileHeldByHolder", "holderAliveWithNoHolder",
+                        "hostAliveWithNoHolder", "appAliveWithNoHolder")
 # The two questions the experiment asks of every shape, plus the one that checks the shape was
 # really the shape it names.
 OBSERVATIONS = ("appListCount", "hostAliveWhileAppHeld", "appHostReadableWhileAppHeld",
@@ -271,6 +283,26 @@ def probe_problems(report, require_reap=True, rules=None, require_partial=False)
             if observation not in record:
                 problems.append("shape %s recorded no %s, so the run did not ask the question"
                                 " this gate answers" % (shape, observation))
+    # The holder shapes are asked for on every run: no flag gates them, so a report without them is
+    # a build that does not have them, and the pairing would go back to being argued rather than
+    # measured. Same refusal, whatever the declarations say.
+    for shape in SEVERED_SHAPES:
+        record = shapes.get(shape)
+        if not isinstance(record, dict):
+            problems.append("the probe recorded no %s shape, so nothing in this run says whether a"
+                            " holder that keeps an app can keep its host alive once the"
+                            " back-pointer is gone -- which is the claim the fix rests on" % shape)
+            continue
+        for observation in SEVERED_OBSERVATIONS:
+            if observation not in record:
+                problems.append("shape %s recorded no %s, so the run did not ask the question"
+                                " this gate answers" % (shape, observation))
+    unknown = [name for name in sorted(shapes) if name not in list(SHAPES) + list(SEVERED_SHAPES)]
+    if unknown:
+        problems.append("the report carries shape(s) this audit does not know: %s. A shape that no"
+                        " rule judges reads as green whatever it measures, so a new shape and the"
+                        " rules that judge it have to arrive in the same commit"
+                        % ", ".join(unknown))
     return problems
 
 
@@ -308,6 +340,50 @@ def judge(report, decls, baseline):
                             " shape `-[TemporaryHost initFromHost:]` declares, or something"
                             " outside it is retaining it"
                             % (key, production.get(key), hand_built.get(key)))
+
+    # The two holder shapes and their controls. These are the only readings in the report that
+    # watch a holder which is not the app, so the controls below are the only thing standing between
+    # the pairing's measured contribution and the harness's own references, which is why a holder
+    # that will not die voids the shape rather than merely noting it.
+    for shape in SEVERED_SHAPES:
+        record = shapes.get(shape)
+        if not isinstance(record, dict):
+            continue  # refused as a missing shape, where absence is not a verdict about anything
+        if not bool(record.get("backpointerSevered")):
+            problems.append("%s: the probe did not cut the back-pointer, so this is the graph shape"
+                            " under the holder shape's name. The reading under it would credit the"
+                            " app with keeping its host alive for the very reason the fix is trying"
+                            " to remove" % shape)
+        if bool(record.get("holderAliveWithNoHolder")):
+            problems.append("%s: the holder survived being dropped by the probe, so the probe is"
+                            " holding on to what it claims to watch. Every yes in this shape"
+                            " belongs to the harness, and a reading taken while the harness leaks"
+                            " describes the harness")
+        if not bool(record.get("appAliveWhileHeldByHolder")):
+            problems.append("%s: the holder was given the app and lost it, so there was never a"
+                            " holder standing outside the graph, and whatever the two shapes agree"
+                            " on they did not hold the pair to agree on it" % shape)
+        if bool(record.get("hostAliveWithNoHolder")) or bool(record.get("appAliveWithNoHolder")):
+            problems.append("%s: something in this process outlived the last holder of the pair,"
+                            " including the holder these shapes were measured against, so the pair"
+                            " leaks and the two readings beside it are not measuring the pairing"
+                            % shape)
+    severed_app_only = shapes.get("severedBackpointerAppOnlyHolder")
+    severed_paired = shapes.get("severedBackpointerPairedHolder")
+    if isinstance(severed_app_only, dict) and isinstance(severed_paired, dict):
+        if bool(severed_app_only.get("hostAliveWhileHeldByHolder")):
+            problems.append("severedBackpointerAppOnlyHolder: with the back-pointer cut by hand a"
+                            " holder keeping only the app still kept the host alive, so something"
+                            " other than `app.host` is holding it. The app would not be the whole"
+                            " of the leak, and every statement this report makes about who holds"
+                            " what would be a statement about a holder it cannot see")
+        if not bool(severed_paired.get("hostAliveWhileHeldByHolder")):
+            problems.append("severedBackpointerPairedHolder: a holder that kept the app and the"
+                            " host together still lost the host, so naming a host to a holder does"
+                            " not keep it alive and the pairing cannot stand in for the strong"
+                            " back-pointer. That is the premise the fix starts from, not one of its"
+                            " outcomes: a holder rule built on it would ship a nil read in the"
+                            " middle of a stream")
 
     # The definitions of the shapes, read from the same file as the expectations. `appListCount`
     # is how a reader knows which shape was built, and a shape that quietly changes its own
@@ -379,7 +455,7 @@ def judge(report, decls, baseline):
                         " changes in the commit that predicts what it will see"
                         % (key, os.path.relpath(BASELINE, ROOT)))
     else:
-        for shape in SHAPES:
+        for shape in list(SHAPES) + list(SEVERED_SHAPES):
             want = (expected.get("shapes") or {}).get(shape)
             if want is None:
                 problems.append("the profile for %s says nothing about %s, so that shape is"
@@ -499,8 +575,11 @@ def section5_status(report, decls):
     return ("`app.host` is still strong: every shape keeps its host alive on the app alone, so"
             " each holder on the baseline's list -- a stream that holds only its app, a cell that"
             " reads its host out of the app -- has to be given a host of its own in the same"
-            " commit that flips the back-pointer, not in a later one. The measurement is here and"
-            " the judgement is unchanged until a commit moves it")
+            " commit that flips the back-pointer, not in a later one. The two holder shapes beside"
+            " them say what such a holder is worth: with the back-pointer cut, the app-only holder"
+            " loses the host and the holder that was given the host keeps it, so the pairing does"
+            " replace the edge -- measured, not argued. The judgement is unchanged until a commit"
+            " moves it")
 
 
 REAP_STATUSES = ("empty", "kept", "reaped", "removed-some")
@@ -834,12 +913,25 @@ def any_leaks(report):
 
 def summary(ownership):
     shapes = ownership["shapes"]
-    return " | ".join("%s: held=%s no-holder=%s (appList %s)"
+    line = " | ".join("%s: held=%s no-holder=%s (appList %s)"
                       % (shape,
                          "yes" if shapes[shape]["hostAliveWhileAppHeld"] else "no",
                          "yes" if shapes[shape]["hostAliveWithNoHolder"] else "no",
                          shapes[shape]["appListCount"])
                       for shape in SHAPES if isinstance(shapes.get(shape), dict))
+    # The pairing's contribution, printed beside the graph readings because it is the number the fix
+    # has to keep hold of when it lands: the app-only holder is where today's holders stand, and the
+    # paired holder is where step 2 and step 3 would put them.
+    holder = []
+    for shape in SEVERED_SHAPES:
+        record = shapes.get(shape)
+        if isinstance(record, dict):
+            holder.append("%s: host held=%s" % (
+                "app-only" if record.get("holderKind") == "app-only" else "app+host",
+                "yes" if record.get("hostAliveWhileHeldByHolder") else "no"))
+    if holder:
+        line += " | severed back-pointer, %s" % " vs ".join(holder)
+    return line
 
 
 # ---------------------------------------------------------------------------
@@ -856,6 +948,16 @@ def shipped_report():
                 "appHostReadableWhileAppHeld": readable, "hostAliveWithNoHolder": leak_host,
                 "appAliveWithNoHolder": leak_app}
 
+    def holder_shape(kind, host_held):
+        # The two holder shapes as this laptop measured them on 2026-09-25, over a graph whose
+        # back-pointer the probe cut by hand: a holder given the app alone lost the host, a holder
+        # given the app and the host kept it, and both holders died when the probe let go. The last
+        # is the control -- a holder that survived would mean the harness was holding the pair.
+        return {"holderKind": kind, "backpointerSevered": True,
+                "hostAliveWhileHeldByHolder": host_held, "appAliveWhileHeldByHolder": True,
+                "holderAliveWithNoHolder": False, "hostAliveWithNoHolder": False,
+                "appAliveWithNoHolder": False}
+
     return {"ownership": {"holder": "app-only", "libraryHosts": 2, "probeOwnedHosts": 0,
                           "reapedHosts": {"status": "kept", "found": 2, "probeOwned": 0},
                           "productionHostUuid": "86D1F81F-4D3D-E306-D694-EFDFE6BCD6CE",
@@ -863,7 +965,11 @@ def shipped_report():
                                         "existing": 2, "seeded": 0},
                           "shapes": {"productionGraph": shape(3, True, True, True, True),
                                      "handBuiltGraph": shape(1, True, True, True, True),
-                                     "backpointerOnly": shape(0, True, True, False, False)}},
+                                     "backpointerOnly": shape(0, True, True, False, False),
+                                     "severedBackpointerAppOnlyHolder": holder_shape("app-only",
+                                                                                     False),
+                                     "severedBackpointerPairedHolder": holder_shape("app-and-host",
+                                                                                    True)}},
             "failures": []}
 
 
@@ -881,6 +987,9 @@ def fixed_report():
                              "hostAliveWithNoHolder": False, "appAliveWithNoHolder": False})
     shapes["backpointerOnly"].update({"hostAliveWhileAppHeld": False,
                                       "appHostReadableWhileAppHeld": False})
+    # Unchanged, deliberately: these two shapes cut the edge by hand, so what the header declares
+    # about it cannot change their readings. That is why the two profiles expect the same thing from
+    # them, and why a fixer cannot make them agree with the declaration by editing the expectation.
     return report
 
 
@@ -938,6 +1047,42 @@ def self_test(baseline):
          ["handBuiltGraph.appListCount"]),
         ("a shape that recorded nothing", dropped_observation(shipped_report()), strong,
          baseline, ["recorded no"]),
+        # The two holder shapes. Their absence, their controls, and the difference between them are
+        # the whole of what step 2 and step 3 of the fix are justified by, so each of the six below
+        # is a way the pairing's measured contribution could be reported without existing.
+        ("the holder shapes never measured",
+         shapes_without(shipped_report(), SEVERED_SHAPES), strong, baseline,
+         ["no severedBackpointerAppOnlyHolder", "no severedBackpointerPairedHolder"]),
+        ("the back-pointer left in place",
+         mutate(shipped_report(), "severedBackpointerAppOnlyHolder",
+                backpointerSevered=False), strong, baseline,
+         ["did not cut the back-pointer"]),
+        ("the holder that would not die",
+         mutate(shipped_report(), "severedBackpointerPairedHolder",
+                holderAliveWithNoHolder=True), strong, baseline,
+         ["holding on to what it claims to watch"]),
+        ("the holder that never held the app",
+         mutate(shipped_report(), "severedBackpointerPairedHolder",
+                appAliveWhileHeldByHolder=False), strong, baseline,
+         ["given the app and lost it"]),
+        ("an app-only holder that kept the host alive",
+         mutate(shipped_report(), "severedBackpointerAppOnlyHolder",
+                hostAliveWhileHeldByHolder=True), strong, baseline,
+         ["something other than `app.host` is holding it"]),
+        ("a paired holder that could not keep the host",
+         mutate(shipped_report(), "severedBackpointerPairedHolder",
+                hostAliveWhileHeldByHolder=False), strong, baseline,
+         ["cannot stand in for the strong"]),
+        ("a holder shape that leaks with nobody holding it",
+         mutate(shipped_report(), "severedBackpointerPairedHolder",
+                hostAliveWithNoHolder=True), strong, baseline,
+         ["outlived the last holder"]),
+        ("a shape the audit has no rule for", shapes_with_extra(shipped_report()), strong,
+         baseline, ["does not know"]),
+        ("a holder that is not the holder its shape names",
+         mutate(shipped_report(), "severedBackpointerAppOnlyHolder",
+                holderKind="app-and-host"), strong, baseline,
+         ["severedBackpointerAppOnlyHolder.holderKind"]),
         # The reap rules. These are the refusals that keep a probe from reading somebody else's
         # library and calling it the production shape, which the private `HOME` was believed to
         # do and does not.
@@ -1233,6 +1378,27 @@ def dropped_observation(report):
     return report_with(report, shapes=dict(shapes, handBuiltGraph=record))
 
 
+def shapes_without(report, names):
+    """A record from a build that never measured the named shapes.
+
+    The shapes are not behind a flag, so this is what a build predating them -- or one where the
+    call was dropped -- actually looks like, and it has to be refused rather than quietly judged
+    over the shapes that happen to be there.
+    """
+    report = report_with(report)
+    shapes = {name: record for name, record in report["ownership"]["shapes"].items()
+              if name not in names}
+    return report_with(report, shapes=shapes)
+
+
+def shapes_with_extra(report, name="someFutureHolderShape"):
+    """A build that grew a shape the audit has no rule for: green by omission, so refused."""
+    report = report_with(report)
+    shapes = dict(report["ownership"]["shapes"])
+    shapes[name] = {"hostAliveWhileHeldByHolder": True}
+    return report_with(report, shapes=shapes)
+
+
 def mutate(report, shape, **changes):
     report = report_with(report)
     shapes = report["ownership"]["shapes"]
@@ -1243,7 +1409,9 @@ def mutate(report, shape, **changes):
 # The mutations that test a missing-evidence rule have to keep the evidence missing, or the repair
 # below hands it back and the rule the case exists to prove bites never opens its mouth.
 MISSING_EVIDENCE_WANTS = ("no reapedHosts", "not counted on both sides",
-                               "no partialHostInfo", "no partialHostName")
+                               "no partialHostInfo", "no partialHostName",
+                               "no severedBackpointerAppOnlyHolder",
+                               "no severedBackpointerPairedHolder")
 
 
 def with_filed_app_counts(report):
@@ -1322,6 +1490,31 @@ def with_filed_partial(report):
             "displayNameAfterPropagate": "Probe Host Named", "hostsAfter": 2,
             "probeOwnedAfter": 1, "appsBefore": 3, "appsAfter": 3, "cleanedUp": "by-the-probe",
         }
+    return report
+
+
+def with_filed_holder_shapes(report):
+    """The two holder shapes a build predating them would have written, had it measured them.
+
+    Same discipline as `with_filed_partial`: the repair supplies only the absent record, with the
+    readings this laptop took of that shape, and never overwrites what a record did record -- or the
+    red team would hand back the very evidence its mutation deleted and report a bite it did not
+    prove. It exists to show that a filed record's refusal for a missing shape is about the absence,
+    and that the shape is worth measuring rather than that the old run was wrong.
+    """
+    report = json.loads(json.dumps(report))
+    shapes = report.get("ownership", {}).get("shapes")
+    if not isinstance(shapes, dict):
+        return report
+    readings = {"severedBackpointerAppOnlyHolder": ("app-only", False),
+                "severedBackpointerPairedHolder": ("app-and-host", True)}
+    for name, (kind, host_held) in readings.items():
+        if not isinstance(shapes.get(name), dict):
+            shapes[name] = {"holderKind": kind, "backpointerSevered": True,
+                            "hostAliveWhileHeldByHolder": host_held,
+                            "appAliveWhileHeldByHolder": True,
+                            "holderAliveWithNoHolder": False, "hostAliveWithNoHolder": False,
+                            "appAliveWithNoHolder": False}
     return report
 
 
@@ -1409,6 +1602,32 @@ def red_team(sample_path, baseline, decls):
          lambda report: report_with(report, reapedHosts={
              "status": "reaped", "found": 1, "probeOwned": 1, "removed": 1, "remaining": 0}),
          "not counted on both sides"),
+        # The holder shapes, broken the four ways that would each turn the pairing's measured
+        # contribution into a green that measured nothing. The first is what a build predating them
+        # looks like, which is also what a build that lost the call looks like.
+        ("the holder shapes silently not measured",
+         lambda report: shapes_without(report, SEVERED_SHAPES),
+         "no severedBackpointerPairedHolder"),
+        ("the back-pointer quietly left attached",
+         lambda report: mutate(report, "severedBackpointerPairedHolder",
+                               backpointerSevered=False), "did not cut the back-pointer"),
+        ("the harness holding its own holder",
+         lambda report: mutate(report, "severedBackpointerAppOnlyHolder",
+                               holderAliveWithNoHolder=True),
+         "holding on to what it claims to watch"),
+        ("a hidden holder behind the app-only shape",
+         lambda report: mutate(report, "severedBackpointerAppOnlyHolder",
+                               hostAliveWhileHeldByHolder=True),
+         "something other than `app.host` is holding it"),
+        ("the pairing unable to hold a host",
+         lambda report: mutate(report, "severedBackpointerPairedHolder",
+                               hostAliveWhileHeldByHolder=False),
+         "cannot stand in for the strong"),
+        ("a holder shape that outlived every holder",
+         lambda report: mutate(report, "severedBackpointerPairedHolder",
+                               hostAliveWithNoHolder=True), "outlived the last holder"),
+        ("a shape nobody wrote a rule for",
+         lambda report: shapes_with_extra(report), "does not know"),
         ("a clean-up that claimed to finish and did not",
          lambda report: report_with(
              report, libraryHosts=1, probeOwnedHosts=1,
@@ -1428,7 +1647,7 @@ def red_team(sample_path, baseline, decls):
             # of its own, so it is spelled out here -- the record gains the reap entry that run
             # would have written for the library it found, and nothing else is touched. The one
             # case that tests the missing field keeps it missing.
-            report = with_filed_reap(with_filed_partial(report))
+            report = with_filed_reap(with_filed_partial(with_filed_holder_shapes(report)))
         # CI runs this audit with the partial-response step asked for by name, so the red team
         # bites on CI's footing: a rule that only fires under a flag nobody passes in a fixture is
         # a rule nobody has watched fire.
@@ -1477,7 +1696,7 @@ def red_team(sample_path, baseline, decls):
                 # And the refusal has to be about that and nothing else: give the old run the
                 # record it would have written and it must go green, or the rule is refusing the
                 # shape rather than the missing evidence.
-                repaired = with_filed_reap(with_filed_partial(json.loads(json.dumps(filed))))
+                repaired = with_filed_reap(with_filed_partial(with_filed_holder_shapes(filed)))
                 quiet = probe_problems(repaired, require_partial=True)
                 if quiet:
                     print("FAIL red team: %s is still refused after the entries it predates are"

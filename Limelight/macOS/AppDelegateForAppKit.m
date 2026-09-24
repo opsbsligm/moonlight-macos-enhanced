@@ -1126,6 +1126,80 @@ static void MLOwnershipBuildBackpointerPair(TemporaryHost **hostSlot,
     *appListCountSlot = host.appList.count;
 }
 
+// Two shapes that ask the question the three above cannot, because in all three the outside
+// holder *is* the app: whether a separate holder that keeps the app can keep its host alive, and
+// whether a holder that keeps the app *and* the host can do it. That is the whole of step 2 and
+// step 3 of the fix -- `streamVC.app` plus `streamVC.host`, `item.app` plus `item.host` -- and the
+// claim it rests on, "today the host is alive because its own app points back at it", has been
+// read off the declarations rather than measured.
+//
+// The pair is built the way `-[TemporaryHost initFromHost:]` leaves it and then the back-pointer is
+// severed by hand (`app.host = nil`), which stands in for what `weak` does to the graph the day it
+// is declared, without anybody having to land the declaration first. Severing is explicit and is
+// reported as such, so a reader cannot mistake these two for a run of the fixed build: what they
+// measure is the *contribution* of that one edge, held fixed against the shape that keeps it.
+//
+// The holder itself is a stand-in object, not a view controller -- the probe constructs no views --
+// and it is witnessed like everything else. Its own aliveness after the probe lets go is the control
+// that says the harness is not holding what it claims to watch: if the holder survives being dropped
+// here, every `yes` below belongs to the harness and the run is refused.
+//
+// What these two shapes can say, and what they cannot. They can say that with the back-pointer
+// severed, a holder keeping only the app loses the host and a holder keeping both does not: that is
+// the pairing doing the job by name, measured rather than argued, and it is the number the fix has
+// to hold on to when it lands. They cannot say what a live stream session does with those objects --
+// the probe builds no `StreamViewController`, and the session's own references are not in this
+// process. The holder rule in scripts/ownership-audit.py is what watches the assignment sites, and
+// the boundary between the two stays written down on both sides.
+static NSDictionary *MLOwnershipMeasureHolderShape(BOOL holderKeepsHost,
+                                                   BOOL severBackpointer) {
+    __weak TemporaryHost *witnessHost = nil;
+    __weak TemporaryApp *witnessApp = nil;
+    __weak NSMutableArray *witnessHolder = nil;
+    __block NSMutableArray *holder = nil;
+
+    @autoreleasepool {
+        TemporaryHost *host = nil;
+        TemporaryApp *app = nil;
+        NSUInteger appListCount = NSUIntegerMax;
+        MLOwnershipBuildGraphPair(&host, &app, &appListCount);
+        if (severBackpointer) {
+            // Only the hand-severed shapes are comparable to the fix: the graph shape keeps its
+            // back-pointer, and leaving it in place here would make "the holder keeps the host
+            // alive" true of both variants for the wrong reason.
+            app.host = nil;
+        }
+        holder = [NSMutableArray array];
+        [holder addObject:app];
+        if (holderKeepsHost) {
+            [holder addObject:host];
+        }
+        witnessHost = host;
+        witnessApp = app;
+        witnessHolder = holder;
+        // Drop the local references so the holder is the only outside hand on the pair, which is
+        // the state `prepareForSegue:` leaves the app in.
+        host = nil;
+        app = nil;
+    }
+    MLProbeSpin(0.3);
+
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    result[@"holderKind"] = holderKeepsHost ? @"app-and-host" : @"app-only";
+    result[@"backpointerSevered"] = @(severBackpointer);
+    result[@"hostAliveWhileHeldByHolder"] = @(witnessHost != nil);
+    result[@"appAliveWhileHeldByHolder"] = @(witnessApp != nil);
+
+    holder = nil;
+    @autoreleasepool {
+    }
+    MLProbeSpin(0.3);
+    result[@"holderAliveWithNoHolder"] = @(witnessHolder != nil);
+    result[@"hostAliveWithNoHolder"] = @(witnessHost != nil);
+    result[@"appAliveWithNoHolder"] = @(witnessApp != nil);
+    return result;
+}
+
 // The same question asked of the host's name, because the method answers it bare.
 //
 // `propagateChangesToParent:` assigns `name` the way `uuid` used to be assigned, and
@@ -1479,6 +1553,11 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
                                                            NSUInteger *appListCountSlot) {
         MLOwnershipBuildBackpointerPair(hostSlot, appSlot, appListCountSlot);
     });
+    // The two holder shapes above: the same severed graph, held by a holder that keeps the app
+    // alone and by one that keeps the app and the host. The difference between the two readings is
+    // the pairing's contribution, which is what step 2 and step 3 of the fix are for.
+    shapes[@"severedBackpointerAppOnlyHolder"] = MLOwnershipMeasureHolderShape(NO, YES);
+    shapes[@"severedBackpointerPairedHolder"] = MLOwnershipMeasureHolderShape(YES, YES);
 
     NSDictionary *report = @{@"ownership": ownership, @"failures": failures};
     NSData *json = [NSJSONSerialization dataWithJSONObject:report
@@ -1491,6 +1570,12 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
             [handBuilt[@"hostAliveWhileAppHeld"] boolValue] ? "yes" : "no",
             [handBuilt[@"hostAliveWithNoHolder"] boolValue] ? "yes" : "no",
             [shapes[@"backpointerOnly"][@"hostAliveWithNoHolder"] boolValue] ? "yes" : "no");
+    NSDictionary *severedAppOnly = shapes[@"severedBackpointerAppOnlyHolder"];
+    NSDictionary *severedPaired = shapes[@"severedBackpointerPairedHolder"];
+    fprintf(stderr, "[ownership-probe] back-pointer severed: a holder keeping only the app keeps"
+            " the host alive: %s | a holder keeping the app and the host keeps it alive: %s\n",
+            [severedAppOnly[@"hostAliveWhileHeldByHolder"] boolValue] ? "yes" : "no",
+            [severedPaired[@"hostAliveWhileHeldByHolder"] boolValue] ? "yes" : "no");
     if (failures.count) {
         fprintf(stderr, "[ownership-probe] %s\n",
                 [[failures componentsJoinedByString:@"; "] UTF8String]);
