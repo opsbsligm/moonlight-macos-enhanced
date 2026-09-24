@@ -250,6 +250,7 @@ def probe_problems(report):
     elif seed.get("status") not in ("seeded", "existing-hosts"):
         problems.append("the audit asked for a host graph and got status %r, so the production"
                         " shape was never there to hold" % seed.get("status"))
+    problems.extend(reap_problems(ownership, seed))
     shapes = ownership.get("shapes")
     if not isinstance(shapes, dict):
         problems.append("the probe recorded no shapes, so there is no control and no reading")
@@ -500,6 +501,77 @@ def section5_status(report, decls):
             " the judgement is unchanged until a commit moves it")
 
 
+REAP_STATUSES = ("empty", "kept", "reaped", "removed-some")
+
+
+def reap_problems(ownership, seed):
+    """Judge what the probe did about the library it found itself in.
+
+    The reason these rules exist is that handing a probe a private `HOME` does not give it a
+    private database: the support directory resolves out of the account, not out of `$HOME`, so
+    every probe on a machine -- and every step of one CI job -- opens the same store. A run that
+    did not look at who owned the hosts in it could therefore measure a graph an earlier run left
+    behind and report it as the production shape, which is exactly what the runner had been doing
+    while its comment described a clean room.
+    """
+    problems = []
+    reap = ownership.get("reapedHosts")
+    if not isinstance(reap, dict):
+        return ["the audit set ML_PROBE_REAP_OWN_HOSTS and the probe recorded no reapedHosts, so"
+                " the flag reached a build that ignores it -- the same failure the seed flag has"
+                " its own rule for, and the reap cannot be assumed any more than the seed was"]
+    status = reap.get("status")
+    if status not in REAP_STATUSES:
+        problems.append("the reap recorded status %r, which is not a library the probe may judge:"
+                        " the outcomes it may report are %s"
+                        % (status, ", ".join(REAP_STATUSES)))
+        return problems
+    found = int(reap.get("found") or 0)
+    ours = int(reap.get("probeOwned") or 0)
+    # The record has to describe one library. A probe that counted the hosts and then chose a
+    # verdict by a different count is describing two, and neither reading can be trusted.
+    if status == "kept" and ours > 0:
+        problems.append("the reap kept a library of %d host(s) while calling %d of them"
+                        " probe-owned, so hosts a probe planted are still in the graph this run"
+                        " measured" % (found, ours))
+    if status == "reaped" and int(reap.get("remaining") or 0) != 0:
+        problems.append("the reap reported reaping and then read %s host(s) back, so the library"
+                        " the shapes were measured over is not the empty one the status claims"
+                        % reap.get("remaining"))
+    if status == "empty" and found != 0:
+        problems.append("the reap called a library of %d host(s) empty" % found)
+    library = int(ownership.get("libraryHosts") or 0)
+    probe_owned = int(ownership.get("probeOwnedHosts") or 0)
+    if status in REAP_STATUSES and isinstance(reap.get("probeOwned"), int):
+        # The two counts are taken at different moments -- the reap looks before this run seeds,
+        # the measurement looks after -- so they are compared through the seeding rather than
+        # against each other. Getting this wrong is not hypothetical: the first version of the
+        # shape loop stopped counting where it stopped searching, and a laptop holding one planted
+        # host among two reported none beside a reap that said one.
+        owned_after_reap = 0 if status != "kept" else int(reap["probeOwned"])
+        seeded_now = isinstance(seed, dict) and seed.get("status") == "seeded"
+        expected = owned_after_reap + (int(seed.get("seeded") or 0) if seeded_now else 0)
+        if probe_owned != expected:
+            problems.append("the library the shapes were measured over holds %d probe-owned"
+                            " host(s), which is not the %d the reap left (%s) plus whatever this"
+                            " run seeded (%s), so the two halves of the record do not describe"
+                            " one library"
+                            % (probe_owned, owned_after_reap, status,
+                               seed.get("seeded") if seeded_now else "nothing"))
+    if probe_owned > library:
+        problems.append("the probe counted %d probe-owned host(s) inside a library of %d, which"
+                        " is a count that cannot come from one look at one library"
+                        % (probe_owned, library))
+    if (isinstance(seed, dict) and seed.get("status") == "existing-hosts" and library > 0
+            and probe_owned >= library):
+        problems.append("every one of the %d host(s) in the library was planted by a probe and the"
+                        " seed still reported existing-hosts, so this run measured a graph an"
+                        " earlier probe left in the database instead of one it made: the room was"
+                        " not clean, and the production shape is the previous run's handiwork"
+                        % library)
+    return problems
+
+
 def app_weak(decls):
     return decls["app.host"] == "weak"
 
@@ -535,7 +607,8 @@ def shipped_report():
                 "appHostReadableWhileAppHeld": readable, "hostAliveWithNoHolder": leak_host,
                 "appAliveWithNoHolder": leak_app}
 
-    return {"ownership": {"holder": "app-only", "libraryHosts": 2,
+    return {"ownership": {"holder": "app-only", "libraryHosts": 2, "probeOwnedHosts": 0,
+                          "reapedHosts": {"status": "kept", "found": 2, "probeOwned": 0},
                           "productionHostUuid": "86D1F81F-4D3D-E306-D694-EFDFE6BCD6CE",
                           "seedHosts": {"status": "existing-hosts", "requested": 1,
                                         "existing": 2, "seeded": 0},
@@ -616,6 +689,38 @@ def self_test(baseline):
          ["handBuiltGraph.appListCount"]),
         ("a shape that recorded nothing", dropped_observation(shipped_report()), strong,
          baseline, ["recorded no"]),
+        # The reap rules. These are the refusals that keep a probe from reading somebody else's
+        # library and calling it the production shape, which the private `HOME` was believed to
+        # do and does not.
+        ("the reap flag reaching a build that ignored it",
+         report_with(shipped_report(), reapedHosts=None), strong, baseline, ["no reapedHosts"]),
+        ("a library left in the state a probe cannot name",
+         report_with(shipped_report(), reapedHosts={"status": "mixed", "found": 3,
+                                                    "probeOwned": 1}),
+         strong, baseline, ["not a library the probe may judge"]),
+        ("a reap that kept hosts of its own",
+         report_with(shipped_report(), reapedHosts={"status": "kept", "found": 2,
+                                                    "probeOwned": 1}),
+         strong, baseline, ["probe-owned, so hosts a probe planted"]),
+        ("a reap that said reaped and left hosts",
+         report_with(shipped_report(), reapedHosts={"status": "reaped", "found": 2,
+                                                   "probeOwned": 2, "removed": 2,
+                                                   "remaining": 1}),
+         strong, baseline, ["reported reaping and then read"]),
+        # The CI runner's record on 2026-09-24: one host, planted by the step before, and a seed
+        # that reported it as somebody's library. Red by these rules, green by none of them
+        # before they existed, which is the point of writing them down.
+        ("the leftover library the runner reported",
+         report_with(shipped_report(), libraryHosts=1, probeOwnedHosts=1,
+                     reapedHosts={"status": "empty", "found": 0, "probeOwned": 0},
+                     seedHosts={"status": "existing-hosts", "requested": 1, "existing": 1,
+                               "seeded": 0}),
+         strong, baseline, ["not clean"]),
+        ("a library the probe seeded for itself",
+         report_with(shipped_report(), libraryHosts=1, probeOwnedHosts=1,
+                     reapedHosts={"status": "empty", "found": 0, "probeOwned": 0},
+                     seedHosts={"status": "seeded", "requested": 1, "seeded": 1}),
+         strong, baseline, []),
     ]
     failures = 0
     for label, report, decls, base, expected in cases:
@@ -681,6 +786,22 @@ def mutate(report, shape, **changes):
     return report_with(report, shapes=shapes)
 
 
+def with_filed_reap(report):
+    """The reap entry a pre-reap run would have written for the library it actually found.
+
+    Only ever used by the red team, on a record filed before the field existed. It is a repair of
+    the sample, not of the rule: without it the missing field answers every question the red team
+    asks, and the rules it is trying to prove bite never get to open their mouths.
+    """
+    if isinstance(report["ownership"].get("reapedHosts"), dict):
+        return report
+    total = int(report["ownership"].get("libraryHosts") or 0)
+    owned = int(report["ownership"].get("probeOwnedHosts") or 0)
+    status = "empty" if total == 0 else ("kept" if owned == 0 else "mixed")
+    return report_with(report, reapedHosts={"status": status, "found": total,
+                                            "probeOwned": owned})
+
+
 # ---------------------------------------------------------------------------
 # The red team: break a real record and check that the rules bite on it
 # ---------------------------------------------------------------------------
@@ -719,10 +840,31 @@ def red_team(sample_path, baseline, decls):
              name: record for name, record in report["ownership"]["shapes"].items()
              if name != "productionGraph"}),
          "productionGraph"),
+        # The library question, asked of a real record. Both of these are the runner's shape on
+        # 2026-09-24: one host in the database, planted by the sweep a step earlier, and a run
+        # that called it existing-hosts and measured it as the production graph.
+        ("a library in which every host was planted by a probe",
+         lambda report: report_with(
+             report, libraryHosts=1, probeOwnedHosts=1,
+             reapedHosts={"status": "empty", "found": 0, "probeOwned": 0},
+             seedHosts={"status": "existing-hosts", "requested": 1, "existing": 1,
+                        "seeded": 0}),
+         "not clean"),
+        ("a build that never saw the reap flag",
+         lambda report: report_with(report, reapedHosts=None),
+         "no reapedHosts"),
     ]
     failures = 0
     for label, change, want in mutations:
         report = change(json.loads(json.dumps(sample)))
+        if want != "no reapedHosts":
+            # The filed record predates the reap, so every mutation of it would otherwise be
+            # refused for the missing field and the rules underneath would go untested: the red
+            # team would report nine bites while proving one. Filling the field in is a mutation
+            # of its own, so it is spelled out here -- the record gains the reap entry that run
+            # would have written for the library it found, and nothing else is touched. The one
+            # case that tests the missing field keeps it missing.
+            report = with_filed_reap(report)
         problems = probe_problems(report)
         if not problems:
             problems, _notes = judge(report, decls, baseline)
@@ -736,6 +878,53 @@ def red_team(sample_path, baseline, decls):
             failures += 1
         else:
             print("ok   red team: %s" % label)
+
+    # Every record filed in this repository, refused or accepted for the reason the baseline says
+    # and no other. Filing a run is a claim about what the rules will make of it, and the claim
+    # belongs to the record rather than to the code that reads it: when a greener run arrives, the
+    # expectation changes because the evidence arrived, not because a rule was relaxed.
+    records = baseline.get("filed_record_refusals")
+    if not isinstance(records, dict) or not records:
+        print("FAIL red team: the baseline files no `filed_record_refusals`, so nothing says what"
+              " the committed records are supposed to do under these rules -- and a record that"
+              " is expected to pass is as much a claim as one expected to fail.")
+        failures += 1
+    else:
+        for name, want in sorted(records.items()):
+            path = os.path.join(ROOT, "scripts", name)
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    filed = json.load(handle)
+            except (OSError, ValueError) as error:
+                print("FAIL red team: the baseline names %s and it cannot be read (%s)" % (name, error))
+                failures += 1
+                continue
+            said = "; ".join(probe_problems(filed))
+            if want:
+                missing = [expected for expected in want if expected not in said]
+                if missing:
+                    print("FAIL red team: %s was refused for the wrong reason(s): wanted %r, got %s"
+                          % (name, missing[0], said[:200] or "no complaints at all"))
+                    failures += 1
+                    continue
+                # And the refusal has to be about that and nothing else: give the old run the"
+                # record it would have written and it must go green, or the rule is refusing the
+                # shape rather than the missing evidence.
+                quiet = probe_problems(with_filed_reap(json.loads(json.dumps(filed))))
+                if quiet:
+                    print("FAIL red team: %s is still refused after the reap entry it predates is"
+                          " filled in, so the refusal was not about the reap: %s"
+                          % (name, quiet[0][:180]))
+                    failures += 1
+                    continue
+                print("ok   red team: %s, refused for exactly %r and for nothing else" % (name, want))
+            else:
+                if said:
+                    print("FAIL red team: %s was expected to pass and was refused: %s"
+                          % (name, said[:220]))
+                    failures += 1
+                    continue
+                print("ok   red team: %s, accepted as the baseline files it" % name)
 
     # The holder rule is read off the tree rather than off a record, so its red team breaks the
     # tree -- in a dictionary in memory, with no file touched. The break is the interesting one:
@@ -791,7 +980,7 @@ def read_probe_record(output_directory):
         return None
 
 
-def capture(timeout):
+def capture(timeout, reap=True):
     """Ask the Debug build who holds what, and hand back what it recorded.
 
     It needs the product `render-probe.py` builds and nothing else: no `leaks`, no page, no
@@ -808,6 +997,11 @@ def capture(timeout):
     out = tempfile.mkdtemp(prefix="ownership-out.")
     binary = os.path.join(app, "Contents", "MacOS", project_identity.bundle_executable(app))
     env = dict(os.environ, HOME=home, ML_OWNERSHIP_PROBE="1", ML_RENDER_PROBE_OUTPUT=out)
+    if reap:
+        # The flag is on by default, and off only for a person who wants to see the library as
+        # the previous run left it. Leaving it off always would keep the gate blind to the one
+        # thing the private `HOME` cannot do: give this run a database of its own.
+        env["ML_PROBE_REAP_OWN_HOSTS"] = "1"
     try:
         try:
             subprocess.run([binary], capture_output=True, text=True, env=env, timeout=timeout,
@@ -819,9 +1013,11 @@ def capture(timeout):
             return None
         return read_probe_record(out)
     finally:
-        # The gate that asks who is holding what is not allowed to be the thing holding it: the
-        # probe writes a database into the HOME it was given, and both directories are this
-        # function's to remove.
+        # Both directories are this function's to remove, and removing them is worth doing --
+        # but it is not isolation, and used to be described as if it were. The support directory
+        # the probe opens resolves out of the account record rather than out of `HOME`, so the
+        # database behind this run is the machine's own, and what keeps the run from inheriting
+        # an earlier probe's graph is the reap flag above rather than the directory below.
         shutil.rmtree(home, ignore_errors=True)
         shutil.rmtree(out, ignore_errors=True)
 
@@ -845,6 +1041,8 @@ def parse(arguments):
         if arguments[index] == "--timeout":
             timeout = int(arguments[index + 1])
             index += 2
+        elif arguments[index] == "--no-reap":
+            index += 1
         elif arguments[index] == "--sample":
             sample = arguments[index + 1]
             index += 2
@@ -870,7 +1068,7 @@ def main():
     if "--red-team" in arguments:
         return 1 if red_team(sample, baseline, decls) else 0
 
-    report = capture(timeout)
+    report = capture(timeout, reap="--no-reap" not in arguments)
     problems = probe_problems(report)
     notes = []
     if not problems:
@@ -891,13 +1089,18 @@ def main():
         return 1
     ownership = report["ownership"]
     seed = ownership.get("seedHosts") or {}
-    # Named on every green line rather than left in the record: on a runner the graph is a seed
-    # (no LAN to answer mDNS), and "measured on a host this run wrote" is a different claim from
-    # "measured on somebody's library". The two are worth telling apart in the log, where nobody
-    # can go and look at the machine.
+    # Named on every green line rather than left in the record: "measured on a host this run
+    # wrote" and "measured on a graph an earlier run left in the shared database" are different
+    # claims, and on a runner the two are one host apart -- which is exactly the pair of claims
+    # the first version of this line got the wrong way round, because the sweep that seeds a host
+    # runs a step earlier in the same job. The reap status is printed beside the count so the log
+    # says both what the library held and what this run did about it.
+    reap = ownership.get("reapedHosts") or {}
     print("ownership: declarations %s" % signature(decls))
-    print("ownership: %d host(s) in the library, seed status %s"
-          % (ownership.get("libraryHosts", 0), seed.get("status", "unrecorded")))
+    print("ownership: %d host(s) in the library (%s planted by a probe), seed status %s, reap"
+          " status %s"
+          % (ownership.get("libraryHosts", 0), ownership.get("probeOwnedHosts", "unrecorded"),
+             seed.get("status", "unrecorded"), reap.get("status", "unrecorded")))
     print("ownership: %s" % summary(ownership))
     print("ownership: %d site(s) hand an app to a holder"
           % len(app_assignment_sites(first_party_sources())))

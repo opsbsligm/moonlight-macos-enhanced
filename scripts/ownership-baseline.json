@@ -42,7 +42,7 @@
    "measured_on": "2026-09-24, run 36015387603, GitHub macOS runners, arm64 and x86_64: both reported the library as 1 host with seed status `seeded`, the production graph holding its host on the app alone and surviving its last holder, the hand-built graph agreeing, and the lone back-pointer going back",
    "runs": 2,
    "what_still_needs_a_thing_we_do_not_have": "a live stream session. The runners judge the object graph and the assignments; nobody has yet watched a running stream read `app.host`, and the holder rule is a guarantee about the source until somebody does.",
-   "what_the_runners_add": "the seed path, which is the only way to build the graph where there is nothing to discover. The laptop measured `existing-hosts` over a real library; a runner measures `seeded`, and the appList of 3 on both arches is the seed's fan-out read back through the production `getHosts`. Same table either way, which is the point: the reading does not depend on whose LAN answered.",
+   "what_the_runners_add": "Nothing, until the reap. The runner's ownership reading was the sweep's leftover graph, reached through the one file every probe on the machine opens, because a private `HOME` does not move the support directory: it resolves out of the account record. `HOME` isolation was assumed by three probes and measured false on 2026-09-25 by an empty temporary home that still reported the laptop's own two hosts. With `ML_PROBE_REAP_OWN_HOSTS` the ownership probe removes hosts it can prove it planted, through the app's own `removeHost:`, and only when the whole library is probe-owned -- so on a runner the seed branch is finally the branch that runs, and on a person's machine the library is read and not touched.",
    "x86_64": {
     "appAssignmentSites": 3,
     "backpointerOnly": {
@@ -68,12 +68,13 @@
      "hostAliveWithNoHolder": true
     },
     "sitesAlsoGivenAHost": 1
-   }
+   },
+   "correction_seed_status": "WRONG IN THE FIRST FILING, corrected from the run's own log. This block used to say both arches reported seed status `seeded`. The first ownership print appeared in run 36019606141 and both arches read `1 host(s) in the library, seed status existing-hosts`. The `seeded` had been carried over from the memory sweep's line in the same job, which does seed a host: the sweep runs a step earlier, and the probe that came to measure a graph it would plant itself found the sweep's host already in the database. Two readings of two steps had been merged into one record, which is the mistake this file exists to make expensive."
   },
   "laptop": {
    "backpointer_only_survives_with_no_holder": false,
-   "library_hosts": 2,
-   "measured_on": "2026-09-24, one Debug probe build, one laptop with a real library: the picked host carried three apps, so the production shape reports appListCount 3 while the hand-built one reports 1",
+   "library_hosts": 1,
+   "measured_on": "2026-09-25, one Debug probe build on this laptop, after the reap: one host in the library, none of them planted by a probe, the reap recording `kept` and leaving it alone, and the three shapes reading exactly as they did the day before -- which is the check that the reap changed who holds what and not what is held",
    "production_graph": {
     "appAliveWithNoHolder": true,
     "appHostReadableWhileAppHeld": true,
@@ -81,7 +82,8 @@
     "hostAliveWhileAppHeld": true,
     "hostAliveWithNoHolder": true
    },
-   "seed_status": "existing-hosts"
+   "seed_status": "existing-hosts",
+   "what_the_cleanup_found": "Before the reap there were two hosts in this library, and the first run of the reap called the library mixed: one of the two carried the seed's uuid prefix. An earlier sweep had planted it here while believing the temporary `HOME` it was handed kept it out of the machine's own store. It was removed through the app's own `removeHost:` under `ML_PROBE_REMOVE_OWN_HOSTS`, the flag a person sets for their own machine; the default reap still refuses a mixed library, because it cannot tell a leftover from somebody's GameStream host and guessing deletes a machine from somebody's list. The host that remains is the one this laptop streams to."
   },
   "unpaired_sites_found": "prepareForSegue: (AppsViewController.m:613, the stream) and configureItem: (AppsViewController.m:724, the AppCell, which reads self.app.host.uuid at AppCell.m:129). Both are alive today because the app is what keeps the host alive, which is the first observation of this experiment rather than an inference.",
   "what_the_controls_are_for": "handBuiltGraph exists only to agree with productionGraph: if the two disagree, something outside the pair is holding it and no reading in the report describes the app. backpointerOnly has nothing pointing back at the app, so it is required to go back; if it survives, the probe is holding the objects it claims to watch and the leak in the other two shapes is the harness's. Both controls are refused rather than warned about, because they are the only reason the third reading means anything.",
@@ -143,5 +145,13 @@
    "appListCount": 1
   },
   "why": "the counts are the definition of the shapes, not a property of the library. A hand-built graph with no app pointing back is the third shape wearing the second shape's name, and the agreement between the two graphs -- the control that says nothing outside the pair is retaining it -- would then be an agreement between two copies of the same shape."
- }
+ },
+ "filed_record_refusals": {
+  "ownership-sample.json": [],
+  "ownership-sample-prereap.json": [
+   "no reapedHosts"
+  ]
+ },
+ "filed_record_refusals_note": "One entry per record filed in `scripts`, keyed by file name, and the value is the list of refusals that file must draw. `ownership-sample.json` is the run of 2026-09-25 on this laptop after the reap landed: one host in the library, none of them the probe's, the reap keeping them, and the shapes unchanged from the run before it -- so it has to draw nothing. `ownership-sample-prereap.json` is run 36019606141, filed a day earlier: the CI runner's reading, whose library was the memory sweep's leftover, and it must draw the refusal naming the field that run's build could not have recorded. The red team also fills that field in and requires the older record to go green, which is what makes the refusal a verdict about the reap rather than a coincidence of shape. Expectations move when records arrive, which keeps relaxing a rule and filing a record two different edits.",
+ "library_sharing": "One database per machine, not one per probe. `DatabaseSingleton` resolves its store under `NSApplicationSupportDirectory` in `NSUserDomainMask`, which comes out of the account record and not out of `$HOME`, so a Debug probe started with a private temporary home still opens the same SQLite file as the app a person uses. Measured, not inferred: an empty temporary `HOME`, a probe asked to seed one host, and a report of the laptop's own two hosts. Every probe in this repository had assumed the opposite, and one of them was deleting the directory it believed it had written to. What follows from it: the steps of one CI job share a library, and a run that measures `the library` without asking who put hosts in it may be measuring the previous run. `ML_PROBE_REAP_OWN_HOSTS` and `probeOwnedHosts` are what turns that from an assumption into a reading."
 }

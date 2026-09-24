@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A probe now knows whose library it is measuring, because a private `HOME` never gave it one.**
+  Every Debug probe in this repository was started with a temporary `HOME` and described in its own
+  comments as getting "its own database and preferences". Measured on 2026-09-25: an empty
+  temporary home, the ownership probe, and a report of this laptop's own two hosts. `DatabaseSingleton`
+  resolves its store through `NSApplicationSupportDirectory` in `NSUserDomainMask`, which answers out
+  of the account record and ignores `$HOME` (`DatabaseSingleton.m:100`), so every probe on a machine
+  -- and every step of one CI job -- opens the same SQLite file, and the directory an audit deleted
+  afterwards was a directory it had never written to. Two consequences were real: the ownership step
+  on a runner was measuring the host the memory sweep had planted one step earlier and reporting that
+  library as somebody else's, and this laptop's real library had a probe's host inside it, which the
+  first reap reported as a mixed library. The seed's uuid prefix is now one constant, the library is
+  counted by who wrote each host, and `ML_PROBE_REAP_OWN_HOSTS` reaps a probe's own hosts through the
+  app's own `-[DataManager removeHost:]` before seeding -- `reaped`, `kept`, or `empty` when the
+  library holds none of ours, and a refusal on `mixed`, because the guess that goes wrong there
+  deletes a player's GameStream host. `ML_PROBE_REMOVE_OWN_HOSTS` is the second flag a person presses
+  for their own machine, and it is what cleared the leftover here. `probeOwnedHosts` is recorded beside
+  `libraryHosts` and printed on the green line, so the log says whose graph was measured and what the
+  run did about it; `scripts/ownership-audit.py` reconciles the two counts through the seeding, because
+  the first version of that count stopped counting where it stopped searching and a real laptop caught
+  it saying zero beside a reap that said one. Filed records now each carry their own expectation in the
+  baseline: the new one must be accepted, and run `36019606141`'s must be refused for the reap entry its
+  build predates and for nothing else -- the red team fills that entry in and requires it to go green, so
+  the refusal is proven to be about the missing evidence rather than about the shape.
+
 
 - **The thing section 5 was waiting for is now measured instead of argued: the app asks its own
   objects who is holding whom, and a fix cannot change ownership without predicting it first.**
@@ -345,6 +369,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **The ownership reading filed on CI said the runner seeded its own host. It did not, and the
+  sentence was a transcription of a different step.** `scripts/ownership-baseline.json` recorded both
+  arches at `seedHosts.status = seeded`; the first line the probe itself printed (run `36019606141`)
+  read `1 host(s) in the library, seed status existing-hosts` on both. The `seeded` had been copied
+  from the memory sweep's own line in the same job -- which does seed a host, one step earlier, into
+  the one database the whole job shares, for as long as a private `HOME` did not separate them. The
+  readings themselves stand: the three shapes agreed word for word across both arches and still do,
+  and `appList 3` is `appList 3` whoever wrote the host. What was wrong was the claim about where the
+  graph came from, which is the one thing that section was written to keep straight, so the record
+  now says so in the file it sits in and `docs/memory-ownership.md` section 10 carries the correction
+  next to the numbers it describes.
+
 - **A re-shown stream window no longer answers one event twice.**
   `-viewDidAppear` is delivered again to the same view controller when its
   window is hidden and shown again, and once per show across three parent

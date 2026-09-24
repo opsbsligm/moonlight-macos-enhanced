@@ -674,6 +674,137 @@ static BOOL MLProbeArmed = NO;
 // The status is recorded rather than assumed, because the failure this gate exists to catch
 // is a sweep that judged an empty room and called it clean: a flag that asked for a graph and
 // silently got none has to be visible in the report the audit reads.
+// Every host this file plants carries this uuid prefix, so "which of the hosts in the library
+// came from a probe" is one question with one answer. The seed below writes it, the count under
+// it reads it, and the reaper removes nothing that does not start with it. Three places that
+// each spelled the prefix out would disagree the first time somebody renamed one of them, and
+// the disagreement would be a probe deleting a player's machines.
+static NSString *const MLProbeHostUuidPrefix = @"probe-host-";
+
+// Split the library by who put each host in it. `total` is what the app would show a person and
+// `probeOwned` is what an earlier probe left behind. The two are counted together because the
+// difference between them is what decides whether a probe may touch the library at all, and a
+// probe that asked that question of a second copy of the library would be asking it of a
+// library that had changed since the first look.
+static void MLCountLibraryHosts(DataManager *store, long *total, long *probeOwned) {
+    long seen = 0;
+    long ours = 0;
+    for (TemporaryHost *host in [store getHosts]) {
+        seen++;
+        // A host with no uuid is not ours: it cannot have come from a seed that always names
+        // its hosts, and it is exactly the kind of half-written record a real library can hold.
+        if ([host.uuid hasPrefix:MLProbeHostUuidPrefix]) {
+            ours++;
+        }
+    }
+    if (total != NULL) {
+        *total = seen;
+    }
+    if (probeOwned != NULL) {
+        *probeOwned = ours;
+    }
+}
+
+// Reap the hosts earlier probes planted, and only those.
+//
+// This exists because of a fact about macOS that every probe in this file had assumed away: the
+// `HOME` a probe is handed does not move its database. `URLsForDirectory:NSApplicationSupportDirectory
+// inDomains:NSUserDomainMask` resolves out of the account record rather than out of `$HOME`, so
+// a Debug probe started with a private temporary home still opens the store in the real user's
+// Application Support, and the directory an audit removes afterwards is a directory that was
+// never written to. Measured on this laptop on 2026-09-24: an empty temporary `HOME`, a probe
+// that asked for one seeded host, and a report of two existing hosts -- that machine's own
+// library, reached through an environment variable that was supposed to have hidden it.
+//
+// Which means the graph a probe measures belongs to whoever that file belongs to, and the steps
+// of one CI job share it. The memory sweep seeds a host, and the ownership probe that runs after
+// it in the same job finds that host already waiting and calls the library somebody else's. That
+// is the whole difference between `seeded` and `existing-hosts` in the runner's record, and it is
+// why the runner's ownership reading had been measuring the previous step's handiwork underneath
+// a comment claiming a clean room.
+//
+// A probe cannot fix that by deleting a library, so it does not try. It removes hosts only when
+// every host in the library could only have come from a probe, and it records which of the
+// outcomes happened: `reaped`, `kept` (a person's machines, untouched), `empty`, `mixed`, or
+// `did-not-clear`. `mixed` is a refusal rather than a note: a library holding both is one where
+// no rule written here can tell the probe's from the player's without guessing, and the guess
+// would be the deletion of somebody's GameStream host.
+//
+// What this step does not look at is the apps. `removeHost:` is the app's own deletion path and
+// it takes the host record; whether the app records a seeded host hung its apps on go with it is
+// Core Data's delete rule and nobody measured it here. The reading after the removal counts
+// hosts, because hosts are what the ownership question is about.
+static void MLReapProbeOwnedHostsIfRequested(NSMutableDictionary *report, void (^refuse)(NSString *)) {
+    if (getenv("ML_PROBE_REAP_OWN_HOSTS") == NULL) {
+        return;
+    }
+    NSMutableDictionary *record = [NSMutableDictionary dictionary];
+    report[@"reapedHosts"] = record;
+    DataManager *store = [[DataManager alloc] init];
+    long total = 0;
+    long ours = 0;
+    MLCountLibraryHosts(store, &total, &ours);
+    record[@"found"] = @(total);
+    record[@"probeOwned"] = @(ours);
+    if (total == 0) {
+        record[@"status"] = @"empty";
+        return;
+    }
+    if (ours == 0) {
+        record[@"status"] = @"kept";
+        return;
+    }
+    if (ours != total && getenv("ML_PROBE_REMOVE_OWN_HOSTS") != NULL) {
+        // A person asking for their own machine back. The default reap refuses a mixed library
+        // because it cannot be sure which half is a probe's and which half is somebody's LAN;
+        // this flag does not lower that bar, it raises the evidence: a human read the numbers and
+        // named the hosts to remove, which is the one thing the reap on a runner cannot do. Hosts
+        // that do not carry the seed's uuid are still not touched.
+        record[@"status"] = @"removed-some";
+    }
+    if (ours != total && ![record[@"status"] isEqualToString:@"removed-some"]) {
+        record[@"status"] = @"mixed";
+        refuse([NSString stringWithFormat:@"%ld of the %ld host(s) in the library were planted by a"
+                @" probe and the rest were not, so this run cannot say whose library the graph it"
+                @" measured came from", ours, total]);
+        return;
+    }
+    NSMutableArray<TemporaryHost *> *doomed = [NSMutableArray array];
+    for (TemporaryHost *host in [store getHosts]) {
+        if ([host.uuid hasPrefix:MLProbeHostUuidPrefix]) {
+            [doomed addObject:host];
+        }
+    }
+    for (TemporaryHost *host in doomed) {
+        [store removeHost:host];
+    }
+    long remaining = 0;
+    long stillOurs = 0;
+    MLCountLibraryHosts(store, &remaining, &stillOurs);
+    record[@"removed"] = @(ours);
+    record[@"remaining"] = @(remaining);
+    if (stillOurs != 0) {
+        record[@"status"] = @"did-not-clear";
+        refuse([NSString stringWithFormat:@"asked to remove %ld probe host(s) and the library still"
+                @" holds %ld of them, so the removal did not go the way the app removes a host",
+                ours, stillOurs]);
+        return;
+    }
+    if ([record[@"status"] isEqualToString:@"removed-some"]) {
+        // Somebody's hosts are still in there, which is the point: the verdict here is that the
+        // probe's own are gone, not that the library is empty.
+        return;
+    }
+    if (remaining != 0) {
+        record[@"status"] = @"did-not-clear";
+        refuse([NSString stringWithFormat:@"removed the only probe host(s) in a library of %ld and"
+                @" it still reads %ld host(s), so something other than the seed wrote here",
+                total, remaining]);
+        return;
+    }
+    record[@"status"] = @"reaped";
+}
+
 static void MLSeedHostsIntoLibrary(NSMutableDictionary *report, void (^refuse)(NSString *),
                                    long wanted) {
     NSMutableDictionary *record = [NSMutableDictionary dictionary];
@@ -708,7 +839,7 @@ static void MLSeedHostsIntoLibrary(NSMutableDictionary *report, void (^refuse)(N
     for (long hostNumber = 0; hostNumber < wanted; hostNumber++) {
         TemporaryHost *host = [[TemporaryHost alloc] init];
         host.name = [NSString stringWithFormat:@"Probe Host %ld", hostNumber + 1];
-        host.uuid = [NSString stringWithFormat:@"probe-host-%ld", hostNumber + 1];
+        host.uuid = [NSString stringWithFormat:@"%@%ld", MLProbeHostUuidPrefix, hostNumber + 1];
         host.address = [NSString stringWithFormat:@"192.0.2.%ld", 10 + hostNumber];
         [store updateHost:host];
 
@@ -903,6 +1034,12 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
     // the report so the audit reads the premise instead of assuming it from this file.
     ownership[@"holder"] = @"app-only";
 
+    // Reap before seeding. Without this the ownership probe on a CI runner measures the graph
+    // the memory sweep left in the same database one step earlier -- the same shape, the same
+    // three apps, and a `seed status` of existing-hosts rather than seeded, which is the only
+    // clue that the room was not clean. A person's own library is left exactly as it was.
+    MLReapProbeOwnedHostsIfRequested(ownership, refuse);
+
     // One host through the production write path, exactly as the memory sweep seeds one. A
     // machine with a library of its own is left alone and its library is what gets measured.
     MLSeedHostsIntoLibrary(ownership, refuse, 1);
@@ -916,6 +1053,7 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
     // would then be watching its own harness and reporting the harness's retain as the app's
     // leak. Nothing else is still held when the first observation is taken.
     NSUInteger libraryHostCount = 0;
+    NSUInteger libraryProbeOwned = 0;
     __block TemporaryHost *libraryHost = nil;
     __block TemporaryApp *libraryApp = nil;
     __block NSUInteger libraryAppListCount = 0;
@@ -923,6 +1061,17 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
         DataManager *store = [[DataManager alloc] init];
         NSArray<TemporaryHost *> *library = [store getHosts];
         libraryHostCount = library.count;
+        for (TemporaryHost *candidate in library) {
+            // Counted over the whole library, before anything picks a host out of it. The first
+            // version of this counted inside the loop below and stopped where that loop stopped,
+            // and a real library caught it: two probe hosts, one picked, and a report that said
+            // the library held none -- a count of the search, presented as a count of the
+            // library. The reap above counts the same library a second way, and the audit now
+            // refuses the two answers whenever they differ.
+            if ([candidate.uuid hasPrefix:MLProbeHostUuidPrefix]) {
+                libraryProbeOwned++;
+            }
+        }
         for (TemporaryHost *candidate in library) {
             NSArray<TemporaryApp *> *apps = candidate.appList.allObjects;
             if (apps.count > 0) {
@@ -937,6 +1086,7 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
         }
     }
     ownership[@"libraryHosts"] = @(libraryHostCount);
+    ownership[@"probeOwnedHosts"] = @(libraryProbeOwned);
     if (libraryApp == nil) {
         // Not a skip: a library with no app behind any host means there is no production graph
         // to hold, which is the whole subject, so the run has to say so out loud.
