@@ -399,6 +399,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The first `leaks` run on the settings path found a first-party retain
+  cycle, and the page that records it says why the obvious fix is not safe.**
+  `TemporaryHost.appList` retains its `TemporaryApp`s while
+  `TemporaryApp.host` retains the host back, so the pair is garbage to
+  everyone but itself -- and `-[DataManager getHosts]` builds a fresh graph on
+  every call while `SettingsModel.hosts` is a computed property with seventeen
+  call sites, so every evaluation pins the graph it just made. Measured over a
+  Debug probe run: 105 leaks for 10,896 bytes, six `ROOT CYCLE:
+  <TemporaryApp>` stacks, each tree 17 objects at 1.91K shared between them.
+  `docs/memory-ownership.md` writes down the command, the two ways the tool
+  misleads (its exit 1 means `leaks found leaks`; the shipped `strings` answer
+  lives in the debug dylib, not the 38KB stub), the owners that hold an app
+  and no host -- `StreamViewController` reads `self.app.host` twenty-one times
+  and the box-art path builds its path from `app.host.uuid` asynchronously --
+  and the fix, which is a weak back-pointer plus an explicit host on those two
+  owners, with `ROOT CYCLE: <TemporaryApp>` going 6 to 0 as the proof. No
+  ownership change was made: the streaming path cannot be run on this machine,
+  and a memory fix that trades a leak for a nil host mid-session is a
+  behaviour change, not a polish.
+
+
 - **The gate that accounts for a stored CoreFoundation reference now asks
   which class stored it, because a neighbour's teardown was paying the debt.**
   `constraints-audit.py` credits an ivar when a release of that name exists
