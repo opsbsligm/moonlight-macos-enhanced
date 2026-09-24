@@ -219,7 +219,7 @@ def judge_pairing(sites, decls, baseline):
     return problems, notes
 
 
-def probe_problems(report):
+def probe_problems(report, require_reap=True):
     """Why this run may not be judged at all, read out of the probe's own record.
 
     Kept apart from `capture()` so the fixtures can drive every one of these: each is a shape a
@@ -250,7 +250,7 @@ def probe_problems(report):
     elif seed.get("status") not in ("seeded", "existing-hosts"):
         problems.append("the audit asked for a host graph and got status %r, so the production"
                         " shape was never there to hold" % seed.get("status"))
-    problems.extend(reap_problems(ownership, seed))
+    problems.extend(reap_problems(ownership, seed, require_reap))
     shapes = ownership.get("shapes")
     if not isinstance(shapes, dict):
         problems.append("the probe recorded no shapes, so there is no control and no reading")
@@ -504,7 +504,7 @@ def section5_status(report, decls):
 REAP_STATUSES = ("empty", "kept", "reaped", "removed-some")
 
 
-def reap_problems(ownership, seed):
+def reap_problems(ownership, seed, require_reap=True):
     """Judge what the probe did about the library it found itself in.
 
     The reason these rules exist is that handing a probe a private `HOME` does not give it a
@@ -517,6 +517,12 @@ def reap_problems(ownership, seed):
     problems = []
     reap = ownership.get("reapedHosts")
     if not isinstance(reap, dict):
+        if not require_reap:
+            # `--no-reap` asks the probe to leave the library alone, so the absence of the record
+            # is the run doing what it was told. It is not a clean reading either: without the
+            # reap the shapes may be measured over whatever the previous run left, which is why the
+            # leftover rule below still runs -- it needs only the two counts, not the verdict.
+            return []
         return ["the audit set ML_PROBE_REAP_OWN_HOSTS and the probe recorded no reapedHosts, so"
                 " the flag reached a build that ignores it -- the same failure the seed flag has"
                 " its own rule for, and the reap cannot be assumed any more than the seed was"]
@@ -542,6 +548,8 @@ def reap_problems(ownership, seed):
         problems.append("the reap called a library of %d host(s) empty" % found)
     library = int(ownership.get("libraryHosts") or 0)
     probe_owned = int(ownership.get("probeOwnedHosts") or 0)
+    if not isinstance(reap, dict):
+        return problems
     if status in REAP_STATUSES and isinstance(reap.get("probeOwned"), int):
         # The two counts are taken at different moments -- the reap looks before this run seeds,
         # the measurement looks after -- so they are compared through the seeding rather than
@@ -707,6 +715,25 @@ def self_test(baseline):
                                                    "probeOwned": 2, "removed": 2,
                                                    "remaining": 1}),
          strong, baseline, ["reported reaping and then read"]),
+        # The clean-up flag, which a person presses and a job never does. The green case is the
+        # shape this laptop actually reported while clearing its library: one planted host removed,
+        # somebody's real host left standing, and the shapes then measured over the host that
+        # remains. The red case is the same run one notch wrong -- it says removed-some and leaves
+        # one of ours in there -- which is the failure mode a flag like this has.
+        ("a clean-up that left somebody's host standing",
+         report_with(shipped_report(), libraryHosts=1, probeOwnedHosts=0,
+                     reapedHosts={"status": "removed-some", "found": 2, "probeOwned": 1,
+                                  "removed": 1, "remaining": 1},
+                     seedHosts={"status": "existing-hosts", "requested": 1, "existing": 1,
+                                "seeded": 0}),
+         strong, baseline, []),
+        ("a clean-up that left one of its own behind",
+         report_with(shipped_report(), libraryHosts=1, probeOwnedHosts=1,
+                     reapedHosts={"status": "removed-some", "found": 2, "probeOwned": 1,
+                                  "removed": 1, "remaining": 1},
+                     seedHosts={"status": "existing-hosts", "requested": 1, "existing": 1,
+                                "seeded": 0}),
+         strong, baseline, ["not the 0 the reap left"]),
         # The CI runner's record on 2026-09-24: one host, planted by the step before, and a seed
         # that reported it as somebody's library. Red by these rules, green by none of them
         # before they existed, which is the point of writing them down.
@@ -750,7 +777,37 @@ def self_test(baseline):
                 print("FAIL fixture: %s left the reader with no statement of what section 5"
                       " still lacks" % label)
                 failures += 1
-    return failures, len(cases)
+    # The diagnosis mode, tested apart from the table because it changes one input rather than
+    # one shape: `--no-reap` is how a person looks at the library the way the previous run left it,
+    # and an escape hatch that the gate kills on the spot is not a hatch. The same record that must
+    # be refused for a missing reap entry has to pass when nobody asked for one -- and the leftover
+    # rule, which needs no reap verdict at all, must still refuse it.
+    total = 0
+    diagnosis = [
+        ("the escape hatch, opened", shipped_report(), False, []),
+        ("the escape hatch, with a leftover library",
+         report_with(shipped_report(), libraryHosts=2, probeOwnedHosts=2,
+                     seedHosts={"status": "existing-hosts", "requested": 1, "existing": 2,
+                                "seeded": 0}),
+         False, ["not clean"]),
+    ]
+    for label, report, require_reap, expected in diagnosis:
+        problems = probe_problems(report, require_reap=require_reap)
+        if expected and not problems:
+            print("FAIL fixture: %s passed, and it should have been refused" % label)
+            failures += 1
+        elif expected and expected[0] not in "; ".join(problems):
+            print("FAIL fixture: %s refused for the wrong reason: wanted %r, got %s"
+                  % (label, expected[0], problems[0][:160]))
+            failures += 1
+        elif not expected and problems:
+            print("FAIL fixture: %s was refused: %s" % (label, problems[0][:200]))
+            failures += 1
+        else:
+            print("ok   fixture: %s" % label)
+        total += 1
+
+    return failures, len(cases) + total
 
 
 def report_with(report, **changes):
@@ -853,6 +910,16 @@ def red_team(sample_path, baseline, decls):
         ("a build that never saw the reap flag",
          lambda report: report_with(report, reapedHosts=None),
          "no reapedHosts"),
+        # The clean-up flag reported honestly once and can report dishonestly the same way: the
+        # verdict says the probe's own hosts are gone while the library still counts one of them.
+        ("a clean-up that claimed to finish and did not",
+         lambda report: report_with(
+             report, libraryHosts=1, probeOwnedHosts=1,
+             reapedHosts={"status": "removed-some", "found": 2, "probeOwned": 1,
+                          "removed": 1, "remaining": 1},
+             seedHosts={"status": "existing-hosts", "requested": 1, "existing": 1,
+                        "seeded": 0}),
+         "not the 0 the reap left"),
     ]
     failures = 0
     for label, change, want in mutations:
@@ -1068,8 +1135,9 @@ def main():
     if "--red-team" in arguments:
         return 1 if red_team(sample, baseline, decls) else 0
 
-    report = capture(timeout, reap="--no-reap" not in arguments)
-    problems = probe_problems(report)
+    reap = "--no-reap" not in arguments
+    report = capture(timeout, reap=reap)
+    problems = probe_problems(report, require_reap=reap)
     notes = []
     if not problems:
         problems, notes = judge(report, decls, baseline)

@@ -104,6 +104,13 @@ TemporaryHost ──appList(retain, TemporaryHost.h:41)──▶ TemporaryApp
 > **「谁持有谁」不需要会话**，§10 已经把它量出来了（三种形状 + 两条控制 + 头文件对账）；
 > **「串流期会不会读到 nil」仍然需要会话**，而它现在改由源码侧的持有者规则担保：
 > `weak` 一落地，任何「只把 app 交给持有者、没把 host 交出去」的赋值点都会判红。
+
+> **2026-09-25 的登记（不编码）**：第 2 步与第 3 步的形状是「给 `StreamViewController` 与
+> `AppCell` 各加一个 `strong` 的 host 属性并在赋值点配对」。它同时满足「新增属性」与
+> 「改变 host 生命周期」两件事，**在打磨模式下属于登记项，不写代码**。
+> 登记内容：需要一次带新形状的测量（cell ← app → host ← cell 会不会成环）＋
+> `leaks` 的 ROOT CYCLE 6→0 ＋ §9 的增长速率不变，三者同时到位才算可提交；
+> 门禁（holder 规则）已经在上膛状态，所以真做的那天它会自动把关，不怕被「只 flip 属性」绕过。
 > 也就是说：`weak` 化的提交从此**必须先让 `streamVC.host`/`item.host` 这类赋值存在**才可能过 CI——
 > 这条改动不再等一个跑不起来的会话，它等的是两个今天就能补上的属性。
 
@@ -390,6 +397,15 @@ inDomains:NSUserDomainMask` 从**账号记录**解析，不看 `$HOME`。
 **门禁现状**：31 条 fixture、红队 12 条，其中红队现在读**两份真记录并各自核对期望**：
 本轮记录必须被**接受**，`36019606141` 那份必须**只**因缺 `reapedHosts` 被拒——
 且**补齐该字段后必须转绿**（否则那记拒绝就是在拒绝形状，而不是在拒绝缺失的证据）。
+
+**CI 侧的实测**（run `36029410301`，两条 arch 逐字相同）：
+`1 host(s) in the library (1 planted by a probe), seed status seeded, reap status reaped`，
+三形状读数与本机一致。也就是说 **ownership 在 runner 上第一次量到了自己种的图**——
+§10 当初想要的「seed 分支终于被执行」，隔了一天才真成立。
+同一次作业里内存扫掠自己打印的三行是 `seeded` / `existing-hosts` / `existing-hosts`：
+同一件事的另一面——第一遍扫掠种下，后面的扫掠沿用同一份库。
+growth 判的就是这一份库上的两遍扫掠（正是它要的），但**「沿用别人留下的图」这件事从此必须说出来**，
+不许再冒充「这是别人的库」。
 
 **清理后的实测**：reap `kept`(found 1 / probeOwned 0)、seed `existing-hosts`、
 三形状逐字同于前一日（production 3 / hand-built 1 / back-pointer 0，yes+yes / yes+yes / yes+no）；

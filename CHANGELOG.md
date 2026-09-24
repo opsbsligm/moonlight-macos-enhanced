@@ -30,7 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it saying zero beside a reap that said one. Filed records now each carry their own expectation in the
   baseline: the new one must be accepted, and run `36019606141`'s must be refused for the reap entry its
   build predates and for nothing else -- the red team fills that entry in and requires it to go green, so
-  the refusal is proven to be about the missing evidence rather than about the shape.
+  the refusal is proven to be about the missing evidence rather than about the shape. The runner
+  now says so on its own line -- run `36029410301`, both arches, word for word: `1 host(s) in the
+  library (1 planted by a probe), seed status seeded, reap status reaped` -- which is the first
+  ownership measurement on CI taken over a graph the probe itself wrote, the thing the seed was
+  added for and never actually delivered while the three steps shared one database. `--no-reap` is
+  the hatch for a person who wants to see the library the way the previous run left it, and it
+  carries two fixtures of its own: the hatch has to open -- a gate that refuses the very run it just
+  configured is not a hatch, and the first version of this one did exactly that, then blamed a build
+  for ignoring a flag it had never sent -- and the leftover rule, which needs no reap verdict at all,
+  still has to refuse a library that is entirely a probe's.
 
 
 - **The thing section 5 was waiting for is now measured instead of argued: the app asks its own
