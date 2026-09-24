@@ -2541,6 +2541,40 @@ for section, _, _ in (("StreamMenuSectionWindow", 0, 0),
     check("[self popUpStreamSubmenuForSection:%s fromButton:sender]" % section in diagnostics,
           "the %s button asks for its section by name" % section)
 
+# --- the devices panel and the report have to agree -------------------------
+# The panel is the only place a player learns why device redirection is off, and the report
+# is the only copy of that answer that ever leaves the machine. While the report stayed
+# silent the question was answered by guessing, because the same four preconditions the panel
+# prints decide it and nothing downstream can tell "this build is not signed in the form a
+# driver accepts" from "the host says no".
+#
+# The report reads the model, not the bus. Enumerating the registry is the panel's explicit
+# call for a reason: the player most likely to copy a report is one whose device is already
+# misbehaving, and a report that took longer than the panel would punish exactly them. The
+# two boundary sentences are required because a device section that reads as an empty list
+# makes the report blame a cable nobody touched, and because a host that was never asked must
+# not be reported as a host that answered.
+report_builder = open(os.path.join(root, "Limelight/macOS/Helpers/"
+                                    "DiagnosticsReportBuilder+Live.m"), encoding="utf-8").read()
+devices_body = method_body(report_builder, "+ (DiagnosticsReportSection *)devicesSection")
+check("auditLine" in devices_body,
+      "the report repeats the panel's own audit line instead of restating it in new words")
+# Checked against the code rather than the text. The file carries a comment naming the
+# scanning call to explain why it is absent, and a rule that reads comments would either stay
+# green while somebody added the call inside one, or turn red for the honest sentence. Stripping
+# comment lines is what makes the assertion mean "nobody calls this" and not "nobody mentions this".
+report_code = "\n".join(line for line in report_builder.split("\n")
+                         if not line.strip().startswith(("//", "*", "/*")))
+check("rowsByScanningBus" not in report_code,
+      "the report describes the devices panel without enumerating the bus behind it")
+check("(a report never asks a host)" in devices_body
+      and "(a report never enumerates the bus)" in devices_body,
+      "the report names which of its own silences were its own choice"
+      if "(a report never asks a host)" in devices_body else
+      "the devices section states a host answer it never asked anybody for")
+check("[self devicesSection]" in report_builder,
+      "the devices section is assembled into the report rather than merely built")
+
 # --- one compiler answer --------------------------------------------------
 # Every behavioural harness needs a clang and an SDK. Four of them wrote the answer
 # themselves and all four asked xcrun, so on a host whose Xcode license has not been

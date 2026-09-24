@@ -55,6 +55,8 @@ WINDOW_MODES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                              "StreamViewController+WindowModes.m")
 VIDEO_RULES = os.path.join(root, "Limelight", "macOS", "ViewControllers",
                       "SettingsModel+VideoPageRules.swift")
+REPORT_BUILDER = os.path.join(root, "Limelight", "macOS", "Helpers",
+                                "DiagnosticsReportBuilder+Live.m")
 PBXPROJ = os.path.join(root, "Moonlight.xcodeproj", "project.pbxproj")
 RENDER_PROBE = os.path.join(root, "scripts", "render-probe.py")
 VIDEO_RENDERER = os.path.join(root, "Limelight", "Stream", "VideoDecoderRenderer.m")
@@ -1057,6 +1059,28 @@ def defer_the_keyboard_return_behind_the_alert(text):
     return text.replace(ALERT_SESSION_OPENS, ALERT_SESSION_OPENS + UNCAPTURE_BEFORE_ALERT, 1)
 
 
+BUS_ANSWER_READ = "panel.busHasBeenScanned ? MLUSBBusSnapshotStatusName(panel.busStatus)"
+BUS_ANSWER_BOUNDARY = '@"" : @" (a report never enumerates the bus)"'
+
+
+def report_enumerates_the_bus_it_says_it_skipped(text):
+    """Let the report scan the bus and keep claiming that it did not.
+
+    This is the shape a well-meant completeness fix takes. The device section suddenly has
+    real rows in it, so the report looks more useful, while three things quietly went wrong:
+    copying a report now iterates the registry on the one machine whose device is already
+    misbehaving, the `not-scanned` line became a statement about a scan that did run, and a
+    report generated while nothing is plugged in reads as "this build sees no devices" rather
+    than "nobody looked".
+    """
+    once(text, BUS_ANSWER_READ, "the report's own bus reading")
+    once(text, BUS_ANSWER_BOUNDARY, "the report's not-scanned boundary")
+    text = text.replace(BUS_ANSWER_READ,
+                        "[panel rowsByScanningBusWithHostPaired:YES].count"
+                        " ? MLUSBBusSnapshotStatusName(panel.busStatus)", 1)
+    return text.replace(BUS_ANSWER_BOUNDARY, '@"" : @" (scanned for this report)"', 1)
+
+
 def drop_swift_debug_condition(text):
     """Stop compiling the Debug-only Swift code, while its caller stays.
 
@@ -1988,6 +2012,9 @@ MUTATIONS = [
      "the video page recomputes the enhancement rule instead of asking the model"),
     ("unadvertised-section", MENU, unadvertise_section,
      "a submenu stops advertising the section the overlay addresses it by"),
+    ("report-enumerates-the-bus-it-says-it-skipped", REPORT_BUILDER,
+     report_enumerates_the_bus_it_says_it_skipped,
+     "the report scans the bus while still printing that a report never scans it"),
     ("address-by-title-again", DIAGNOSTICS, address_by_title_again,
      "the submenu lookup compares the words on the item again"),
     ("wrong-section-button", DIAGNOSTICS, point_a_button_at_the_wrong_section,
