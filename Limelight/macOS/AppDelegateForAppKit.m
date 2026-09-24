@@ -2283,9 +2283,19 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
             if (self.welcomePermissionsWC != nil) return;
             // Also skip if app is not active in foreground.
             if (NSApp.isActive == NO) return;
-            // Read saved host count via DataManager (CoreData backed)
+            // Read saved host count via DataManager (CoreData backed). This line used to ask the
+            // question "can this object read the library?" by reading the library, and then read it
+            // again for the value -- elsewhere in this repository that question is asked with
+            // `respondsToSelector:`, which does not cost anything. The cost here is not negligible:
+            // `-[DataManager getHosts]` builds a `TemporaryHost` and its `TemporaryApp`s for every
+            // row on every call -- the graph docs/memory-ownership.md section 13 counts bytes
+            // for, so the guard doubled the work of a launch path and guarded nothing -- `getHosts`
+            // is a compile-time message on a class this method already messages directly two lines
+            // below, and `allHosts.count` reads 0 whether the array is nil or empty, which is the
+            // only distinction the ternary could make. Asking once also removes a window in which
+            // the two reads could disagree about a library something else was editing.
             DataManager *dm = [[DataManager alloc] init];
-            NSArray *allHosts = [dm performSelector:@selector(getHosts)] ? [dm getHosts] : nil;
+            NSArray *allHosts = [dm getHosts];
             if (allHosts.count > 0) {
                 Log(LOG_I, @"[Connect] %lu saved hosts exist; skipping permission nag",
                     (unsigned long)allHosts.count);
