@@ -16,7 +16,12 @@
 > `getHosts` now counts its own calls, and the settings page measures one read per visit at
 > its root, three for the stream pane, and none on dismissal -- so the growth rate that
 > `leak-audit.py` reports is tied to the reads that cause it instead of merely sitting under
-> a byte ceiling. Section 10 (same day) splits that blocker in two and measures the
+> a byte ceiling. Section 14 (same day) followed those reads to a defect they exposed: a
+> server-info response with no `uniqueid` matched a paired host by the code's own fall-back rule and
+> wrote the missing id over the stored one, after which the next look at the device list deleted the
+> host and -- `Host.appList` being `Cascade` -- the applications the user had added to it. Measured
+> at 2 hosts to 1 and 6 app records to 3 for one response missing one tag; fixed by the nil guard
+> that method already applies to every neighbouring field. Section 10 (same day) splits that blocker in two and measures the
 > half that never needed a session: the Debug build now reports who keeps a host alive, three
 > shapes with two controls, and the holder rule refuses a `weak` back-pointer while any
 > assignment hands out an app without handing out its host. (That same rule corrected one row
@@ -606,3 +611,95 @@ uuid 被清空、随后 app 记录 3 → 0 且 `ML_PROBE_REMOVE_OWN_HOSTS` 也�
   定，因为两者动的是同一段代码。
 * 计数器只在 `DEBUG` 下存在，Release 没有读数——这是刻意的：门禁跑 Debug 二进制，而 Release 若
   被拿去跑 leak-audit，会因为「报告里没有 `readsPerCycle`」直接判红，不会静默变绿。
+
+
+## 14. 一次缺 `uniqueid` 的响应，如何删掉用户配的 app（2026-09-25）
+
+§13 登记的风险当天就测完了，因为它不需要真机——**代码自己就声明了这个场景会发生**。
+
+### 链路：四个环节，每一环都是读出来的
+
+| 环节 | 位置 | 事实（不是推测） |
+|:---|:---|:---|
+| 响应可以不带 id | `ServerInfoResponse.m:22` | `host.uuid = [[self getStringTag:TAG_UNIQUE_ID] trim];` 无守卫：缺 `uniqueid` 这个 tag，赋进去就是 nil |
+| 代码**预期**它不带 | `DataManager.m:245` | `getHostForTemporaryHost:` 里有一段注释 `Fallback matching when UUID is missing`，改用 mac / address / name 去命中已存的那台。也就是说「uuid 缺失的发现响应」不是想象，是原作者按频次写进代码的常态 |
+| 写回时没守卫 | `TemporaryHost.m:79` | `propagateChangesToParent:` 开头写着 `Avoid overwriting existing data with nil if we don't have everything populated`，并且 `address`/`externalAddress`/`localAddress`/`ipv6Address`/`mac`/`serverCert` 全部照这句话加了 `if (self.x != nil)`，**只有 `uuid` 是裸赋值** |
+| 读列表先删 | `SettingsModel.swift:126`、`HostSidebarViewModel.swift:73` | 两处都在读之前 `removeHostsWithEmptyUuid`（`DataManager.m:227` 实测是 `deleteObject:` + `saveData`，真写 store） |
+| 删 host 连带删 app | §12 实测 | `Host.appList = Cascade` |
+
+**串起来的后果**：一台已配对主机只要被一次不带 `uniqueid` 的响应命中 fallback 匹配，它的 uuid 就被
+抹掉；此后**任何一次打开设置页或侧栏**都会删掉这台主机，并顺着级联删掉用户自己添加的 app。不是
+「等下一次好响应修好」，是「看一眼设备列表就没了」。
+
+### 实测：修与不修各跑一次同一测量
+
+新探针 `ML_PROBE_PARTIAL_HOST_INFO`（挂在 ownership 探针里，reap 之前）做的事与 app 自己做的完全
+一致：种 1 台带 uuid 与 3 个 app 的 host → 把一份**除 `uniqueid` 外字段齐全**的 server-info 喂给
+生产解析器 → 走生产 `updateHost:` → 再按设置页的方式读一次列表。两份真记录：
+
+| 读数 | 修复前 | 修复后 |
+|:---|:---|:---|
+| `uuidAfterPropagate` | `<empty>` | `probe-host-partial` |
+| `rowAfterPropagate` | `true` | `true` |
+| hosts（读列表前→后） | **2 → 1** | 2 → 2 |
+| apps（读列表前→后） | **6 → 3** | 6 → 6 |
+| `cleanedUp` | `by-the-app` | `by-the-probe` |
+
+修复前那份记录里 `probeOwnedBeforeCleanup` 也是 0：uuid 一被抹掉，**§11 那套「按 uuid 前缀认领探针
+自己的 host」的归属判定就再也认不出它了**——被摧毁的不只是数据，还有"这是谁弄坏的"这件事本身。
+
+### 修法：把方法自己声明的意图补到它漏掉的那个字段上
+
+```objc
+if (self.uuid != nil && self.uuid.length > 0) {
+    parentHost.uuid = self.uuid;
+}
+```
+
+`length` 也要判，因为 `<uniqueid></uniqueid>` 解析出来是空串，而空串在 `removeHostsWithEmptyUuid`
+眼里同样是垃圾——写空与写 nil 删得一样干净。合法流程里不存在「把 host 的 uuid 置空」：读列表的代码
+本来就把空 uuid 当成待删对象。
+
+### 门禁
+
+| 断言 | 理由 |
+|:---|:---|
+| CI 用 `--require-partial` 索要这份记录 | flag 到达一个无视它的 build 时，缺记录必须红——与 reap 用的是同一类控制，否则"探针被编译掉"就是静默的绿 |
+| `uuidAfterPropagate == plantedUuid` | 守卫生效本身 |
+| hosts 读前 == 读后 | 「看一眼列表」不许删东西 |
+| apps 读前 == 读后 | 级联不许带走用户配置 |
+| `parsedUuid == "<absent>"` 且 name/mac 非空 | 前提：喂进去的必须真是那份缺 tag 的响应，且 fallback 真是靠它命中的 |
+| `plantedUuid` 必须带 `probe-host-` 前缀 | 不许拿真人的 host 做这个实验 |
+| `cleanedUp == "by-the-probe"` | 探针自己种的自己收走；若变成 `by-the-app`，说明测量把自己的研究对象删了 |
+| `appRecordProblem` 存在即红 | 数不出来＝级联没被观测到，而不是没发生 |
+
+**本地门禁抓住了一次 harness 的不一致**：第一版把 `ML_PROBE_PARTIAL_HOST_INFO` 写在 build.yml 的
+step `env` 里、把 `--require-partial` 写在命令行里，而 local-gates 只复现**命令行**、不带 CI 的
+step 环境——于是本地跑到这一步时探针压根没被要求做这个实验，审计却索要记录，报红。这类"开关与断言
+分家"的错误只会被本地门禁抓到（CI 两处都有，反而永远绿）。修法与 reap 对称：**审计脚本要求什么，就
+自己在子进程环境里给探针设什么**，build.yml 只留命令行。一条真相，一个主人。
+
+**红队抓住了一次我自己的空洞**：第一版把这条规则写成"默认不要求"，于是「步骤悄悄没跑」那条注入
+判定为**通过**——红队直接报 `this is a rule that does not bite`。这就是把 CI 口径变成强制的原因。
+第二个坑也同类：填充函数一开始无条件覆盖，把注入的危险记录洗成干净的，红队又报了一次不咬合。
+
+### 测试
+
+* `--self-test` **56 条**（+13：干净记录两种口径、uuid 被抹、列表删 host、级联带走 app、前提不成立、
+  解析不出可匹配字段、种了真人 host、数不出 app、探针留下研究对象、status 没测、flag 到了无视它的
+  build、没被索要时缺记录不算错）。
+* `--red-team` **21 条全绿**（+3：真记录级别的「守卫关掉」注入、「步骤静默没跑」注入、新入档记录按
+  baseline 声明被接受）。
+* 入档第五份真记录 `scripts/ownership-sample-partial.json`（修复后那份）；**先前四份如实改成必须被
+  拒**，且只因为缺这份记录被拒——把该记录补回去后它们重新转绿，证明拒的是缺失的证据，不是形状。
+* `--require-partial` + reap 的最严口径在本机跑真 store：**0 failure**。
+
+### 没测到 / 登记
+
+* **真机上究竟有没有不带 `uniqueid` 的响应**：本机没有可连主机，测不了。但这条不必等真机——
+  `getHostForTemporaryHost:` 的 fallback 分支就是原作者对该场景的表态；而**修复不依赖它是否常见**：
+  写回守卫本来就是那个方法对每个字段的既定承诺。
+* **`name` 同样没有守卫**（`TemporaryHost.m:77`），一次缺 `hostname` 的响应会把用户改过的主机名冲掉。
+  后果比 uuid 轻（不触发删除），但同属"用 nil 覆盖已有数据"，登记待判。
+* 修复改变了写库行为（少了一次覆盖写）。这是修 bug 必需的**行为变化**，不属于「接口与业务行为不变」
+  的禁区：对外接口、页面、设置项都没动，动的是一条会让用户丢配置的写入。

@@ -452,7 +452,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
-- **The ownership reading filed on CI said the runner seeded its own host. It did not, and the
+- **A host-info response without a unique id could no longer delete a paired machine and the apps
+  added to it.** `-[DataManager getHostForTemporaryHost:withHostRecords:]` carries a branch commented
+  "Fallback matching when UUID is missing" and finds the stored host by mac, address or name instead,
+  so a discovery response that arrived without its `uniqueid` is not a hypothetical -- it is expected
+  often enough that the shipping code is written for it. What it did next was the defect.
+  `-[TemporaryHost propagateChangesToParent:]` opens with "Avoid overwriting existing data with nil
+  if we don't have everything populated in the temporary host", guards `address`, `externalAddress`,
+  `localAddress`, `ipv6Address`, `mac` and `serverCert` with exactly that intent, and assigned
+  `uuid` bare. The fall-back found the paired host, the write cleared the identifier that made it
+  that host, and nothing repaired it afterwards: `SettingsModel.hosts` and the device sidebar both
+  call `removeHostsWithEmptyUuid` before reading a single row -- `deleteObject:` and `saveData`, not
+  an in-memory filter -- so the next look at the device list removed the machine, and `Host.appList`
+  is `Cascade`, so the applications somebody had added to it went too. Measured on a live store, the
+  library went from two hosts to one and the app records from six to three for a single response that
+  omitted one tag; `probeOwnedBeforeCleanup` read zero in the same run, because wiping the uuid also
+  destroys the prefix by which a probe claims its own host, taking the blame with the data. The fix
+  is the guard the method already promises, applied to the field that lost the most: an empty string
+  is refused alongside nil, since `<uniqueid></uniqueid>` parses to one and the reader treats empty
+  exactly as it treats nil -- as trash to remove -- and no legitimate flow sets a host's uuid to
+  empty. The experiment runs on every push on both architectures, asked for by name so a build that
+  ignored the flag cannot answer green: it plants a host with an id and three apps, hands the
+  production parser a body with every field a paired machine sends except that one, lets the
+  production write path take its turn, then reads the device list the way the settings page does and
+  refuses a uuid that changed, a library that shrank across a read, app records that went with it, a
+  body that did not actually lack the tag, a host it did not own, and a probe that deleted its own
+  subject. `scripts/ownership-audit.py` grew thirteen fixtures and the red team three more -- one of
+  each pair added because the red team refused to accept the first version of this rule, which passed
+  while claiming to bite, and then accepted a second version only after the fill-in stopped
+  overwriting the very record it was testing -- and four records filed before this step existed are
+  now expected to be refused for that absence and for nothing else, green again once the entry is
+  supplied. What remains open: whether a real Sunshine or GameStream host ever omits the tag cannot
+  be checked from a machine with nothing to connect to, `name` at `TemporaryHost.m:77` is still
+  assigned bare so a response with no `hostname` can still overwrite one a person renamed, and the
+  repair changes what gets written to the store because that is what the bug was. One defect found
+  on the way belongs to the harness rather than the app: the probe flag first lived in the workflow's
+  step environment while `--require-partial` lived in the command line beside it, and the local gates
+  replay the command line and nothing else, so the local run demanded a record it had never asked
+  the probe to write and went red on its own scaffolding. A control split between an environment and
+  an argument is one half the tools can only fail for the wrong reason, so the audit now raises its
+  own probe flag, as it already does for the reap.
+ the runner seeded its own host. It did not, and the
   sentence was a transcription of a different step.** `scripts/ownership-baseline.json` recorded both
   arches at `seedHosts.status = seeded`; the first line the probe itself printed (run `36019606141`)
   read `1 host(s) in the library, seed status existing-hosts` on both. The `seeded` had been copied
