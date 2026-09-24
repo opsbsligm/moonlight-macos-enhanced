@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The memory ceiling counted instances, went red twice over numbers no commit had moved,
+  and was rebuilt to judge the shape instead of the count.** Nine sweeps of one Debug probe
+  build on one laptop, with nothing changed in between, leaked 4, 5, 5, 5, 6, 6, 6, 6 and 8
+  `TemporaryHost`s, and 12, 15, 15, 15, 18, 18, 18, 18 and 24 `TemporaryApp`s -- exactly
+  three apps per host every time -- over 1,418 to 1,968 bytes per host and 6,176 to 15,696
+  in all. The settings page builds one temporary host graph per host it can see, and how
+  many hosts it sees is how many `_nvstream._tcp` answers arrived before the page drew
+  (`Limelight/Network/MDNSManager.m` browses that service). So the absolute per-class
+  ceilings `leak-audit.py` shipped with a few hours earlier -- 18 apps, 6 hosts -- were
+  ceilings on somebody else's variable, and the sweep proved it by refusing a tree that had
+  not changed.
+
+  What the gate judges now: the set of first-party classes may not grow; the **fan-out** --
+  apps per leaked host -- may not exceed the measured ratio plus a per-host slack (3+1 in
+  `scripts/leak-baseline.json`, which also carries the nine runs, the host counts they saw
+  and the byte range they measured); total bytes may not exceed a **per-host** budget (2,500
+  plus a 2,000-byte floor that is marked unmeasured, because this laptop cannot produce a
+  host-free sweep). The host count itself is not a ceiling any more -- a busier LAN is not a
+  regression. A sweep that sees no host says so in a note and does not certify the graph,
+  while apps leaking with no host present is refused outright, because that one has no
+  environment to blame. `--red-team` grew to match (seven breaks, including the host-free
+  one), `--write-baseline` refuses to divide by zero and no longer dirties the baseline when
+  it raises nothing, and the gate's teeth are written down with their scope: it sees a new
+  first-party class and a second holder of the same graph, and it does not see one more
+  80-byte string per host -- 4% of a host's measured bytes, inside a margin that is there so
+  nobody mutes the ceiling.
+
+
 - **The memory ceiling is a gate now, and building it caught a gate reading nothing.**
   `scripts/leak-audit.py` runs the Debug probe under Apple's `leaks`, reads one line per
   leaked block, and refuses a first-party class that shows up outside

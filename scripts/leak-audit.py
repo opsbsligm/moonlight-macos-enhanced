@@ -10,21 +10,31 @@ looked the next time. So this gate exists to keep looking: it drives the Debug p
 build through ``leaks``, reads every leaked block (not just the few stacks ``leaks``
 puts in a tree), and compares what it finds against a committed ceiling.
 
-The comparison is deliberately not an equality. ``leaks`` answers for the machine it
-ran on: this laptop has a host configured, so the settings page really builds a
-temporary host graph and really leaks it, while CI's fresh HOME has no hosts and
-leaks none of that. A gate that demanded the same numbers everywhere would be red in
-whichever place it was written for. So the rule is a ceiling per class plus a ceiling
-on total bytes, which is the shape that survives both places, and a class that stops
-leaking is reported rather than silently forgiven -- lowering a baseline is a thing a
-person does on purpose, in the commit that fixes the leak.
+The comparison is deliberately not an equality, and after one afternoon it stopped being a
+count either. ``leaks`` answers for the machine it ran on and for the minute it ran on: the
+settings page leaks one temporary host graph per host it can see, and how many hosts a
+sweep sees is how many ``_nvstream._tcp`` answers arrived before the page drew
+(``Limelight/Network/MDNSManager.m`` browses that service), so the host count is not a
+property of this repository's code. Measured -- one Debug build, nine sweeps, one laptop,
+no code change between them: hosts 4, 5, 5, 5, 6, 6, 6, 6, 8; first-party apps 12, 15, 15,
+15, 18, 18, 18, 18, 24, which is exactly three apps per host every single time; 1,418 to
+1,968 bytes per host; 6,176 to 15,696 bytes in all. The gate first shipped with absolute
+per-class ceilings (18 and 6) and went red twice the same afternoon over numbers no commit
+had moved.
 
-Why one rule is exact and the other carries a margin, measured rather than assumed: five
-runs of the same build on one machine gave first-party counts of 18/6 every single time,
-while the totals moved between 10,000 and 11,792 bytes and the leak count between 104 and
-105. So a per-class ceiling is written as an exact number and the byte ceiling is the
-highest observed (11,792) plus half again, rounded to 17,700 -- a byte ceiling that is red
-because the runner's CoreFoundation allocated differently is a ceiling somebody mutes.
+So the rules judge the shape the code owns and leave the count the LAN alone: the set of
+first-party classes may not grow; the fan-out -- apps per leaked host -- may not exceed the
+measured ratio plus a per-host slack; total bytes may not exceed a per-host budget. What
+that keeps the teeth on is a second retain cycle over the same graph, which multiplies the
+fan-out instead of adding one to it. What it cannot see is a small extra object per host:
+one more 80-byte string is 4% of a host's measured bytes, and the byte budget carries a 32%
+margin on purpose, because a ceiling that goes red over somebody else's CoreFoundation is a
+ceiling somebody mutes. The slack is per host rather than pinned at three because how many
+apps a GameStream box publishes is its owner's library, not our code.
+
+A host count of zero is its own answer and is not treated as a clean one: with no host
+there is no graph, so the byte budget goes unjudged and says so, while apps leaking with no
+host present is refused -- that is a leak with no environment to blame.
 
 The rule that keeps a reader that read nothing from being green: the report's own summary
 says how many blocks leaked, and the audit refuses when it read fewer blocks than that.
@@ -161,32 +171,63 @@ def judge(first_party, total, summary, baseline, blocks):
         return (["the report counts %d leaked blocks in its own summary and the audit "
                  "read %d, %s. A report the rules were never pointed at is refused, not "
                  "judged clean." % (summary[0], blocks, why)], notes)
+    host_class = baseline.get("host_class")
+    hosts = first_party.get(host_class, 0) if host_class else 0
+    fan_out = baseline.get("apps_per_host", {})
+    slack = baseline.get("slack_per_host", 0)
+    budgeted = set(fan_out) | ({host_class} if host_class else set())
+    measured = baseline.get("observed", {})
+
     for class_name in sorted(first_party):
-        allowed = baseline.get("classes", {}).get(class_name)
-        if allowed is None:
+        if class_name not in budgeted:
             problems.append("a first-party class nobody budgeted is leaking: %s (%d)"
                             % (class_name, first_party[class_name]))
-        elif first_party[class_name] > allowed:
-            problems.append("%s leaks %d instances where the ceiling is %d"
-                            % (class_name, first_party[class_name], allowed))
-    for class_name in sorted(baseline.get("classes", {})):
+
+    if host_class and host_class not in first_party:
+        notes.append("%s is not leaking in this run, so no host graph was built here: the "
+                     "fan-out ceiling held by having nothing to multiply, and the byte "
+                     "budget went unjudged -- this sweep cannot certify that graph"
+                     % host_class)
+
+    for class_name in sorted(fan_out):
         if class_name not in first_party:
-            notes.append("%s is not leaking in this run, where the ceiling carries %d -- "
-                         "if that is because it was fixed, lower the ceiling in the same "
-                         "commit" % (class_name, baseline["classes"][class_name]))
-    ceiling = baseline.get("total_bytes")
-    if ceiling is not None and total > ceiling:
-        problems.append("the process leaked %d bytes against a ceiling of %d"
-                        % (total, ceiling))
+            notes.append("%s is not leaking in this run, where the ceiling carries %d per "
+                         "host -- if that is because it was fixed, lower the ceiling in the "
+                         "same commit" % (class_name, fan_out[class_name]))
+            continue
+        allowed = hosts * (fan_out[class_name] + slack)
+        if first_party[class_name] > allowed:
+            problems.append(
+                "%s leaks %d instances against %d leaked %s(s): a fan-out of %.2f per host "
+                "where the ceiling is %d+%d. Measured on the shipped code: %s per host over "
+                "%d runs. A fan-out that grew is a second owner of the same graph, not a "
+                "busier network -- the host count is already accounted for here"
+                % (class_name, first_party[class_name], hosts, host_class or "host",
+                   float(first_party[class_name]) / hosts if hosts else float("inf"),
+                   fan_out[class_name], slack,
+                   ", ".join(str(value) for value in measured.get("apps_per_host", [])),
+                   measured.get("runs", 0)))
+
+    per_host = baseline.get("bytes_per_host")
+    if per_host is not None and hosts:
+        budget = per_host * hosts + baseline.get("byte_floor", 0)
+        if total > budget:
+            problems.append("the process leaked %d bytes against %d (%d per leaked host plus "
+                            "a %d-byte floor): the host count is accounted for, so this is "
+                            "bytes per host growing"
+                            % (total, budget, per_host, baseline.get("byte_floor", 0)))
     return problems, notes
 
 
 def report(text, baseline, objc_names, module):
     first_party, total, summary, blocks = count_leaks(text, objc_names, module)
     problems, notes = judge(first_party, total, summary, baseline, blocks)
-    print("leak-audit: %d leaked bytes over %d block(s), first-party classes: %s"
+    host_class = baseline.get("host_class")
+    print("leak-audit: %d leaked bytes over %d block(s), first-party classes: %s%s"
           % (total, blocks, ", ".join("%s=%d" % kv for kv in sorted(first_party.items()))
-             or "none"))
+             or "none",
+             "" if not host_class else " (fan-out judged against %d leaked %s)"
+             % (first_party.get(host_class, 0), host_class)))
     for note in notes:
         print("note  %s" % note)
     return problems
@@ -234,7 +275,12 @@ def fixtures():
     """
     module = "MoonlightEnhanced"
     names = {"TemporaryApp", "TemporaryHost", "AppDelegateForAppKit"}
-    base = {"classes": {"TemporaryApp": 2, "TemporaryHost": 1}, "total_bytes": 400}
+    # The shape of the committed baseline, at the scale of a report a person can read in
+    # one screen: one leaked host, four bytes-per-host of budget, and a fan-out ceiling of
+    # three plus a slack of one.
+    base = {"host_class": "TemporaryHost", "apps_per_host": {"TemporaryApp": 3},
+            "slack_per_host": 1, "bytes_per_host": 300, "byte_floor": 100,
+            "observed": {"apps_per_host": [3], "runs": 7}}
     clean = ("Process 9: 4 leaks for 300 total leaked bytes\n"
              "Leak: 0x1  size=64  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n"
              "Leak: 0x2  size=64  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n"
@@ -243,8 +289,20 @@ def fixtures():
     new_class = clean.replace(
         "Leak: 0x4  size=108  zone: MallocZone   CFString  ObjC  CoreFoundation",
         "Leak: 0x4  size=108  zone: MallocZone   AppDelegateForAppKit  ObjC  MoonlightEnhanced")
-    grown = clean.replace("TemporaryApp  ObjC", "TemporaryHost  ObjC", 1)
+    # One host, six apps: twice the ceiling of four. This is the shape a second owner of
+    # the same graph takes -- the fan-out multiplies -- and it is not the shape a busier
+    # network takes, which moves the host count and leaves the ratio alone.
+    grown = ("Process 9: 8 leaks for 380 total leaked bytes\n"
+             + "Leak: 0x1  size=40  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n" * 6
+             + "Leak: 0x7  size=40  zone: MallocZone   TemporaryHost  ObjC  MoonlightEnhanced\n"
+               "Leak: 0x8  size=60  zone: MallocZone   CFString  ObjC  CoreFoundation\n")
     heavy = clean.replace("for 300 total leaked", "for 900 total leaked")
+    # Apps with no host in the report: nothing here can be blamed on the LAN, because a
+    # graph that was never built cannot have leaked anything.
+    hostless = ("Process 9: 3 leaks for 200 total leaked bytes\n"
+                "Leak: 0x1  size=64  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n"
+                "Leak: 0x2  size=64  zone: MallocZone   TemporaryApp  ObjC  MoonlightEnhanced\n"
+                "Leak: 0x3  size=72  zone: MallocZone   CFString  ObjC  CoreFoundation\n")
     empty = "Process 9:\nLeak: 0x1  size=64  zone: MallocZone   TemporaryApp  ObjC\n"
     # The shape of the first report this gate ever read: the summary counts every leak,
     # the body draws the graph, and the only blocks written out as blocks are the few the
@@ -253,15 +311,17 @@ def fixtures():
     tree = ("Process 9: 4 leaks for 300 total leaked bytes\n"
             " DISTANT CYCLE\n"
             "+  1 0x1  64 B  CFString  CoreFoundation\n")
-    gone = ("Process 9: 1 leaks for 64 total leaked bytes\n"
-            "Leak: 0x1  size=64  zone: MallocZone   TemporaryApp  ObjC\n")
+    gone = ("Process 9: 2 leaks for 252 total leaked bytes\n"
+            "Leak: 0x1  size=144  zone: MallocZone   TemporaryHost  ObjC\n"
+            "Leak: 0x2  size=108  zone: MallocZone   CFString  ObjC\n")
     swift = ("Process 9: 1 leaks for 64 total leaked bytes\n"
              "Leak: 0x1  size=64  zone: MallocZone   "
              "_TtC17MoonlightEnhanced13SettingsModel  ObjC\n")
     cases = [("the shipped shape passes", clean, 0, None),
              ("a class nobody budgeted starts leaking", new_class, 1, None),
-             ("a budgeted class leaks more instances than the ceiling", grown, 1, None),
-             ("total bytes grow past the ceiling", heavy, 1, None),
+             ("the fan-out grows past the ceiling", grown, 1, "fan-out"),
+             ("bytes grow past the per-host budget", heavy, 1, "per leaked host"),
+             ("apps leak with no host in the report", hostless, 1, "fan-out"),
              ("a report with no summary line", empty, 1, None),
              ("a Swift class is ours too, mangling and all", swift, 1, None),
              ("a budgeted class that stopped leaking is a note, not a failure",
@@ -350,12 +410,17 @@ def red_team(text, baseline, objc_names, module):
         blockers.append("the report handed to the red team reads %d block(s) against the "
                         "%d its own summary counts, so breaking it would prove nothing "
                         "about a real sweep" % (blocks, summary[0]))
-    budgeted = sorted(baseline.get("classes", {}))
+    host_class = baseline.get("host_class")
+    fan_out = baseline.get("apps_per_host", {})
+    slack = baseline.get("slack_per_host", 0)
+    budgeted = sorted(set(fan_out) | ({host_class} if host_class else set()))
     if not budgeted:
         blockers.append("the baseline budgets no class, so there is no ceiling to break")
-    if summary is not None and blocks == summary[0] and not first_party:
-        blockers.append("the report carries no first-party block, so the growth rule has "
-                        "nothing to grow -- aim the red team at a sweep that leaks")
+    hosts = first_party.get(host_class, 0) if host_class else 0
+    if summary is not None and blocks == summary[0] and not hosts:
+        blockers.append("the report leaked no %s, so every ratio in the baseline divides by "
+                        "zero -- break a report that built the graph, or the fan-out rules "
+                        "go untested and the run means nothing" % (host_class or "host"))
     unbudgeted = sorted(name for name in objc_names
                         if name not in budgeted and name not in first_party)
     if not unbudgeted:
@@ -366,36 +431,51 @@ def red_team(text, baseline, objc_names, module):
             print("FAIL red team cannot run: %s" % blocker)
         return len(blockers)
 
-    ceiling = baseline.get("total_bytes", 0)
-    grown = budgeted[0]
-    extra = baseline["classes"][grown] + 1 - first_party.get(grown, 0)
-    quiet = budgeted[1] if len(budgeted) > 1 else None
+    multiplied = next((name for name in sorted(fan_out)
+                       if first_party.get(name, 0) > hosts), None)
+    if multiplied is None:
+        blockers.append("no budgeted class leaks more instances than the host count, so "
+                        "there is no fan-out here to multiply")
+        for blocker in blockers:
+            print("FAIL red team cannot run: %s" % blocker)
+        return len(blockers)
+    allowed = hosts * (fan_out[multiplied] + slack)
+
+    def without(class_name):
+        """The same report with one class's blocks taken out, and its honest block count."""
+        lines = [line for line in text.splitlines()
+                 if not (LEAK_LINE.match(line) and LEAK_LINE.match(line).group(2)
+                         == class_name)]
+        return recount("\n".join(lines) + "\n",
+                       sum(1 for line in lines if LEAK_LINE.match(line)))
 
     cases = []
-    flooded = flood(text, grown, max(extra, 1))
-    cases.append(("a budgeted class grows past its ceiling",
-                  recount(flooded, summary[0] + max(extra, 1)), 1,
-                  "ceiling is %d" % baseline["classes"][grown]))
+    extra = max(allowed + 1 - first_party[multiplied], 1)
+    cases.append(("the fan-out grows past the ceiling",
+                  recount(flood(text, multiplied, extra), summary[0] + extra), 1, "fan-out"))
     planted = flood(text, unbudgeted[0], 1)
     cases.append(("a class nobody budgeted starts leaking",
                   recount(planted, summary[0] + 1), 1, "nobody budgeted"))
-    cases.append(("the byte ceiling is broken",
-                  re.sub(r"( leaks for )\d+", lambda m: "%s%d" % (m.group(1), ceiling + 1),
-                         text, count=1), 1, "against a ceiling of %d" % ceiling))
+    per_host = baseline.get("bytes_per_host")
+    if per_host:
+        over = per_host * hosts + baseline.get("byte_floor", 0) + 1
+        cases.append(("the bytes per leaked host grow past the budget",
+                      re.sub(r"( leaks for )\d+",
+                             lambda m: "%s%d" % (m.group(1), over), text, count=1), 1,
+                      "per leaked host"))
     cases.append(("the summary is cut off",
                   "\n".join(line for line in text.splitlines()
                              if SUMMARY.search(line) is None), 1, "no `leaks for"))
     cases.append(("the blocks disappear but the summary stays",
                   "\n".join(line for line in text.splitlines()
                              if not LEAK_LINE.match(line)), 1, "never looked at"))
-    if quiet:
-        dropped = [line for line in text.splitlines()
-                   if not (LEAK_LINE.match(line)
-                           and LEAK_LINE.match(line).group(2) == quiet)]
-        kept = sum(1 for line in dropped if LEAK_LINE.match(line))
-        cases.append(("a budgeted class is genuinely fixed", recount("\n".join(dropped) + "\n",
-                                                                    kept), 0,
-                      "%s is not leaking in this run" % quiet))
+    if host_class:
+        # The one break a runner with no LAN would produce by itself, minus the excuse:
+        # the hosts are gone and the apps are not, so no network remains to blame.
+        cases.append(("apps leak with no host left in the report", without(host_class), 1,
+                      "fan-out"))
+    cases.append(("a budgeted class is genuinely fixed", without(multiplied), 0,
+                  "%s is not leaking in this run" % multiplied))
 
     failures = 0
     for label, mutated, want_problems, want_text in cases:
@@ -436,9 +516,29 @@ def capture(timeout):
     out = tempfile.mkdtemp(prefix="leak-out.")
     binary = os.path.join(app, "Contents", "MacOS", project_identity.bundle_executable(app))
     env = dict(os.environ, HOME=home, ML_RENDER_PROBE="1", ML_RENDER_PROBE_OUTPUT=out)
-    proc = subprocess.run([tool, "--atExit", "--list", "--", binary],
-                          capture_output=True, text=True, env=env, timeout=timeout,
-                          cwd=ROOT)
+    try:
+        try:
+            proc = subprocess.run([tool, "--atExit", "--list", "--", binary],
+                                  capture_output=True, text=True, env=env,
+                                  timeout=timeout, cwd=ROOT)
+        except subprocess.TimeoutExpired:
+            # A probe that never exits has no report to judge, and `leaks` writes its
+            # answer only when the target stops. Say which of the two failed and how long
+            # the sweep was given: a runner that dies at the timeout has to be told the
+            # timeout it died at, and a traceback is not an answer to that question.
+            print("FAIL the sweep did not finish inside %d seconds, so `leaks` had no "
+                  "report to write -- it prints its answer only when the app stops. "
+                  "Raise `--timeout` if this machine is slow; it does not raise the "
+                  "ceiling, which lives in the baseline file." % timeout)
+            return None
+    finally:
+        # The gate that looks for leaks is not allowed to leave any of its own behind:
+        # the probe writes screenshots into its output directory and a database into the
+        # HOME it was given, and both belong to this function. render-probe.py has always
+        # cleared its own; this one did not, and a laptop that ran the sweep a dozen times
+        # today found out by filling up.
+        shutil.rmtree(home, ignore_errors=True)
+        shutil.rmtree(out, ignore_errors=True)
     # `leaks` exits 1 when it found leaks, which is the normal answer for a real app.
     if SUMMARY.search(proc.stdout) is None:
         print("FAIL `leaks` produced no summary (exit %d):\n%s"
@@ -492,7 +592,8 @@ def main():
     module = project_identity.product_name()
     objc_names = first_party_classes(root)
     baseline = (json.load(open(BASELINE, encoding="utf-8"))
-                if os.path.exists(BASELINE) else {"classes": {}, "total_bytes": 0})
+                if os.path.exists(BASELINE) else {"apps_per_host": {}, "host_class": None,
+                                                  "bytes_per_host": None})
     if "--red-team" in arguments:
         if text is None:
             print("FAIL --red-team breaks a captured report and none was given. Pass "
@@ -506,14 +607,38 @@ def main():
     problems = report(text, baseline, objc_names, module)
     if "--write-baseline" in arguments:
         first_party, total, _summary, _blocks = count_leaks(text, objc_names, module)
-        classes = dict(baseline.get("classes", {}))
-        for name, count in first_party.items():
-            classes[name] = max(count, classes.get(name, 0))
-        ceiling = max(total, baseline.get("total_bytes", 0))
-        json.dump({"classes": classes, "total_bytes": ceiling},
-                  open(BASELINE, "w", encoding="utf-8"), indent=1, sort_keys=True)
+        host_class = baseline.get("host_class")
+        hosts = first_party.get(host_class, 0) if host_class else 0
+        if not hosts:
+            print("FAIL --write-baseline refuses to write from a run that leaked no %s: "
+                  "there is no host to divide by, so this run would record a ceiling of "
+                  "zero for every ratio and call it a measurement"
+                  % (host_class or "host class"))
+            return 1
+        fan_out = dict(baseline.get("apps_per_host", {}))
+        for name, count in sorted(first_party.items()):
+            if name == host_class:
+                continue
+            observed = -(-count // hosts)  # ceil: a partial host is still a whole app
+            fan_out[name] = max(observed, fan_out.get(name, 0))
+        observed_bytes = max(total // hosts, baseline.get("bytes_per_host", 0))
+        baseline = dict(baseline)
+        baseline["apps_per_host"] = fan_out
+        baseline["bytes_per_host"] = observed_bytes
+        baseline["observed"] = dict(baseline.get("observed", {}),
+                                    hosts_seen=sorted(set(
+                                        baseline.get("observed", {}).get("hosts_seen", [])
+                                        + [hosts])))
+        with open(BASELINE, "w", encoding="utf-8") as handle:
+            json.dump(baseline, handle, indent=1, sort_keys=True)
+            # The trailing newline is not decoration: without it the writer dirties the
+            # file on a run that raised nothing, and a gate that cannot be run without a
+            # diff is a gate people stop running.
+            handle.write("\n")
         print("wrote %s (a ceiling only ever goes up here; lowering one is a decision"
-              " somebody makes in the commit that fixes the leak)" % BASELINE)
+              " somebody makes in the commit that fixes the leak). Note that this raises"
+              " the measured number, not the margin -- the slack and the byte floor stay"
+              " where a human put them." % BASELINE)
         return 0
     for problem in problems:
         print("FAIL %s" % problem)
