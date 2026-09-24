@@ -520,7 +520,21 @@ reap 把它删掉 —— 所以这张对账表**不是本机专属**，每次 pu
 三个结论：
 
 1. **`streamPane` 一次打开读 3 遍**，另两页各 1 遍。§9 记录里那个「扇出 3.0」到这里才算有了
-   名字：被量的那一路就是串流设置页，它按分节各读一次，而不是每次 visit 读一次。
+   名字：被量的那一路就是串流设置页。**3 遍的来源用一次性插桩（打印 `callStackSymbols`，跑完
+   即回滚、未提交）测到，不是推测**：
+   * 每个 present 区间里都有 1 次来自 `SettingsOverlayPresenter.init` → `SettingsModel.init`
+     → `static SettingsModel.hosts.getter`（§1 说的那个 computed 属性，在这里被求值）；
+   * `streamPane` 另有 2 次来自 `StreamView.body` 里两个不同的 `onAppear`（栈上夹着
+     `FormSection.init(title:content:)`），链路逐条读代码核对过：
+     `SettingsStreamPane.swift:199` → `refreshConnectionCandidates()`
+     （`SettingsModel+DerivedValues.swift:216`，在 220 行自己 `getHosts`）与
+     `SettingsStreamPane.swift:694` → `refreshSunshineDisplays(force:)`
+     （`SettingsModel.swift:1130` → `currentTemporaryHost()` 1123 → `getHosts` 1126）。
+     两条链读的是**同一个语义**（当前选中那台 host），却各自重读一遍全库；
+   * 探针自己数库的那些读（`MLRunRenderProbeAndExitIfRequested`）落在 present/dismiss 区间
+     之外，不进这三行读数。
+   本轮做的是**栈归因 + 代码链路核对**，没做逐次时间对齐（那需要阶段标签），也没有改任何调用
+   点——见下面「顺带撞见的风险」。
 2. **关闭路径一次都不读**。这不是推出来的，是三次运行都为 0，于是它够格当门禁。
 3. **每个 cycle 的读数与第几次无关**（全是 1）。也就是说现在没有「越开越慢」的形状——而这类
    问题只有多 cycle 才看得见，单 cycle 永远看不见。
@@ -546,11 +560,49 @@ reap 把它删掉 —— 所以这张对账表**不是本机专属**，每次 pu
   读数记录」不由这条判红，留给更 sharp 的那条），以及 4 条 `probe_problems` case（cycle flag
   到达无视它的 build / cycle 完成却没记读数 / 记了读数 / 中途停止）。全量 0 失败。
 
+### 顺带撞见的风险：一次「读」列表会先写库删行
+
+`SettingsModel.hosts`（`SettingsModel.swift:122`）是 **static computed**，每次求值的头两行是：
+
+```swift
+let dataMan = DataManager()
+dataMan.removeHostsWithEmptyUuid()   // 写操作，先于任何读
+if let tempHosts = dataMan.getHosts() as? [TemporaryHost] { ... }
+```
+
+于是「打开设置页看一眼设备」这件事在生产路径上包含一次**删除**（`removeHostsWithEmptyUuid`
+实测是 `deleteObject:` + `saveData`，`DataManager.m:227`，写 store 不是改内存）。单看它有道理：
+空 uuid 的行是半成品，`hosts` 自己也会把它们过滤掉，留着只是让三条链反复遍历。但它和 §12 刚量到
+的删除规则**复合**起来就不是清理了——模型说 `Host.appList = Cascade`，**删一台 host 会连带删掉
+它的 app 记录**，而那些 app 记录是用户自己配的。
+
+「已保存的 host 会不会被写成空 uuid」没有留成猜测，链路是读出来的：
+
+| 环节 | 位置 | 事实 |
+|:---|:---|:---|
+| 响应缺字段就赋空值 | `ServerInfoResponse.m:22` | `host.uuid = [[self getStringTag:TAG_UNIQUE_ID] trim];` —— 无守卫，缺 tag 即 nil/空 |
+| 写回 store 时也没守卫 | `TemporaryHost.m:79` | `parentHost.uuid = self.uuid;` 无条件执行。**同一个方法里** `address` / `externalAddress` / `localAddress` / `ipv6Address` / `mac` / `serverCert` 全都写着 `if (self.x != nil)`，只有 `name` 与 `uuid` 是裸赋值 |
+| 于是下一次读会删 | `SettingsModel.swift:126`、`HostSidebarViewModel.swift:73` | 两处都在读列表之前调 `removeHostsWithEmptyUuid` |
+| 删 host 会连带删 app | §12 实测 | `Host.appList = Cascade`，删一台 host 时 app 行随之消失 |
+
+一条不完整的主机信息响应（缺 `UNIQUE_ID`）就可能把一台已配对主机的 uuid 清成空，之后**任何一次
+打开设置页或侧栏**都会把它和用户配的 app 一起删掉。**可达性**（真机上是否确有缺 `UNIQUE_ID` 的
+响应）本机测不了——这里没有可连的主机，所以它是登记项，不是结论。
+
+测法已经想好，能复用本轮与 §12 的全部机制：种一台 uuid 有值、挂 3 个 app 的 host → 走一次
+`populateHost:` 喂一份**不含 `UNIQUE_ID`** 的响应 → 数 uuid 与两侧 app 记录。当前代码的**预期**是
+uuid 被清空、随后 app 记录 3 → 0 且 `ML_PROBE_REMOVE_OWN_HOSTS` 也救不回来（行已经没了）；那正是
+红证，红了之后修的是「同一方法里漏掉的守卫」，而不是新行为。本轮不编码，因为无论补守卫还是让删除
+不级联，都是**行为改变**，属独立决策；而读库次数已经钉死，改动无法偷偷发生。
+
 ### 没测到 / 留给下一轮
 
 * **真串流会话里 `self.app.host` 的读数**照旧没有——那需要能跑起来的主机，本机没有。
 * **`streamPane` 那 3 次能不能合并成 1 次**：属于性能优化，且会改变「页面在什么时刻看到最新的
-  库」这个语义（分节各自刷新 vs 一次快照），所以它是一次**独立决策**，登记在此，本轮不编码。
-  真要动它，`HOST_READS_WHEN_OPENED` 会先变红，逼着把理由写清楚。
+  库」这个语义（onAppear 再读一遍 vs 用 presenter 构造时那份快照），所以它是一次**独立决策**，
+  登记在此，本轮不编码。真要动它，`HOST_READS_WHEN_OPENED` 会先变红，逼着把理由写清楚。
+  两处 onAppear 读的是**同一个语义**（当前 host），已逐条核对过链路，所以合并的技术前提成立；
+  真正没解的是「它们各自期望在什么时刻看到新 host」——这条留给下一轮连同上面那个删除风险一起判
+  定，因为两者动的是同一段代码。
 * 计数器只在 `DEBUG` 下存在，Release 没有读数——这是刻意的：门禁跑 Debug 二进制，而 Release 若
   被拿去跑 leak-audit，会因为「报告里没有 `readsPerCycle`」直接判红，不会静默变绿。
