@@ -26,7 +26,11 @@ What it proves:
   * a Liquid Glass material is actually composited, measured from the Core
     Animation layer tree (CABackdropLayer and friends), because SwiftUI materials
     do not appear as AppKit view classes and the hosting view's own name contains
-    "Glass" without meaning anything.
+    "Glass" without meaning anything;
+  * how many times each page goes to the database to open, and that closing it
+    does not go there at all -- the read count is what turns the leak rate in
+    `leak-audit.py` from a coincidence into an accounted-for number, because
+    `getHosts` builds a fresh graph per host in the library on every call.
 
 What it does not prove: how good it looks over a live stream. The page body sits
 on a deliberate opaque base, so how much of the window backdrop reads through is
@@ -259,7 +263,89 @@ def verify(report, out_dir=None):
     expect(len(materials) > 0, "no backdrop or material layer in the page: no Liquid Glass is composited")
 
     verify_panes(report, refusals, out_dir)
+    verify_host_reads(report, refusals)
     return refusals
+
+
+# What one trip through each page costs the database, measured on 2026-09-25 by three runs of
+# this build (one at 3 visit cycles, two at 6) against the machine's own one-host library:
+# videoPane 1, appPane 1, streamPane 3, and nothing on every dismissal, the same numbers at
+# both cycle counts. streamPane is the odd one because its own view model reads the host list
+# per section rather than once per visit; that is the number the byte ceiling in
+# `leak-audit.py` has been absorbing ever since it was written, and it is now written down
+# where a change to it has to be argued about.
+#
+# The counts are exact rather than bounded above, deliberately: how many times a page opens
+# the database is decided by the structure of the code that opens it, not by the machine, the
+# library, or the load, so a range would only hide a doubling until the byte ceiling swallowed
+# it. One read builds one graph per host in the library (DataManager.m:205 builds a fresh
+# TemporaryHost per row every call), so a read added to a cell binding is a graph added per
+# host per visit -- which is the leak, measured before it reaches the byte count.
+HOST_READS_WHEN_OPENED = {"videoPane": 1, "appPane": 1, "streamPane": 3}
+
+
+def verify_host_reads(report, refusals):
+    """Check how often the pages went to the database, and that the counter is wired up.
+
+    The instrument is a debug-only atomic counter that `getHosts` itself bumps, so the first
+    claim against any run is that the count exists and that a read this function can see for
+    itself was registered by it. A report without the fields is a Release build or deleted
+    instrumentation, either of which would make every other read number here a zero.
+    """
+    def expect(ok, message):
+        if not ok:
+            refusals.append(message)
+
+    for name, want in sorted(HOST_READS_WHEN_OPENED.items()):
+        pane = report.get(name)
+        if not isinstance(pane, dict):
+            continue
+        opened = pane.get("hostReadsDuringPresent")
+        expect(isinstance(opened, int),
+               "%s recorded no hostReadsDuringPresent, so either the read counter was compiled"
+               " out or it was deleted -- and then nothing in this report says how often the"
+               " page goes to the database (it reports %r)" % (name, opened))
+        if not isinstance(opened, int):
+            continue
+        expect(opened == want,
+               "%s opened with %d library read(s) where this tree measures %d. Each read builds"
+               " one TemporaryHost per host in the library, so a read added here is a graph per"
+               " host per visit; if the shape changed on purpose, change"
+               " HOST_READS_WHEN_OPENED in that same commit and say why in its message"
+               % (name, opened, want))
+        closed = pane.get("hostReadsDuringDismiss")
+        expect(closed == 0,
+               "%s read the library %r time(s) while being dismissed. Measured here it does not"
+               " read at all on the way out, and a read during teardown is one that happens"
+               " while the page is already on its way to being released" % (name, closed))
+
+    cycles = report.get("memoryCycles")
+    if not isinstance(cycles, dict):
+        return
+    spans = cycles.get("readsPerCycle")
+    expect(isinstance(spans, list) and len(spans) > 0,
+           "the visit cycles recorded no readsPerCycle, so the growth being measured cannot be"
+           " tied to the reads that cause it (it reports %r)" % (spans,))
+    if isinstance(spans, list) and spans:
+        expect(all(isinstance(value, int) for value in spans),
+               "readsPerCycle holds a non-number, so the per-visit read count is not a count: %r" % (spans,))
+        expect(len(set(spans)) == 1,
+               "the visits did not read the library the same number of times (%r). A page that"
+               " reads more on each trip gets slower the longer somebody leaves it open, which"
+               " is a different fault from a constant count and cannot be fixed by shrinking a"
+               " ceiling" % (spans,))
+    expect(isinstance(cycles.get("readsDuringCycles"), int),
+           "the visit cycles recorded no readsDuringCycles, so the total is missing and the"
+           " per-visit spans cannot be checked against it: %r" % (cycles.get("readsDuringCycles"),))
+    unattributed = cycles.get("readsUnattributedToCycles")
+    expect(isinstance(unattributed, int) and unattributed == 0,
+           "%r library read(s) happened outside every visit cycle while the status says they all"
+           " completed -- a read nobody was charging for is how a count stops adding up"
+           % (unattributed,))
+    expect(isinstance(cycles.get("libraryEndReads"), int) and cycles["libraryEndReads"] >= 1,
+           "counting the library at the end of the cycles did not register as a library read"
+           " (%r), so the counter is not attached to the read path and every read number in this"
+           " report is a zero" % (cycles.get("libraryEndReads"),))
 
 
 def build(timeout):
