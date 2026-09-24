@@ -399,6 +399,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **The gate that accounts for a stored CoreFoundation reference now asks
+  which class stored it, because a neighbour's teardown was paying the debt.**
+  `constraints-audit.py` credits an ivar when a release of that name exists
+  somewhere the object can reach. It used to search the whole file, and two
+  classes compiled into one file can each carry an ivar under the same name:
+  class A takes a reference and never returns it, class B releases its own,
+  and the pair read as clean. A planted two-owner file shows the old answer,
+  and `displayLink` is carried by two classes today, `HIDSupport` and
+  `VideoDecoderRenderer`, one per file, so the collision is one move away.
+  Asking per class costs the tree nothing -- no creation in any compiled
+  source is credited by another class's release -- and a mutation that
+  restores the file-wide search now trips the assertion it was written for.
+
+
 - **The permissions section now carries the limit of its own measurement, and
   a gate checks the report's claims against the tree instead of trusting the
   prose.** `screen recording: not granted` has two readings that send a player
