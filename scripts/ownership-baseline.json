@@ -11,6 +11,65 @@
  },
  "observed": {
   "app_asset_retriever_correction": "docs/memory-ownership.md section 4 recorded the box-art path as a holder with no host. It has one: AppAssetRetriever.h:15 declares a TemporaryHost property and AppAssetManager.m:59 assigns it beside retriever.app, so the asynchronous boxArtPathForApp: read of app.host.uuid is over a host the request itself is holding. Section 5 step 3 is therefore already done for that path, and the two sites above are the whole of what steps 2 and 3 still owe.",
+  "ci_runner": {
+   "arm64": {
+    "appAssignmentSites": 3,
+    "backpointerOnly": {
+     "appAliveWithNoHolder": false,
+     "appHostReadableWhileAppHeld": true,
+     "appListCount": 0,
+     "hostAliveWhileAppHeld": true,
+     "hostAliveWithNoHolder": false
+    },
+    "declarations": "app.host=strong,host.appList=strong",
+    "handBuiltGraph": {
+     "appAliveWithNoHolder": true,
+     "appHostReadableWhileAppHeld": true,
+     "appListCount": 1,
+     "hostAliveWhileAppHeld": true,
+     "hostAliveWithNoHolder": true
+    },
+    "productionGraph": {
+     "appAliveWithNoHolder": true,
+     "appHostReadableWhileAppHeld": true,
+     "appListCount": 3,
+     "hostAliveWhileAppHeld": true,
+     "hostAliveWithNoHolder": true
+    },
+    "sitesAlsoGivenAHost": 1
+   },
+   "identical_across_both_arches": true,
+   "measured_on": "2026-09-24, run 36015387603, GitHub macOS runners, arm64 and x86_64: both reported the library as 1 host with seed status `seeded`, the production graph holding its host on the app alone and surviving its last holder, the hand-built graph agreeing, and the lone back-pointer going back",
+   "runs": 2,
+   "what_still_needs_a_thing_we_do_not_have": "a live stream session. The runners judge the object graph and the assignments; nobody has yet watched a running stream read `app.host`, and the holder rule is a guarantee about the source until somebody does.",
+   "what_the_runners_add": "the seed path, which is the only way to build the graph where there is nothing to discover. The laptop measured `existing-hosts` over a real library; a runner measures `seeded`, and the appList of 3 on both arches is the seed's fan-out read back through the production `getHosts`. Same table either way, which is the point: the reading does not depend on whose LAN answered.",
+   "x86_64": {
+    "appAssignmentSites": 3,
+    "backpointerOnly": {
+     "appAliveWithNoHolder": false,
+     "appHostReadableWhileAppHeld": true,
+     "appListCount": 0,
+     "hostAliveWhileAppHeld": true,
+     "hostAliveWithNoHolder": false
+    },
+    "declarations": "app.host=strong,host.appList=strong",
+    "handBuiltGraph": {
+     "appAliveWithNoHolder": true,
+     "appHostReadableWhileAppHeld": true,
+     "appListCount": 1,
+     "hostAliveWhileAppHeld": true,
+     "hostAliveWithNoHolder": true
+    },
+    "productionGraph": {
+     "appAliveWithNoHolder": true,
+     "appHostReadableWhileAppHeld": true,
+     "appListCount": 3,
+     "hostAliveWhileAppHeld": true,
+     "hostAliveWithNoHolder": true
+    },
+    "sitesAlsoGivenAHost": 1
+   }
+  },
   "laptop": {
    "backpointer_only_survives_with_no_holder": false,
    "library_hosts": 2,

@@ -47,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded as holding no host -- turns out to declare one at `AppAssetRetriever.h:15` and get it
   assigned beside the app at `AppAssetManager.m:59`. Section 5 step 3 is already done for the box
   art path; the two holders above are all that steps 2 and 3 still owe.
+  The runners ran the other half of the provenance: with no LAN to answer there is only the
+  seeded host, and arm64 and x86_64 returned the table word for word -- production graph alive
+  on the app alone and alive after its last holder, hand-built agreeing, the lone back-pointer
+  gone back, 3 assignment sites with 1 paired -- so the gate prints `library hosts / seed
+  status` beside its verdict, because "measured on a graph this run wrote" and "measured on
+  somebody's library" are different claims and a log reader cannot touch the machine.
 
 - **The memory sweep now measures what one more trip through the settings page costs, and it
   does not come back free.** `ML_RENDER_PROBE_CYCLES` drives the Debug probe through N further
