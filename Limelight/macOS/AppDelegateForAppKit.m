@@ -44,6 +44,13 @@ typedef enum : NSUInteger {
 // happened, so scripts/render-probe.py can assert it without a stream session
 // and without touching anyone's settings: the runner points HOME at a scratch
 // directory, so the database and preferences under test are the probe's own.
+#if DEBUG
+// Defined in `DataManager.m`. Debug-only, like the counter it reads: the release binary carries
+// neither, and `getHosts` does not branch on anything a player would pay for.
+extern unsigned long long MLHostReads(void);
+extern void MLResetHostReads(void);
+#endif
+
 static void MLProbeSpin(NSTimeInterval seconds) {
     NSDate *until = [NSDate dateWithTimeIntervalSinceNow:seconds];
     while ([until timeIntervalSinceNow] > 0) {
@@ -480,8 +487,18 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
 
     NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
     NSSet<NSView *> *subviewsBefore = [NSSet setWithArray:content.subviews];
+#if DEBUG
+    // Counted around the presentation rather than around the pass, because the question the leak
+    // gate answers is "what does one visit cost", and a visit is present-and-close. `SettingsModel
+    // .hosts` is computed and each read builds a fresh graph, so this count is the number of
+    // graphs this one pane pinned -- and the pane is where the reading happens, not the window.
+    unsigned long long readsAtEntry = MLHostReads();
+#endif
     [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
     MLProbeSpin(1.4);
+#if DEBUG
+    unsigned long long readsAfterPresent = MLHostReads();
+#endif
 
     NSMutableDictionary *result = [NSMutableDictionary dictionary];
     result[@"requestedPane"] = @(pane);
@@ -614,6 +631,11 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     [SettingsOverlayPresenter dismissSettingsFromWindow:window];
     MLProbeSpin(0.5);
     result[@"presentedAfterDismiss"] = @([SettingsOverlayPresenter isSettingsPresentedInWindow:window]);
+#if DEBUG
+    result[@"hostReadsDuringPresent"] = @(readsAfterPresent - readsAtEntry);
+    result[@"hostReadsDuringDismiss"] = @(MLHostReads() - readsAfterPresent);
+    result[@"hostReadsDuringPass"] = @(MLHostReads() - readsAtEntry);
+#endif
     result[@"stillMountedAfterDismiss"] = @([overlay isDescendantOf:content]);
     if (previousAdvancedState) {
         [probeDefaults setObject:previousAdvancedState forKey:MLProbeAdvancedSectionCollapsedKey];
@@ -1501,7 +1523,18 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
                     @" an unknown denominator", requestedCycles]);
         } else {
             cycleRecord[@"status"] = @"running";
+            NSMutableArray<NSNumber *> *readsPerCycle = [NSMutableArray array];
+#if DEBUG
+            // The loop total is measured from before the first visit rather than summed from the
+            // per-cycle spans, so a read that happens between two cycles (the library count a
+            // pane pass does on its way out, say) cannot hide in the gaps of a sum. Both numbers
+            // are reported; scripts/render-probe.py is what checks they add up.
+            unsigned long long readsAtCyclesStart = MLHostReads();
+#endif
             for (long cycle = 0; cycle < wantedCycles; cycle++) {
+#if DEBUG
+                unsigned long long readsAtCycleStart = MLHostReads();
+#endif
                 [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
                 MLProbeSpin(0.25);
                 if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
@@ -1524,6 +1557,9 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
                             @" which is a visit that never ends rather than a leak rate", cycle + 1]);
                     break;
                 }
+#if DEBUG
+                [readsPerCycle addObject:@(MLHostReads() - readsAtCycleStart)];
+#endif
                 cycleRecord[@"completed"] = @(cycle + 1);
             }
             if ([cycleRecord[@"status"] isEqualToString:@"running"]) {
@@ -1535,7 +1571,40 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
             // is divided by a library that has since grown. Measured across five growth runs on
             // one build: 230 to 500 first-party bytes per visit per host depending on which of
             // those two numbers is used, so the denominator is not a detail.
+#if DEBUG
+            cycleRecord[@"readsPerCycle"] = readsPerCycle;
+            cycleRecord[@"readsDuringCycles"] = @(MLHostReads() - readsAtCyclesStart);
+            // The read below is itself a read of the library, so it is counted on its own line
+            // rather than being folded into a per-cycle average. The library count has to be taken
+            // after the visits -- mDNS keeps adding hosts while the process lives -- and a rate
+            // divided by a stale denominator is not the rate anyone thinks they measured.
+            unsigned long long readsBeforeLibraryEnd = MLHostReads();
+#endif
             cycleRecord[@"libraryEnd"] = @((long)[[[DataManager.alloc init] getHosts] count]);
+#if DEBUG
+            cycleRecord[@"libraryEndReads"] = @(MLHostReads() - readsBeforeLibraryEnd);
+            // Reads that the per-cycle spans did not account for. The spans are cut at cycle
+            // boundaries and the total is taken across the whole loop, so this is what a
+            // completed cycle leaves unexplained -- it should be nothing. It is reported rather
+            // than asserted here because a cycle that broke partway through is allowed to owe a
+            // read to the visit it never finished; render-probe.py is where the completed runs
+            // get held to zero, and it can tell the two cases apart by the status field.
+            unsigned long long sumOfCycleSpans = 0;
+            for (NSNumber *span in readsPerCycle) {
+                sumOfCycleSpans += [span unsignedLongLongValue];
+            }
+            unsigned long long readsDuringAllCycles = [cycleRecord[@"readsDuringCycles"] unsignedLongLongValue];
+            cycleRecord[@"readsUnattributedToCycles"] = @(readsDuringAllCycles - sumOfCycleSpans);
+            // The counter has to be wired to the thing it claims to count. Every library count
+            // goes through getHosts, so a run that reports zero reads for the one read this
+            // function makes on its own behalf means the instrumentation is dead -- and every
+            // other number in this record would then be a zero as well.
+            if ([cycleRecord[@"libraryEndReads"] unsignedLongLongValue] < 1) {
+                refuse(@"counting the library through getHosts did not register as a library read,"
+                       @" so the host-read counter is not attached to the read path and every"
+                       @" read count in this report is meaningless");
+            }
+#endif
         }
     }
 

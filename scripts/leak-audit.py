@@ -703,6 +703,12 @@ def probe_problems(probe, returncode=0, cycles_requested=None):
                             " than the one it reports"
                             % (cycles_requested, cycles.get("status"),
                                cycles.get("completed")))
+        elif not isinstance(cycles.get("readsPerCycle"), list) or not cycles["readsPerCycle"]:
+            problems.append("the sweep asked for %d visit cycle(s) and the probe recorded no"
+                            " readsPerCycle, so the growth has no library reads behind it -- the"
+                            " counter is compiled out of this build or was deleted, and a leak"
+                            " rate that cannot be tied to the reads that cause it is a"
+                            " coincidence with a unit on it" % cycles_requested)
         elif cycles.get("completed") != cycles_requested:
             problems.append("the sweep asked for %d visit cycle(s) and the probe recorded %s as"
                             " completed, so the rate would be divided by visits that did not"
@@ -742,6 +748,28 @@ def library_hosts(probe):
     return 0
 
 
+def host_reads_per_visit(probe):
+    """How many times one trip through the page went to the library, as that run recorded it.
+
+    `getHosts` builds a fresh `TemporaryHost` per row on every call (`DataManager.m:205`), so
+    the read count is the reason the sweep sees graphs at all: one visit reads the library N
+    times, each read materialises one graph per host in the library, and those graphs are the
+    leaked objects this file counts. Measured on 2026-09-25 by three runs of one build, the
+    settings root reads once per visit at both 3 and 6 cycles. None is returned when the run
+    recorded nothing, which is a different fact from zero.
+    """
+    cycles = (probe or {}).get("memoryCycles")
+    if not isinstance(cycles, dict):
+        return None
+    spans = cycles.get("readsPerCycle")
+    if not isinstance(spans, list) or not spans:
+        return None
+    values = [value for value in spans if isinstance(value, int)]
+    if len(values) != len(spans):
+        return None
+    return float(sum(values)) / len(values)
+
+
 def judge_growth(shorter, longer, baseline):
     """Is the page leaking per visit, and is that rate the one the baseline already carries?
 
@@ -772,6 +800,28 @@ def judge_growth(shorter, longer, baseline):
           % (visits, shorter["ours"], longer["ours"], per_cycle, per_cycle_per_host, hosts,
              ", graphs leaked %d then %d" % (shorter["hosts"], longer["hosts"])
              if shorter.get("hosts") is not None else ""))
+    # How many graphs the extra visits left behind, against how many the reads could build.
+    # The byte ceiling above can absorb a doubling -- five unmodified runs of this build came
+    # back spread over 192 to 461 bytes per visit per host -- so it is not the rule that ought
+    # to notice a second creator of the same graph. The read count is: it says exactly how many
+    # graphs per host the page is entitled to orphan, and it is measured in the run rather than
+    # remembered here.
+    built = None
+    if shorter.get("hosts") is not None and longer.get("hosts") is not None:
+        built = longer["hosts"] - shorter["hosts"]
+        reads = longer.get("reads")
+        if built > 0 and reads is not None:
+            entitled = reads * visits * hosts
+            if built > entitled:
+                problems.append(
+                    "the extra visits left %d more leaked %s graph(s) than the %s library"
+                    " read(s) per visit can account for across %d host(s) (%d extra visits, %d to"
+                    " %d graphs, %s entitled). One read builds one graph per host, so the surplus"
+                    " has another creator this gate cannot name -- either something reads the"
+                    " library outside the path the probe counts, or a graph is retained per visit"
+                    " by something other than the read"
+                    % (built, baseline.get("host_class"), reads, hosts, visits,
+                       shorter["hosts"], longer["hosts"], entitled))
     if per_cycle < 0:
         notes.append("the page leaked %d fewer bytes over %d extra visits than it did over %d:"
                      " the rate went down. That is a fix, and the ceiling in the baseline is"
@@ -786,6 +836,12 @@ def judge_growth(shorter, longer, baseline):
             " bytes per visit per host"
             % (per_cycle_per_host, ceiling, hosts, visits, shorter["ours"], longer["ours"],
                ", ".join(str(value) for value in (measured or []))))
+    if built is not None:
+        notes.append("the %d extra leaked graph(s) across %d host(s) are inside what the %s"
+                     " library read(s) per visit are entitled to orphan (%d of them), so the"
+                     " growth has a named source rather than only a ceiling"
+                     % (built, hosts, longer.get("reads"),
+                        longer.get("reads") * visits * hosts if longer.get("reads") is not None else 0))
     return problems, notes
 
 
@@ -801,7 +857,7 @@ def growth_fixture():
     """
     base = {"growth_bytes_per_cycle_per_host": 1100.0,
             "observed": {"growth_bytes_per_cycle_per_host": [192, 461]}}
-    one_host = {"cycles": 1, "library": 2, "ours": 6912, "hosts": 18}
+    one_host = {"cycles": 1, "library": 2, "ours": 6912, "hosts": 18, "reads": 1.0}
     def after(visits, bytes_leaked):
         longer = dict(one_host, cycles=visits, ours=bytes_leaked, hosts=18 + visits)
         return longer
@@ -831,6 +887,17 @@ def growth_fixture():
         # note that says so is the one above. This case keeps "flat" from being read as a
         # regression by a rule written with the wrong sign.
         ("the rate is flat across visits", after(8, 6912), 0, None),
+        # The rule the byte ceiling cannot do: 7 extra visits, one read each, two hosts in the
+        # library, so 14 graphs are entitled to survive. This shape orphans 32, which is a
+        # second creator of the same graph -- and 32 graphs at 384 bytes is 1228 bytes per
+        # visit per host, which the ceiling above would also catch. The point is the surplus is
+        # refused as a surplus, named, rather than as bytes that happen to be too large.
+        ("a visit orphans more graphs than its reads can explain",
+         dict(one_host, cycles=8, ours=9000, hosts=18 + 4 * 8), 1, "another creator"),
+        # A run whose probe predates the counter, or whose counter was compiled out, is not
+        # refused by this rule -- `probe_problems()` refuses it for missing the record, and a
+        # growth rule that also fired would hide that sharper message behind a vaguer one.
+        ("no read count recorded", dict(one_host, cycles=8, ours=9000, reads=None), 0, None),
         ("no extra visits to divide by", dict(one_host, cycles=1), 1, "no extra visiting"),
         ("no host in either sweep", dict(one_host, cycles=8, ours=9000, library=0), 1,
          "no per-host"),
@@ -859,25 +926,44 @@ def probe_record_fixture():
     full of system leaks and no first-party object in it, which is exactly what a clean run
     looks like to a reader that never asks.
     """
+    # The last four cases ask about the visit cycles, so they pass a cycle count the way
+    # `--growth` does. Without one the cycle branch never runs, and a rule that only fires on
+    # a flag nobody passed in a fixture is a rule nobody has ever seen fire.
+    seeded = {"failures": [], "seedHosts": {"status": "seeded", "seeded": 1}}
     cases = [
-        ("no report at all", None, 1, "no report.json"),
+        ("no report at all", None, None, 1, "no report.json"),
         ("the probe refused its own run", {"failures": ["the settings page did not mount"]},
-         1, "did not present"),
-        ("the seed flag reached a build that ignores it", {"failures": []}, 1,
+         None, 1, "did not present"),
+        ("the seed flag reached a build that ignores it", {"failures": []}, None, 1,
          "reached a build that ignores it"),
         ("the seed recorded a refusal", {"failures": [],
                                          "seedHosts": {"status": "invalid",
-                                                       "requested": "two"}}, 1,
+                                                       "requested": "two"}}, None, 1,
          "no host graph"),
-        ("the graph was seeded", {"failures": [],
-                                  "seedHosts": {"status": "seeded", "seeded": 1}}, 0, None),
+        ("the graph was seeded", dict(seeded), None, 0, None),
         ("the machine had hosts of its own", {"failures": [],
                                               "seedHosts": {"status": "existing-hosts",
-                                                            "existing": 4}}, 0, None),
+                                                            "existing": 4}}, None, 0, None),
+        # Measured on 2026-09-25: the growth sweep divides by visits, and a build without the
+        # read counter still reports visits, so the only thing saying whether any library read
+        # happened inside them is this record.
+        ("the cycle flag reached a build that ignores it", dict(seeded), 2, 1,
+         "no memoryCycles"),
+        ("the cycles completed but recorded no reads",
+         dict(seeded, memoryCycles={"status": "completed", "completed": 3}), 3, 1,
+         "no library reads"),
+        ("the cycles completed and recorded their reads",
+         dict(seeded, memoryCycles={"status": "completed", "completed": 3,
+                                    "readsPerCycle": [1, 1, 1]}), 3, 0, None),
+        # Stopping partway is refused for its own reason even though such a run would also
+        # carry no reads: the shorter denominator is the sharper of the two messages.
+        ("the cycles stopped partway",
+         dict(seeded, memoryCycles={"status": "did-not-present", "completed": 1,
+                                    "requested": "3"}), 3, 1, "stopped at"),
     ]
     failures = 0
-    for label, probe, want_problems, want_text in cases:
-        problems = probe_problems(probe)
+    for label, probe, cycles_requested, want_problems, want_text in cases:
+        problems = probe_problems(probe, cycles_requested=cycles_requested)
         if bool(problems) != bool(want_problems):
             print("FAIL %s: expected %s, got %s"
                   % (label, "a refusal" if want_problems else "a pass",
@@ -1080,7 +1166,8 @@ def main():
                                                                     objc_names, module)
             problems += report(sweep_text, baseline, objc_names, module)
             sweeps.append({"cycles": cycles, "library": library_hosts(sweep_probe),
-                           "ours": ours, "hosts": per_class.get(host_class, 0)})
+                           "ours": ours, "hosts": per_class.get(host_class, 0),
+                           "reads": host_reads_per_visit(sweep_probe)})
         growth_problems, growth_notes = judge_growth(sweeps[0], sweeps[1], baseline)
         problems += growth_problems
         notes += growth_notes

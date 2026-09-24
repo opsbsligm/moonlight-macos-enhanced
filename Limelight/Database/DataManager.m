@@ -11,6 +11,41 @@
 #import "TemporarySettings.h"
 #import "DatabaseSingleton.h"
 
+#if DEBUG
+#include <stdatomic.h>
+
+// How many times the library has been read through `getHosts`, counted for the Debug probes.
+//
+// The number exists because of a chain that has been asserted in prose for a long time and never
+// counted: `SettingsModel.hosts` is a computed property (`SettingsModel.swift:122`), every
+// evaluation of it calls `getHosts`, and every `getHosts` builds a *fresh* object graph out of
+// Core Data (`DataManager.m:175`) -- one `TemporaryHost` per row plus the `TemporaryApp` set each
+// one holds, in a cycle that `leaks` calls ROOT CYCLE and `docs/memory-ownership.md` records as
+// pinned by whoever asked. So the leak the memory gate judges is not one graph per run of the app:
+// it is one graph per read. That makes this counter the quantity that explains the leak gate's
+// numbers, and the only honest answer to "how many times does opening one page ask for the whole
+// library". The call-site count in the documentation (seventeen) is stale by measurement -- there
+// are twenty-nine call sites today, and a call-site count was never the question anyway, because
+// a site inside a loop is not a site.
+//
+// Relaxed ordering is deliberate: the counter is not standing in for anything else, and no other
+// value is meant to be visible because a read was. Debug-only for the same reason the count costs
+// nothing where players run: `#if DEBUG` means the release binary does not carry the increment.
+static atomic_ullong MLHostReadCounter = 0;
+
+unsigned long long MLHostReads(void) {
+    return atomic_load_explicit(&MLHostReadCounter, memory_order_relaxed);
+}
+
+void MLResetHostReads(void) {
+    atomic_store_explicit(&MLHostReadCounter, 0, memory_order_relaxed);
+}
+
+static void MLRecordHostRead(void) {
+    atomic_fetch_add_explicit(&MLHostReadCounter, 1ULL, memory_order_relaxed);
+}
+#endif
+
 @implementation DataManager {
     NSManagedObjectContext *_managedObjectContext;
 }
@@ -173,6 +208,9 @@
 }
 
 - (NSArray*) getHosts {
+#if DEBUG
+    MLRecordHostRead();
+#endif
     __block NSMutableArray *tempHosts = [[NSMutableArray alloc] init];
     
     [_managedObjectContext performBlockAndWait:^{

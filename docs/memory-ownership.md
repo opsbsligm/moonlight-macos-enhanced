@@ -6,12 +6,17 @@
 > `TemporaryApp.host` retains the host back (`TemporaryApp.h:20`), so the pair is garbage
 > for anyone but itself. That matters because `-[DataManager getHosts]` builds a *fresh*
 > graph on every call (`DataManager.m:175`) and `SettingsModel.hosts` is a computed property
-> (`SettingsModel.swift:122`) with 17 call sites: each evaluation pins the graph it made.
+> (`SettingsModel.swift:122`) with call sites counted in §13: each evaluation pins the graph
+> it made.
 > Flipping the back-pointer to `weak` is **not** safe by itself — `StreamViewController`
 > holds an app and no host, and an asynchronous box-art path reads `app.host.uuid` — so this
 > page records the measurement, the fix, and the one thing that has to exist before the fix
 > is honest. No ownership change was made here, because the streaming path cannot be
-> exercised on this machine. Section 10 (same day) splits that blocker in two and measures the
+> exercised on this machine. Section 13 (2026-09-25) removed the last guess in the chain:
+> `getHosts` now counts its own calls, and the settings page measures one read per visit at
+> its root, three for the stream pane, and none on dismissal -- so the growth rate that
+> `leak-audit.py` reports is tied to the reads that cause it instead of merely sitting under
+> a byte ceiling. Section 10 (same day) splits that blocker in two and measures the
 > half that never needed a session: the Debug build now reports who keeps a host alive, three
 > shapes with two controls, and the holder rule refuses a `weak` back-pointer while any
 > assignment hands out an app without handing out its host. (That same rule corrected one row
@@ -62,7 +67,8 @@ TemporaryHost ──appList(retain, TemporaryHost.h:41)──▶ TemporaryApp
 
 - `-[DataManager getHosts]`（`DataManager.m:175`）**每次都 `alloc` 新的 `TemporaryHost`**，没有缓存；
 - `SettingsModel.hosts` 是 `static var ... { }` 计算属性（`SettingsModel.swift:122`），同样没有缓存；
-- `getHosts` 的调用点实测 **17 处**（Swift 11 + ObjC 6），其中多处就在设置页的取值路径上。
+- `getHosts` 的调用点（口径与逐处清单见 §13）：生产代码 **16 处**（Swift 11 + ObjC 5），Debug
+  探针里另有 6 处，其中多处就在设置页的取值路径上。
 
 所以每求值一次，就多钉住一份图。探针那一次渲染只摊到几 KB，是因为测试账号的主机/应用少；
 这台机器量的是**一次渲染**，不是长会话曲线（见 §6）。
@@ -269,8 +275,9 @@ TemporaryHost ──appList(retain, TemporaryHost.h:41)──▶ TemporaryApp
 
 **为什么抖**：一次访问里页面读几遍 `getHosts` 不由单一控制（`SettingsModel` 计算属性、设备页、
 app 页各读各的），而每次读会遍历当时库里的全部主机。这条**没有测到根因**，只测到了它的幅度。
-顺带记下：那 17 处 `getHosts` 调用点本身就是可优化的存量（同一页渲染内读 3 遍同一个库），
-但它属于「行为可能变」的重构，本轮不动，登记在此。
+顺带记下：那些 `getHosts` 调用点（逐处清单见 §13）本身就是可优化的存量（同一页渲染内读 3 遍
+同一个库）——§13 已经把「读几遍」从推测变成有门禁的读数；但**合并读取属于「行为可能变」的重构**，
+本轮不动，登记在此。
 
 **CI 上第一次跑到就落在同一个分布里**（run `36000138662`：230 与 307 字节/次访问/主机，
 库中各 1 台，每图仍 384）。一个细节要记下：那两次扫描的**第一趟是种子先到、第二趟是发现先到**
@@ -467,3 +474,83 @@ reap 把它删掉 —— 所以这张对账表**不是本机专属**，每次 pu
 
 **没测到**：孤儿判定依赖 `host == nil` 谓词在该 store 上的行为；若 store 拒绝这个谓词，
 探针记 `appRecordProblem` 并判红，不猜。真串流会话里 `self.app.host` 的读数照旧没有。
+
+
+## 13. 一次进设置页到底读了几遍库：把最后那个猜测量掉（2026-09-25）
+
+### 为什么这仍属于正确性，而不是性能
+
+§9 交付的增长速率是 `bytes / visit / host`。它有一个从未被检验的前提：**一次 visit 会读几遍
+库**。`-[DataManager getHosts]` 每次调用都为库里每一行造一套全新的 `TemporaryHost`/`TemporaryApp`
+图（`DataManager.m:210`），于是
+
+```
+一次 visit 泄漏的图数 = 这次 visit 读库的次数 × 库内 host 数
+```
+
+读库次数不是常数的时候，「速率」就只是恰好观测到的字节数。§9 那条字节阈值自己也承认：同一份
+未改动的代码，五轮跑出 192 / 384 / 422 / 461 / 461 字节，脚本当时的注释写着「一次 visit 到底
+读几遍库，不是这个仓库能控制的数字」。**这一轮就是把那句话作废。**
+
+### 先更正旧口径：调用点不是 17 处
+
+§1 与 §2 里的「17 处」是 §1 那轮的估数。这轮按明确口径重数：排除 `DataManager.h:29` 的声明、
+`DataManager.m:210` 的定义、纯注释行，以及名字相近但无关的 `forgetHosts`。
+
+| 口径 | 数量 | 位置 |
+|:---|:---|:---|
+| 生产代码调用点 | **16** | Swift 11：`HostSidebarViewModel.swift:74`、`SettingsModel.swift:127/1031/1126`、`SettingsModel+DerivedValues.swift:220`、`SettingsModel+RiskAssessment.swift:42`、`SettingsObjCBridge.swift:50/791`、`SettingsAppPane.swift:193`、`SettingsDevicesPane.swift:504`、`SettingsStreamPane.swift:174`；ObjC 5：`AppsViewController.m:246`、`AppsWorkspaceViewController.m:98`、`HostsViewController.m:554`、`DiagnosticsReportBuilder+Live.m:250`、`AppDelegateForAppKit.m:1956` |
+| Debug 探针调用点 | 6 | `AppDelegateForAppKit.m` 的 714 / 873 / 927 / 972 / 1174 / 1583（ownership 与 render 两个探针自己数库用） |
+
+记一笔：`AppDelegateForAppKit.m:1956` 一行里写了 `performSelector:@selector(getHosts)` 和
+`[dm getHosts]` 两个调用表达式，最坏情况读两遍。这是登记，不是本轮要改的。
+
+### 实测读数
+
+计数器是 `#if DEBUG` 下的一个 `atomic_ullong`，由 `getHosts` **自己**在入口以 `relaxed` 自增
+（`DataManager.m`），不是外面套的包装，所以「调用了却没被记到」没有藏身之处。跑法是同一份二进制
+跑三次（1 次 3 个 cycle、2 次 6 个 cycle），对着本机那 1 台真 host：
+
+| 读数 | videoPane | appPane | streamPane | 设置根页（cycles） |
+|:---|:---|:---|:---|:---|
+| present 期间读库 | 1 | 1 | **3** | 1（每个 cycle 都是 1） |
+| dismiss 期间读库 | 0 | 0 | 0 | — |
+| 三次运行是否一致 | 一致 | 一致 | 一致 | `readsPerCycle` 全是 `[1]` |
+
+三个结论：
+
+1. **`streamPane` 一次打开读 3 遍**，另两页各 1 遍。§9 记录里那个「扇出 3.0」到这里才算有了
+   名字：被量的那一路就是串流设置页，它按分节各读一次，而不是每次 visit 读一次。
+2. **关闭路径一次都不读**。这不是推出来的，是三次运行都为 0，于是它够格当门禁。
+3. **每个 cycle 的读数与第几次无关**（全是 1）。也就是说现在没有「越开越慢」的形状——而这类
+   问题只有多 cycle 才看得见，单 cycle 永远看不见。
+
+### 门禁：读数不许偷偷变
+
+| 断言 | 为什么是这个形状 |
+|:---|:---|
+| 每页 present 读数 `==` `HOST_READS_WHEN_OPENED`（1 / 1 / 3） | 读几遍由代码结构决定，不由机器、库大小或负载决定，所以写**精确值**而不是上限；给上限就等于允许一次翻倍藏进余量里。要改数，就得在改结构那个 commit 里连同这张表一起改，并说明理由 |
+| dismiss 读数 `== 0` | 实测如此；teardown 期间的读是在页面正被释放时读，属于另一类错误 |
+| `readsPerCycle` 必须全部相等 | 递增＝每进一次读更多＝用得越久越慢。这与「常数偏大」是两种病，修法不同，不该混进同一条阈值 |
+| `readsUnattributedToCycles == 0` | 状态说所有 cycle 都完成了，就不该有落在 cycle 边界外的读；这条是「计数仍然自洽」的自检 |
+| `libraryEndReads >= 1`（ObjC 侧与 Python 侧各判一次） | 数一次库本身就是一次 `getHosts`。若它记成 0，说明计数器根本没接在读路径上，**这份报告里所有读数都是假的 0** |
+| 报告里没有 `readsPerCycle` | 判红：Release 编译，或探针被删。此时 growth 速率没有归因来源，只是一个带单位的巧合 |
+| leak 侧：多出的泄漏图数 ≤ 读库次数 × visits × hosts | 把 §9 的字节阈值和读数接起来。字节阈值容得下一次翻倍（192→461 的实测散布），所以它**不该**是发现「同一张图的第二个创造者」的那条规则；读数才是：它说清了每台 host 有权被泄漏几个图，超出部分必须点名 |
+
+### 测试
+
+* 7 条红证（拿真报告注入污染）：streamPane 翻倍、某页变成 0、dismiss 去读库、`readsPerCycle`
+  递增、边界外多一次读、计数器是死的、探针字段整块消失——逐条打出预期拒绝理由，全部命中；真报告
+  自身 0 拒绝（绿）。
+* `leak-audit --self-test` 新增：2 条 growth case（「泄漏图数超出读库有权解释的量」判红；「没有
+  读数记录」不由这条判红，留给更 sharp 的那条），以及 4 条 `probe_problems` case（cycle flag
+  到达无视它的 build / cycle 完成却没记读数 / 记了读数 / 中途停止）。全量 0 失败。
+
+### 没测到 / 留给下一轮
+
+* **真串流会话里 `self.app.host` 的读数**照旧没有——那需要能跑起来的主机，本机没有。
+* **`streamPane` 那 3 次能不能合并成 1 次**：属于性能优化，且会改变「页面在什么时刻看到最新的
+  库」这个语义（分节各自刷新 vs 一次快照），所以它是一次**独立决策**，登记在此，本轮不编码。
+  真要动它，`HOST_READS_WHEN_OPENED` 会先变红，逼着把理由写清楚。
+* 计数器只在 `DEBUG` 下存在，Release 没有读数——这是刻意的：门禁跑 Debug 二进制，而 Release 若
+  被拿去跑 leak-audit，会因为「报告里没有 `readsPerCycle`」直接判红，不会静默变绿。

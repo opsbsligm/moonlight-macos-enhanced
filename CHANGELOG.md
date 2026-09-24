@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **How many times a page reads the library is now a counted number, so the leak rate finally has
+  a source.** `-[DataManager getHosts]` builds a fresh `TemporaryHost`/`TemporaryApp` graph per row
+  on every call, which makes one formula the whole story: graphs orphaned by a visit equal the reads
+  that visit performed multiplied by the hosts in the library. The second factor has been measured
+  for rounds; the first was assumed, and the assumption was written down as a limitation -- five
+  unmodified runs of one build came back spread over 192 to 461 bytes per visit per host, and
+  `scripts/leak-audit.py` said plainly that how often a page reads is not a number this repository
+  controls. It is now. `getHosts` itself bumps a debug-only relaxed atomic counter (no wrapper, so a
+  call that went uncounted has nowhere to hide), and the render probe reports the count cut three
+  ways: during presentation, during dismissal, and per visit cycle. Measured three times against a
+  live one-host library, at 3 and at 6 cycles: videoPane 1, appPane 1, streamPane **3**, dismissal
+  **0** for all three, and every visit cycle reading exactly once. The stream pane's three reads are
+  the fan-out of 3.0 that the growth numbers have carried since it was first measured -- the pane
+  reads per section rather than per visit -- and the constant count per cycle is what says the page
+  does not get slower the longer somebody leaves it open, a shape no single-cycle run can see.
+  `scripts/render-probe.py` now requires those counts to equal the measured shape exactly rather than
+  fall under some headroom, because how many times a page opens the database is decided by the shape
+  of the code and not by the machine or the library: headroom is where a doubling would live. It
+  refuses a dismissal that reads (measured: none does), visit cycles that do not read equally, a read
+  outside every cycle, a report with no read count at all, and -- the one that indicts the
+  instrument -- a library count that did not register as a read, which would make every other number
+  in the report a false zero. `scripts/leak-audit.py` gained the other half: leaked graphs across
+  two sweeps may not exceed what the recorded reads are entitled to orphan, which is the rule that
+  notices a second creator of the same graph, since the byte ceiling demonstrably tolerates a
+  doubling. Seven red-team injections over a real report each refuse for their own stated reason,
+  and the record itself passes clean. What this deliberately does not do is merge the stream pane's
+  three reads into one: that changes when a page sees a fresh library, which is a behaviour decision
+  and not a measuring one, so it is recorded in `docs/memory-ownership.md` section 13 -- alongside
+  the corrected call-site count, sixteen in production code rather than the seventeen an earlier
+  section estimated -- and the gate there will turn red first and demand the reason.
+
 - **Where a deleted host's app records go is now measured, and the Core Data model is on the hook
   for its answer.** `-[DataManager removeHost:]` deletes a host and nothing else, so the fate of the
   app rows hangs on `Host.appList`'s deletion rule -- a fact about `Limelight.xcdatamodeld` rather
