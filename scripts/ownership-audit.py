@@ -889,8 +889,16 @@ def main():
             print(json.dumps(report, indent=1, sort_keys=True))
         print("%d ownership failure(s)" % len(problems))
         return 1
+    ownership = report["ownership"]
+    seed = ownership.get("seedHosts") or {}
+    # Named on every green line rather than left in the record: on a runner the graph is a seed
+    # (no LAN to answer mDNS), and "measured on a host this run wrote" is a different claim from
+    # "measured on somebody's library". The two are worth telling apart in the log, where nobody
+    # can go and look at the machine.
     print("ownership: declarations %s" % signature(decls))
-    print("ownership: %s" % summary(report["ownership"]))
+    print("ownership: %d host(s) in the library, seed status %s"
+          % (ownership.get("libraryHosts", 0), seed.get("status", "unrecorded")))
+    print("ownership: %s" % summary(ownership))
     print("ownership: %d site(s) hand an app to a holder"
           % len(app_assignment_sites(first_party_sources())))
     for note in notes:

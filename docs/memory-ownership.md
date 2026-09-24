@@ -299,6 +299,15 @@ app 页各读各的），而每次读会遍历当时库里的全部主机。这�
 - 「只有 app 时 host 一定活着」这一条，正是 §4 那张表所说的「今天全靠这条强反向指针续命」——现在它是量出来的，不是读出来的。
 - 形状定义写进 `shape_contract`：手工形状若悄悄变成「只有反向指针」，两条图的一致就退化成同一种形状自己跟自己一致，所以 `appListCount` 不对就整轮拒绝。
 
+**CI 第一次跑到走的是另一条路**（run `36015387603`，arm64 与 x86_64）：runner 没有 LAN，
+库里只有**种子写下的那 1 台**（`seedHosts.status = seeded`），
+两条 arch 报出**逐字相同**的三行读数——production `appList 3` / hand-built `1` / back-pointer `0`，
+前两行 yes+yes、第三行 yes+no——以及同样的「3 个赋值点、1 个已配对」。
+本机那份是 `existing-hosts`（真库），runner 那份是 `seeded`（自己写的图），
+**同一张表在两种来源下都成立**，这正是「测的是代码而不是某人的局域网」的证据。
+门禁因此把来源打在绿字里（`N host(s) in the library, seed status …`）：
+「量的是自己种的图」与「量的是别人的库」是两个不同的断言，而日志的读者没法去摸那台机器。
+
 **门禁判什么**（`scripts/ownership-audit.py`；CI 里三条 step：audit 作业跑 `--self-test` 与 `--red-team`，两个 macOS 作业跑真机测量）：
 
 - 两条控制任一不成立 → 整轮拒绝。控制不是警告，因为第三个读数全靠它们；
