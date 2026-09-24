@@ -399,6 +399,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Maintenance
 
+- **A documentation rewrite is a chance for numbers to go stale quietly, so
+  the moved page was re-counted.** `docs/contributing.md` came out of
+  `README.md` carrying two gate figures that had already expired the day it
+  was written: `compile-audit.py` was described as 49/49 where the run says 82
+  of 82, and the 108/108 mutation count was credited to `constraints-audit.py`
+  when the battery that produces it is `assertion-battery.py`, now 140/140.
+  The page also told a contributor that images are named
+  `Moonlight-<version>-build<N>.dmg`, which is not how any artefact in `dist/`
+  is named -- they are per-architecture and the version is verified inside the
+  image by `dmg-audit.py`, not by the filename. The build-requirement line
+  said Xcode 26.x while the toolchain that CI and this machine actually use is
+  Xcode 27.0 with `MacOSX27.0.sdk`, so it now names what was measured instead
+  of a version nobody ran. `docs/` `spikes/` `staging/` were missing from the
+  tree diagram, and the commit-type list omits the four types this repo uses
+  -- now stated as a convention with no script behind it, which is what the
+  search for one found.
+
 - **The user-memory design was re-measured before anyone read it, and its
   spike is in the repo now.** The design doc arrived carrying citations that
   had drifted: three gate line numbers pointed one to twenty-one lines away
