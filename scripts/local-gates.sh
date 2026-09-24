@@ -202,8 +202,10 @@ while IFS= read -r cmd; do
       # wants the Debug product render-probe.py leaves behind -- which this sweep does not
       # build (that build is the twenty-minute price) but has no need to rebuild either.
       # So the question goes to the disk instead of being written down as a permanent
-      # excuse: with the product on disk the sweep runs here in about forty seconds, and
-      # without it the line says which of the two is missing.
+      # excuse: with the product on disk the sweep runs here -- about forty seconds per sweep,
+      # and `--growth` asks for two of them (a one-visit sweep and a six-visit sweep), so this
+      # line takes a couple of minutes on a laptop. Without the product the line says which of
+      # the two is missing.
       case "$cmd" in
         *--self-test*|*--red-team*|*--log*) ;;
         *)

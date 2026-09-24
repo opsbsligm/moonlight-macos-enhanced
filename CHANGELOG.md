@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The memory sweep now measures what one more trip through the settings page costs, and it
+  does not come back free.** `ML_RENDER_PROBE_CYCLES` drives the Debug probe through N further
+  visits in the production order -- present, run the page's own back control, let the teardown
+  land -- and records `requested`, `completed` and the size of the library *after* the visits.
+  `leak-audit.py --growth` runs the sweep twice, once at one visit and once at six, judges each
+  half against the ceiling it already carried, and divides what our objects grew by by the extra
+  visits and the hosts in the library. One sweep cannot tell "this page orphans a graph per run"
+  from "this page orphans a graph per visit" -- both leave the same objects at exit -- and only
+  the second gets worse while somebody is using it. It did not come back free: five growth runs
+  of one unchanged build put the extra cost at 192, 384, 422, 461 and 461 bytes per visit per
+  host, with the bytes per leaked graph pinned at 384 every time, so the growth is whole graphs
+  and not fatter ones, and closing the page reclaims none of them.
+  Dividing by the library size read before the visits rather than after them moved the same
+  unmodified build to 230-499, which is why the denominator is taken at the end of the run.
+  The ceiling is therefore a doubling sentinel at 1100 bytes -- one and two graphs per visit per
+  host pass, three are refused -- and the pass at two is written into the fixtures rather than a
+  comment, because a spread of 192-499 on untouched code means any tighter ceiling goes red on
+  the shipped page. Section 9 of ``docs/memory-ownership.md`` adds the thing this measurement was
+  really for: the retain cycle in section 5 now has a target it can be tested against -- after a
+  fix, this rate has to fall, not merely get thinner per graph.
+
 - **The Debug probe now seeds a host graph, so the memory gate has something to measure on
   a runner -- and the byte ceiling had to stop measuring the machine to keep that true.** A
   CI machine has no LAN to browse, so it discovered no host, built no graph, and the sweep

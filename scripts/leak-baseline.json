@@ -5,6 +5,8 @@
  "first_party_bytes_floor": 128,
  "first_party_bytes_floor_measured": false,
  "first_party_bytes_per_host": 512,
+ "growth_bytes_per_cycle_per_host": 1100.0,
+ "growth_ceiling_reason": "a doubling sentinel, not a byte budget. Five growth runs of one unmodified build came back at 192, 384, 422, 461 and 461 first-party bytes per extra visit per host (an earlier batch, divided by the library size read before the visits rather than after, spread 230 to 499). What moves is how many times the page reads the library during a visit and how many hosts discovery had added by then, neither of which this repository controls, so a ceiling at one graph per host per visit -- 384 -- would go red on the shipped code. The ceiling therefore sits above two graphs per visit per host (768, which still passes and is written down as the blind spot in the fixtures) and refuses at three (1152), which is what a second owner of the TemporaryHost/TemporaryApp cycle looks like rather than a busier render.",
  "host_class": "TemporaryHost",
  "observed": {
   "apps_per_host": [
@@ -59,6 +61,14 @@
   "first_party_bytes_per_host": [
    384
   ],
+  "growth_bytes_per_cycle_per_host": [
+   192,
+   384,
+   422,
+   461,
+   499
+  ],
+  "growth_measured_on": "2026-09-24, one Debug probe build, one laptop, 6 visits per growth run against a 1-visit sweep, library of 2 hosts: our objects went from 7,296-8,064 bytes over 19-21 leaked graphs to 9,600-11,904 over 25-31, and the bytes per leaked graph stayed 384 in every run -- the growth is more whole graphs, not fatter ones. The page does not reclaim them on close: that is the rate section 5 of docs/memory-ownership.md has to move before the growth ceiling can be lowered",
   "hosts_seen": [
    4,
    5,
