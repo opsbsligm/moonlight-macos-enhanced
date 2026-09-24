@@ -621,6 +621,19 @@ def blind_cf_property_rule(text):
     once(text, CF_GUARD, "CF property guard")
     return text.replace(CF_GUARD, BLIND_GUARD, 1)
 
+# The two lines that decide who pays for a reference an object stores in an ivar. Read out
+# of the gate rather than retyped, so moving them lands here as a missing anchor.
+IVAR_CREDIT = ('            kept = (name.startswith("_")\n'
+               '                    and ivar_released_by_its_owner(text, position, name))\n')
+IVAR_CREDIT_BY_FILE = ('            kept = (name.startswith("_")\n'
+                       '                    and re.search(r"\\w*Release\\(\\s*%s\\s*\\)" % re.escape(name), text))\n')
+
+
+def credit_stored_references_by_file(text):
+    """Bill a stored reference to the file again, so a neighbour's teardown settles the debt."""
+    once(text, IVAR_CREDIT, "the owner the ivar credit asks about")
+    return text.replace(IVAR_CREDIT, IVAR_CREDIT_BY_FILE, 1)
+
 
 # The three lines the repeating timer rules and their measurement are written against,
 # read from the files rather than retyped, so a rewrite of any of them lands here as a
@@ -1945,6 +1958,10 @@ MUTATIONS = [
     ("cf-class-segments-blinded", AUDIT, blind_class_segment_reader,
      "the rule that asks which class owns a CoreFoundation property can no longer tell a"
      " class apart, so its own planted pair stops being answered", AUDIT_GATE),
+    ("stored-reference-credited-to-a-neighbour", AUDIT,
+     credit_stored_references_by_file,
+     "the credit for a reference an object stores stops asking which class stores it, so"
+     " the second owner planted under the same name pays the first owner's debt", AUDIT_GATE),
     ("blind-sweep", ANALYZER, blind_sweep, "an analyzer that did not run reads as clean", ANALYZER_GATE),
     ("accept-new-findings", ANALYZER, accept_new_findings, "a new finding class slips past the baseline", ANALYZER_GATE),
     ("blind-scan-health", L10N, blind_scan_health, "an empty scan reads as a clean tree", L10N_GATE),

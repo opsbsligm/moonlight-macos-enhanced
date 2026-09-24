@@ -1428,27 +1428,84 @@ def compiled_sources(scan_root):
 
 CREATED = re.compile(r"(\w+)\s*=\s*CG\w*(?:Create|Copy)\w*\(")
 
+CLASS_BLOCK = re.compile(r"^(?:@interface|@implementation)\s+([A-Za-z_]\w*)", re.M)
+BLOCK_EDGE = re.compile(r"^@(?:interface|implementation|protocol)\b", re.M)
+
+
+def class_segments(text):
+    """Every `@interface`/`@implementation` block, with the class it names and its span.
+
+    The rule below asks a question about one class -- did the object that owns this
+    property ever hand the reference back -- so it needs text cut along class lines. A
+    category or a class extension names its class first, which is the name that matters:
+    `- (void)tearDown` in `HIDSupport (Private)` still runs on a HIDSupport. The span is
+    returned because the caller has to know which declarations fell inside a class and
+    which fell outside every one of them.
+    """
+    marks = [match.start() for match in BLOCK_EDGE.finditer(text)]
+    for match in CLASS_BLOCK.finditer(text):
+        start = match.start()
+        end = len(text)
+        for pos in marks:
+            if pos > start:
+                end = pos
+                break
+        yield match.group(1), start, end
+
+
+
+def ivar_released_by_its_owner(text, position, name):
+    """Does the class carrying this ivar ever hand the reference back?
+
+    The credit used to be written per file: a `...Release(_foo)` anywhere in the file paid
+    for a creation stored in `_foo` anywhere in it. Two classes compiled into one file can
+    each carry an ivar under the same name, and then one class's teardown pays the other
+    class's debt -- the same judgement error the property rule below already refuses, seen
+    from the ivar side: right answer, wrong evidence, and the next class to borrow a name
+    cleared by whichever one released first. The names are not invented for the example:
+    `displayLink` is carried by two classes in this tree today, `HIDSupport` and
+    `VideoDecoderRenderer`, one per file, so the collision is one move away rather than a
+    hypothetical. Tightening it costs the tree nothing -- over every compiled source no
+    creation is credited by another class's release -- so the honest question is the one
+    asked. Code outside every class has no owner to ask, and there the file is still the
+    only horizon: that much is said here instead of being hidden inside the match.
+    """
+    release = re.compile(r"\w*Release\(\s*%s\s*\)" % re.escape(name))
+    spans = list(class_segments(text))
+    owner = next((class_name for class_name, start, end in spans
+                  if start <= position < end), None)
+    if owner is None:
+        return release.search(text) is not None
+    return any(release.search(text[start:end])
+               for class_name, start, end in spans
+               if class_name == owner)
+
 
 def unowned_creations(source_path, text):
     """CoreFoundation references this file takes without saying who owes them back.
 
     A Create or Copy has three honest endings. It is released before the method that took it
     ends; it is returned by a method that says it hands over a +1; or it is stored where the
-    object keeps it -- an ivar -- with a release somewhere else in the same file. The third is
-    what the renderer's colour spaces do, one teardown per prepare, and no rule here had ever
-    seen that ending, because those methods open their brace on the line after the signature
-    and the reader used to stop at the signature. They appeared as three unaccounted
+    object keeps it -- an ivar -- with a release written by the class that carries it. The
+    third is what the renderer's colour spaces do, one teardown per prepare, and no rule here
+    had ever seen that ending, because those methods open their brace on the line after the
+    signature and the reader used to stop at the signature. They appeared as three unaccounted
     references the moment the other style became readable, which is the same blind spot seen
     from the side it hurts.
     """
     problems = []
+    scan_from = 0
     for body in method_bodies(text):
         signature = body.split("\n")[0]
+        # The bodies arrive in document order, so a moving cursor tells two methods
+        # that spell themselves identically apart instead of charging both to the first.
+        position = text.find(body, scan_from)
+        scan_from = position + 1
         for name in set(CREATED.findall(body)):
             released = re.search(r"\w*Release\(\s*%s\s*\)" % re.escape(name), body)
             returned = re.search(r"return\s+%s\s*;" % re.escape(name), body)
             kept = (name.startswith("_")
-                    and re.search(r"\w*Release\(\s*%s\s*\)" % re.escape(name), text))
+                    and ivar_released_by_its_owner(text, position, name))
             if not released and not kept and not (returned and "CF_RETURNS_RETAINED" in signature):
                 problems.append("%s: %s is created and then neither released nor "
                                 "declared owned" % (os.path.relpath(source_path, root), name))
@@ -1476,6 +1533,34 @@ planted_dropped_space = ("- (void)keepThePlantedColorSpace\n"
                          "}\n")
 kept_space = unowned_creations("planted.m", planted_stored_space)
 dropped_space = unowned_creations("planted.m", planted_dropped_space)
+# The pair above answers one owner. Two owners in the same file is the case the
+# per-file credit could not tell apart, and it is not hypothetical: `displayLink` is
+# kept by two classes in this tree today, in two files, and one file with two such
+# ivars is one edit away.
+planted_two_owners = (
+    "@interface PlantedOwnerA\n"
+    "@end\n"
+    "@implementation PlantedOwnerA\n"
+    "- (void)keepThePlantedColorSpace\n"
+    "{\n"
+    "    _plantedColorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);\n"
+    "}\n"
+    "@end\n"
+    "@interface PlantedOwnerB\n"
+    "@end\n"
+    "@implementation PlantedOwnerB\n"
+    "- (void)releaseThePlantedColorSpace\n"
+    "{\n"
+    "    CGColorSpaceRelease(_plantedColorSpace);\n"
+    "    _plantedColorSpace = NULL;\n"
+    "}\n"
+    "@end\n")
+two_owners = unowned_creations("planted.m", planted_two_owners)
+check(len(two_owners) == 1,
+      "a release written by another class does not pay for this class's ivar"
+      if len(two_owners) == 1 else
+      "the second owner's release paid the first owner's debt: %s" % two_owners)
+
 check(not kept_space and len(dropped_space) == 1,
       "a reference an object stores and releases elsewhere in the file is accounted for,"
       " and one it stores and never releases is not"
@@ -1530,29 +1615,6 @@ check(unheld_iookit_locals(planted_walk) == ["plantedIterator"],
 
 CF_PROPERTY = re.compile(r"@property[^(]*\([^)]*\)\s+(\w+Ref)\s+(\w+)\s*;")
 CF_RELEASE = re.compile(r"\w*Release\(\s*(?:self\.|_)?([A-Za-z_]\w*)\s*\)")
-CLASS_BLOCK = re.compile(r"^(?:@interface|@implementation)\s+([A-Za-z_]\w*)", re.M)
-BLOCK_EDGE = re.compile(r"^@(?:interface|implementation|protocol)\b", re.M)
-
-
-def class_segments(text):
-    """Every `@interface`/`@implementation` block, with the class it names and its span.
-
-    The rule below asks a question about one class -- did the object that owns this
-    property ever hand the reference back -- so it needs text cut along class lines. A
-    category or a class extension names its class first, which is the name that matters:
-    `- (void)tearDown` in `HIDSupport (Private)` still runs on a HIDSupport. The span is
-    returned because the caller has to know which declarations fell inside a class and
-    which fell outside every one of them.
-    """
-    marks = [match.start() for match in BLOCK_EDGE.finditer(text)]
-    for match in CLASS_BLOCK.finditer(text):
-        start = match.start()
-        end = len(text)
-        for pos in marks:
-            if pos > start:
-                end = pos
-                break
-        yield match.group(1), start, end
 
 
 def unreleased_cf_properties(texts):
