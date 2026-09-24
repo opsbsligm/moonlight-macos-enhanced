@@ -992,6 +992,74 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
     }
 
 
+    // Cumulative measurement: what a person going in and out of the page leaves behind.
+    //
+    // Every claim above looks at one visit and one close. A page that leaks once per visit
+    // and a page that leaks once per run answer the same question at exit -- "these objects
+    // are still here" -- and the difference between them is the one a user feels: the first
+    // gets worse over an evening, the second does not. So the flag asks for N further visits
+    // through the production presenter, in the production order (present, run the back
+    // control's closure, let the teardown land), and the sweep then reports for N visits
+    // rather than one. scripts/leak-audit.py --growth is what turns two of these runs into a
+    // rate; this function deliberately asserts no count, because how many graphs a run holds
+    // is the library's and the render's, not a property anyone should hardcode here.
+    //
+    // What it does assert is that the cycles it was asked for ran. A flag that reached a
+    // build which ignores it would otherwise be read as "the page does not grow across
+    // visits", which is the same false green with a number next to it.
+    const char *requestedCycles = getenv("ML_RENDER_PROBE_CYCLES");
+    if (requestedCycles != NULL) {
+        char *cyclesEnd = NULL;
+        long wantedCycles = strtol(requestedCycles, &cyclesEnd, 10);
+        NSMutableDictionary *cycleRecord = [NSMutableDictionary dictionary];
+        cycleRecord[@"requested"] = [NSString stringWithUTF8String:requestedCycles];
+        cycleRecord[@"completed"] = @0;
+        report[@"memoryCycles"] = cycleRecord;
+        if (cyclesEnd == requestedCycles || *cyclesEnd != '\0' || wantedCycles < 1 || wantedCycles > 64) {
+            cycleRecord[@"status"] = @"invalid";
+            refuse([NSString stringWithFormat:@"ML_RENDER_PROBE_CYCLES asks for %s, which is not a"
+                    @" whole cycle count between 1 and 64, so the growth being measured would have"
+                    @" an unknown denominator", requestedCycles]);
+        } else {
+            cycleRecord[@"status"] = @"running";
+            for (long cycle = 0; cycle < wantedCycles; cycle++) {
+                [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
+                MLProbeSpin(0.25);
+                if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+                    cycleRecord[@"status"] = @"did-not-present";
+                    refuse([NSString stringWithFormat:@"memory cycle %ld did not present the page,"
+                            @" so the sweep counted fewer visits than it asked for", cycle + 1]);
+                    break;
+                }
+                if (![SettingsOverlayPresenter pressBackControlInWindow:window]) {
+                    cycleRecord[@"status"] = @"back-control-unreachable";
+                    refuse([NSString stringWithFormat:@"memory cycle %ld could not reach the back"
+                            @" control, so the page was never closed and the next cycle would have"
+                            @" presented on top of it", cycle + 1]);
+                    break;
+                }
+                MLProbeSpin(0.25);
+                if ([SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+                    cycleRecord[@"status"] = @"did-not-close";
+                    refuse([NSString stringWithFormat:@"memory cycle %ld left the page presented,"
+                            @" which is a visit that never ends rather than a leak rate", cycle + 1]);
+                    break;
+                }
+                cycleRecord[@"completed"] = @(cycle + 1);
+            }
+            if ([cycleRecord[@"status"] isEqualToString:@"running"]) {
+                cycleRecord[@"status"] = @"completed";
+            }
+            // How many hosts the library holds now, read after the visits rather than before
+            // them. The count moves underneath a run -- MDNSManager keeps adding hosts while
+            // the process is alive -- and a rate divided by a number from the start of the run
+            // is divided by a library that has since grown. Measured across five growth runs on
+            // one build: 230 to 500 first-party bytes per visit per host depending on which of
+            // those two numbers is used, so the denominator is not a detail.
+            cycleRecord[@"libraryEnd"] = @((long)[[[DataManager.alloc init] getHosts] count]);
+        }
+    }
+
     // Hand over to the stage that runs after launch. Accessibility is the reason:
     // measured on this tree, an app that has not finished launching vends a
     // placeholder tree (the application element referring to itself, no window, no

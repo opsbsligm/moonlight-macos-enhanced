@@ -71,6 +71,9 @@ Usage:
                                            baseline file, runs on any host that has python
   leak-audit.py [root] --report <file>     also write the raw sweep report there, so a red
                                            run on a runner leaves the whole thing behind
+  leak-audit.py [root] --growth            run two sweeps (1 visit and N visits) and judge
+                                           how much the page orphans per extra visit
+  leak-audit.py [root] --growth-cycles N   how many visits the longer sweep makes (8)
   leak-audit.py [root] --write-baseline    raise the ceiling where this run exceeded it
   leak-audit.py [root] --self-test         fixtures only, no process, no baseline file
 Exit 0 only when the sweep really ran and first-party leaks stayed inside the ceiling.
@@ -589,7 +592,40 @@ def red_team(text, baseline, objc_names, module):
     cases.append(("a budgeted class is genuinely fixed", without(multiplied), 0,
                   "%s is not leaking in this run" % multiplied))
 
+    # The growth rule is arithmetic over two sweeps, so its breaks are made by holding this
+    # one real report as the short sweep and asking what the long sweep would have to look
+    # like. Every number in the break comes out of the report -- our bytes, its graphs, and
+    # the cost of one graph derived from the two -- so the ceiling is exercised against real
+    # magnitudes rather than against a constant this file invented. What is synthetic is only
+    # the extra visiting, which no laptop report can contain.
     failures = 0
+    growth_ceiling = baseline.get("growth_bytes_per_cycle_per_host")
+    if growth_ceiling and ours_bytes and first_party.get(host_class):
+        graphs = first_party[host_class]
+        cost_of_one_graph = float(ours_bytes) / graphs
+        shorter = {"cycles": 1, "library": graphs, "ours": ours_bytes, "hosts": graphs}
+        for visits in (1, 2, 3):
+            longer = dict(shorter, cycles=6,
+                          ours=ours_bytes + 5 * graphs * visits * cost_of_one_graph)
+            problems, notes = judge_growth(shorter, longer, baseline)
+            label = "%d graph(s) per visit per host" % visits
+            # Measured on an unchanged build: one graph per visit per host sits inside the
+            # spread the page produces by itself, so the ceiling has to let it through.
+            want_refusal = visits >= 3
+            if bool(problems) != want_refusal:
+                print("FAIL red team: %s -- expected %s, got %s"
+                      % (label, "a refusal" if want_refusal else "a pass",
+                         "; ".join(problems) or "; ".join(notes) or "silence"))
+                failures += 1
+            elif want_refusal and not any("per visit per host" in line for line in problems):
+                print("FAIL red team: %s refused for the wrong reason: %s" % (label, problems))
+                failures += 1
+            else:
+                said = "refused" if want_refusal else (
+                    "passed -- the ceiling has to let the shipped page through" if visits == 1
+                    else "passed -- the measured blind spot, two graphs a visit")
+                print("ok   red team: %s %s" % (label, said))
+
     for label, mutated, want_problems, want_text in cases:
         per_class, mutated_total, mutated_summary, mutated_blocks, mutated_ours = \
             count_leaks(mutated, objc_names, module)
@@ -629,7 +665,7 @@ def read_probe_record(output_directory):
         return None
 
 
-def probe_problems(probe, returncode=0):
+def probe_problems(probe, returncode=0, cycles_requested=None):
     """Why this sweep may not be judged, read out of what the probe recorded about itself.
 
     Kept apart from `capture()` so a fixture can drive it: every one of these refusals is a
@@ -655,7 +691,164 @@ def probe_problems(probe, returncode=0):
         problems.append("the sweep asked for %s seeded host(s) and got status %r, recorded by"
                         " the probe itself, so there is no host graph behind these numbers"
                         % (seed.get("requested"), seed.get("status")))
+    if cycles_requested is not None:
+        cycles = probe.get("memoryCycles")
+        if not isinstance(cycles, dict):
+            problems.append("the sweep asked for %d visit cycle(s) and the probe recorded no"
+                            " memoryCycles, so the flag reached a build that ignores it and the"
+                            " growth being measured has no visits in it" % cycles_requested)
+        elif cycles.get("status") != "completed":
+            problems.append("the sweep asked for %d visit cycle(s) and the probe stopped at %r"
+                            " after %s -- a run that stopped partway has a shorter denominator"
+                            " than the one it reports"
+                            % (cycles_requested, cycles.get("status"),
+                               cycles.get("completed")))
+        elif cycles.get("completed") != cycles_requested:
+            problems.append("the sweep asked for %d visit cycle(s) and the probe recorded %s as"
+                            " completed, so the rate would be divided by visits that did not"
+                            " happen" % (cycles_requested, cycles.get("completed")))
     return problems
+
+
+def sibling_report(report_path, cycles):
+    """Where the longer sweep's raw report goes, so the two reports do not overwrite each other."""
+    if not report_path:
+        return None
+    base, extension = os.path.splitext(report_path)
+    return "%s-%dvisits%s" % (base, cycles, extension or ".txt")
+
+
+def library_hosts(probe):
+    """How many hosts the page could have read during this run, as the probe recorded it.
+
+    The rate wants a per-host denominator, and the number has to come from the run rather
+    than from the leaked counts: the leaked counts are what is being measured, and dividing
+    a measurement by itself is how a leak of one graph per visit gets reported as a rate of
+    one. Zero is returned rather than guessed, and the caller refuses a zero.
+    """
+    cycles = (probe or {}).get("memoryCycles")
+    if isinstance(cycles, dict) and cycles.get("libraryEnd"):
+        # The count the visits actually saw. `seedHosts` is read before the page opens, and
+        # discovery keeps writing hosts while the process lives, so dividing by it understates
+        # the library and overstates the rate.
+        return int(cycles["libraryEnd"])
+    seed = (probe or {}).get("seedHosts")
+    if not isinstance(seed, dict):
+        return 0
+    if seed.get("status") == "seeded":
+        return int(seed.get("seeded") or 0)
+    if seed.get("status") == "existing-hosts":
+        return int(seed.get("existing") or 0)
+    return 0
+
+
+def judge_growth(shorter, longer, baseline):
+    """Is the page leaking per visit, and is that rate the one the baseline already carries?
+
+    `shorter` and `longer` are two sweeps of the same build, the second taking more trips
+    through the page. Their difference is the only place a per-visit leak shows up: one
+    sweep cannot tell "this page leaks once per run" from "this page leaks once per visit",
+    because both leave the same objects at exit. The division is by completed visits and by
+    the hosts the run could actually see, so the rate says what one trip through one host
+    costs, which is the number that survives a different library and a different machine.
+    """
+    problems, notes = [], []
+    visits = longer["cycles"] - shorter["cycles"]
+    if visits <= 0:
+        return (["the two sweeps asked for %d and %d visit cycle(s), so there is no extra"
+                 " visiting between them and no rate to divide by"
+                 % (shorter["cycles"], longer["cycles"])], notes)
+    hosts = min(shorter["library"], longer["library"])
+    if hosts <= 0:
+        return (["neither sweep recorded a host in the library, so the rate has no per-host"
+                 " denominator and would be a bytes-per-visit figure for an unknown number of"
+                 " machines"], notes)
+    per_cycle = float(longer["ours"] - shorter["ours"]) / visits
+    per_cycle_per_host = per_cycle / hosts
+    measured = baseline.get("observed", {}).get("growth_bytes_per_cycle_per_host")
+    ceiling = baseline.get("growth_bytes_per_cycle_per_host")
+    print("leak-audit growth: %d visits took our objects from %d to %d bytes -- %.0f bytes per"
+          " visit, %.1f per visit per host across %d host(s)%s"
+          % (visits, shorter["ours"], longer["ours"], per_cycle, per_cycle_per_host, hosts,
+             ", graphs leaked %d then %d" % (shorter["hosts"], longer["hosts"])
+             if shorter.get("hosts") is not None else ""))
+    if per_cycle < 0:
+        notes.append("the page leaked %d fewer bytes over %d extra visits than it did over %d:"
+                     " the rate went down. That is a fix, and the ceiling in the baseline is"
+                     " above it -- lowering one is a decision somebody makes in the commit that"
+                     " fixes the leak" % (-int(per_cycle * visits), visits, shorter["cycles"]))
+    elif ceiling is not None and per_cycle_per_host > ceiling:
+        problems.append(
+            "each extra trip through the page leaves %.1f first-party bytes per host behind"
+            " where the ceiling is %.1f (%d hosts, %d extra visits, %d to %d bytes). Bytes per"
+            " host inside one sweep stayed inside its own ceiling, so this is objects being"
+            " orphaned per visit rather than a busier library. Measured on the shipped code: %s"
+            " bytes per visit per host"
+            % (per_cycle_per_host, ceiling, hosts, visits, shorter["ours"], longer["ours"],
+               ", ".join(str(value) for value in (measured or []))))
+    return problems, notes
+
+
+def growth_fixture():
+    """The rate rule, driven without a process.
+
+    The number that matters here is the one that cannot be seen in a single sweep: a page
+    that orphans one graph per visit and a page that orphans one graph per launch look the
+    same to a run that visits once, and only the first gets worse while somebody is using
+    it. The cases below are the two shapes plus the ways the measurement itself can lie --
+    no extra visits, no hosts to divide by -- and the one that has to stay green, a rate
+    that fell.
+    """
+    base = {"growth_bytes_per_cycle_per_host": 1100.0,
+            "observed": {"growth_bytes_per_cycle_per_host": [192, 461]}}
+    one_host = {"cycles": 1, "library": 2, "ours": 6912, "hosts": 18}
+    def after(visits, bytes_leaked):
+        longer = dict(one_host, cycles=visits, ours=bytes_leaked, hosts=18 + visits)
+        return longer
+    cases = [
+        # Measured on the shipped code: 6,912 bytes at one visit, 11,136 at eight, over two
+        # hosts -- 302 bytes per visit per host.
+        ("the shipped rate is inside its ceiling", after(8, 11136), 0, None),
+        # One whole graph per host per visit -- 384 bytes -- is inside the measured spread,
+        # which is what the spread is: five runs of this build, unmodified, came back at 192,
+        # 384, 422, 461 and 461 bytes per visit per host, because how many times the page
+        # reads the library during a visit is not a number this repository controls.
+        ("a visit orphans one graph per host", after(8, 6912 + 7 * 2 * 384), 0, None),
+        # Two graphs per visit per host passes too, and that gap is the rule's real limit:
+        # 768 sits inside the spread a doubling could hide in. Recording it as a case keeps
+        # the blind spot in the fixtures, where a future run has to read it, rather than in
+        # a comment nobody opens.
+        ("a visit orphans two graphs per host -- the measured blind spot",
+         after(8, 6912 + 7 * 2 * 2 * 384), 0, None),
+        # Three graphs a visit is a second owner of the same cycle, and that is what this
+        # rule is for.
+        ("a visit orphans three graphs per host", after(8, 6912 + 7 * 2 * 3 * 384), 1,
+         "per visit per host"),
+        # The fix, which must not be refused for going the right way: one visit's worth of
+        # objects came back, which is what a real repair of the ownership cycle looks like.
+        ("the rate fell because somebody fixed it", after(8, 5912), 0, "went down"),
+        # Zero is not a fall and is not a refusal either: the page stopped growing, and the
+        # note that says so is the one above. This case keeps "flat" from being read as a
+        # regression by a rule written with the wrong sign.
+        ("the rate is flat across visits", after(8, 6912), 0, None),
+        ("no extra visits to divide by", dict(one_host, cycles=1), 1, "no extra visiting"),
+        ("no host in either sweep", dict(one_host, cycles=8, ours=9000, library=0), 1,
+         "no per-host"),
+    ]
+    failures = 0
+    for label, longer, want_problems, want_text in cases:
+        problems, notes = judge_growth(one_host, longer, base)
+        if bool(problems) != bool(want_problems):
+            print("FAIL %s: expected %s, got %s"
+                  % (label, "a refusal" if want_problems else "a pass",
+                     "; ".join(problems) or "; ".join(notes) or "silence"))
+            failures += 1
+        elif want_text and not any(want_text in line for line in (problems + notes)):
+            print("FAIL %s answered without `%s`: %s" % (label, want_text, problems + notes))
+            failures += 1
+        else:
+            print("ok   %s" % label)
+    return failures
 
 
 def probe_record_fixture():
@@ -698,7 +891,7 @@ def probe_record_fixture():
     return failures
 
 
-def capture(timeout, report_path=None):
+def capture(timeout, report_path=None, cycles=None):
     """Run the Debug probe under `leaks` and hand back its report.
 
     `--report` exists because a runner that refuses a leak leaves nothing else behind: the
@@ -710,12 +903,12 @@ def capture(timeout, report_path=None):
         print("FAIL no `leaks` on this host -- install the Xcode command line tools."
               " This gate refuses rather than skipping, because a memory sweep that did"
               " not run is exactly what a green check with no memory sweep looks like.")
-        return None
+        return None, None
     app = os.path.join(DERIVED, "Build", "Products", "Debug",
                        project_identity.product_name() + ".app")
     if not os.path.isdir(app):
         print("FAIL no Debug build at %s -- `render-probe.py` builds it" % app)
-        return None
+        return None, None
     home = tempfile.mkdtemp(prefix="leak-home.")
     out = tempfile.mkdtemp(prefix="leak-out.")
     binary = os.path.join(app, "Contents", "MacOS", project_identity.bundle_executable(app))
@@ -724,6 +917,8 @@ def capture(timeout, report_path=None):
     # probe does not set it: its pixel asserts were written against an empty library.
     env = dict(os.environ, HOME=home, ML_RENDER_PROBE="1", ML_RENDER_PROBE_OUTPUT=out,
                ML_RENDER_PROBE_SEED_HOSTS="1")
+    if cycles:
+        env["ML_RENDER_PROBE_CYCLES"] = str(cycles)
     try:
         try:
             proc = subprocess.run([tool, "--atExit", "--list", "--", binary],
@@ -738,7 +933,7 @@ def capture(timeout, report_path=None):
                   "report to write -- it prints its answer only when the app stops. "
                   "Raise `--timeout` if this machine is slow; it does not raise the "
                   "ceiling, which lives in the baseline file." % timeout)
-            return None
+            return None, None
         probe = read_probe_record(out)
     finally:
         # The gate that looks for leaks is not allowed to leave any of its own behind:
@@ -753,7 +948,7 @@ def capture(timeout, report_path=None):
     # to have presented (a sweep over a page that refused to open judges a broken app and
     # calls it a memory result), and the host graph this sweep asked for has to exist (a
     # sweep over no graph is the green that says nothing).
-    refused = probe_problems(probe, proc.returncode)
+    refused = probe_problems(probe, proc.returncode, cycles)
     for problem in refused:
         print("FAIL %s" % problem)
     if refused:
@@ -774,23 +969,29 @@ def capture(timeout, report_path=None):
     if SUMMARY.search(proc.stdout) is None:
         print("FAIL `leaks` produced no summary (exit %d):\n%s"
               % (proc.returncode, proc.stdout[-400:]))
-        return None
-    return proc.stdout
+        return None, None
+    return proc.stdout, probe
 
 
 # A flag's value is not a positional, and the mistake of treating it as one is worth
 # naming: `--log leaks-arm64.log` would otherwise be read as the repository to scan, the
 # scan would find no classes at all, and the gate would pass every leak in the file.
-VALUE_FLAGS = ("--timeout", "--log", "--report")
+VALUE_FLAGS = ("--timeout", "--log", "--report", "--growth-cycles")
 
 
 def parse(arguments):
-    """(root, timeout, log path or None, report path or None), keeping each flag's value
-    attached to its flag and out of the positionals."""
+    """(root, timeout, log path or None, report path or None, growth cycles), keeping each
+    flag's value attached to its flag and out of the positionals.
+
+    `--growth-cycles` is in the value list for the same reason `--log` is: a number left
+    loose is read as the repository to scan, the scan finds no classes at all, and every
+    first-party object in the report becomes somebody else's leak.
+    """
     root = ROOT
     timeout = 900
     log = None
     report = None
+    growth_cycles = 8
     index = 0
     while index < len(arguments):
         argument = arguments[index]
@@ -800,6 +1001,8 @@ def parse(arguments):
                 timeout = int(value)
             elif argument == "--log":
                 log = value
+            elif argument == "--growth-cycles":
+                growth_cycles = int(value)
             else:
                 report = value
             index += 2
@@ -807,7 +1010,7 @@ def parse(arguments):
         if not argument.startswith("--"):
             root = argument
         index += 1
-    return root, timeout, log, report
+    return root, timeout, log, report, growth_cycles
 
 
 def main():
@@ -815,17 +1018,17 @@ def main():
     # `report` is also the name of the function that prints the verdict below, so the flag
     # value is not allowed to answer to it here: the first run of `--report` shadowed the
     # printer with a None and died on the way to reporting a leak.
-    root, timeout, log, report_path = parse(arguments)
+    root, timeout, log, report_path, growth_cycles = parse(arguments)
     text = None
     if log is not None:
         text = open(log, encoding="utf-8", errors="replace").read()
     if "--self-test" in arguments:
-        failures = (fixtures() + class_discovery_fixture()
+        failures = (fixtures() + class_discovery_fixture() + growth_fixture()
                     + probe_record_fixture())
         print("%d leak-audit fixture failure(s)" % failures)
         return 1 if failures else 0
     if text is None:
-        text = capture(timeout, report_path)
+        text, _probe = capture(timeout, report_path)
         if text is None:
             return 1
     module = project_identity.product_name()
@@ -843,6 +1046,42 @@ def main():
         failures = red_team(text, baseline, objc_names, module)
         print("%d leak-audit red-team failure(s)" % failures)
         return 1 if failures else 0
+    if "--growth" in arguments:
+        if log is not None:
+            print("FAIL --growth measures a rate across two sweeps it runs itself, and `--log`"
+                  " hands it one captured sweep. Drop the log and let it visit the page.")
+            return 1
+        if growth_cycles < 2:
+            print("FAIL --growth needs at least 2 visits in the longer sweep to divide by --"
+                  " it was given %d, which is the shorter sweep again" % growth_cycles)
+            return 1
+        # Both halves are judged on their own before the difference between them is judged:
+        # a growth run that quietly stops checking the ceiling would be a weaker gate hiding
+        # inside a stronger-sounding one.
+        host_class = baseline.get("host_class")
+        problems = []
+        notes = []
+        sweeps = []
+        for cycles, where in ((1, report_path),
+                              (growth_cycles, sibling_report(report_path, growth_cycles))):
+            sweep_text, sweep_probe = capture(timeout, where, cycles=cycles)
+            if sweep_text is None:
+                return 1
+            per_class, _total, _summary, _blocks, ours = count_leaks(sweep_text,
+                                                                    objc_names, module)
+            problems += report(sweep_text, baseline, objc_names, module)
+            sweeps.append({"cycles": cycles, "library": library_hosts(sweep_probe),
+                           "ours": ours, "hosts": per_class.get(host_class, 0)})
+        growth_problems, growth_notes = judge_growth(sweeps[0], sweeps[1], baseline)
+        problems += growth_problems
+        notes += growth_notes
+        for note in growth_notes:
+            print("note  %s" % note)
+        for problem in problems:
+            print("FAIL %s" % problem)
+        print("%d leak-audit failure(s)" % len(problems))
+        return 1 if problems else 0
+
     problems = report(text, baseline, objc_names, module)
     if "--write-baseline" in arguments:
         first_party, total, _summary, _blocks, ours_bytes = count_leaks(

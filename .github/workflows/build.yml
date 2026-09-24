@@ -579,19 +579,27 @@ jobs:
       # gets its own HOME, so its database and preferences are its own.
       run: python3 scripts/render-probe.py --timeout 1500
 
-    - name: Verify the settings page leaks nothing new
+    - name: Verify the settings page leaks nothing new, per visit
       # The probe build the step above just compiled is run again under `leaks`, which
       # attributes every leaked object it can see. First-party leaks are judged against
       # scripts/leak-baseline.json, where the TemporaryHost/TemporaryApp retain cycle is
       # recorded because it was measured here and not assumed -- and the numbers in that
       # file are per leaked host, not counts, because nine sweeps of one unchanged build
-      # leaked between 4 and 8 hosts and always three apps per host. So a runner that
-      # discovers no GameStream host is not the clean case: it says so and leaves the graph
-      # unjudged, while a new first-party class or a wider fan-out is refused wherever it
-      # shows up. Needs no new build: the Debug product is already on disk.
+      # leaked between 4 and 8 hosts and always three apps per host. A runner with no GameStream
+      # host to discover is no longer the empty room it used to be: the sweep asks the probe to
+      # seed one host and three apps through the production DataManager, so the graph, the
+      # fan-out and the per-host byte budget are all judged here rather than waved past.
+      # --growth runs the sweep twice, once at one visit through the page and once at six, and
+      # divides the difference by the extra visits and the hosts in the library. That is the
+      # only shape in which "this page orphans a graph every time somebody opens it" and "this
+      # page orphans one graph once per run" differ -- and only the first gets worse over an
+      # evening. The ceiling on it is a doubling sentinel (three graphs per visit per host,
+      # where the measured spread on an unchanged build is 192 to 499 bytes), because how often
+      # the page reads the library inside one visit is not a number this repository owns; the
+      # blind spot is written into the fixtures rather than a comment.
       # One line, not a folded one: scripts/local-gates.sh builds its list out of this file
       # line by line, and a flag on its own line is a flag the local sweep never passes.
-      run: python3 scripts/leak-audit.py --timeout 900 --report build/leaks-sweep.txt
+      run: python3 scripts/leak-audit.py --timeout 900 --growth --growth-cycles 6 --report build/leaks-sweep.txt
 
     - name: Upload ${{ matrix.variant }} leak sweep
       # The refusal names the rule and prints the offending blocks; the report is the part
