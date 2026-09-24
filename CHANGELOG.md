@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The thing section 5 was waiting for is now measured instead of argued: the app asks its own
+  objects who is holding whom, and a fix cannot change ownership without predicting it first.**
+  `docs/memory-ownership.md` refused to turn `TemporaryApp.host` into a `weak` back-pointer
+  because the danger of doing so -- a stream that holds an app and no host -- had never been
+  *seen*, only read out of `StreamViewController.h`. Seeing it does not need a stream session,
+  because the question is only who holds what. `ML_OWNERSHIP_PROBE` builds the pair three ways and
+  holds each of them the way `prepareForSegue:` holds it (`AppsViewController.m:613` assigns
+  `streamVC.app` and no host), then asks whether the host is alive while only the app is held and
+  whether either of them survives the last holder. `productionGraph` takes its app out of
+  `-[DataManager getHosts]`, the call whose graph leaked, so the reading cannot be blamed on how a
+  fixture was assembled. `handBuiltGraph` builds the same shape by hand and exists to *agree* with
+  it -- a disagreement means something outside the pair is retaining it. `backpointerOnly` has
+  nothing pointing back at the app, so it is required to go back; if it survived, the probe would
+  be holding the objects it claims to watch and the leak beside it would be the harness's.
+  The measured answer, on a library of two hosts: the production graph reports its host alive on
+  the app alone and both of them alive with nobody holding them, the hand-built graph agrees, and
+  the lone back-pointer goes back. That is the retain cycle `leaks` calls ROOT CYCLE, seen from
+  inside the process, plus the control that says the sighting belongs to the app.
+  `scripts/ownership-audit.py` judges the record and refuses when a header and an observation
+  contradict each other -- including the direction a reader most wants to be fooled by, because
+  `weak` in the header and the host still alive is not the fix working, it is a holder nobody can
+  see. Expectations live in `scripts/ownership-baseline.json` keyed by the declarations they were
+  written against, so flipping the back-pointer without first writing what you expect to observe
+  is itself the refusal; the after-fix profile is already there, and it says no shape may survive
+  its last holder and no holder may keep a host alive by holding its app alone. Its red team
+  mutates `scripts/ownership-sample.json`, a real record with the host identifier replaced, so the
+  rules are proven to bite on data the app wrote rather than data invented for them, and it breaks
+  the tree in memory to prove the holder rule bites too.
+  What the graph cannot see is said in the same breath as its verdict: no probe builds a
+  `StreamViewController`, so the second half of the fix is judged off the source instead -- every
+  statement that hands an app to a holder must also give that holder a host, refused outright
+  under a weak back-pointer and refused as a *new* entry today, while the strong one still hides
+  it. That found the holders precisely: `prepareForSegue:` gives a stream its app and nothing
+  else, `configureItem:` gives an `AppCell` its app while `AppCell.m:129` reads
+  `self.app.host.uuid`, and `AppAssetRetriever` -- which `docs/memory-ownership.md` section 4 had
+  recorded as holding no host -- turns out to declare one at `AppAssetRetriever.h:15` and get it
+  assigned beside the app at `AppAssetManager.m:59`. Section 5 step 3 is already done for the box
+  art path; the two holders above are all that steps 2 and 3 still owe.
+
 - **The memory sweep now measures what one more trip through the settings page costs, and it
   does not come back free.** `ML_RENDER_PROBE_CYCLES` drives the Debug probe through N further
   visits in the production order -- present, run the page's own back control, let the teardown
