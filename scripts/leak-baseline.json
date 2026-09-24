@@ -11,22 +11,48 @@
    3
   ],
   "ci_runner": {
+   "apps_per_host_seen": [
+    3.0,
+    3.0
+   ],
    "blocks_seen": [
     287,
-    288
+    288,
+    364,
+    380
    ],
-   "byte_budget": "unjudged there -- the run says so in its own note",
-   "bytes_seen": [
-    18720,
-    18816
+   "byte_budget": "judged in the seeded runs: 512 per leaked host plus a 128 floor, and both sat inside it (2,688 against 3,712, 2,304 against 3,200). Under the ceiling this file carried until that push, both runs would have been refused -- 24,416 against 19,500 and 23,424 against 17,000 -- which is the change of rule measured on a runner rather than argued at a desk",
+   "first_party_bytes_per_host": [
+    384,
+    384
    ],
-   "first_party_classes": "none",
+   "first_party_bytes_seen": [
+    0,
+    0,
+    2304,
+    2688
+   ],
+   "first_party_classes": "none in the two runs before the seed; TemporaryApp and TemporaryHost in the two seeded runs, nothing else",
    "hosts_seen": [
     0,
-    0
+    0,
+    6,
+    7
    ],
-   "measured_on": "2026-09-24, run 35977080604, arm64 and x86_64, GitHub macOS runners",
-   "runs": 2
+   "measured_on": "2026-09-24, runs 35977080604 (before the seed) and 35987288683 (after), arm64 and x86_64, GitHub macOS runners. The seeded runs wrote a host through the production DataManager and the page read it back; the leak counts are 6 and 7 graphs, which is one host times however many times the page read the library during the render",
+   "runs": 4,
+   "seeded_graphs": [
+    null,
+    null,
+    1,
+    1
+   ],
+   "total_bytes_seen": [
+    18720,
+    18816,
+    23424,
+    24416
+   ]
   },
   "first_party_bytes_floor_note": "unmeasured: no sweep has yet leaked a first-party object that is not part of a host graph, so nothing has needed the floor",
   "first_party_bytes_measured_on": "2026-09-24, the committed sweep scripts/leak-sample.txt: 2,304 of 11,792 leaked bytes are ours, over 6 hosts; 1 TemporaryHost + 3 TemporaryApp per host",

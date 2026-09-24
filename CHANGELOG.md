@@ -29,18 +29,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Three sweeps then agreed: 2,304 of 11,792 bytes ours over 6 hosts, 2,688 of 13,744 over 7,
   and 6,144 of 21,712 over 16 -- 384 first-party bytes per leaked host every time, a fan-out
-  of 3.0 every time. That number is what killed the old byte rule: it judged the report's
-  total (2,500 per host plus a 2,000 floor), and a runner with one seeded host gets a budget
-  of 4,500 against 18,720 bytes of other people's objects, so it would have gone red no
-  matter what this repository did. The rule now budgets our objects -- 512 bytes per leaked
+  of 3.0 every time, and two more agreed from the runners that then got the graph: 2,688 of
+  24,416 bytes ours over 7 leaked graphs on arm64, 2,304 of 23,424 over 6 on x86_64. Those
+  four-and-two numbers are what killed the old byte rule: it judged the report's total (2,500
+  per host plus a 2,000 floor), and the seeded runners carry budgets of 19,500 and 17,000
+  under totals of 24,416 and 23,424 -- so the first runner that ever had a graph to measure
+  would have gone red twice over numbers holding not one first-party object. The rule now budgets our objects -- 512 bytes per leaked
   host plus a 128-byte floor nothing has needed yet -- and prints the total as context.
   A second owner of the same graph still trips it (768 > 512 + 128), and the change of rule
   carries its own regression: the fixtures hold a runner-shaped report -- one graph of ours
   inside a machine's noise -- which the old ceiling refused and the new one passes, with a
   matching pair in the red team, growing one of our blocks refused and growing a `CFString`
-  passed. Section 8 of ``docs/memory-ownership.md`` records what this still cannot see: the
-  floor has never been measured, the seed's first runner run is the push that follows, and
-  the 80% of leaked bytes belonging to classes we do not declare stays unwatched.
+  passed. ``observed.ci_runner`` now holds four runs, two without a graph and two with, and
+  Section 8 of ``docs/memory-ownership.md`` records what is still unseen: the 128-byte floor
+  has never been measured, a runner seeding into a library that already has hosts cannot be
+  built at all (a runner has no LAN to disagree with), and the 80% of leaked bytes belonging
+  to classes we do not declare stays unwatched.
 
 - **A refused ceiling now names the objects, and wiring that up caught a shadowing bug in
   the gate itself.** `leak-audit.py --report <file>` keeps the raw sweep beside the verdict,
