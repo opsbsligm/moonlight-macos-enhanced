@@ -11,7 +11,11 @@
 > holds an app and no host, and an asynchronous box-art path reads `app.host.uuid` — so this
 > page records the measurement, the fix, and the one thing that has to exist before the fix
 > is honest. No ownership change was made here, because the streaming path cannot be
-> exercised on this machine.
+> exercised on this machine. Section 10 (same day) splits that blocker in two and measures the
+> half that never needed a session: the Debug build now reports who keeps a host alive, three
+> shapes with two controls, and the holder rule refuses a `weak` back-pointer while any
+> assignment hands out an app without handing out its host. (That same rule corrected one row
+> of the section 4 table: the box-art retriever does hold its host.)
 
 ## 1. 实测结论
 
@@ -63,8 +67,12 @@ TemporaryHost ──appList(retain, TemporaryHost.h:41)──▶ TemporaryApp
 |:---|:---|:---|
 | `AppsViewController.h:24` `strong TemporaryHost *host` | **是**（`self.host = newHost`，`:496`；并在 `:1592` 把 `app.host` 指回来） | 这条路径安全 |
 | `StreamViewController.h:25` `strong TemporaryApp *app` | **否**（`StreamViewController.h` 里没有任何 `TemporaryHost` 属性） | 今天全靠这条环给 host 续命 |
-| `AppAssetManager.m:58` → `AppAssetRetriever.app` | **否**，且 `AppAssetManager.m:34` 在异步路径里读 `app.host.uuid` 拼 boxart 路径 | 同上 |
+| `AppAssetManager.m:58` → `AppAssetRetriever.app` | ~~**否**~~ **是**（2026-09-24 更正：`AppAssetRetriever.h:15` 就声明了 `TemporaryHost* host`，`AppAssetManager.m:59` 在赋 app 的下一行赋了它） | 异步 boxart 路径（`AppAssetRetriever.m:29` → `boxArtPathForApp:` 读 `app.host.uuid`）其实一直自己持有 host——**§5 的第 3 步这条路已经做完了** |
 | `AppsViewController.m:246` 的 `NSArray *hosts` 等局部变量 | 方法返回即释放 | 不构成根 |
+
+**这张表本轮被自己写的门禁更正了一行**：那条更正不是修辞，而是 §10 的门禁在扫全仓 `.app =` 赋值点时，
+把 `retriever.app = app;` 与同一方法体内的 `retriever.host = host;` 配上了对，然后与这张表撞车。
+表里那条「否」因此是**读代码读漏了一行**，而这条门禁存在的意义之一就是不让这种「读出来的一致」继续走。
 
 `streamVC.app` 的唯一赋值点是 `AppsViewController.m:611-613`（`prepareForSegue:`）。串流开始后 apps 页是否还活着不由静态阅读决定——
 而 `StreamViewController+Diagnostics.m` 里读 `self.app.host` 有 **21 处**（含 `activeAddress` 的写入与设置分桶读取）。
@@ -78,10 +86,21 @@ TemporaryHost ──appList(retain, TemporaryHost.h:41)──▶ TemporaryApp
 4. 验证：同一条 `leaks` 命令，`ROOT CYCLE: <TemporaryApp>` 的栈数 **6 → 0**（这是可红可绿的证据，不是推理）；
    再配一条门禁「给 `streamVC.app` 赋值处必须同时给 host 赋值」+ 植入反例，与「changelog 说某个 step 进了 workflow 而 workflow 里没有它」同形状。
 
+**第 4 步的门禁已在 2026-09-24 落地**（`scripts/ownership-audit.py` 的 holder 规则：扫每一处 `X.app =` 赋值，
+要求同一方法体内出现 `X.host =`；`weak` 之下有任何一条就判红，今天强指针之下则**新增**一条也判红，
+并把现存的未配对点记在基线里）。它同时给出了 §10 的测量，把下面这条「阻塞」改成了一半能验证。
+
 **阻塞条件（不是借口，是缺的那条证据）**：串流路径本地跑不起来（需要真主机 + 真会话）。
 `leaks` 只能为设置页那条路径担保，为串流期不存在的空指针担保不了。
 在能给出「串流会话中 `app.host` 不为 nil」的红→绿证据之前，这个改动不做——
 本仓库自己定下的规矩就是：没测过的路径不写进规则，也不写进代码。
+
+> **2026-09-24 的状态更新**：这句话里混着两个问题，本轮把它们分开了。
+> **「谁持有谁」不需要会话**，§10 已经把它量出来了（三种形状 + 两条控制 + 头文件对账）；
+> **「串流期会不会读到 nil」仍然需要会话**，而它现在改由源码侧的持有者规则担保：
+> `weak` 一落地，任何「只把 app 交给持有者、没把 host 交出去」的赋值点都会判红。
+> 也就是说：`weak` 化的提交从此**必须先让 `streamVC.host`/`item.host` 这类赋值存在**才可能过 CI——
+> 这条改动不再等一个跑不起来的会话，它等的是两个今天就能补上的属性。
 
 ## 6. 这次没测到
 
@@ -131,6 +150,8 @@ TemporaryHost ──appList(retain, TemporaryHost.h:41)──▶ TemporaryApp
 
 **红证证不了什么**：它证明读取器还在读，不证明上限数字是对的（数字的正确性靠上面那 9 次实测）；
 也不证明 §5 的所有权修法可以做——那条仍卡在「串流会话里 `app.host` 不为 nil」这条本地给不出的证据上。
+（2026-09-24 更新：这条的一半由 §10 的探针给出，另一半由 `ownership-audit.py` 的持有者规则从源码担保；
+本门禁依旧只为「有没有多出一手泄漏」负责。）
 
 **门禁的牙齿范围**（写清楚，免得被当成内存总闸）：能抓到的是「多出一类一手对象」与「同一张图多了一个持有者」
 （扇出会翻倍，不是加一）；抓不到的是「每个主机多漏一个几十字节的对象」——那只占每主机字节的几个百分点，
@@ -185,7 +206,7 @@ TemporaryHost ──appList(retain, TemporaryHost.h:41)──▶ TemporaryApp
 - runner 只覆盖到「无 LAN 的纯种子」这一种混合：种 1 台后渲染轮次是 6~7，本机开 IGNORE 时是 16，
   而「runner 上既有真实发现又有种子」这种形状构造不出来（runner 没有 LAN）。
   「种子被种进一个非空库」因此仍然是纸面推演，尽管那条分支本机已经跑过。
-- §5 的所有权修法照旧卡着：还是缺「真串流会话里 `app.host` 不为 nil」那条红→绿证据。
+- ~~§5 的所有权修法照旧卡着~~ **2026-09-24 拆成两半**：「谁持有谁」由 §10 量出来了；「串流期读到 nil」依然没有真会话，但改由持有者规则在源码上拦住——`weak` 落地时任何未配对的 `X.app =` 都会判红，所以这一条不再是「等真机」，而是「先补两个 host 属性」。
 - 替我们泄漏的**系统对象**（`CFString`/`NSMutableSet` 那 80%）没有任何一条规则盯着——
   一手类集合抓不到它们，一手字节预算也抓不到，这条边界与上一轮相同。
 
@@ -244,3 +265,68 @@ app 页各读各的），而每次读会遍历当时库里的全部主机。这�
 **这条门禁抓不到什么**（与它抓得到同等重要）：抓不到「每次访问多漏一个几十字节的小对象」——
 速度的抖动比那个信号大一个数量级；抓不到回收失败但字节不变形（例如图被换成了别的等量对象）。
 它抓的是**倍增**，并且第一次给了 §5 一个能被证伪的目标值。
+
+
+## 10. 谁在给 host 续命：把 §5 从「等真机」变成一次测量（2026-09-24）
+
+§5 的理由一直是一句诚实的话：没有真串流会话，就没法断言 `app.host` 会不会在串流期变 nil。
+但这句话里混着两个问题——**谁持有谁**（对象图的性质）与**串流期会不会读到 nil**（需要会话）。
+前者从来不需要会话。本轮把它单独量了，于是 §5 从「等条件」变成「有一张能红能绿的表」。
+
+**怎么问的**：Debug 构建里的 `ML_OWNERSHIP_PROBE` 造出 host 与 app，然后**只留 app 一个持有者**
+——这正是 `prepareForSegue:` 交出串流时的状态（`AppsViewController.m:613` 只赋 `streamVC.app`）——
+再问两个问题：只有 app 被持有时 host 还活着吗？两个都不再被持有时，它们还活着吗？
+
+**三种形状，每种挡的是一种会骗人的方式**：
+
+| 形状 | 它排除的是什么 |
+|:---|:---|
+| `productionGraph` | app 直接取自 `-[DataManager getHosts]`（就是那张泄漏过的图），读数不能赖成「fixture 自己搭的形状」 |
+| `handBuiltGraph` | 同一形状手工再搭一遍，**唯一用途是与上一行一致**；不一致就说明图之外还有人在持有，这份报告里所有读数都不再描述 app |
+| `backpointerOnly` | 只有 `app.host`、没有任何东西反向指向 app。它**必须**能被回收；它若活着，说明探针在持有自己声称在观察的对象 |
+
+**实测**（本机真实库 2 台主机，被选中的那台带 3 个 app；`scripts/ownership-sample.json` 是这次运行留下的记录，只替换了主机 UUID）：
+
+| 形状 | 只有 app 时 host 活着 | 无人持有还活着 | `appList` |
+|:---|:---|:---|:---|
+| `productionGraph` | 是 | 是 | 3 |
+| `handBuiltGraph` | 是 | 是 | 1 |
+| `backpointerOnly` | 是 | **否** | 0 |
+
+- 第三行是这份报告能成立的唯一原因：**harness 没有持有被测对象**，
+  所以前两行的「无人持有还活着」是 app 自己的循环——`leaks` 那句 ROOT CYCLE 从此有了进程内部的对应物。
+- 第一行与第二行一致，说明图之外没有别人在拿着它。
+- 「只有 app 时 host 一定活着」这一条，正是 §4 那张表所说的「今天全靠这条强反向指针续命」——现在它是量出来的，不是读出来的。
+- 形状定义写进 `shape_contract`：手工形状若悄悄变成「只有反向指针」，两条图的一致就退化成同一种形状自己跟自己一致，所以 `appListCount` 不对就整轮拒绝。
+
+**门禁判什么**（`scripts/ownership-audit.py`；CI 里三条 step：audit 作业跑 `--self-test` 与 `--red-team`，两个 macOS 作业跑真机测量）：
+
+- 两条控制任一不成立 → 整轮拒绝。控制不是警告，因为第三个读数全靠它们；
+- **头文件与观测对不上账 → 拒绝**，尤其是「头里写 `weak`、host 却还活着」——那不是修好了，那是有个看不见的持有者；
+- 声明说这里有循环（两边都 strong）却什么都没漏 → 拒绝：那说明实验自己没造出图；
+- 期望写在 `scripts/ownership-baseline.json` 的 `profiles` 里，**键是它写下时所依据的声明**。
+  于是「改所有权却没先写下预期」本身就是拒绝；修好之后那一份也提前写好了：任何形状都不许在无人持有时活着，
+  也不许只靠 app 把 host 留住；
+- 红证改的是**真记录**（`ownership-sample.json`）而不是照自己的正则造的数。最要紧的一条植入是「声明说有循环，可什么都没漏」——那正是坏掉的实验会报出来的样子，不是修好了的样子。
+
+**另一半（`weak` 之后谁来持有 host）改由源码担保**：探针不构造任何 view controller，
+所以它看不见串流会话。于是同一份门禁去扫全仓 `X.app = ` 赋值点，要求同一方法体里出现 `X.host = `：
+`weak` 之下留一条就判红一条；今天 strong 之下**新增**一条也判红（因为它就是 `weak` 化那天会炸的地方）。
+扫出来的事实：
+
+| 赋值点 | 是否同时给了 host | 说明 |
+|:---|:---|:---|
+| `AppAssetManager.m:58-59` `retriever.app/.host` | **是** | §5 第 3 步这条路早就做完了（§4 的表格在这里读漏了一行，已更正） |
+| `AppsViewController.m:613` `streamVC.app` | 否 | `StreamViewController.h:25` 只有 app，没有 host 属性 |
+| `AppsViewController.m:724` `item.app` | 否 | **本轮新发现**：`AppCell.h:20` 只存 app，而 `AppCell.m:129` 读 `self.app.host.uuid` 去查 artwork 变暗设置 |
+
+这条规则**由它看守的那个改动来上膛**：今天 strong 之下它只做「记录 + 不许新增」，
+所以它不会去逼一个测不了的行为变更；`weak` 一落地它自动变成硬门，
+于是「只 flip 属性、不给持有者补 host」这种提交**在 CI 里过不去**，而不是等真机串流炸出来。
+配对是**按持有者名字**判的——`otherVC.host = host;` 不能给 `streamVC.app` 续命，这条也有一条 fixture。
+
+**仍未测到**：
+- 真串流会话里 `self.app.host` 的实际读数照旧没有（这需要真主机 + 真会话）。现在拦它的是源码侧的持有者规则，不是运行时证据；
+- 探针种下的主机走的是生产 `DataManager` 写路径，但**不经过 discovery**，所以「mDNS 应答拼出来的 host 与其 appList 的所有权」依旧没测；
+- `AppCell`/`StreamViewController` 补上 host 属性之后会不会引入新的循环（cell ← app → host ← cell？）没测——
+  这条在补的那一轮必须一起量，量法就是本节这张表加一条新形状。
