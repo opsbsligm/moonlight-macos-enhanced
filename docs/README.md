@@ -20,7 +20,7 @@
 |:---|:---|:---|
 | [`contributing.md`](contributing.md) | 准备改代码、提 PR 的人 | 构建要求、质量门控清单与它们各自守住什么、项目结构、贡献流程与 Commit 规范、版本与 tag 约定 |
 | [`input-mapping-design.md`](input-mapping-design.md) | 改输入路径之前必读的人 | 键盘映射表与其四条设计原则、「双击鼠标触发开始菜单」的根因与修复方式 |
-| [`memory-ownership.md`](memory-ownership.md) | 动对象所有权或内存之前必读的人 | 第一次把 `leaks` 跑在设置页路径上的实测：一手代码里的循环引用、它为什么每求值一次就累积一次、为什么不能顺手改 `weak`，以及做这个改动前必须先有的那条证据 |
+| [`memory-ownership.md`](memory-ownership.md) | 动对象所有权或内存之前必读的人 | 第一次把 `leaks` 跑在设置页路径上的实测：一手代码里的循环引用、它为什么每求值一次就累积一次、为什么不能顺手改 `weak`、做这个改动前必须先有的那条证据，以及 `leak-audit.py` 这道上限门禁的基线口径与「读不到泄漏=绿」的红证 |
 | [`input-mapping-benchmark.md`](input-mapping-benchmark.md) | 想验证「竞争力」这个说法的人 | 键盘/鼠标映射逐项对标 Parsec、UU 远程、Citrix、moonlight-qt 的结论与取证纪律（英文） |
 
 ## 设备重定向与主机契约

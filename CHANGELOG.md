@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The memory ceiling is a gate now, and building it caught a gate reading nothing.**
+  `scripts/leak-audit.py` runs the Debug probe under Apple's `leaks`, reads one line per
+  leaked block, and refuses a first-party class that shows up outside
+  `scripts/leak-baseline.json` or above the number written there. A ceiling and not an
+  equality, because `leaks` answers for the machine it ran on: this laptop has a host
+  configured, so the settings page builds the temporary host graph and leaks it — five runs
+  of one render, 18 `TemporaryApp`s and 6 `TemporaryHosts` every time — while a fresh HOME
+  leaks none of it. Per-class ceilings are exact (they did not move in five runs); the byte
+  ceiling carries a margin (totals moved between 10,000 and 11,792), because a ceiling that
+  goes red over somebody else's CoreFoundation is a ceiling somebody mutes. It is a step in
+  each macOS build, after the render probe whose Debug product it reuses, and the audits job
+  and `constraints-audit.py` run the two shapes that need nothing but python.
+
+  The half that needed nothing but python is the half with news. `--red-team` takes a
+  captured report and breaks it one way at a time — a class over its ceiling, a class nobody
+  budgeted, a byte total over the ceiling, a truncated summary, blocks deleted under a
+  summary that stayed, and a leak that is genuinely fixed — and each break must come back
+  refused for its own reason while the last must pass. It runs on
+  `scripts/leak-sample.txt`, a real `--atExit --list` sweep of the settings page with this
+  machine's host GUID and IPv6 address stripped out of the leaked strings, so the class
+  tokens, sizes and block counts are `leaks`' own rather than written to match this
+  script's regular expressions. Six breaks, six right answers. Aimed at the first report
+  this gate ever read instead, the red team refused to run — and that report had been green.
+  It was `leaks`' default tree: its summary counted 105 leaks, its body drew a graph and
+  wrote out 9 of them as blocks, so the reader read 0 blocks, printed "first-party classes:
+  none", added two notes explaining that the budgeted classes were not leaking, and exited
+  0 over 18 leaking apps. The judge now compares the blocks it read against the number the
+  report itself counts and refuses either way, including the other direction, so a report
+  format that changes under the reader turns the gate red instead of turning it blind.
+  `--list` on the same build reads 106 blocks against 106 counted, in 8 classes, which also
+  retires the "96 leaks unattributed" line in `docs/memory-ownership.md`: that gap was the
+  tree's, not the app's.
+
+  What this does not claim: the ownership fix that file §5 lays out is still blocked on the
+  evidence only a real stream session can give, so the 18/6 stay in the baseline as measured
+  debt; there is still no growth-rate curve for repeated settings visits; and the red team
+  proves the reader reads, not that the ceiling is right — a class that starts leaking
+  inside somebody else's cycle is still invisible to it.
+
+
 - **Block notification observers are now counted against a real AppKit,
   because the owner of one is not the object that registered it.**
   `scripts/notification-observer-tests.py` compiles observers that differ only
