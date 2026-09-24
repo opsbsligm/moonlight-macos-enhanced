@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Where a deleted host's app records go is now measured, and the Core Data model is on the hook
+  for its answer.** `-[DataManager removeHost:]` deletes a host and nothing else, so the fate of the
+  app rows hangs on `Host.appList`'s deletion rule -- a fact about `Limelight.xcdatamodeld` rather
+  than about any line of Objective-C, and one of nine model versions in this tree is the one
+  `.xccurrentversion` names, so reading the wrong file reads a model the app never opens. Reading
+  was not treated as knowing: a planted host (three apps, written through the production
+  `updateAppsForExistingHost:`) took the store from three app records to six, and removing it took
+  them back to **three with none orphaned**. That is `Cascade`, measured, and it matters because an
+  app record whose host is gone is invisible to every production read -- `getHosts` reaches apps
+  only through hosts -- so nothing in the app could ever list or delete it while the store kept
+  paying for it. The count opens a fresh context on the store's own coordinator rather than reusing
+  `DatabaseSingleton`'s, because `DataManager` works on a second context and neither is obliged to
+  see the other's committed rows: a stale count would agree with the model by accident and stay
+  green forever. `scripts/ownership-audit.py` now reads the current model and requires the two to
+  agree -- `Cascade` with the rows still there is a refusal, a non-cascade rule with neither the
+  count nor the orphans moved is a refusal, an orphan is a refusal under any rule, and a run that
+  deleted without counting on both sides, or a model it cannot read, may not claim the deletion was
+  clean. This is not a laptop-only assertion: a runner has no LAN, so the sweep seeds a host and the
+  reap deletes it on every push, which makes the reconciliation a real deletion in CI rather than a
+  fixture. 43 fixtures and 18 red-team checks pass, three of the fixtures injecting a model outright
+  so the rule is tested rather than one particular model; the four filed records each carry their
+  own expectation, and the clean-up record from the previous round is filed honestly as a refusal --
+  it deleted before the rows were counted -- with the fill-in that must turn it green.
+
 - **A probe now knows whose library it is measuring, because a private `HOME` never gave it one.**
   Every Debug probe in this repository was started with a temporary `HOME` and described in its own
   comments as getting "its own database and preferences". Measured on 2026-09-25: an empty

@@ -705,6 +705,71 @@ static void MLCountLibraryHosts(DataManager *store, long *total, long *probeOwne
     }
 }
 
+// Count the app records in the store, and how many of them belong to no host.
+//
+// This question is asked because `-[DataManager removeHost:]` deletes a host and nothing else, and
+// whether the apps that host was holding go with it is decided by the Core Data model rather than
+// by any line of code in this repository: `Host.appList` carries a deletion rule, and the file that
+// says which one (`Limelight.xcdatamodeld`, whose current version `.xccurrentversion` names) is not
+// a header anyone can grep alongside the code. The audit reads that model and compares; this counts
+// what the store actually did.
+//
+// A fresh context is opened on purpose. `DataManager` works on its own private-queue context and
+// `DatabaseSingleton` exposes a second one, and neither is obliged to see the other's committed
+// rows without a refresh -- a count read through a stale context would be a count of some earlier
+// moment, which is exactly the kind of reading that agrees with the model by accident. A new
+// context on the same store coordinator reads what the SQLite file holds.
+//
+// Orphans matter on their own: an app record whose host is gone is invisible to every production
+// read (`getHosts` reaches apps through hosts), so it is a row nothing can delete through the app
+// while still costing the store its space.
+static void MLCountAppRecords(long *total, long *orphans, NSString **problem) {
+    NSManagedObjectContext *reader = [[NSManagedObjectContext alloc]
+            initWithConcurrencyType:NSPrivateQueueConcurrencyType];
+    reader.persistentStoreCoordinator = [DatabaseSingleton shared].persistentStoreCoordinator;
+
+    __block long totalRows = -1;
+    __block long orphanRows = -1;
+    __block NSString *failure = nil;
+    [reader performBlockAndWait:^{
+        NSError *error = nil;
+        NSFetchRequest *all = [NSFetchRequest fetchRequestWithEntityName:@"App"];
+        all.resultType = NSCountResultType;
+        NSArray<NSNumber *> *rows = [reader executeFetchRequest:all error:&error];
+        if (error != nil) {
+            failure = [NSString stringWithFormat:@"counting the app records failed: %@",
+                       error.localizedDescription ?: @"no description"];
+            return;
+        }
+        totalRows = rows.firstObject.unsignedIntegerValue;
+
+        NSFetchRequest *loose = [NSFetchRequest fetchRequestWithEntityName:@"App"];
+        loose.resultType = NSCountResultType;
+        loose.predicate = [NSPredicate predicateWithFormat:@"host == nil"];
+        error = nil;
+        NSArray<NSNumber *> *looseRows = [reader executeFetchRequest:loose error:&error];
+        if (error != nil) {
+            // Not a refusal of its own: a store that will not answer the orphan question is
+            // reported as unmeasured rather than guessed at, and the audit decides whether an
+            // unmeasured orphan count can carry a green.
+            failure = [NSString stringWithFormat:@"counting app records with no host failed: %@",
+                       error.localizedDescription ?: @"no description"];
+            return;
+        }
+        orphanRows = looseRows.firstObject.unsignedIntegerValue;
+    }];
+
+    if (total != NULL) {
+        *total = totalRows;
+    }
+    if (orphans != NULL) {
+        *orphans = orphanRows;
+    }
+    if (problem != NULL) {
+        *problem = failure;
+    }
+}
+
 // Reap the hosts earlier probes planted, and only those.
 //
 // This exists because of a fact about macOS that every probe in this file had assumed away: the
@@ -746,6 +811,19 @@ static void MLReapProbeOwnedHostsIfRequested(NSMutableDictionary *report, void (
     MLCountLibraryHosts(store, &total, &ours);
     record[@"found"] = @(total);
     record[@"probeOwned"] = @(ours);
+
+    // The app records are counted on both sides of any deletion, because "the library reads back
+    // empty" only speaks about hosts. Whatever the model's rule turns out to be, the two numbers
+    // and the orphan count have to be a story the audit can read.
+    long appsBefore = 0;
+    long orphansBefore = 0;
+    NSString *countFailure = nil;
+    MLCountAppRecords(&appsBefore, &orphansBefore, &countFailure);
+    record[@"appRecordsBefore"] = @(appsBefore);
+    record[@"orphanAppRecordsBefore"] = @(orphansBefore);
+    if (countFailure != nil) {
+        record[@"appRecordProblem"] = countFailure;
+    }
     if (total == 0) {
         record[@"status"] = @"empty";
         return;
@@ -783,6 +861,18 @@ static void MLReapProbeOwnedHostsIfRequested(NSMutableDictionary *report, void (
     MLCountLibraryHosts(store, &remaining, &stillOurs);
     record[@"removed"] = @(ours);
     record[@"remaining"] = @(remaining);
+
+    long appsAfter = 0;
+    long orphansAfter = 0;
+    NSString *afterFailure = nil;
+    MLCountAppRecords(&appsAfter, &orphansAfter, &afterFailure);
+    record[@"appRecordsAfter"] = @(appsAfter);
+    record[@"orphanAppRecordsAfter"] = @(orphansAfter);
+    if (afterFailure != nil) {
+        // The before count is still worth what it is, and the gap is named rather than left for a
+        // reader to mistake for a zero.
+        record[@"appRecordProblem"] = afterFailure;
+    }
     if (stillOurs != 0) {
         record[@"status"] = @"did-not-clear";
         refuse([NSString stringWithFormat:@"asked to remove %ld probe host(s) and the library still"
