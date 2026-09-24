@@ -21,7 +21,10 @@
 > wrote the missing id over the stored one, after which the next look at the device list deleted the
 > host and -- `Host.appList` being `Cascade` -- the applications the user had added to it. Measured
 > at 2 hosts to 1 and 6 app records to 3 for one response missing one tag; fixed by the nil guard
-> that method already applies to every neighbouring field. Section 10 (same day) splits that blocker in two and measures the
+> that method already applies to every neighbouring field. Section 15 (same day) applies the same
+> promise to the second field that was written bare -- the name -- and records why the third one,
+> `customName`, must stay unguarded: the rename sheet clears that field with nil, and `populateHost:`
+> never assigns it, so a guard there would make a custom name impossible to unset. Section 10 (same day) splits that blocker in two and measures the
 > half that never needed a session: the Debug build now reports who keeps a host alive, three
 > shapes with two controls, and the holder rule refuses a `weak` back-pointer while any
 > assignment hands out an app without handing out its host. (That same rule corrected one row
@@ -703,3 +706,68 @@ step 环境——于是本地跑到这一步时探针压根没被要求做这个
   后果比 uuid 轻（不触发删除），但同属"用 nil 覆盖已有数据"，登记待判。
 * 修复改变了写库行为（少了一次覆盖写）。这是修 bug 必需的**行为变化**，不属于「接口与业务行为不变」
   的禁区：对外接口、页面、设置项都没动，动的是一条会让用户丢配置的写入。
+
+
+## 15. 同族第二个字段：`name`；以及为什么 `customName` 必须继续裸着写（2026-09-25）
+
+§14 之后，`propagateChangesToParent:` 里只剩 `name` 还是裸赋值。补上守卫的过程顺带回答了一个更重要的
+问题：**这个方法的三个字段对「缺失」的语义并不相同**，把它们一起"加守卫"是错的。
+
+### 三个字段的差别是可执行的，不是修辞
+
+| 字段 | 谁会在响应里把它变成 nil | `nil` 有没有合法含义 | 该不该守 |
+|:---|:---|:---|:---|
+| `uuid` | 会（`populateHost:` 用 `uniqueid` 覆盖） | 无（读列表时空 uuid 一律当垃圾删） | **守**（§14） |
+| `name` | 会（`populateHost:` 用 `hostname` 覆盖） | 无（服务器改名一定带着新名字来） | **守**（本轮） |
+| `customName` | **不会**（`populateHost:` 从不赋这个字段；库里读出的 temp host 自带原值） | **有**：`HostsViewController.m:473` 就是靠 `nil` 表达「用户清掉了自定义名」 | **不许守** |
+
+也就是说：给 `customName` 加守卫会直接**做坏一个功能**（自定义名再也清不掉），而它本来就没有被覆盖的
+风险——因为覆盖它的那条路径不存在。这条判断写进代码注释，也写进门禁的措辞里，避免以后有人"顺手
+统一风格"。
+
+### `name` 的实际代价：比 uuid 轻，但同样有读数
+
+`-[TemporaryHost displayName]` 在没有自定义名时退回 `self.name ?: @""`，所以名字被冲空的后果是
+**设备列表里出现一行没有标签的机器**，而不是删数据。实测（新探针 `ML_PROBE_PARTIAL_HOST_NAME`，用
+uuid 精确命中、不走 fallback，以免与 §14 那个实验混在一起）：
+
+| 读数 | 加守卫前 | 加守卫后 |
+|:---|:---|:---|
+| `nameAfterPropagate` | `<empty>` | `Probe Host Named` |
+| `displayNameAfterPropagate` | `""`（列表里是空标签） | `Probe Host Named` |
+| hosts / apps | 2 / 3 → 2 / 3 | 2 / 3 → 2 / 3 |
+
+最后那行是本轮最重要的读数：**它证明这个缺陷只是"难看"，不是"丢数据"**。规则照样判红，理由不是严重度，
+而是那个方法自己的承诺——六个字段守、两个字段不守，那不叫承诺。
+
+### 门禁
+
+新增 `partialHostName` 记录，与 `partialHostInfo` 由同一个 `--require-partial` 索要（审计脚本自己在
+子进程环境里打开两个探针开关，沿用 §14 学到的"一个主人"原则）。拒绝：
+
+* 名字与种下的不一致（守卫失效）；显示名为空（用户看到空标签行）；
+* 解析出来的 body 其实**带了**名字（前提不成立，测的是普通响应）；
+* `appsAfter != appsBefore`——本轮判定这个形状"从未见过"，因为一次只是没带名字的响应不该动 app；
+  真出现就说明写回做的事比覆盖标签更多；
+* 记录缺失（flag 到了无视它的 build）、status 不是 `measured`、不是自己种的 host、数不出 app、
+  探针留下自己的 host。
+
+两个实验的记录**必须同时提交**：判定逻辑里两条规则对同一份记录一起判，所以"只带一半证据"的记录会被
+点名——这正是我们想要的（避免 CI 上只跑了一个实验而另一个悄悄消失）。
+
+### 测试
+
+* `--self-test` **62 条**（+6：名字守住 / 名字被抹 / 空标签行 / body 其实带了名字 / 写回动了 app /
+  name 步骤静默没跑）。
+* `--red-team` **23 条全绿**（+2：真记录级「守卫关掉」注入、「name 步骤没跑」注入）。
+* 入档记录重跑并覆盖：同一份 ownership 报告里 `partialHostInfo` 与 `partialHostName` 都在，reap 也在，
+  最严口径（`--require-partial` + 本地真 store）**0 failure**。
+* 先前四份记录的期望同步补上「缺 `partialHostName`」，依旧**只因为缺证据被拒**，补齐后转绿。
+
+### 登记
+
+* `ML_PROBE_PARTIAL_HOST_NAME` 测的是"响应缺 hostname"。另一条会让 name 变空的路径是用户自己把
+  主机名改成空——那条走 `customName`/重命名面板，不在本探针范围内，且当前 UI 是否允许提交空名未测。
+* 到这一步，`propagateChangesToParent:` 的九个字段全部有了明确归属：七个守、一个（`customName`）
+  故意不守并写明理由、`pairState`/`serverCodecModeSupport` 是数值不涉及 nil。这个方法的"缺失语义"
+  问题到此收口。

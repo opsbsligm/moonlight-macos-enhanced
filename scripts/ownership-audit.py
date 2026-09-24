@@ -252,6 +252,7 @@ def probe_problems(report, require_reap=True, rules=None, require_partial=False)
                         " shape was never there to hold" % seed.get("status"))
     problems.extend(reap_problems(ownership, seed, require_reap, rules))
     problems.extend(partial_host_problems(ownership, require_partial))
+    problems.extend(partial_name_problems(ownership, require_partial))
     shapes = ownership.get("shapes")
     if not isinstance(shapes, dict):
         problems.append("the probe recorded no shapes, so there is no control and no reading")
@@ -597,6 +598,92 @@ def app_record_problems(reap, rules=None):
     return problems
 
 
+def _field_experiment_problems(partial, label):
+    """The two things every missing-field experiment has to establish about itself.
+
+    Split out because the second record measures the same shape and would otherwise carry a copy of
+    these sentences, which is how two rules drift: one gets tightened and the other quietly keeps
+    accepting what it used to.
+    """
+    problems = []
+    if partial.get("status") != "measured":
+        problems.append("the %s run recorded status %r instead of measuring, so the"
+                        " server-info body never became the host this rule is about"
+                        % (label, partial.get("status")))
+        return problems
+    planted = partial.get("plantedUuid") or ""
+    if not planted.startswith("probe-host-"):
+        problems.append("the %s run planted %r, which is not a probe-owned uuid, so"
+                        " it was measuring somebody's real host and any number below it belongs to"
+                        " that person's library rather than to this test" % (label, planted))
+    if partial.get("cleanedUp") != "by-the-probe":
+        problems.append("the probe reports it left the host it planted as %r, so either the"
+                        " measurement deleted its own subject or something else did, and the"
+                        " library the next run reads is not the one this one started from"
+                        % partial.get("cleanedUp"))
+    if partial.get("appRecordProblem"):
+        problems.append("the app records could not be counted while judging the %s"
+                        " (%s), so the cascade above is unmeasured rather than absent"
+                        % (label, partial["appRecordProblem"])
+                        if label == "partial-response" else
+                        "the app records could not be counted while judging the %s (%s), so what"
+                        " the write cost is unmeasured rather than free"
+                        % (label, partial["appRecordProblem"]))
+    return problems
+
+
+def partial_name_problems(ownership, require_partial=False):
+    """Judge the response that arrived without a hostname.
+
+    `-[ServerInfoResponse populateHost:]` assigns the name it was given, and until this rule the
+    write-back assigned it bare like `uuid` used to be, so a body with no `hostname` emptied the name
+    of a host that had one and left `-[TemporaryHost displayName]` falling through to an empty string
+    unless a custom name sat behind it. Measured before the guard: `nameAfterPropagate` empty, the
+    display name empty, and -- the part that decides how bad this is -- the host and app counts
+    unmoved. An empty name is ugly; an empty uuid is a deletion. It is refused anyway, because the
+    method promises not to overwrite with nil and a promise kept for six fields and broken for two is
+    not a promise.
+
+    The record also exists to keep the one field that stays unguarded from being "fixed" by
+    somebody's tidy hands: `customName` is written bare because the rename sheet clears it with nil,
+    and a guard there would make a custom name impossible to unset.
+    """
+    named = ownership.get("partialHostName")
+    if not isinstance(named, dict):
+        if require_partial:
+            return ["the audit asked for the missing-field experiments and the probe recorded no"
+                    " partialHostName, so the flag reached a build that ignores it and no run here"
+                    " says what a response with no hostname does to a saved name"]
+        return []
+    problems = _field_experiment_problems(named, "missing-name run")
+    if named.get("status") != "measured":
+        return problems
+    planted_name = named.get("plantedName")
+    if not planted_name:
+        problems.append("the missing-name run recorded no planted name, so there is no value to"
+                        " compare the write against and the numbers below it cannot be read")
+    if named.get("parsedName") != "<absent>":
+        problems.append("the body the probe parsed carried a name (%r), so nothing was missing and"
+                        " the run measured an ordinary response while reporting it as this one"
+                        % named.get("parsedName"))
+    survived = named.get("nameAfterPropagate")
+    if survived != planted_name:
+        problems.append("a response without a hostname left the stored host's name as %r where the"
+                        " planted one was %r: the device list shows whatever that reads as, and"
+                        " `displayName` answers with the empty string when nothing else is behind it"
+                        % (survived, planted_name))
+    if not named.get("displayNameAfterPropagate"):
+        problems.append("the host reads out of the library with no display name at all, which is the"
+                        " row a person sees in the device list: an unlabelled machine they cannot"
+                        " tell apart from the next one")
+    if named.get("appsAfter") != named.get("appsBefore"):
+        problems.append("app records moved from %s to %s across a response that only failed to carry"
+                        " a name, so the write did more than overwrite a label and this rule has"
+                        " never seen that shape before -- it is not the one judged above"
+                        % (named.get("appsBefore"), named.get("appsAfter")))
+    return problems
+
+
 def partial_host_problems(ownership, require_partial=False):
     """Judge what one host-info response without a unique id did to a host that has one.
 
@@ -624,17 +711,10 @@ def partial_host_problems(ownership, require_partial=False):
                     " partialHostInfo, so the flag reached a build that ignores it and no run here"
                     " says what a response without a unique id does to a paired host"]
         return []
-    problems = []
-    status = partial.get("status")
-    if status != "measured":
-        problems.append("the partial-response run recorded status %r instead of measuring, so the"
-                        " server-info body never became the host this rule is about" % status)
+    problems = _field_experiment_problems(partial, "partial-response")
+    if partial.get("status") != "measured":
         return problems
     planted = partial.get("plantedUuid") or ""
-    if not planted.startswith("probe-host-"):
-        problems.append("the partial-response run planted %r, which is not a probe-owned uuid, so"
-                        " it was measuring somebody's real host and any number below it belongs to"
-                        " that person's library rather than to this test" % planted)
     if partial.get("parsedUuid") != "<absent>":
         problems.append("the server-info body the probe parsed carried a uuid (%r), so the"
                         " fall-back branch was never reached and this run measured a normal"
@@ -661,15 +741,6 @@ def partial_host_problems(ownership, require_partial=False):
                         " cascade that follows a deleted host took user configuration with it --"
                         " these are the applications somebody added, not probe scratch that can be"
                         " re-made" % (partial.get("appsBefore"), partial.get("appsAfterCleanup")))
-    if partial.get("cleanedUp") != "by-the-probe":
-        problems.append("the probe reports it left the host it planted as %r, so either the"
-                        " measurement deleted its own subject or something else did, and the"
-                        " library the next run reads is not the one this one started from"
-                        % partial.get("cleanedUp"))
-    if partial.get("appRecordProblem"):
-        problems.append("the app records could not be counted while judging the partial response"
-                        " (%s), so the cascade above is unmeasured rather than absent"
-                        % partial["appRecordProblem"])
     return problems
 
 
@@ -1038,8 +1109,22 @@ def self_test(baseline):
              "hostsBeforeCleanup": 2, "hostsAfterCleanup": 2, "appsBefore": 6,
              "appsAfterCleanup": 6, "cleanedUp": "by-the-probe"}
 
+    CLEAN_NAME = {"status": "measured", "plantedUuid": "probe-host-named",
+                  "plantedName": "Probe Host Named", "parsedName": "<absent>",
+                  "parsedUuid": "probe-host-named", "nameAfterPropagate": "Probe Host Named",
+                  "displayNameAfterPropagate": "Probe Host Named", "hostsAfter": 2,
+                  "probeOwnedAfter": 1, "appsBefore": 3, "appsAfter": 3,
+                  "cleanedUp": "by-the-probe"}
+
     def partial_case(**changes):
-        return report_with(shipped_report(), partialHostInfo=dict(CLEAN, **changes))
+        # Both records travel together, so a case that names one shape still has to hand the other
+        # one over: otherwise every uuid case would also be refused for the name record it lacks.
+        return report_with(shipped_report(), partialHostInfo=dict(CLEAN, **changes),
+                           partialHostName=dict(CLEAN_NAME))
+
+    def partial_name(**changes):
+        return report_with(shipped_report(), partialHostInfo=dict(CLEAN),
+                           partialHostName=dict(CLEAN_NAME, **changes))
 
     partials = [
         # Measured on 2026-09-25 after the guard went in: the uuid survived, the library kept its
@@ -1078,12 +1163,33 @@ def self_test(baseline):
         ("the flag reaching a build that ignores it", report_with(shipped_report(),
                                                                   partialHostInfo=None),
          True, ["reached a build that ignores it"]),
-        # Nobody asked, nobody reports: the local run and the shape loops must not start refusing
+        # The name asked the same way. The red case is the record this laptop filed before the
+        # second guard went in: the name gone, the display name reading as the empty string, and the
+        # counts unmoved -- the shape that costs a blank row rather than a deleted machine.
+        ("the name kept by the guard", partial_name(), True, []),
+        ("the name written away",
+         partial_name(nameAfterPropagate="<empty>", displayNameAfterPropagate=""), True,
+         ["left the stored host's name"]),
+        ("a row that reads out unlabelled",
+         partial_name(nameAfterPropagate="Probe Host Named", displayNameAfterPropagate=""), True,
+         ["no display name"]),
+        ("a body that was not missing a name",
+         partial_name(parsedName="Probe Host Named", nameAfterPropagate="Other"), True,
+         ["nothing was missing"]),
+        ("a name run that wrote more than a label",
+         partial_name(appsAfter=0), True, ["did more than overwrite a label"]),
+        ("the name step silently not running",
+         report_with(shipped_report(), partialHostName=None), True, ["no partialHostName"]),
+        # No record when nobody asked for one: the local run and the shape loops must not start refusing
         # over a step only CI sets.
         ("no record when nobody asked for one", shipped_report(), False, []),
     ]
     for label, report, require_partial, expected in partials:
-        problems = partial_host_problems(report["ownership"], require_partial)
+        # Both rules judge every case, because both records are asked for together: a uuid shape
+        # judged on its own would be refused for the name record it does not mention, and the case
+        # that is meant to prove one rule bites would be proved by the other one instead.
+        problems = (partial_host_problems(report["ownership"], require_partial)
+                    + partial_name_problems(report["ownership"], require_partial))
         total += 1
         if expected and not problems:
             print("FAIL fixture: %s passed, and it should have been refused" % label)
@@ -1137,7 +1243,7 @@ def mutate(report, shape, **changes):
 # The mutations that test a missing-evidence rule have to keep the evidence missing, or the repair
 # below hands it back and the rule the case exists to prove bites never opens its mouth.
 MISSING_EVIDENCE_WANTS = ("no reapedHosts", "not counted on both sides",
-                               "no partialHostInfo")
+                               "no partialHostInfo", "no partialHostName")
 
 
 def with_filed_app_counts(report):
@@ -1198,13 +1304,24 @@ def with_filed_partial(report):
         # one the red team just broke -- keeps what it saw, or the repair would erase the mutation
         # it exists to test, which is exactly how a red team reports bites it never proved.
         return report
-    ownership["partialHostInfo"] = {
-        "status": "measured", "plantedUuid": "probe-host-partial",
-        "parsedName": "Probe Host Partial", "parsedMac": "aa:bb:cc:dd:ee:f0",
-        "parsedUuid": "<absent>", "uuidAfterPropagate": "probe-host-partial",
-        "rowAfterPropagate": True, "hostsBeforeCleanup": 2, "hostsAfterCleanup": 2,
-        "appsBefore": 6, "appsAfterCleanup": 6, "cleanedUp": "by-the-probe",
-    }
+    if not isinstance(ownership.get("partialHostInfo"), dict):
+        ownership["partialHostInfo"] = {
+            "status": "measured", "plantedUuid": "probe-host-partial",
+            "parsedName": "Probe Host Partial", "parsedMac": "aa:bb:cc:dd:ee:f0",
+            "parsedUuid": "<absent>", "uuidAfterPropagate": "probe-host-partial",
+            "rowAfterPropagate": True, "hostsBeforeCleanup": 2, "hostsAfterCleanup": 2,
+            "appsBefore": 6, "appsAfterCleanup": 6, "cleanedUp": "by-the-probe",
+        }
+    if not isinstance(ownership.get("partialHostName"), dict):
+        # The same repair for the record that came second: both experiments are asked for together,
+        # so a record predating one of them is refused for that one and for nothing else.
+        ownership["partialHostName"] = {
+            "status": "measured", "plantedUuid": "probe-host-named",
+            "plantedName": "Probe Host Named", "parsedName": "<absent>",
+            "parsedUuid": "probe-host-named", "nameAfterPropagate": "Probe Host Named",
+            "displayNameAfterPropagate": "Probe Host Named", "hostsAfter": 2,
+            "probeOwnedAfter": 1, "appsBefore": 3, "appsAfter": 3, "cleanedUp": "by-the-probe",
+        }
     return report
 
 
@@ -1245,6 +1362,16 @@ def red_team(sample_path, baseline, decls):
          "left the stored host's uuid"),
         ("the partial-response step silently not running",
          lambda report: report_with(report, partialHostInfo=None), "no partialHostInfo"),
+        ("a response with no hostname writing the name away",
+         lambda report: report_with(report, partialHostName={
+             "status": "measured", "plantedUuid": "probe-host-named",
+             "plantedName": "Probe Host Named", "parsedName": "<absent>",
+             "parsedUuid": "probe-host-named", "nameAfterPropagate": "<empty>",
+             "displayNameAfterPropagate": "", "hostsAfter": 2, "probeOwnedAfter": 1,
+             "appsBefore": 3, "appsAfter": 3, "cleanedUp": "by-the-probe"}),
+         "left the stored host's name"),
+        ("the missing-name step silently not running",
+         lambda report: report_with(report, partialHostName=None), "no partialHostName"),
         ("the seed flag reaching a build that ignored it",
          lambda report: report_with(report, seedHosts=None),
          "no seedHosts"),
@@ -1451,6 +1578,7 @@ def capture(timeout, reap=True, partial=False):
         # probe for a record it had never told the probe to write, and went red on its own harness
         # rather than on the code. One owner, one truth.
         env["ML_PROBE_PARTIAL_HOST_INFO"] = "1"
+        env["ML_PROBE_PARTIAL_HOST_NAME"] = "1"
     try:
         try:
             subprocess.run([binary], capture_output=True, text=True, env=env, timeout=timeout,

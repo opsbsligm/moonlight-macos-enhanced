@@ -74,7 +74,25 @@
     if (self.serverCert != nil) {
         parentHost.serverCert = self.serverCert;
     }
-    parentHost.name = self.name;
+    // The same promise as the guard below, kept for the name as well. `-[ServerInfoResponse
+    // populateHost:]` overwrites the name of the temporary host it was handed, so a body without a
+    // `hostname` carries no name rather than a new one, and writing that away left the stored host
+    // reading back with an empty name -- `-[TemporaryHost displayName]` falls through to `@""`
+    // unless a custom name sits behind it, so the device list shows a machine with no label. Measured
+    // before this guard: `nameAfterPropagate` empty and `displayNameAfterPropagate` the empty string,
+    // with the host count and the app count unchanged, which is the whole difference between this
+    // defect and the uuid above it -- an empty name is ugly, an empty uuid is a deletion. A genuine
+    // rename from the server still arrives, because it arrives with a name in it.
+    if (self.name.length > 0) {
+        parentHost.name = self.name;
+    }
+    // Bare on purpose, and the only field in this method that stays that way. The rename sheet
+    // (`HostsViewController.m:473`) clears a custom name by assigning nil, so a guard here would
+    // leave the field impossible to unset; and the discovery path cannot clobber it, because
+    // `populateHost:` never assigns `customName` and a temporary host read out of the store already
+    // carries it (`TemporaryHost.m:35`). The three fields differ in whether an absent value means
+    // "this response has no news" or "the person asked for this gone", and only the second one has to
+    // be able to write nil.
     [parentHost setValue:self.customName forKey:@"customName"];
     // The guard every field above this one carries, extended to the field where its absence cost
     // the most. `-[DataManager getHostForTemporaryHost:withHostRecords:]` has a branch commented
