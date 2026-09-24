@@ -54,6 +54,8 @@
 第三条（把 app 跑在 Apple `leaks` 下的真扫描）**额外**要求 `build-render-probe/Build/Products/Debug/*.app`
 ——那是 `render-probe.py` 留下的产物，本扫描不自己构建它（那要二十分钟），但产物在盘上时它会就地跑掉（约四十秒），
 产物不在时 `local-gates.sh` 报 skip 并指名缺的是哪一样，而不是静默计成通过。
+真扫描会把原始报告落到 `build/leaks-sweep.txt`（已 gitignore，约 0.9 MB/次）；CI 里同一份报告作为 artifact 保留 7 天——
+runner 判红之后那台机器就没了，能重跑的机会只有这一次。
 
 同一个下午 `assertion-battery.py` 实测 144/144，**这个数字没有包含内存门禁**：
 它的植入形状活在自己的 `--red-team` 里（6 条破坏，逐条要求拒得有理，其中「真的修好一类」必须放行），

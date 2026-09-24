@@ -581,13 +581,31 @@ jobs:
 
     - name: Verify the settings page leaks nothing new
       # The probe build the step above just compiled is run again under `leaks`, which
-      # attributes every leaked object it can see, and first-party leaks are judged
-      # against scripts/leak-baseline.json -- the retain cycle in TemporaryHost/
-      # TemporaryApp is in that file because it was measured here, not assumed. A host
-      # with no configured GameStream host leaks none of that graph, so the rule is a
-      # ceiling rather than an equality; what never varies is a class outside the ceiling
-      # or above it. Needs no new build: the Debug product is already on disk.
-      run: python3 scripts/leak-audit.py --timeout 900
+      # attributes every leaked object it can see. First-party leaks are judged against
+      # scripts/leak-baseline.json, where the TemporaryHost/TemporaryApp retain cycle is
+      # recorded because it was measured here and not assumed -- and the numbers in that
+      # file are per leaked host, not counts, because nine sweeps of one unchanged build
+      # leaked between 4 and 8 hosts and always three apps per host. So a runner that
+      # discovers no GameStream host is not the clean case: it says so and leaves the graph
+      # unjudged, while a new first-party class or a wider fan-out is refused wherever it
+      # shows up. Needs no new build: the Debug product is already on disk.
+      # One line, not a folded one: scripts/local-gates.sh builds its list out of this file
+      # line by line, and a flag on its own line is a flag the local sweep never passes.
+      run: python3 scripts/leak-audit.py --timeout 900 --report build/leaks-sweep.txt
+
+    - name: Upload ${{ matrix.variant }} leak sweep
+      # The refusal names the rule and prints the offending blocks; the report is the part
+      # nobody can rebuild, because the machine that produced it is a runner that no longer
+      # exists by the time the log is read. `if: always()` so the report survives the very
+      # run that needs it, and `warn` rather than `error` because a host with no `leaks`
+      # refuses before any report is written, and that refusal must stay the failure.
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: Moonlight-macOS-leaks-${{ matrix.variant }}
+        path: build/leaks-sweep.txt
+        if-no-files-found: warn
+        retention-days: 7
 
     - name: Verify video enhancement paths
       # MetalFX scaling and VT frame interpolation are both object-creation
