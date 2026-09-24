@@ -674,25 +674,11 @@ static BOOL MLProbeArmed = NO;
 // The status is recorded rather than assumed, because the failure this gate exists to catch
 // is a sweep that judged an empty room and called it clean: a flag that asked for a graph and
 // silently got none has to be visible in the report the audit reads.
-static void MLSeedHostsForMemorySweep(NSMutableDictionary *report, void (^refuse)(NSString *)) {
-    const char *requested = getenv("ML_RENDER_PROBE_SEED_HOSTS");
-    if (requested == NULL) {
-        return;
-    }
-
-    char *end = NULL;
-    long wanted = strtol(requested, &end, 10);
+static void MLSeedHostsIntoLibrary(NSMutableDictionary *report, void (^refuse)(NSString *),
+                                   long wanted) {
     NSMutableDictionary *record = [NSMutableDictionary dictionary];
-    record[@"requested"] = [NSString stringWithUTF8String:requested];
+    record[@"requested"] = @(wanted);
     report[@"seedHosts"] = record;
-
-    if (end == requested || *end != '\0' || wanted < 1 || wanted > 16) {
-        record[@"status"] = @"invalid";
-        refuse([NSString stringWithFormat:@"ML_RENDER_PROBE_SEED_HOSTS asks for %s, which is not a"
-                @" whole host count between 1 and 16, so the sweep would judge a graph of unknown"
-                @" size", requested]);
-        return;
-    }
 
     DataManager *store = [[DataManager alloc] init];
     long existing = (long)[[store getHosts] count];
@@ -749,6 +735,259 @@ static void MLSeedHostsForMemorySweep(NSMutableDictionary *report, void (^refuse
         return;
     }
     record[@"status"] = @"seeded";
+}
+
+// The memory sweep's shape of the helper above: how many hosts it wants comes from the
+// environment, and a flag that is absent means the sweep measures the library exactly as it
+// stands. The refusal and the `invalid` status it records are unchanged from the version that
+// parsed and seeded in one function, because `leak-audit.py` judges that status by name.
+static void MLSeedHostsForMemorySweep(NSMutableDictionary *report, void (^refuse)(NSString *)) {
+    const char *requested = getenv("ML_RENDER_PROBE_SEED_HOSTS");
+    if (requested == NULL) {
+        return;
+    }
+
+    char *end = NULL;
+    long wanted = strtol(requested, &end, 10);
+    if (end == requested || *end != '\0' || wanted < 1 || wanted > 16) {
+        NSMutableDictionary *record = [NSMutableDictionary dictionary];
+        record[@"requested"] = [NSString stringWithUTF8String:requested];
+        record[@"status"] = @"invalid";
+        report[@"seedHosts"] = record;
+        refuse([NSString stringWithFormat:@"ML_RENDER_PROBE_SEED_HOSTS asks for %s, which is not a"
+                @" whole host count between 1 and 16, so the sweep would judge a graph of unknown"
+                @" size", requested]);
+        return;
+    }
+
+    MLSeedHostsIntoLibrary(report, refuse, wanted);
+}
+
+// The ownership experiment: who keeps a host alive while a stream holds only its app.
+//
+// Section 5 of docs/memory-ownership.md wants to make `TemporaryApp.host` weak, and it is
+// blocked on an honest reason rather than on courage: no stream session runs here, so nobody
+// can claim from a live session that `app.host` would not go nil underneath the stream. That
+// question does not need a session. It asks only who holds what, and who holds what can be
+// asked of the objects themselves.
+//
+// So this builds the pair and holds it the way `prepareForSegue:` holds it -- `streamVC.app`
+// and nothing else (`AppsViewController.m:613`) -- then asks two questions of each shape:
+//
+//   hostAliveWhileAppHeld -- the host is still alive when the only strong reference outside
+//       the pair is the app pointing at it. Yes means `TemporaryApp.host` is doing that job:
+//       the stream's host is alive because its own app is holding it. That is precisely what
+//       turning the back-pointer weak takes away, and what step 2 and step 3 of the fix have
+//       to hand back by name.
+//   hostAliveWithNoHolder -- nothing outside the pair holds either object any more and they
+//       are still alive. Yes is the retain cycle `leaks` reports, seen from inside the process
+//       instead of from a heap sampler, and it is the number step 1 has to move to No.
+//
+// Three shapes, because a single reading is not evidence:
+//
+//   productionGraph -- the app is taken out of `-[DataManager getHosts]`, the call the settings
+//       page makes and the call whose graph leaked. Nothing in this shape is assembled by hand,
+//       so the reading cannot be an artefact of how a test wrote its fixture.
+//   handBuiltGraph -- the same shape (`host.appList` owns the apps, `app.host` owns the host
+//       back, as `-[TemporaryHost initFromHost:]` leaves it at TemporaryHost.m:42-51) built
+//       directly. It exists only to agree with the shape above. If the two disagree, something
+//       outside the pair is retaining it and every number below is worthless.
+//   backpointerOnly -- an app that knows its host with nothing pointing back. This is the shape
+//       `AppAssetRetriever` is in (`AppAssetManager.m:34` reads `app.host.uuid` asynchronously),
+//       it is what every holder becomes the day `host` turns weak, and it is the control that
+//       keeps the leak honest: nothing holds this pair, so if it fails to go back, the harness
+//       is holding it and the other two readings are measuring this probe, not the app.
+//
+// This function reports what it saw and refuses only what it can call a broken harness. The
+// judgement lives in scripts/ownership-audit.py, which reads these numbers next to the property
+// declarations and refuses when the two disagree -- including the direction that matters most,
+// because `weak` in the header and the host still alive is not a pass, it is somebody else
+// holding it. A run that asks for the experiment and leaves no record behind is refused too.
+//
+// The seed below writes through the production `DataManager`, so running this by hand without
+// pointing HOME at a scratch directory adds a probe host to your own library. The memory sweep
+// carries the same hazard and the same instruction.
+static NSDictionary *MLOwnershipMeasureShape(void (^build)(TemporaryHost **hostSlot,
+                                                           TemporaryApp **appSlot,
+                                                           NSUInteger *appListCountSlot)) {
+    __weak TemporaryHost *witnessHost = nil;
+    __weak TemporaryApp *witnessApp = nil;
+    __block TemporaryApp *appHolder = nil;
+    __block NSUInteger appListCount = NSUIntegerMax;
+
+    @autoreleasepool {
+        TemporaryHost *builtHost = nil;
+        TemporaryApp *builtApp = nil;
+        build(&builtHost, &builtApp, &appListCount);
+        witnessHost = builtHost;
+        witnessApp = builtApp;
+        appHolder = builtApp;
+        // Let the pair out of this scope with the app as its only outside holder, which is the
+        // state a stream is in. Whatever the builder autoreleased (the graph array, the app
+        // literals) goes with the pool below, so anything still here after it drained is being
+        // kept by the pair itself.
+        builtHost = nil;
+        builtApp = nil;
+    }
+    MLProbeSpin(0.3);
+
+    NSMutableDictionary *result = [NSMutableDictionary dictionary];
+    result[@"appListCount"] = @(appListCount);
+    result[@"hostAliveWhileAppHeld"] = @(witnessHost != nil);
+    result[@"appHostReadableWhileAppHeld"] = @(appHolder.host != nil);
+
+    appHolder = nil;
+    @autoreleasepool {
+    }
+    MLProbeSpin(0.3);
+    result[@"hostAliveWithNoHolder"] = @(witnessHost != nil);
+    result[@"appAliveWithNoHolder"] = @(witnessApp != nil);
+    return result;
+}
+
+// The pair `-[TemporaryHost initFromHost:]` leaves behind, built without Core Data: the host
+// owns the apps through `appList` and the app owns the host back.
+static void MLOwnershipBuildGraphPair(TemporaryHost **hostSlot,
+                                      TemporaryApp **appSlot,
+                                      NSUInteger *appListCountSlot) {
+    TemporaryHost *host = [[TemporaryHost alloc] init];
+    TemporaryApp *app = [[TemporaryApp alloc] init];
+    host.name = @"Ownership Probe Host";
+    host.uuid = @"ownership-probe-host";
+    host.address = @"192.0.2.9";
+    app.id = @"910000";
+    app.name = @"Ownership Probe App";
+    app.host = host;
+    host.appList = [[NSMutableSet alloc] initWithArray:@[app]];
+    *hostSlot = host;
+    *appSlot = app;
+    *appListCountSlot = host.appList.count;
+}
+
+// The same app and host with nothing pointing back at the app, which is what `app.host` alone
+// is on the day it turns weak, and what `AppAssetRetriever` is holding right now.
+static void MLOwnershipBuildBackpointerPair(TemporaryHost **hostSlot,
+                                            TemporaryApp **appSlot,
+                                            NSUInteger *appListCountSlot) {
+    TemporaryHost *host = [[TemporaryHost alloc] init];
+    TemporaryApp *app = [[TemporaryApp alloc] init];
+    host.name = @"Ownership Probe Host";
+    host.uuid = @"ownership-probe-host";
+    host.address = @"192.0.2.9";
+    app.id = @"910000";
+    app.name = @"Ownership Probe App";
+    app.host = host;
+    *hostSlot = host;
+    *appSlot = app;
+    *appListCountSlot = host.appList.count;
+}
+
+static void MLRunOwnershipProbeAndExitIfRequested(void) {
+    if (getenv("ML_OWNERSHIP_PROBE") == NULL) {
+        return;
+    }
+
+    NSString *output = NSProcessInfo.processInfo.environment[@"ML_RENDER_PROBE_OUTPUT"]
+                       ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ownership-probe"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:output
+                             withIntermediateDirectories:YES
+                                              attributes:nil
+                                                   error:nil];
+
+    NSMutableDictionary *ownership = [NSMutableDictionary dictionary];
+    NSMutableArray<NSString *> *failures = [NSMutableArray array];
+    void (^refuse)(NSString *) = ^(NSString *problem) {
+        [failures addObject:problem];
+    };
+    // The premise every number below rests on: the holder is the app and nothing else. Named in
+    // the report so the audit reads the premise instead of assuming it from this file.
+    ownership[@"holder"] = @"app-only";
+
+    // One host through the production write path, exactly as the memory sweep seeds one. A
+    // machine with a library of its own is left alone and its library is what gets measured.
+    MLSeedHostsIntoLibrary(ownership, refuse, 1);
+
+    NSMutableDictionary *shapes = [NSMutableDictionary dictionary];
+    ownership[@"shapes"] = shapes;
+
+    // Picked inside its own pool, and only the two objects of interest leave it. The array
+    // `getHosts` returns, and the `allObjects` array of each host, are autoreleased, and an
+    // array that outlives the handover is a second pair of hands on the graph: the measurement
+    // would then be watching its own harness and reporting the harness's retain as the app's
+    // leak. Nothing else is still held when the first observation is taken.
+    NSUInteger libraryHostCount = 0;
+    __block TemporaryHost *libraryHost = nil;
+    __block TemporaryApp *libraryApp = nil;
+    __block NSUInteger libraryAppListCount = 0;
+    @autoreleasepool {
+        DataManager *store = [[DataManager alloc] init];
+        NSArray<TemporaryHost *> *library = [store getHosts];
+        libraryHostCount = library.count;
+        for (TemporaryHost *candidate in library) {
+            NSArray<TemporaryApp *> *apps = candidate.appList.allObjects;
+            if (apps.count > 0) {
+                libraryHost = candidate;
+                libraryApp = apps.firstObject;
+                libraryAppListCount = candidate.appList.count;
+                break;
+            }
+        }
+        if (libraryHost != nil) {
+            ownership[@"productionHostUuid"] = libraryHost.uuid ?: @"";
+        }
+    }
+    ownership[@"libraryHosts"] = @(libraryHostCount);
+    if (libraryApp == nil) {
+        // Not a skip: a library with no app behind any host means there is no production graph
+        // to hold, which is the whole subject, so the run has to say so out loud.
+        shapes[@"productionGraph"] = @"not-measured";
+        refuse([NSString stringWithFormat:@"%@ host(s) in the library and none of them has an"
+                @" app, so there is no graph from `getHosts` to hold", @(libraryHostCount)]);
+    } else {
+        shapes[@"productionGraph"] = MLOwnershipMeasureShape(^(TemporaryHost **hostSlot,
+                                                              TemporaryApp **appSlot,
+                                                              NSUInteger *appListCountSlot) {
+            *hostSlot = libraryHost;
+            *appSlot = libraryApp;
+            *appListCountSlot = libraryAppListCount;
+            // The builder is the last place outside the pair that still held these two, so the
+            // handover has to empty it. Leaving them here would put a second holder in the room
+            // and turn "the app keeps its host alive" into a tautology.
+            libraryHost = nil;
+            libraryApp = nil;
+        });
+    }
+    // Wrapped rather than passed: the measurement takes a block because the production shape
+    // needs to hand over captured state, and a helper that takes one kind of builder and not
+    // the other would be two measurements pretending to be one.
+    shapes[@"handBuiltGraph"] = MLOwnershipMeasureShape(^(TemporaryHost **hostSlot,
+                                                          TemporaryApp **appSlot,
+                                                          NSUInteger *appListCountSlot) {
+        MLOwnershipBuildGraphPair(hostSlot, appSlot, appListCountSlot);
+    });
+    shapes[@"backpointerOnly"] = MLOwnershipMeasureShape(^(TemporaryHost **hostSlot,
+                                                           TemporaryApp **appSlot,
+                                                           NSUInteger *appListCountSlot) {
+        MLOwnershipBuildBackpointerPair(hostSlot, appSlot, appListCountSlot);
+    });
+
+    NSDictionary *report = @{@"ownership": ownership, @"failures": failures};
+    NSData *json = [NSJSONSerialization dataWithJSONObject:report
+                                                  options:NSJSONWritingPrettyPrinted
+                                                    error:nil];
+    [json writeToFile:[output stringByAppendingPathComponent:@"report.json"] atomically:YES];
+    NSDictionary *handBuilt = shapes[@"handBuiltGraph"];
+    fprintf(stderr, "[ownership-probe] app-only holder keeps the host alive: %s | pair survives"
+            " with no holder: %s | a lone back-pointer survives with no holder: %s\n",
+            [handBuilt[@"hostAliveWhileAppHeld"] boolValue] ? "yes" : "no",
+            [handBuilt[@"hostAliveWithNoHolder"] boolValue] ? "yes" : "no",
+            [shapes[@"backpointerOnly"][@"hostAliveWithNoHolder"] boolValue] ? "yes" : "no");
+    if (failures.count) {
+        fprintf(stderr, "[ownership-probe] %s\n",
+                [[failures componentsJoinedByString:@"; "] UTF8String]);
+    }
+    fflush(stderr);
+    exit(failures.count ? 1 : 0);
 }
 
 static void MLRunRenderProbeAndExitIfRequested(void) {
@@ -1276,6 +1515,9 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 
 - (void)applicationWillFinishLaunching:(NSNotification *)notification {
 #ifdef DEBUG
+    // Ownership first, then pixels: the ownership experiment has no window to wait for, and
+    // each probe answers to its own flag, so asking for one never runs the other.
+    MLRunOwnershipProbeAndExitIfRequested();
     // Runs and exits when asked; otherwise this is a no-op.
     MLRunRenderProbeAndExitIfRequested();
 #endif

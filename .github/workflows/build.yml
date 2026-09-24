@@ -122,6 +122,24 @@ jobs:
       # that cannot tell a fixed leak from a broken report is a ceiling somebody mutes.
       run: python3 scripts/leak-audit.py --log scripts/leak-sample.txt --red-team
 
+    - name: Verify the ownership experiment's own rules
+      # Section 5 of docs/memory-ownership.md is a fix waiting for evidence, and the evidence is
+      # now measured rather than argued: the Debug probe holds a TemporaryApp with no host and
+      # reports what survives. The measuring needs a macOS runner and a built app; what needs
+      # neither is whether the reader still refuses what it must. Its controls are the fragile
+      # part -- a probe that leaks its own pair would report today's retain cycle as a green
+      # reading of the app -- so both controls, every refusal, and the contradiction between a
+      # header and an observation are fixtures here.
+      run: python3 scripts/ownership-audit.py --self-test
+
+    - name: Verify the ownership experiment still refuses what it must refuse
+      # Same reason the leak reader has a red team, with one more on top: the mutations are made
+      # to scripts/ownership-sample.json, a real record of a real run with this machine's host
+      # identifier replaced, so a rule that only bites on invented numbers is caught here rather
+      # than trusted. The mutation that matters most is a declared cycle that leaked nothing --
+      # the shape a broken experiment reports, not a fixed app.
+      run: python3 scripts/ownership-audit.py --red-team
+
     - name: Verify the workflow can actually run
       # A plain yaml.safe_load accepts a step whose run: key was dropped, and a
       # step with two run: keys. GitHub accepts neither: the run turns red before
@@ -614,6 +632,19 @@ jobs:
         path: build/leaks-sweep.txt
         if-no-files-found: warn
         retention-days: 7
+
+    - name: Verify who keeps a host alive, and what that costs
+      # The Debug product the two steps above built is asked one question that neither can ask:
+      # if the only thing in the process holding an app is the app, is its host still alive? That
+      # is the exact state `prepareForSegue:` leaves a stream in (`AppsViewController.m:613`
+      # assigns `streamVC.app` and no host), and it is the state section 5 of
+      # docs/memory-ownership.md refused to change ownership without seeing. No stream session is
+      # needed to look at it, and no LAN either -- the probe seeds one host through the production
+      # `DataManager` if the machine has none -- which is why this runs on every push for the cost
+      # of starting the app. It answers for the object graph and nothing else: the stream's own
+      # host holder is a property no experiment builds, and the audit says so in the same breath
+      # as its verdict.
+      run: python3 scripts/ownership-audit.py --timeout 120
 
     - name: Verify video enhancement paths
       # MetalFX scaling and VT frame interpolation are both object-creation
