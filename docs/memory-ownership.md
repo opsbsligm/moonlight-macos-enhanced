@@ -1174,3 +1174,90 @@ selector 版注册本来就没有 token 可存，但这个名字摆在两个真 
   updateView / refresh* / reloadData / applicationDidBecomeActive 扫了同一批文件，
   这些方法体里的注册数是 0，所以今天没有漏网项。把它们做成可配置清单是**新增规则能力**，
   不在打磨模式里写，只登记入口。
+
+---
+
+## 21. 从猜边界到数括号：一次同族扫描与它顺带照出的自己（2026-09-25）
+
+§19/§20 之后，把「静默误绿」这条元规则拿去扫**所有读源码的门禁**，结果分三部分，
+三部分都记下来，因为其中两部分是否证。
+
+### 扫别人：其余门禁在失败处都大声报错
+
+`enhancement-engine-resolution-tests.py` / `frame-interpolation-status-tests.py` /
+`held-modifier-keyboard-pair-tests.py` 的 `enum_block()` 在 `find` 落空时
+`raise SystemExit`；`workflow-audit.py` 的 `${{` 未闭合会追加 WF016；
+`constraints-audit.py` 找不到 `[NSTimer` 会追加一条 problem；
+`assertion-battery.py` 与 `stream-menu-addressing-tests.py` 找不到锚点也 `raise`。
+**结论：ownership-audit 是例外而不是通例**——因为那两处正是我前两轮自己引入的。
+
+### 否证的两条假设
+
+* 「列 0 被注释掉的方法声明或 `@end` 会提前截断方法」：**不成立**。边界要求行首是
+  `- (` 或 `@end`，`//` 前缀不匹配，实测 `READ`。
+* 「同一文件多个 `@implementation` 的同名 appearance 方法在字典里互相覆盖」：**不成立**。
+  扫全部 129 个一方文件，同名 appearance 方法 0 处。
+
+### 成立的那条：块注释里的列 0 `@end`
+
+```objc
+- (void)viewDidAppear {
+/*
+@implementation OldView
+- (void)deadCode {
+}
+@end
+*/
+    [[NSNotificationCenter defaultCenter] addObserver:self …];
+}
+```
+
+合法可编译，且「把旧实现整段注释掉留在原地」是常见改法。`/*@end*/` 里那行 `@end`
+在列 0，命中「下一个列 0 声明或 `@end`」这条边界 → 方法在它那里结束 →
+其后的注册 `sites=0`，无登记、无抱怨 = 静默绿。实测：`INVISIBLE -> unjudged`。
+
+### 修法：数括号，并且认出「括号只在看起来像括号时才算」
+
+本仓库其实**已有**先例：`stream-menu-addressing-tests.py:method_body` 用深度计数找配对花括号。
+但**不能直接照抄**——它不跳注释和字符串，实测 `// }` 会让朴素深度计数把方法提前结束
+（`INVISIBLE -> would be wrong`），于是把「猜边界」换成另一种「猜括号」。
+所以 `method_text()` 现在数括号，并先经 `past_noise()` 跳过 `//`、`/* */`、
+`"…"`/`@"…"`（含 `\` 转义）与字符字面量；声明行没有 `{` 时（换行放在下一行的排版）
+返回剩余全文，**过读而不过漏**。
+
+### 验证
+
+* `--self-test` **90 → 93**。`git show HEAD:` 把旧实现 exec 回当前模块复跑，
+  **恰好 1 条失败**（被注释掉的 `@implementation`），即本轮真正关闭的是它；
+  另 2 条新用例（注释里的 `}`、字符串里的 `{}`）在旧实现下也通过——它们不是红证，
+  是**新匹配器自身风险**的护栏，用例注释里写明了这一点，不能混作「又抓到两个真 bug」。
+* `--red-team` **36 → 37** 全绿：真树注入 `CommentedPage.m`（块注释 + 其后一个未登记注册），
+  旧实现 `sites=0 / problems=0` 放行，新实现报 `a new notification registration appeared`。
+* `--require-partial` 真树读数**不变**：`8 registration(s) … 8 of them withdrawn`、0 failure。
+  方法体尺寸也从「整份文件」回到正常量级（`viewWillAppear` 750、`viewDidAppear` 2971 字符），
+  这本身就是边界正确的证据。
+* `workflow-audit` 25 规则通过；`local-gates.sh` 见本节末。
+
+### 这条改动怎么把自己照出来的
+
+第一版 `method_text` 取声明行时写成 `text.rfind("\n", 0, start)`，而 `start` 就是声明行
+结尾换行的下一字符，于是 `rfind` 命中的是**同一个**换行，切片为空 →
+`"{" not in declaration` 恒真 → **每次走「过读」分支**，括号逻辑从未执行。
+`--self-test` 当时照样 **93/93 全绿**（过读让所有注册都「看得见」，而 fixture 只有一条注册，
+顺序判断也恰好不受影响），`--red-team` 也照样通过。
+把它照出来的是**真树读数**：`viewDidAppear` 的 3 个注册被同时算进 `viewWillAppear`，
+`AppsViewController.m` 立刻冒出 3 条「未登记的新注册」。
+教训写在这里而不是只写在 commit 里：**过读在 fixture 上是绿的，只有拿真文件读才会露出形状**；
+所以「真树读数不变」这一条从 §19 起就不是走过场，它这几轮已经拦下两次我自己写的错。
+
+### 登记（更新前两节的口径）
+
+* **已关闭**：§19 的「边界是启发式、需要能数括号的解析」——本轮就是它，
+  除了声明行不含 `{` 的排版（选择过读，安全方向）。
+* **仍然开着**：§20 的 `;` 语句窗口（嵌套 `;` 会切窄，方向偏误红）；
+  ivar 形式的 token 写法（今天 0 处，误红方向）；
+  appearance 方法名只有两个（其他「每次访问再执行」的方法今天 0 注册）。
+* **新登记**：`past_noise()` 不认预处理拼接、也不认 ObjC 特有的 `@"…"` 之外的
+  字符串前缀（如 `u"…"`、原始字符串在本仓库无对应物）；真树 129 文件实测未触发。
+* `stream-menu-addressing-tests.py` 的朴素深度计数**不在本轮射程内**：它只读自己
+  控制的一个出厂方法，今天成立；若哪天让它读任意页面，必须复用 `past_noise()`。

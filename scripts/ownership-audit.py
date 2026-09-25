@@ -188,9 +188,6 @@ def app_assignment_sites(texts):
     return sites
 
 
-# Where a method's text stops: the next declaration at column zero, or the `@end` that closes the
-# implementation it lives in. Both are things a reader can point at, unlike a closing brace.
-METHOD_OR_IMPLEMENTATION_END = re.compile(r"^(?:[+-]\s*\(|@end\b)", re.M)
 APPEARANCE_METHOD = re.compile(r"^[+-]\s*\(\s*void\s*\)\s*(viewDidAppear|viewWillAppear)\b", re.M)
 REGISTER_SELECTOR = re.compile(r"addObserver:\s*\w+\s+selector:@selector\((\w+:?)\)\s*"
                                r"name:\s*(?:@\"([^\"]+)\"|([A-Za-z_][\w.]*))")
@@ -212,19 +209,90 @@ def first_group(match_groups):
     return next((part for part in match_groups if part), "")
 
 
-def method_text(text, start):
-    """The text of one method, from the line after its declaration to the next declaration.
+def past_noise(text, i):
+    """The index just past a comment or literal starting at `i`, or `i` when nothing opens there.
 
-    The boundary used to be the first line that held nothing but a closing brace, which is not where
-    methods close -- it is only where they usually close, and the two failures of that guess were
-    both measured against the reader itself. A block literal whose brace sits at column zero (a
-    common way to lay out a long block) ended the method early, so a registration written after it
-    was invisible to the gate: a page with a hidden registration and a record that did not name it
-    reported nothing at all, which is a green that means the rule stopped reading. A method at the
-    very end of a file with no final newline was dropped outright, with the same silence.
+    Braces inside comments and string literals are not braces to a compiler, so they cannot be
+    braces to this reader either. That is not a hypothetical about tidiness: `// }` is one brace a
+    naive depth count would consume, and `@"{ all in one string @"` holds two, so a matcher written
+    without these skips has its own way to end a method in the wrong place -- which is the failure
+    this function exists to remove. `stream-menu-addressing-tests.py` matches braces this naive way
+    and is fine because it reads one shipped method it controls; a gate that reads every page in the
+    tree does not get that licence.
     """
-    following = METHOD_OR_IMPLEMENTATION_END.search(text, start)
-    return text[start:] if following is None else text[start:following.start()]
+    pair = text[i:i + 2]
+    if pair == "//":
+        end = text.find("\n", i)
+        return len(text) if end == -1 else end
+    if pair == "/*":
+        end = text.find("*/", i + 2)
+        return len(text) if end == -1 else end + 2
+    if pair == '@"' or text[i] == '"':
+        quote = i + (1 if pair == '@"' else 0)
+        index = quote + 1
+        while index < len(text):
+            if text[index] == "\\":
+                index += 2
+                continue
+            if text[index] == '"':
+                return index + 1
+            if text[index] == "\n":
+                return index  # a string that does not close on its line stops being a string
+            index += 1
+        return index
+    if text[i] == "'":
+        index = i + 1
+        while index < len(text):
+            if text[index] == "\\":
+                index += 2
+                continue
+            if text[index] == "'":
+                return index + 1
+            if text[index] == "\n":
+                return index
+            index += 1
+        return index
+    return i
+
+
+def method_text(text, start):
+    """The text of one method, from the line after its declaration to its own closing brace.
+
+    Three guesses have now been measured and replaced, each of them a way the gate could report a
+    clean tree about a registration it had not read. The first boundary was the first line holding
+    nothing but a closing brace, which a block literal laid out at column zero satisfied early. The
+    second was the next declaration or `@end` at column zero, which is satisfied early by a dead
+    implementation left inside a method in a `/* */` comment -- the shape that ended a method at its
+    own comment block here, leaving `sites=0` and no complaint. Neither guess survives here: the
+    brace that closes a method is found by counting braces, ignoring the ones inside comments and
+    literals. What remains unproven is only what cannot be counted from text at all, which is a
+    declaration whose opening brace is not on the declaration line; that layout returns the rest of
+    the text rather than a shorter slice, so it over-reads -- and a reader that reads too much is
+    annoying, while one that reads too little is green.
+    """
+    if start < 2:
+        return text[start:]
+    end_of_declaration = start - 1          # the newline that ended the declaration line
+    declaration = text[text.rfind("\n", 0, end_of_declaration) + 1:end_of_declaration]
+    if "{" not in declaration:
+        # The opening brace is not on the declaration line, so there is nothing here to count from.
+        # Reading the rest of the text is the only answer that cannot lose a registration.
+        return text[start:]
+    depth = 1
+    index = start
+    while index < len(text):
+        skipped = past_noise(text, index)
+        if skipped != index:
+            index = skipped
+            continue
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:index]
+        index += 1
+    return text[start:]
 
 
 def appearance_bodies(text):
@@ -1221,6 +1289,18 @@ WRAPPED_BLOCK_BODY = (
     "        queue:nil usingBlock:^(NSNotification *note) { }];\n")
 
 
+# A dead implementation commented out inside the live method, which is what an edit leaves behind
+# when it means to keep the old code around rather than delete it.
+DEAD_CODE_COMMENT = "/*\n@implementation OldView\n- (void)deadCode {\n}\n@end\n*/\n"
+BRACED_COMMENT_BODY = (
+    "    [self run:^{\n"
+    "    // }\n"
+    "    }];\n" + NO_WITHDRAWAL_BODY)
+STRING_BRACE_BODY = (
+    '    NSLog(@"}%s");\n' % "{ note" + NO_WITHDRAWAL_BODY)
+BLOCK_COMMENT_BODY = DEAD_CODE_COMMENT + NO_WITHDRAWAL_BODY
+
+
 def registration_fixture_without_a_closing_brace(body):
     """A page that ends inside the implementation, so the method has no closing brace to find.
 
@@ -1270,6 +1350,15 @@ def observer_self_test(baseline):
          registration_case(HELPER_WITHDRAWAL_BODY,
                            HELPER_METHOD.replace("self.logObserver", "self.someOtherObserver"),
                            keys=(BLOCK_KEY,)), ["runs again on every visit"]),
+        # Noise that is not syntax. The first of these three was measured to be invisible before the
+        # brace count replaced the column-zero guess; the other two guard the new matcher against the
+        # failure mode a naive brace count has, which is a brace that only looks like one.
+        ("a registration after a commented-out implementation in the same method",
+         registration_case(BLOCK_COMMENT_BODY, keys=()), ["new notification registration"]),
+        ("a registration after a brace inside a comment",
+         registration_case(BRACED_COMMENT_BODY, keys=()), ["new notification registration"]),
+        ("a registration after braces inside a string literal",
+         registration_case(STRING_BRACE_BODY, keys=()), ["new notification registration"]),
         # Whether a line break changes the answer, which was measured the way the boundary was: a
         # wrapped selector call produced no site at all, and a wrapped block call that did keep its
         # token was refused as a block nobody kept.
@@ -2194,6 +2283,20 @@ def red_team(sample_path, baseline, decls):
                           "    [[NSNotificationCenter defaultCenter] addObserver:self\n"
                           "        selector:@selector(handleWrapped:)\n"
                           "        name:@\"WrappedLatencyUpdated\" object:nil];\n"
+                          "}\n@end\n"}),
+         ["new notification registration"]),
+        # The shape that ended a method at its own comment block: dead code kept inside the live
+        # method, and one registration after it that the record does not name.
+        ("a registration after a commented-out implementation",
+         dict(sources, **{"Limelight/macOS/CommentedPage.m":
+                          "@implementation CommentedViewController\n"
+                          "- (void)viewDidAppear {\n"
+                          "/*\n@implementation OldView\n- (void)deadCode {\n}\n@end\n*/\n"
+                          "    [[NSNotificationCenter defaultCenter] removeObserver:self\n"
+                          "        name:@\"CommentedLatencyUpdated\" object:nil];\n"
+                          "    [[NSNotificationCenter defaultCenter] addObserver:self\n"
+                          "        selector:@selector(handleCommented:)\n"
+                          "        name:@\"CommentedLatencyUpdated\" object:nil];\n"
                           "}\n@end\n"}),
          ["new notification registration"]),
         ("a registration deleted from a page without saying so",
