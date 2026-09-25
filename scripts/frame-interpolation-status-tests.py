@@ -44,6 +44,12 @@ import apple_toolchain
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 RENDERER = os.path.join(ROOT, "Limelight", "Stream", "VideoDecoderRenderer.m")
+# The cadence arithmetic the shipping gate calls lives in one pure-C header, and the
+# gate stays honest only if the probe compiles that same header rather than a copy of
+# its arithmetic, so the probe asks for it by name and gets the same include path the
+# app build gives it.
+POLICY_DIR = os.path.join(ROOT, "Limelight", "macOS")
+POLICY_HEADER = '"InterpolationCadencePolicy.h"'
 
 ENUMS = ("typedef NS_ENUM(NSInteger, MLActiveVideoFrameInterpolationEngine)",
          "typedef NS_ENUM(NSInteger, MLRequestedVideoFrameInterpolationMode)",
@@ -69,6 +75,13 @@ FORMAT_MARK = "stringWithFormat:"
 WAITING_SHAPE = r'reason:(@"[^"]*")\];[^@]{0,90}\[self requestEnhancedDraw\]'
 
 HEAD = "#import <Foundation/Foundation.h>\n"
+# Lifting a method out of a file also lifts it out of that file's imports, so anything
+# the method body calls by name has to be named here. The gate asks the shared policy
+# whether a display has cadence headroom; a probe that quietly declared its own answer
+# would test a number the app never computes, which is the gap the shared header exists
+# to close. An implicit declaration is an error rather than a warning, so this fails
+# loudly if the header goes by another name.
+HEAD += "#import " + POLICY_HEADER + "\n"
 
 CLASS_HEAD = r"""
 @interface MLVideoDecoderUnderTest : NSObject
@@ -440,7 +453,7 @@ def run(command, work):
 
 def compile_and_run(source_path, binary, clang, sdk, work):
     if run([clang, "-fobjc-arc", "-isysroot", sdk, "-framework", "Foundation",
-            "-o", binary, source_path], work) != 0:
+            "-I", POLICY_DIR, "-o", binary, source_path], work) != 0:
         return 2
     return run([binary], work)
 

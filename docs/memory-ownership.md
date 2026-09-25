@@ -1727,3 +1727,48 @@ ObjC 里 property 的 backing ivar 通常就是 `_x`，折叠两个拼写看起�
   死方法，本轮没查（只补闸不删）；删与不删留给一次专门的死代码轮。
 * 审计只覆盖第一方 `.m`。Swift 侧的 `keyCode` 读数（`SettingsSharedControls.swift` 两处）今天
   靠 `switch event.type` 的 `default` 分支挡住，**没有纳入本门禁的强制范围**，这是已知缺口。
+
+## 29. 「能不能补帧」只能有一个答案：把判据抽成 ObjC 与设置页共用的 C 头（2026-09-26）
+
+### 触发点
+
+* 目标第 3 项要求「180FPS+180Hz 这种必然不启用的组合，设置页提前预警并给出建议值」。
+* 已验证事实：这条判据在 `shouldUseFrameInterpolationForDisplayRefreshRate:` 里是**裸算术**
+  `MAX(frameRate*1.5, frameRate+12.0)`（全仓仅此一处，无第二份拷贝）；而设置页要在串流**开始之前**
+  就算出「这个刷新率能带多少帧率」。两处若各写一份公式，就会出现「页面让你选 120，渲染器又拒绝 120」——
+  用户已经照做了还是没效果，比不给提示更糟。
+* 仓库里已有 `Limelight/macOS/StreamRiskAssessment.swift` 在读「选定 FPS × 当前刷新率」并出预警
+  （1.10 / 1.50 那组是关于撕裂与延迟的**另一条**规则），说明预警的呈现位置已存在，缺的是同一条判据。
+
+### 修法
+
+* 新增 `Limelight/macOS/InterpolationCadencePolicy.h`（纯 C、无 Apple 依赖、`static inline`）：
+  `MLInterpolationMinimumRefreshForSourceFps` / `MLInterpolationHasCadenceHeadroom` /
+  `MLInterpolationMaxSourceFpsForRefresh` / `MLInterpolationSuggestedFpsForRefresh` /
+  `MLStreamFpsPresetAtIndex`。
+* 出厂准入改为调用共享函数，**等值替换**（`MAX(a,b)` 与 `a > b ? a : b` 同义），本轮不动任何行为。
+* 预设表放进函数里而不是文件作用域 `static const` 数组：头文件会被每个引入它的编译单元读一遍，
+  文件作用域数组在未用到它的单元里就是 `-Wunused-const-variable`，而「一方文件 0 warning」是基线。
+* 头文件不进 `project.pbxproj`：本仓库的 `PointerEntryPolicy.h` 同样只在 `.m` 里出现（`grep` 计数 0），
+  头文件不需要工程成员资格。
+
+### 验证
+
+* 驱动出厂函数（`cc -std=c11 -Wall -Wextra`，**0 警告**）实测 49 条读数全对：
+  180Hz 上界**恰好** 120、179Hz 上界 119；144Hz→96→建议 90；120Hz→80→建议 60；
+  60Hz→40→建议 30；30Hz/0/负数→不给建议；边界语义 `180 >= 180` 判**能**（与出厂的「严格小于才拒」一致）；
+  越界索引返回 0。
+* 接线 0 gaps：渲染方 import 该头、准入调用共享函数、`frameRate * 1.5` / `+ 12.0` 字面算术已从渲染方消失；
+  设置页 `fpss`（30/60/90/120/144，剔除 0=自动）与策略推荐表**必须是同一张表**。
+* `--self-test` 三类红证：把 `+12Hz` 放宽成 `+2Hz` → 4 条读数变红；把算术塞回渲染方（保留共享调用）→
+  2 gaps；只把设置页 120 改成 125 → 1 gap。
+* 门禁基线：`local-gates.sh` 50 → 51 passed / 0 failed；`workflow-audit` 25 规则。
+
+### 登记
+
+* **本轮不改任何用户可见文案**：它是第 3 项其余三子（三数读数、可操作下一步、超分描述重写）的地基。
+* **实测到的规则性质**：`+12Hz` 项只在源帧率 < 24 时才可能起约束（1.5 倍在 fps≥24 时总是更大），
+  而页面可选帧率是 30–144 —— 也就是说对**所有可选项**真正起作用的只有 1.5 倍。
+  因此若读数集只覆盖 30 以上，这条突变会在 49 条读数里静默通过；故补测 12/20/23/24 区间。
+  推论：`refresh-12` 在 `refresh<36` 才可能起约束，而那区间上界已低于 30 → 经「建议值」这一表面**不可观测**。
+* 设置页 `StreamRiskAssessment` 的 1.10/1.50 组规则与本报告判据**不是同一条**，本轮不合并、不改写。

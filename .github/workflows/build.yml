@@ -391,6 +391,17 @@ jobs:
       # of a helper that relied on its callers, and put one into -mouseDown:.
       run: python3 scripts/key-code-read-site-audit.py
 
+    - name: Verify the frame interpolation cadence answer is one answer
+      # Whether a display can carry interpolation at a stream rate is one arithmetic fact, but the
+      # renderer (which refuses to build the engine) and the settings page (which has to warn
+      # before a stream starts and name a rate that would work) both act on it. As two copies of
+      # the formula, a player can be told to pick a rate the renderer then refuses -- worse than no
+      # warning, because they already did what they were asked. The harness compiles the shipped C
+      # policy and drives 49 readings, then refuses a tree where the renderer keeps its own copy
+      # of the arithmetic beside the shared call, or where the page offers a rate the policy would
+      # never recommend.
+      run: python3 scripts/interpolation-cadence-policy-tests.py
+
     - name: Verify the stick-driven pointer keeps the travel it promises
       # Two files move the cursor with the right stick, and they disagreed. The HID
       # consumer normalised the stick to a fraction, multiplied by 15.0 and truncated
