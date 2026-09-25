@@ -269,45 +269,52 @@ def observer_registration_sites(texts):
     N times. For a block the withdrawal is the token it was handed; for a selector there is no token
     to hold, which is exactly why half of one page stayed unprotected after the other half was fixed
     -- a token cannot release a registration the centre keyed by selector.
+
+    A method body is read as one text rather than as its lines, for the reason section 19 gives for
+    the method boundary: a reader whose answer depends on where the author broke a line reports a
+    wrapped registration as absent, which is a green about something it did not read. Both failures
+    were measured before this was changed -- a call wrapped over four lines produced no site at all,
+    and a wrapped block call whose token was assigned on the first line was reported as a block
+    nobody kept, refusing a page that was in fact protected.
     """
     sites = []
     for path, text in sorted(texts.items()):
         for method, body in sorted(appearance_bodies(text).items()):
-            lines = body.splitlines()
-            for offset, line in enumerate(lines):
+            for match in REGISTER_SELECTOR.finditer(body):
                 # Only what precedes the registration counts as its withdrawal: a page that removes
                 # the registration after adding it again has the multiplier, just briefly resolved.
-                earlier = "\n".join(lines[:offset])
+                earlier = body[:match.start()]
                 withdrawn_names = [first_group(pair) for pair in REMOVE_BY_NAME.findall(earlier)]
+                name = first_group(match.groups()[1:])
+                sites.append({"key": "%s|%s|%s" % (path, method, name), "file": path,
+                              "method": method, "name": name, "kind": "selector",
+                              "statement": "%s; name %s" % (match.group(1), name),
+                              "withdrawn": name in withdrawn_names, "via": ""})
+            for match in REGISTER_BLOCK.finditer(body):
+                name = first_group(match.groups())
+                earlier = body[:match.start()]
                 withdrawn_tokens = REMOVE_TOKEN.findall(earlier)
-                for match in REGISTER_SELECTOR.finditer(line):
-                    sites.append({"key": "%s|%s|%s" % (path, method,
-                                                       first_group(match.groups()[1:])),
-                                  "file": path, "method": method,
-                                  "name": first_group(match.groups()[1:]), "kind": "selector",
-                                  "statement": "%s; name %s" % (match.group(1),
-                                                                first_group(match.groups()[1:])),
-                                  "withdrawn": first_group(match.groups()[1:]) in withdrawn_names,
-                                  "via": ""})
-                for match in REGISTER_BLOCK.finditer(line):
-                    name = first_group(match.groups())
-                    assigned = TOKEN_ASSIGN.findall(line)
-                    token = assigned[0] if assigned else None
-                    if token is None:
-                        # A block registered where nobody keeps the token can never be withdrawn at
-                        # all, which is the worst case of this rule rather than an unread one.
-                        sites.append({"key": "%s|%s|%s" % (path, method, name), "file": path,
-                                      "method": method, "name": name,
-                                      "kind": "block-untokened",
-                                      "statement": "block registered and never kept",
-                                      "withdrawn": False, "via": ""})
-                        continue
+                # The token is looked for inside the statement that performs this registration rather
+                # than on the line it starts on: a long call wraps, and the assignment and the name
+                # then sit on different lines.
+                statement = body[body.rfind(";", 0, match.start()) + 1:match.start()]
+                assigned = TOKEN_ASSIGN.findall(statement)
+                token = assigned[0] if assigned else None
+                if token is None:
+                    # A block registered where nobody keeps the token can never be withdrawn at
+                    # all, which is the worst case of this rule rather than an unread one.
                     sites.append({"key": "%s|%s|%s" % (path, method, name), "file": path,
-                                  "method": method, "name": name, "kind": "block",
-                                  "statement": "%s; name %s" % (token, name),
-                                  "withdrawn": token in withdrawn_tokens or
-                                               bool(helper_removes_token(text, body, token)),
-                                  "via": helper_removes_token(text, body, token) or ""})
+                                  "method": method, "name": name,
+                                  "kind": "block-untokened",
+                                  "statement": "block registered and never kept",
+                                  "withdrawn": False, "via": ""})
+                    continue
+                sites.append({"key": "%s|%s|%s" % (path, method, name), "file": path,
+                              "method": method, "name": name, "kind": "block",
+                              "statement": "%s; name %s" % (token, name),
+                              "withdrawn": token in withdrawn_tokens or
+                                           bool(helper_removes_token(text, body, token)),
+                              "via": helper_removes_token(text, body, token) or ""})
     return sites
 
 
@@ -1198,6 +1205,22 @@ FLUSH_LEFT_WITHDRAWAL_BODY = (
     " selector:@selector(handleLatency:) name:@\"HostLatencyUpdated\" object:nil];\n")
 
 
+# Both bodies below are a single Objective-C call, wrapped because the line would otherwise be too
+# long, which is what the calls in this tree do under a column limit.
+WRAPPED_SELECTOR_BODY = (
+    "    [[NSNotificationCenter defaultCenter] addObserver:self\n"
+    "                              selector:@selector(handleLatency:)\n"
+    "                                  name:@\"HostLatencyUpdated\"\n"
+    "                              object:nil];\n")
+WRAPPED_BLOCK_BODY = (
+    "    if (self.logObserver != nil) {\n"
+    "        [[NSNotificationCenter defaultCenter] removeObserver:self.logObserver];\n"
+    "    }\n"
+    "    self.logObserver = [[NSNotificationCenter defaultCenter]\n"
+    "        addObserverForName:@\"LogDidAppend\" object:nil\n"
+    "        queue:nil usingBlock:^(NSNotification *note) { }];\n")
+
+
 def registration_fixture_without_a_closing_brace(body):
     """A page that ends inside the implementation, so the method has no closing brace to find.
 
@@ -1247,6 +1270,14 @@ def observer_self_test(baseline):
          registration_case(HELPER_WITHDRAWAL_BODY,
                            HELPER_METHOD.replace("self.logObserver", "self.someOtherObserver"),
                            keys=(BLOCK_KEY,)), ["runs again on every visit"]),
+        # Whether a line break changes the answer, which was measured the way the boundary was: a
+        # wrapped selector call produced no site at all, and a wrapped block call that did keep its
+        # token was refused as a block nobody kept.
+        ("a selector registration whose call is wrapped over four lines",
+         registration_case(WRAPPED_SELECTOR_BODY, keys=(SELECTOR_KEY,)),
+         ["runs again on every visit"]),
+        ("a block registration whose call is wrapped, token and withdrawal intact",
+         registration_case(WRAPPED_BLOCK_BODY, keys=(BLOCK_KEY,)), []),
         # The reader's own failure modes, which are defects of the gate rather than of a page, and
         # which were measured on the reader before the boundary was changed: both shapes below made
         # a registration invisible, and an invisible registration plus a record that does not name it
@@ -2149,6 +2180,20 @@ def red_team(sample_path, baseline, decls):
                           "    [[NSNotificationCenter defaultCenter] addObserver:self"
                           " selector:@selector(handleTail:) name:@\"TailLatencyUpdated\""
                           " object:nil];\n"
+                          "}\n@end\n"}),
+         ["new notification registration"]),
+        # The same dependence attacked through the shipped tree: one wrapped call, withdrawn the way
+        # the real pages withdraw theirs, absent from the record. Reading line by line saw no
+        # registration in this page at all, so the tree looked clean.
+        ("a registration whose call is wrapped, absent from the record",
+         dict(sources, **{"Limelight/macOS/WrappedPage.m":
+                          "@implementation WrappedViewController\n"
+                          "- (void)viewDidAppear {\n"
+                          "    [[NSNotificationCenter defaultCenter] removeObserver:self\n"
+                          "        name:@\"WrappedLatencyUpdated\" object:nil];\n"
+                          "    [[NSNotificationCenter defaultCenter] addObserver:self\n"
+                          "        selector:@selector(handleWrapped:)\n"
+                          "        name:@\"WrappedLatencyUpdated\" object:nil];\n"
                           "}\n@end\n"}),
          ["new notification registration"]),
         ("a registration deleted from a page without saying so",

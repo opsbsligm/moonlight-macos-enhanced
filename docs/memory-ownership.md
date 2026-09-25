@@ -1106,3 +1106,71 @@ selector 版注册本来就没有 token 可存，但这个名字摆在两个真 
   假设没有列 0 的 `@end` 字符串字面量。真要摆脱启发式，得换成能数括号的可信解析，
   那是新功能，不在打磨模式里做，只登记。
 * 未解释事项照旧：`leaks` 快照图数 ±3 散布仍无机制层解释（§16 以速率容忍）。
+
+---
+
+## 20. 同一个依赖的第二条路径：规则不该看换行（2026-09-25）
+
+§19 把「读方法的边界」换成能指着说的东西，并写下原则：**答案不该取决于作者在哪里换行**。
+本轮拿这条原则去查它自己的另一半——`observer_registration_sites()` 是**逐行**扫方法体的，
+而 `REGISTER_SELECTOR` 里的 `\s` 本来就吃换行，也就是说这个模式**能**匹配跨行调用，
+逐行扫描却**不给**它跨行的机会。两条后果都量了：
+
+| 交给读方法的方法体 | 逐行扫描的读数 | 性质 |
+|:---|:---|:---|
+| selector 调用折成 4 行 | `sites=0` 注册**不可见** | 静默绿（最坏） |
+| block 调用折行、token 写在首行 | `kind=block-untokened` | 误红（冤枉一个已受保护的页面） |
+
+第一行和 §19 是同一类缺陷：一个折了行的 selector 注册对门禁彻底隐形，
+只要 baseline 里也没有它，`problems` 就是空。第二行方向相反，但根子相同——
+`TOKEN_ASSIGN.findall(line)` 在**注册所在的那一行**找 `self.xxxObserver =`，
+而折行时赋值和 `addObserverForName:` 不在同一行，于是把**受保护**的页面判成
+「没人持有 token」这一最重罪名。
+
+### 修法
+
+方法体当**一段文本**扫，不再当**行列表**：
+
+* `REGISTER_SELECTOR.finditer(body)` / `REGISTER_BLOCK.finditer(body)` 取代逐行循环；
+* 「撤销必须写在注册之前」改成 `earlier = body[:match.start()]`，
+  语义与原来的「本行之前的所有行」一致，但不再被行边界切断；
+* token 从**执行这条注册的语句**里取：
+  `body[body.rfind(";", 0, match.start()) + 1 : match.start()]`，
+  即上一个 `;` 到注册起点之间的那段。
+
+顺手删掉一个只为规避缩进而写的 `for ... in [(...)][0]` 构造——整段重写之后没有理由留它。
+
+### 验证
+
+* 两条形状修复前后对比：折行 selector 从 `sites=0 INVISIBLE` 变成
+  `kind=selector withdrawn=False`；折行 block 从 `block-untokened` 变成
+  `kind=block withdrawn=True`（token 跨行仍然认账）。
+* `--self-test` **88 → 90** 全绿。用 `git show HEAD:` 把**旧扫描器**取出来
+  `exec` 回当前模块再复跑，**恰好这 2 条失败**（一条报「no longer made」即理由错误，
+  一条把已保护的页面判红），其余 17 条不动。
+* `--red-team` 新增 1 条真树注入 `WrappedPage.m`：一个折行的 selector 调用，
+  撤销写法与出厂页面一致、且不在记录里。新扫描器站点 **8 → 9** 并报
+  `a new notification registration appeared`；旧扫描器 **8 站点 / 0 problems**，
+  即这条用例在修复前会放行。
+* `--require-partial` 真跑读数**不变**：`8 registration(s) ... 8 of them withdrawn`、
+  0 failure，baseline 无需改动。
+* `--red-team` 共 36 条全绿；`workflow-audit` 25 规则通过；`local-gates.sh` 见本节末。
+
+### 登记
+
+* 真树里**目前没有**任何折行的注册（专门比对「整段匹配数」与「逐行匹配数」，
+  129 个一方文件 0 差异），所以这条修复同样是**预防性**的：它买的是「排版不再能决定
+  门禁是否看见」，不是「今天拦下了什么」。这一条必须写清楚，否则会被读成又修了一个真 bug。
+* 语句窗口用 `;` 切分，仍是启发式：如果一条语句里嵌了带 `;` 的东西
+  （块字面量、`for` 循环），窗口会偏窄，可能漏掉赋值而把受保护的 block 判成 untokened。
+  方向是**误红**而非误绿，且真树未触发；要彻底摆脱就得要真正的 ObjC 解析器，属新功能，只登记。
+* token 的持有写法只认点号形式：`TOKEN_ASSIGN` 是 `\w+\.(\w*[Oo]bserver\w*)\s*=`，
+  也就是 `self.xObserver = ...`。用 ivar 直接持有（`_xObserver = ...`）的页面会被判成
+  `block-untokened` 这一最重罪名——**误红**。扫过全部 129 个一方文件的 appearance 方法，
+  这种写法 0 处，所以今天不可达，本轮因此**不改规则**，只登记；真有人改用 ivar 时它会以红
+  的形式自己冒出来，不会静默。
+* 规则只认 `viewDidAppear` / `viewWillAppear` 两个方法名。为确认没有别的「每次访问再执行」的
+  方法在偷偷注册，按 viewDidLayout / viewWillLayout / windowDidResize / windowDidBecomeKey /
+  updateView / refresh* / reloadData / applicationDidBecomeActive 扫了同一批文件，
+  这些方法体里的注册数是 0，所以今天没有漏网项。把它们做成可配置清单是**新增规则能力**，
+  不在打磨模式里写，只登记入口。

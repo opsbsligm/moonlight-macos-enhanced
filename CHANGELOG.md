@@ -484,6 +484,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **The registration gate no longer depends on where a call is wrapped.** The entry below removed one
+  way the reader of `viewDidAppear` could lose a registration; the same reader scanned each method
+  body a line at a time, which is the other half of the same dependence on the author's formatting.
+  `REGISTER_SELECTOR` matches across newlines -- its `\s` consumes them -- so the pattern could read a
+  call that wraps, but the loop never offered it one. A selector registration wrapped over four lines
+  therefore produced no site at all, and an invisible registration with no record entry is again
+  `problems = []`: a green about something the rule did not read. The wrapped block call failed the
+  other way, and just as wrong: the token was searched for on the line holding the registration, so a
+  call whose `self.logObserver =` sat on the first line and whose `addObserverForName:` sat on the
+  second was reported as a block nobody kept, refusing a page that had withdrawn its registration
+  correctly. The method body is now read as one text: both patterns are matched over the body, the
+  withdrawal-before-the-registration test compares against `body[:match.start()]` rather than against
+  the preceding lines, and the token is taken from the statement that performs the registration -- the
+  text between the previous semicolon and the registration -- rather than from a line. Two fixtures
+  cover the two shapes (`--self-test` grew 88 -> 90 green), and executing the previous scanner back
+  out of `git show HEAD:` into the current module fails exactly those two and none of the other
+  seventeen. The red team gained a real-tree injection for the hole: a page with one wrapped
+  selector call, withdrawn the way the shipped pages withdraw theirs and absent from the record. The
+  new scanner reads 9 sites where the tree ships 8 and refuses the unrecorded registration; the old
+  scanner read 8 sites and returned no problems, so that case passed while the hole stood open. On the
+  tree as it is nothing moved -- still 8 registrations, all withdrawn, 0 failures -- and a deliberate
+  comparison of whole-body against line-by-line match counts over 129 first-party files found no
+  wrapped registration anywhere, so this fix, like the one below, is preventive: what it buys is that
+  indentation cannot decide whether the gate sees a registration, not that it caught one today. The
+  statement window is still a heuristic -- a nested `;` inside one statement narrows it, which could
+  credit a missing token and refuse a protected page, an error toward red rather than toward green,
+  and not reachable in this tree as it stands.
 - **The registration gate can no longer be silenced by the layout of a brace.** The rule from the
   entry below reads a page's source to ask which of its `viewDidAppear` registrations are withdrawn
   before they are taken again, and the reader decided where a method ends by looking for the first
