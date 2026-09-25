@@ -1102,6 +1102,7 @@ extension SettingsModel {
   static let defaultEnable10BitSdr = false
   static let defaultIgnoreAspectRatio = false
   static let defaultShowLocalCursor = false
+  static let defaultEdgeSensorSummon = true
   static let defaultEnableMicrophone = false
   static let defaultStreamResolutionScale = false
   static let defaultStreamResolutionScaleRatio = 100

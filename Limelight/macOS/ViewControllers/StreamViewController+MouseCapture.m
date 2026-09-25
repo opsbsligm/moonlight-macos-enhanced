@@ -740,6 +740,220 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     return NSPointInRect([self currentMouseLocationInViewCoordinates], self.view.bounds);
 }
 
+// Pure geometry for the summon band. Kept out of the object so the gate can drive
+// every branch, and so the shipped reader and the gate cannot drift apart.
+static CGFloat MLEdgeSensorNormalDistanceToEdge(NSPoint point, NSRect bounds, MLFreeMouseExitEdge edge) {
+    switch (edge) {
+        case MLFreeMouseExitEdgeLeft:
+            return point.x - NSMinX(bounds);
+        case MLFreeMouseExitEdgeRight:
+            return NSMaxX(bounds) - point.x;
+        case MLFreeMouseExitEdgeBottom:
+            return point.y - NSMinY(bounds);
+        case MLFreeMouseExitEdgeTop:
+            return NSMaxY(bounds) - point.y;
+        case MLFreeMouseExitEdgeNone:
+        default:
+            return CGFLOAT_MAX;
+    }
+}
+
+// The outward sign convention is the one edgeMenuReleaseExitEdgeForEvent: already uses,
+// so a push that the old path would have honoured counts here too, and one it would not
+// still counts as nothing. It reads the two deltas rather than the event so the shipped
+// function is what a test drives.
+static CGFloat MLEdgeSensorOutwardDeltaForDeltas(CGFloat deltaX,
+                                                 CGFloat deltaY,
+                                                 MLFreeMouseExitEdge edge) {
+    CGFloat delta = 0.0;
+    switch (edge) {
+        case MLFreeMouseExitEdgeLeft:
+            delta = -deltaX;
+            break;
+        case MLFreeMouseExitEdgeRight:
+            delta = deltaX;
+            break;
+        case MLFreeMouseExitEdgeTop:
+            delta = deltaY;
+            break;
+        case MLFreeMouseExitEdgeBottom:
+            delta = -deltaY;
+            break;
+        case MLFreeMouseExitEdgeNone:
+        default:
+            return 0.0;
+    }
+    return delta > 0.0 ? delta : 0.0;
+}
+
+// One event is worth at most perEventCap points of intent. A single flick can carry a
+// hundred points, and letting one of them spend the budget would put the dock away
+// every time a player looks around.
+static BOOL MLEdgeSensorPushAccumulate(CGFloat accumulator,
+                                       CGFloat outwardDelta,
+                                       CGFloat perEventCap,
+                                       CGFloat budget,
+                                       CGFloat *outAccumulator) {
+    CGFloat clamped = outwardDelta > perEventCap ? perEventCap : (outwardDelta > 0.0 ? outwardDelta : 0.0);
+    CGFloat next = accumulator + clamped;
+    if (outAccumulator != NULL) {
+        *outAccumulator = next;
+    }
+    return next >= budget;
+}
+
+- (void)refreshEdgeSensorSummonPreference {
+    NSDictionary *prefs = [SettingsClass getSettingsFor:self.app.host.uuid];
+    id value = prefs ? prefs[@"edgeSensorSummon"] : nil;
+    // A settings dictionary from before this key existed has no entry at all. That is
+    // the same state as a fresh install, and both mean the band is armed.
+    self.edgeSensorSummonEnabled = value ? [value boolValue] : YES;
+    if (!self.edgeSensorSummonEnabled) {
+        [self resetEdgeSensorSummonState];
+    }
+}
+
+- (void)resetEdgeSensorSummonState {
+    [self.edgeSensorDwellTimer invalidate];
+    self.edgeSensorDwellTimer = nil;
+    self.edgeSensorPushAccumulator = 0.0;
+}
+
+- (void)beginEdgeSensorDwellTimerIfNeededForEdge:(MLFreeMouseExitEdge)edge {
+    if (self.edgeSensorDwellTimer.isValid) {
+        return;
+    }
+
+    __weak typeof(self) weakSelf = self;
+    self.edgeSensorDwellTimer = [NSTimer scheduledTimerWithTimeInterval:MLEdgeSensorDwellSeconds
+                                                               repeats:NO
+                                                                 block:^(__unused NSTimer *timer) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        strongSelf.edgeSensorDwellTimer = nil;
+        [strongSelf finishEdgeSensorSummonIfStillArmedForEdge:edge];
+    }];
+}
+
+- (void)finishEdgeSensorSummonIfStillArmedForEdge:(MLFreeMouseExitEdge)edge {
+    if (!self.edgeSensorSummonEnabled ||
+        !self.isMouseCaptured ||
+        self.edgeMenuTemporaryReleaseActive ||
+        self.edgeMenuDragging ||
+        self.edgeMenuMenuVisible ||
+        ![self edgeMenuShouldBeVisible] ||
+        self.edgeMenuDockEdge != edge ||
+        [self hasPressedMouseButtonsForCaptureTransition]) {
+        return;
+    }
+    if (self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) {
+        return;
+    }
+
+    NSRect bounds = self.view.bounds;
+    if (NSIsEmptyRect(bounds)) {
+        return;
+    }
+    // The dwell has to still be true when it expires. A pointer that pushed in and came
+    // back on its own is a flick, and the band has to read it as one.
+    if (MLEdgeSensorNormalDistanceToEdge([self currentMouseLocationInViewCoordinates], bounds, edge) >
+        MLEdgeSensorEdgeDistance) {
+        return;
+    }
+
+    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];
+}
+
+- (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason {
+    [self resetEdgeSensorSummonState];
+    Log(LOG_I, @"[diag] Edge sensor summon: reason=%@ edge=%ld band=%.0fpt edge=%.0fpt dwell=%.0fms push=%.0fpt cap=%.0fpt",
+        reason ?: @"unknown",
+        (long)edge,
+        MLEdgeSensorBandWidth,
+        MLEdgeSensorEdgeDistance,
+        MLEdgeSensorDwellSeconds * 1000.0,
+        MLEdgeSensorPushBudget,
+        MLEdgeSensorPushPerEventCap);
+    [self uncaptureMouseWithCode:@"MUC109" reason:reason];
+    [self activateEdgeMenuDockForExitEdge:edge];
+}
+
+- (BOOL)handleEdgeSensorSummonForEvent:(NSEvent *)event {
+    if (!self.edgeSensorSummonEnabled || event == nil) {
+        return NO;
+    }
+    if (!self.isMouseCaptured ||
+        self.edgeMenuTemporaryReleaseActive ||
+        self.edgeMenuDragging ||
+        self.edgeMenuMenuVisible) {
+        [self resetEdgeSensorSummonState];
+        return NO;
+    }
+    if (![self edgeMenuShouldBeVisible]) {
+        [self resetEdgeSensorSummonState];
+        return NO;
+    }
+
+    MLFreeMouseExitEdge edge = self.edgeMenuDockEdge;
+    if (edge == MLFreeMouseExitEdgeNone) {
+        [self resetEdgeSensorSummonState];
+        return NO;
+    }
+    // The free-mouse release path is the older and stricter way out, so it keeps
+    // priority: whenever it already wants to release, the band stays out of the way and
+    // the shipped behaviour is byte for byte what it was.
+    if ([self freeMouseExitEdgeForEvent:event] != MLFreeMouseExitEdgeNone) {
+        [self resetEdgeSensorSummonState];
+        return NO;
+    }
+    if ([self hasPressedMouseButtonsForCaptureTransition]) {
+        [self resetEdgeSensorSummonState];
+        return NO;
+    }
+    if (self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) {
+        return NO;
+    }
+
+    NSRect bounds = self.view.bounds;
+    if (NSIsEmptyRect(bounds)) {
+        return NO;
+    }
+
+    NSPoint point = [self shouldUseCoreHIDTightFreeMouseHandoff]
+        ? [self currentMouseLocationInViewCoordinates]
+        : [self boundaryInteractionViewPointForMouseEvent:event];
+    CGFloat normalDistance = MLEdgeSensorNormalDistanceToEdge(point, bounds, edge);
+    if (normalDistance > MLEdgeSensorBandWidth) {
+        [self resetEdgeSensorSummonState];
+        return NO;
+    }
+    if (normalDistance > MLEdgeSensorEdgeDistance) {
+        // In the band but not against the edge: neither the dwell nor the push budget
+        // starts, which is what keeps a pass through the band from arming anything.
+        [self resetEdgeSensorSummonState];
+        return NO;
+    }
+
+    [self beginEdgeSensorDwellTimerIfNeededForEdge:edge];
+
+    CGFloat nextAccumulator = 0.0;
+    BOOL pushTriggered = MLEdgeSensorPushAccumulate(self.edgeSensorPushAccumulator,
+                                                    MLEdgeSensorOutwardDeltaForDeltas(event.deltaX,
+                                                                                      event.deltaY,
+                                                                                      edge),
+                                                    MLEdgeSensorPushPerEventCap,
+                                                    MLEdgeSensorPushBudget,
+                                                    &nextAccumulator);
+    self.edgeSensorPushAccumulator = nextAccumulator;
+    if (pushTriggered) {
+        [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-push"];
+        return YES;
+    }
+    return NO;
+}
+
 - (void)logMouseClickDiagnosticsForPhase:(NSString *)phase event:(NSEvent *)event {
     NSPoint windowPoint = event.window == self.view.window ? event.locationInWindow : [self.view.window convertPointFromScreen:[self screenPointForMouseEvent:event]];
     NSPoint viewPoint = [self viewPointForMouseEvent:event];
@@ -2430,6 +2644,9 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     if ([self handleEdgeMenuTemporaryReleaseForEvent:event]) {
         return;
     }
+    if ([self handleEdgeSensorSummonForEvent:event]) {
+        return;
+    }
 
     if ([self attemptPendingMouseExitedRecaptureIfNeededForEvent:event]) {
         return;
@@ -2459,6 +2676,9 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reconcileHybridFreeMouseAnchorToCurrentPointer];
     if ([self handleEdgeMenuTemporaryReleaseForEvent:event]) {
+        return;
+    }
+    if ([self handleEdgeSensorSummonForEvent:event]) {
         return;
     }
 
@@ -2491,6 +2711,9 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     if ([self handleEdgeMenuTemporaryReleaseForEvent:event]) {
         return;
     }
+    if ([self handleEdgeSensorSummonForEvent:event]) {
+        return;
+    }
 
     if ([self attemptPendingMouseExitedRecaptureIfNeededForEvent:event]) {
         return;
@@ -2519,6 +2742,9 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reconcileHybridFreeMouseAnchorToCurrentPointer];
     if ([self handleEdgeMenuTemporaryReleaseForEvent:event]) {
+        return;
+    }
+    if ([self handleEdgeSensorSummonForEvent:event]) {
         return;
     }
 
@@ -3089,6 +3315,8 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     if (self.isMouseCaptured) {
         return;
     }
+
+    [self refreshEdgeSensorSummonPreference];
 
     if (self.stopStreamInProgress || self.reconnectInProgress) {
         return;

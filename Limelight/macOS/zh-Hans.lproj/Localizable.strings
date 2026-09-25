@@ -1105,6 +1105,8 @@
 "Auto Adjust Bitrate" = "自动调整码率";
 "Ignore Aspect Ratio" = "忽略宽高比限制";
 "Show Local Cursor" = "显示本地光标";
+"Edge Sensor Summon" = "边缘感应唤出功能栏";
+"Edge Sensor Summon detail" = "在功能栏所在的那条边设 24pt 常驻感应带：贴边不超过 2pt 并停住 150ms，或向内累计推压 30pt（单个事件最多计 6pt），即唤出功能栏并在 0.82s 后自动收起。快速掠边与甩视角不会触发。关闭后只保留原有的指针逃逸唤出方式。";
 "Mouse and Cursor" = "鼠标与光标";
 "Locked Mouse" = "锁定鼠标";
 "Control Center" = "控制中心";

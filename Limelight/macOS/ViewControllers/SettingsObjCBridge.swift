@@ -102,6 +102,9 @@ class SettingsClass: NSObject {
         "sdr10bit": settings.enable10BitSdr ?? false,
         "ignoreAspectRatio": settings.ignoreAspectRatio ?? true,
         "showLocalCursor": settings.showLocalCursor ?? false,
+        // The key the stream reads before arming the edge summon band. Absent and true
+        // mean the same thing to it, and both mean armed.
+        "edgeSensorSummon": settings.edgeSensorSummon ?? true,
         "microphone": settings.enableMicrophone ?? false,
         "streamResolutionScale": settings.streamResolutionScale ?? false,
         "streamResolutionScaleRatio": settings.streamResolutionScaleRatio ?? 100,
@@ -314,6 +317,7 @@ class SettingsClass: NSObject {
       enable10BitSdr: settings.enable10BitSdr,
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
+      edgeSensorSummon: settings.edgeSensorSummon,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,
       streamResolutionScaleRatio: settings.streamResolutionScaleRatio,
@@ -425,6 +429,7 @@ class SettingsClass: NSObject {
         enable10BitSdr: updated.enable10BitSdr,
         ignoreAspectRatio: updated.ignoreAspectRatio,
         showLocalCursor: updated.showLocalCursor,
+        edgeSensorSummon: updated.edgeSensorSummon,
         enableMicrophone: updated.enableMicrophone,
         streamResolutionScale: updated.streamResolutionScale,
         streamResolutionScaleRatio: updated.streamResolutionScaleRatio,
@@ -532,6 +537,7 @@ class SettingsClass: NSObject {
       enable10BitSdr: settings.enable10BitSdr,
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
+      edgeSensorSummon: settings.edgeSensorSummon,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,
       streamResolutionScaleRatio: settings.streamResolutionScaleRatio,

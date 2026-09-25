@@ -633,6 +633,10 @@
 }
 
 - (void)deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:(BOOL)shouldRecapture {
+    // The band starts from nothing every time the dock goes away: a summon that is
+    // folded up has to be paid for again with a fresh dwell or a fresh push.
+    [self resetEdgeSensorSummonState];
+
     BOOL wasTemporary = self.edgeMenuTemporaryReleaseActive;
     self.edgeMenuTemporaryReleaseActive = NO;
     self.edgeMenuPointerInside = NO;

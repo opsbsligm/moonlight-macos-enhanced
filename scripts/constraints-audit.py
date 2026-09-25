@@ -2263,6 +2263,23 @@ for leak_shape, leak_answer in (("--self-test", "its fixtures"),
           "the leak reader failed %s: %s"
           % (leak_answer, (leak_run.stdout + leak_run.stderr).strip().splitlines()[-1:]))
 
+# The edge summon band is geometry and arithmetic, so it needs nothing but a C compiler: the
+# aggregate drives the shipped helpers here, and a band that stopped telling "inside the band"
+# from "against the edge" goes red on a laptop instead of eight minutes into a build job. Its
+# own red proofs run too, because a harness that cannot fail is exactly how a band ships that
+# never lets a player open the dock -- or one that lets go on every flick.
+for sensor_shape, sensor_arguments in (("its readings", []),
+                                       ("its red proofs", ["--self-test"])):
+    sensor_run = subprocess.run([sys.executable,
+                                 os.path.join(scripts_dir, "edge-sensor-summon-tests.py")]
+                                + sensor_arguments,
+                                capture_output=True, text=True, cwd=root)
+    check(sensor_run.returncode == 0,
+          "the edge summon gate passes %s" % sensor_shape
+          if sensor_run.returncode == 0 else
+          "the edge summon gate failed %s: %s"
+          % (sensor_shape, (sensor_run.stdout + sensor_run.stderr).strip().splitlines()[-1:]))
+
 # The ownership experiment gets the same treatment, and its controls make the reason stronger
 # rather than different: a probe that retains its own pair reports today's retain cycle as a
 # reading of the app, and a build that ignores the flag reports an empty record as a clean graph.
