@@ -127,6 +127,7 @@ extension SettingsModel {
     enable10BitSdr = Self.defaultEnable10BitSdr
     ignoreAspectRatio = Self.defaultIgnoreAspectRatio
     showLocalCursor = Self.defaultShowLocalCursor
+    edgeSensorSummon = Self.defaultEdgeSensorSummon
     enableMicrophone = Self.defaultEnableMicrophone
     streamResolutionScale = Self.defaultStreamResolutionScale
     streamResolutionScaleRatio = Self.defaultStreamResolutionScaleRatio
@@ -259,6 +260,7 @@ extension SettingsModel {
       enable10BitSdr = settings.enable10BitSdr ?? Self.defaultEnable10BitSdr
       ignoreAspectRatio = settings.ignoreAspectRatio ?? Self.defaultIgnoreAspectRatio
       showLocalCursor = settings.showLocalCursor ?? Self.defaultShowLocalCursor
+      edgeSensorSummon = settings.edgeSensorSummon ?? Self.defaultEdgeSensorSummon
       enableMicrophone = settings.enableMicrophone ?? Self.defaultEnableMicrophone
       streamResolutionScale = settings.streamResolutionScale ?? Self.defaultStreamResolutionScale
       streamResolutionScaleRatio =
@@ -682,6 +684,7 @@ extension SettingsModel {
       enable10BitSdr: enable10BitSdr,
       ignoreAspectRatio: ignoreAspectRatio,
       showLocalCursor: showLocalCursor,
+      edgeSensorSummon: edgeSensorSummon,
       enableMicrophone: enableMicrophone,
       streamResolutionScale: streamResolutionScale,
       streamResolutionScaleRatio: streamResolutionScaleRatio,

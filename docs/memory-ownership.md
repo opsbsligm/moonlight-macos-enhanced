@@ -1537,3 +1537,62 @@ ObjC 里 property 的 backing ivar 通常就是 `_x`，折叠两个拼写看起�
 * `_{0,2}` 只认 0～2 个下划线前缀（含 Swift 桥接常见的 `__`）。更怪的名字读不到 → 同上，误红方向。
 * 局部变量形式的 token（`id observer = [center addObserverForName:…]`）仍在**跨方法撤销**这条上限里：
   它的撤销几乎总是写在 `dealloc` / `viewWillDisappear`，需要跨方法读才认，本轮不碰。
+
+## 26. 功能栏只认「指针已经逃逸」：一条与捕获模式无关的感应带（2026-09-25）
+
+### 触发点
+
+`StreamViewController+MouseCapture.m` 里展开 dock 的唯一入口是 `uncaptureFreeMouseForExitEdge:`，
+而它只在 `freeMouseExitEdgeForEvent:` 判定成功时才被调用。那个判定的第一行就是
+`if (!self.isRemoteDesktopMode || !self.isMouseCaptured) return None;` —— 于是**游戏模式
+（相对指针）下 dock 永远不会被指针唤出**：指针被回中/钳制在 view 内，根本到不了边。
+非捕获态只剩 `MLEdgeMenuButton` 自己的 `NSTrackingArea`（收起态只露 `VisiblePeek=30`），
+要命中它得先知道 dock 停在哪条边的哪个位置。
+
+### 定案：常驻感应带，两条入口，任一先到
+
+| 量 | 值 | 为什么是这个数 |
+|:---|:---|:---|
+| 感应带宽度 | 24pt | 沿 dock 那条边整条，不要求命中按钮位置；比 `InteractionOutwardPadding=18` 宽、比 `VisiblePeek=30` 窄，不吞掉正常贴边操作 |
+| 贴边阈值 | 2pt | 与 `freeMouseExitEdgeForEvent:` 里非 tight 的 `threshold = 2.0` 同一读数 |
+| 持续 | 150ms | FPS 甩视角在边的法向上停留 <150ms；150ms 已是「按住不动」而非「掠过」 |
+| 推压预算 | 30pt | 指针被钳制时用户仍能「往外顶」；30pt 是多次事件累计，单次最多计 6pt |
+| 单事件封顶 | 6pt | 一次甩动可达 100pt+，不封顶就等于「掠边即出」 |
+
+* 触发后**复用** `activateEdgeMenuDockForExitEdge:`（展开 + 临时释放 + `AutoCollapseDelay=0.82s` 收起），
+  不新造第二套展开逻辑；释放走通用 `uncaptureMouseWithCode:@"MUC109"`，因此**成对恢复**
+  沿用既有实现（`deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:` 里 `captureMouse`）。
+* **现有 free-mouse 路径优先**：`handleEdgeSensorSummonForEvent:` 在 `freeMouseExitEdgeForEvent:`
+  判出非 None 时直接让路。老路（1pt 逃逸）比新带更激进，因此远程桌面模式的行为**逐字节不变**，
+  新带只在老路不会触发的场合（主要是相对模式）起作用。
+* 偏好键 `edgeSensorSummon`，**默认开**；关→ `handleEdgeSensorSummonForEvent:` 第一行返回，
+  不建 timer、不记账、不改任何既有分支。每次 `captureMouse` 重读，设置页改完下次捕获即生效。
+
+### 验证
+
+* `scripts/edge-sensor-summon-tests.py`：把三个**出厂 C 函数**从 `MouseCapture.m` 里按括号配对抽出来，
+  用 `cc -std=c11` 编译后驱动 → **27 条行为断言全绿**（四条边的法向读数、越界为负不外翻、
+  带内与贴边分离、四个方向的朝外符号、单事件封顶、预算 5 个事件花完、回抽不退账、
+  29.4+0.6 触发而 29.4+0.5 不触发、出厂常量与文案数字一致）。
+* 同一脚本的接线断言 **0 gaps**：四个指针 handler 全部接入；释放+展开成对；dwell 是 one-shot
+  且 `weakSelf`、有 `invalidate`；到期时要求「仍然贴边」才触发；收起 dock 即清账；
+  重新捕获重读开关；声明落在 `MouseCaptureInternal` 而不是 `(MenuUI)`。
+* 偏好链路 **0 gaps**：默认 true、桥接字典带 key、设置页有开关、中英双语文案都写着 24/2/150/30/6/0.82。
+* `--self-test` 红证三类：拆掉单事件封顶 → **4 条行为断言变红**；拆掉开关短路 → 接线报 1 gap；
+  拆掉收起时的清账 → 接线报 ledger gap。
+* 编译：`xcodebuild`(Debug/arm64) **BUILD SUCCEEDED**，一方文件 **0 warning**。
+  第一轮构建曾有 6 条 `-Wincomplete-implementation`（方法声明误落在 `(MenuUI)` 分类接口），
+  已把声明移到 `(MouseCaptureInternal)` 并复验为 0。
+* `l10n-audit.py` 0 failures（第一次写漏了 `.strings` 条目结尾分号，CoreFoundation 会在第一条
+  无终结符处停止解析 → 该审计把两条 FAIL 直接顶了出来）。
+
+### 登记
+
+* **手感未实测**：150ms / 30pt / 6pt 是按「掠边与持住的读数差异」定的，需要一次真实串流
+  （180Hz 魔兽场景）确认不误触、且贴边能唤出。数字改动的登记与本次表格里同源。
+* 回抽不退账（`-50pt` 不减少已累计的 10pt）：来回小幅蹭边会累计到预算 → 误触方向，真机若出现
+  就改成「带符号累计并下限为 0」，代价是甩视角的余量变小。
+* dwell 用 one-shot timer 而非事件时间戳：相对模式下用户静止时**不再产生**鼠标事件，
+  事件计时会永远不触发；timer 是这里唯一能覆盖「静止贴住」的形式。
+* dock 停在哪条边由 `edgeMenuDockEdge` 决定，感应带跟着它走；拖动 dock 换边时感应带随之换边
+  （`resetEdgeSensorSummonState` 在收起与重新捕获时都会清账，不会把旧边的账带到新边）。

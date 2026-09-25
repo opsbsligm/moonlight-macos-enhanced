@@ -1105,6 +1105,8 @@
 "Auto Adjust Bitrate" = "Auto Adjust Bitrate";
 "Ignore Aspect Ratio" = "Ignore Aspect Ratio";
 "Show Local Cursor" = "Show Local Cursor";
+"Edge Sensor Summon" = "Edge Sensor Summon";
+"Edge Sensor Summon detail" = "A 24 pt band runs along the edge the stream dock sits on. Holding the pointer within 2 pt of that edge for 150 ms, or pushing inward by 30 pt in total (at most 6 pt per event), opens the dock and folds it away again after 0.82 s. A fast sweep past the edge does not trigger it. With this off, only the pointer-escape route to the dock remains.";
 "Mouse and Cursor" = "Mouse & Cursor";
 "Locked Mouse" = "Locked Mouse";
 "Control Center" = "Control Center";

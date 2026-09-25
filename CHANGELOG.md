@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The stream dock answers a player who holds the pointer against the edge it lives on.**
+  Opening it used to require the pointer to have already escaped capture:
+  `uncaptureFreeMouseForExitEdge:` is the only way in, it is reached through
+  `freeMouseExitEdgeForEvent:` alone, and that method returns nothing outside remote-desktop
+  mode -- so in the relative mode a game is played in, where the pointer is parked and clamped
+  inside the view, the dock could not be reached with the pointer at all, and the route that
+  was left was the dock's own tracking area, which asks the player to already know which 30 pt
+  of which edge it happens to sit on. A band 24 pt deep now runs the whole length of the dock's
+  edge, whatever the capture mode, and opens the dock on either of two readings: held within
+  2 pt of that edge for 150 ms, or 30 pt of inward intent accumulated inside the band where one
+  event is worth at most 6 pt. The cap is the whole argument -- a single flick carries a hundred
+  points, and an uncapped budget puts the dock away every time a player looks around. The band
+  reuses `activateEdgeMenuDockForExitEdge:` instead of inventing a second way to open the dock,
+  and the free-mouse release path keeps priority, so remote-desktop behaviour is untouched and
+  the band acts only where the old path stays silent. `edgeSensorSummon` ships armed and is
+  re-read on every capture; switched off, the band asks nothing, arms nothing and folds nothing
+  away, and the settings page states its thresholds in both languages.
+  `scripts/edge-sensor-summon-tests.py` lifts the three shipped C helpers out of
+  `StreamViewController+MouseCapture.m` by brace matching, compiles them and drives them: 27
+  checks green across the four edges, the outward sign convention, the band-versus-edge split,
+  the budget spent in five events at the cap and a pull-back that refunds nothing. The same file
+  reads the wiring with 0 gaps -- all four pointer handlers arm it, the dwell is a one-shot that
+  is stopped and re-checks the hold when it expires, and folding the dock away clears the ledger
+  -- and its `--self-test` puts the uncapped budget back and goes red on 4 verdicts. The script
+  is a step in the workflow, and `constraints-audit.py` runs both it and its red proofs, so the
+  verdict is a laptop's and not only a runner's. Not measured: the numbers themselves. 150 ms
+  and 30 pt come from how a hold and a sweep differ along the edge normal, not from a stream,
+  and section 26 of `docs/memory-ownership.md` files them as unmeasured until a real 180 Hz session says
+  a hold arrives and a sweep does not.
 - **Whether a holder that is *given* its host keeps it is now a reading, not an inference.** Section
   5 of `docs/memory-ownership.md` asks for two things before `app.host` can turn weak: every holder
   that today reaches its host through the strong back-pointer has to be handed a host of its own, and

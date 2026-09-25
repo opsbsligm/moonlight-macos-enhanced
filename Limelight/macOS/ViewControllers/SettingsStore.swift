@@ -30,6 +30,7 @@ struct Settings: Encodable, Decodable {
   let enable10BitSdr: Bool?
   let ignoreAspectRatio: Bool?
   let showLocalCursor: Bool?
+  let edgeSensorSummon: Bool?
   let enableMicrophone: Bool?
   let streamResolutionScale: Bool?
   let streamResolutionScaleRatio: Int?
@@ -190,6 +191,7 @@ struct Settings: Encodable, Decodable {
       enable10BitSdr: enable10BitSdr,
       ignoreAspectRatio: ignoreAspectRatio,
       showLocalCursor: showLocalCursor,
+      edgeSensorSummon: edgeSensorSummon,
       enableMicrophone: enableMicrophone,
       streamResolutionScale: streamResolutionScale,
       streamResolutionScaleRatio: streamResolutionScaleRatio,
@@ -432,6 +434,7 @@ extension SettingsClass {
       enable10BitSdr: resolvedEnable10BitSdr,
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
+      edgeSensorSummon: settings.edgeSensorSummon,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: resolvedStreamResolutionScale,
       streamResolutionScaleRatio: resolvedStreamResolutionScaleRatio,

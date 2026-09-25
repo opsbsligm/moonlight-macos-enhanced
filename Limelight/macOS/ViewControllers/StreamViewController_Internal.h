@@ -81,6 +81,17 @@ static CGFloat const MLEdgeMenuInteractionOutwardPadding = 18.0;
 static CGFloat const MLEdgeMenuInteractionInwardPadding = 26.0;
 static CGFloat const MLEdgeMenuInteractionVerticalPadding = 28.0;
 static NSTimeInterval const MLEdgeMenuAutoCollapseDelay = 0.82;
+
+// The summon band is measured along the dock's edge and inward from it, so a player
+// who never crosses the free-mouse escape threshold can still reach the dock. The
+// dwell and the push budget are the two ways in; either one alone is what a stray
+// flick lacks (design record: docs/memory-ownership.md SS26).
+static CGFloat const MLEdgeSensorBandWidth = 24.0;
+static CGFloat const MLEdgeSensorEdgeDistance = 2.0;
+static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.15;
+static CGFloat const MLEdgeSensorPushBudget = 30.0;
+static CGFloat const MLEdgeSensorPushPerEventCap = 6.0;
+
 static CGFloat const MLFreeMouseReentryDelayMs = 140.0;
 static CGFloat const MLFreeMouseReentryInset = 32.0;
 static BOOL const MLUseOnScreenControlCenterEntrypoints = YES;
@@ -437,6 +448,13 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic, strong) NSDate *streamStartDate;
 
 @property (nonatomic) BOOL hideFullscreenControlBall;
+// Whether the edge summon band is armed for this session. Read on every capture so a
+// change made in the settings page lands without restarting the stream; the off state
+// is what the regression anchor compares against.
+@property (nonatomic) BOOL edgeSensorSummonEnabled;
+@property (nonatomic, strong) NSTimer *edgeSensorDwellTimer;
+@property (nonatomic) CGFloat edgeSensorPushAccumulator;
+
 @property (nonatomic, strong) NSSlider *menuVolumeSlider;
 @property (nonatomic, strong) NSSlider *menuBitrateSlider;
 @property (nonatomic, strong) NSTextField *menuBitrateValueLabel;
@@ -593,6 +611,14 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (BOOL)performKeyboardTranslationLocalAction:(NSString *)action;
 - (BOOL)handleKeyboardTranslationRuleForEvent:(NSEvent *)event;
 - (BOOL)shouldDeferCommandModifierForShortcutHandlingWithEvent:(NSEvent *)event;
+// The edge summon band is read and armed in the capture category, and only its dock
+// call reaches the menu one, so these belong to the capture interface.
+- (BOOL)handleEdgeSensorSummonForEvent:(NSEvent *)event;
+- (void)refreshEdgeSensorSummonPreference;
+- (void)resetEdgeSensorSummonState;
+- (void)beginEdgeSensorDwellTimerIfNeededForEdge:(MLFreeMouseExitEdge)edge;
+- (void)finishEdgeSensorSummonIfStillArmedForEdge:(MLFreeMouseExitEdge)edge;
+- (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason;
 @end
 @interface StreamViewController (MenuUI) <MLStreamScopedCallbackOwner>
 - (NSString *)mouseModeDisplayNameForMode:(NSString *)mode;
@@ -647,6 +673,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)scheduleEdgeMenuAutoCollapse;
 - (void)activateEdgeMenuDockForExitEdge:(MLFreeMouseExitEdge)exitEdge;
 - (BOOL)handleEdgeMenuTemporaryReleaseForEvent:(NSEvent *)event;
+
 - (void)updateEdgeMenuButtonAppearance;
 - (void)handleEdgeMenuButtonDragWithState:(NSGestureRecognizerState)state translation:(NSPoint)translation;
 - (void)startControlCenterTimerIfNeeded;

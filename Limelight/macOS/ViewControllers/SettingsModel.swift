@@ -453,6 +453,15 @@ class SettingsModel: ObservableObject {
     }
   }
 
+  // Summoning the stream dock by holding the pointer against the edge its dock lives on.
+  // Armed by default; the off state is the regression anchor for the edge sensor.
+  @Published var edgeSensorSummon: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
+
   @Published var enableMicrophone: Bool {
     didSet {
       guard !isLoading else { return }
@@ -1276,6 +1285,7 @@ class SettingsModel: ObservableObject {
     enable10BitSdr = Self.defaultEnable10BitSdr
     ignoreAspectRatio = Self.defaultIgnoreAspectRatio
     showLocalCursor = Self.defaultShowLocalCursor
+    edgeSensorSummon = Self.defaultEdgeSensorSummon
     enableMicrophone = Self.defaultEnableMicrophone
     streamResolutionScale = Self.defaultStreamResolutionScale
     streamResolutionScaleRatio = Self.defaultStreamResolutionScaleRatio

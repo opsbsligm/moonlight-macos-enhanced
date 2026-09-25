@@ -279,6 +279,14 @@ struct InputView: View {
 
       Divider()
 
+      ToggleCell(
+        title: "Edge Sensor Summon",
+        hintKey: "Edge Sensor Summon detail",
+        boolBinding: $settingsModel.edgeSensorSummon
+      )
+
+      Divider()
+
       DisclosureGroup(
         isExpanded: $mouseAdvancedExpanded,
         content: {
