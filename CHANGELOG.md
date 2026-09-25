@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The settings page now says what the frames actually did, and which frame rate this display
+  can interpolate at.** Interpolation could already be named on the page -- "VT Low-Latency Frame
+  Interpolation" -- but that sentence came from the admission, so it reported a decision rather
+  than a measurement. Whether extra frames reached the display, and against what refresh rate, was
+  only on the performance overlay, and `setupOverlay` (the only place that starts the timer behind
+  `updateStats`) runs when the host's "show performance overlay" setting is on: the player who most
+  needs to know is the one looking at a page that cannot tell them. The renderer now publishes one
+  reading per second from the same block that rolls its counters over and from the refresh the
+  display link just measured -- arriving, on-screen, interpolated, and the frame rate this refresh
+  can carry -- and stopping a stream zeroes it, because a stale number under a host that is no
+  longer streaming is indistinguishable from a live one. The page adds the advice the refusals
+  should have carried: with interpolation selected and no headroom, it names the measured refresh
+  and the frame rate to use instead (180 Hz -> 120, 179 -> 90), and it asks the shared policy
+  rather than repeating the arithmetic; before a stream exists it asks the display mode and says
+  so in the wording ("measures %1$@ Hz"). Measured by lifting the publisher out of
+  `VideoDecoderRenderer.m` and playing it: 10 readings answer correctly (180 -> 120, 179 -> 90,
+  140 -> 90, 100 -> 60, 59.94 -> 30, 44 -> nothing, unknown -> nothing), a keyless stream publishes
+  under the global row, the four readings arrive untouched, and stopping answers all zeros.
+  `scripts/interpolation-readout-tests.py` adds those readings and 7 red proofs -- swapping the
+  arriving rate for the on-screen one, dropping the zeroing, moving the feed onto the overlay's
+  timer, silencing the notification, giving the advice its own copy of the 1.5x rule, deleting the
+  row from the probe's expectations, and replacing the suggestion with a constant. Not measured,
+  stated plainly: no real stream produced these numbers. What a 180 Hz panel *actually* measures
+  during a 魔兽 session -- and therefore whether the advice names 120 or 90, since a measured
+  179.8x Hz genuinely fails `refresh >= 1.5 x 120` -- needs one real run with this row on screen.
+  Section 30 of `docs/memory-ownership.md` keeps the details, including the super-resolution
+  description that is still outstanding.
+
 - **Whether a display can carry frame interpolation is now one answer, not two copies.**
   The rule -- refresh at least 1.5x the stream rate and at least 12 Hz above it, or the renderer
   reports `NoCadenceHeadroom` -- lived as arithmetic inside

@@ -665,7 +665,10 @@ private struct StreamHostRuntimeInfo {
     }
   }
 
-  private static func currentDisplayRefreshRateHz() -> Double {
+  /// The display mode's own refresh rate. Internal rather than private because the settings page
+  /// has to ask the same question before a stream exists, and a second CGDisplay reading written
+  /// beside this one is how two numbers for one screen appear.
+  static func currentDisplayRefreshRateHz() -> Double {
     guard let screen = NSScreen.main,
       let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
       let mode = CGDisplayCopyDisplayMode(CGDirectDisplayID(screenNumber.uint32Value))

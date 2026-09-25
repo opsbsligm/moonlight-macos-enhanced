@@ -48,7 +48,7 @@ final class DebugProbeExpectations: NSObject {
     // Every string the video page is expected to display for the current state.
     // The probe asserts these are on screen, which ties the sentence to the
     // gate: renaming a key updates the expectation, dropping the row does not.
-    let videoStrings: [String] = [
+    var videoStrings: [String] = [
       localize(model.frameInterpolationExplanationKey),
       localize(model.upscalingExplanationKey),
       localize("Video Runtime Path Label"),
@@ -60,7 +60,14 @@ final class DebugProbeExpectations: NSObject {
       localize("Frame Interpolation Engine Label"),
       localize(model.videoFrameInterpolationRuntimeStatusSummaryKey),
       localize(model.videoFrameInterpolationRuntimeStatusDetailKey),
+      // Both cadence rows are already sentences -- one is a measurement, the other is advice
+      // built from a policy call -- so they are handed over as the page will show them instead of
+      // being keys the probe would have to translate a second time.
+      model.videoCadenceReadoutDisplayText,
     ]
+    if let cadenceAdvice = model.frameInterpolationCadenceAdviceText {
+      videoStrings.append(cadenceAdvice)
+    }
 
     return [
       "expectationsFromPageModel": modelObject is SettingsModel,

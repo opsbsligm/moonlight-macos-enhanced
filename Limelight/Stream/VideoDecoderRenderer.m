@@ -1886,6 +1886,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     [self publishVideoFrameInterpolationRuntimeStatusSummary:MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpolationEngineNone)
                                                       detail:[self runtimeDetailKeyForFrameInterpolationReport:MLVideoFrameInterpolationReportDisabled]];
+    [self publishVideoCadenceRuntimeReadoutStopped];
 
     if (_frameInterpolationOutputPool != NULL) {
         CFRelease(_frameInterpolationOutputPool);
@@ -2491,6 +2492,40 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 {
     NSString *hostKey = _runtimeHostKey ?: @"__global__";
     [SettingsClass updateVideoFrameInterpolationRuntimeStatusFor:hostKey summaryKey:summaryKey detailKey:detailKey];
+}
+
+// The numbers a player has to see to answer "is it actually interpolating, and against what".
+// A sentence that says interpolation is running is not a measurement: the reported engine comes
+// from the admission, while whether extra frames are reaching the display is only visible in the
+// counters. These readings are taken here rather than in the stats overlay because the overlay
+// exists only when the player turned it on -- a readout that lived on that path would stop
+// updating exactly for the people who never enable it -- and this block is the per-second
+// roll-up the counters themselves are computed in, next to the refresh rate the display link
+// just measured. The suggested rate is the shared policy's answer for that refresh, so the page
+// cannot offer a frame rate this file's admission would then refuse.
+- (void)publishVideoCadenceRuntimeReadoutWithSourceFps:(double)sourceFps
+                                             outputFps:(double)outputFps
+                                        interpolatedFps:(double)interpolatedFps
+                                             refreshHz:(double)refreshHz
+{
+    int suggestedFps = MLInterpolationSuggestedFpsForRefresh(refreshHz);
+    [SettingsClass updateVideoCadenceReadoutFor:_runtimeHostKey ?: @"__global__"
+                                      sourceFps:sourceFps
+                                      outputFps:outputFps
+                                interpolatedFps:interpolatedFps
+                                      refreshHz:refreshHz
+                                   suggestedFps:suggestedFps];
+}
+
+// Stopping a stream ends the measurement rather than leaving the last second of it on screen:
+// a page that still says "120 FPS interpolated" under a host that is no longer streaming is a
+// reading nobody can distinguish from a live one.
+- (void)publishVideoCadenceRuntimeReadoutStopped
+{
+    [self publishVideoCadenceRuntimeReadoutWithSourceFps:0.0
+                                              outputFps:0.0
+                                         interpolatedFps:0.0
+                                              refreshHz:0.0];
 }
 
 - (NSString *)runtimeDetailKeyForEnhancementEngine:(MLActiveVideoEnhancementEngine)engine
@@ -5324,6 +5359,11 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
             VideoStats completedStats = self->_activeWndVideoStats;
             completedStats.lastUpdatedTimestamp = now;
             self->_videoStats = completedStats;
+
+            [self publishVideoCadenceRuntimeReadoutWithSourceFps:completedStats.receivedFps
+                                                       outputFps:completedStats.renderedFps
+                                                  interpolatedFps:completedStats.interpolatedFps
+                                                       refreshHz:self->_lastDisplayRefreshRate];
 
             memset(&self->_activeWndVideoStats, 0, sizeof(VideoStats));
             self->_activeWndVideoStats.measurementStartTimestamp = now;

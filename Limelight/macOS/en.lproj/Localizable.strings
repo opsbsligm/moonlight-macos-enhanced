@@ -654,6 +654,11 @@
 "Video Frame Interpolation Runtime Detail Requires Metal Renderer" = "Interpolation only runs on the Metal Renderer. Switch the renderer mode to enable it.";
 "Video Frame Interpolation Runtime Detail Disabled For Hdr" = "HDR streams keep the native present path, so interpolation stays off. Turn HDR off to use interpolation.";
 "Video Frame Interpolation Runtime Detail Refresh Rate Unknown" = "The display refresh rate could not be measured, so interpolation stayed off.";
+"Frame Interpolation Cadence Idle" = "Once a stream is running this shows what was actually measured: the frame rate arriving, the frame rate reaching the display, and the display's refresh rate.";
+"Frame Interpolation Cadence Readout" = "%1$@ FPS arriving \u00b7 %2$@ FPS on screen \u00b7 %3$@ Hz display";
+"Frame Interpolation Cadence Readout Interpolating" = "%1$@ FPS arriving \u00b7 %2$@ FPS on screen \u00b7 %3$@ Hz display \u00b7 %4$@ FPS interpolated";
+"Frame Interpolation Cadence Advice" = "This display measures %1$@ Hz, which cannot carry interpolation at %2$@ FPS: an interpolated frame still needs its own scanout slot. Set the stream frame rate to %3$@ FPS or lower and interpolation will engage.";
+"Frame Interpolation Cadence No Headroom" = "This display measures %1$@ Hz, which leaves no headroom even for 30 FPS, so frame interpolation is not available on it.";
 "Video runtime status title" = "Active during this stream";
 "Video runtime status hint" = "Reported live by the renderer. Before a stream starts these lines show the idle state.";
 "Video Runtime Path Label" = "Render path";

@@ -25,6 +25,18 @@ class SettingsClass: NSObject {
     let detailKey: String?
   }
 
+  /// One second of what the display and the stream actually did, taken by the renderer where it
+  /// rolls its counters over. It is a value rather than a pair of localisation keys because it
+  /// carries four measurements, and a key cannot say "119" without every language in the tree
+  /// agreeing on where the number goes.
+  private struct CadenceReadoutSnapshot: Equatable {
+    let sourceFps: Double
+    let outputFps: Double
+    let interpolatedFps: Double
+    let refreshHz: Double
+    let suggestedFps: Int
+  }
+
   private static let inputRuntimeStatusLock = NSLock()
   private static var mouseRuntimeStatusByHost: [String: InputRuntimeStatusSnapshot] = [:]
   private static var scrollRuntimeStatusByHost: [String: InputRuntimeStatusSnapshot] = [:]
@@ -32,6 +44,7 @@ class SettingsClass: NSObject {
   private static var videoEnhancementRuntimeStatusByHost: [String: InputRuntimeStatusSnapshot] = [:]
   private static var videoFrameInterpolationRuntimeStatusByHost: [String: InputRuntimeStatusSnapshot] =
     [:]
+  private static var videoCadenceReadoutByHost: [String: CadenceReadoutSnapshot] = [:]
 
   private static func mouseInputStrategy(for key: String) -> MouseInputDriverStrategy {
     if let settings = Settings.getSettings(for: key) {
@@ -1066,6 +1079,98 @@ class SettingsClass: NSObject {
       detailKey: detailKey,
       notificationName: .moonlightVideoRuntimeStatusDidChange
     )
+  }
+
+  /// The renderer's per-second readings. Numbers rather than keys, so this is where they become
+  /// a sentence: the line is formatted here and the page shows what it is given, which keeps one
+  /// wording for both the settings page and the probe that checks the page says it.
+  @objc(updateVideoCadenceReadoutFor:sourceFps:outputFps:interpolatedFps:refreshHz:suggestedFps:)
+  static func updateVideoCadenceReadout(
+    for key: String,
+    sourceFps: Double,
+    outputFps: Double,
+    interpolatedFps: Double,
+    refreshHz: Double,
+    suggestedFps: Int
+  ) {
+    let snapshot = CadenceReadoutSnapshot(
+      sourceFps: sourceFps,
+      outputFps: outputFps,
+      interpolatedFps: interpolatedFps,
+      refreshHz: refreshHz,
+      suggestedFps: suggestedFps
+    )
+    inputRuntimeStatusLock.lock()
+    let previous = videoCadenceReadoutByHost[key]
+    if previous == snapshot {
+      inputRuntimeStatusLock.unlock()
+      return
+    }
+    videoCadenceReadoutByHost[key] = snapshot
+    inputRuntimeStatusLock.unlock()
+
+    DispatchQueue.main.async {
+      NotificationCenter.default.post(
+        name: .moonlightVideoRuntimeStatusDidChange,
+        object: nil,
+        userInfo: ["hostKey": key]
+      )
+    }
+  }
+
+  /// Empty until a stream has measured something, because the page has an honest thing to say
+  /// before a stream ("this is where the numbers will appear") and a number is not it. Once a
+  /// stream has run and stopped, the renderer publishes zeros, so the stale line cannot outlive
+  /// the stream it described and this answers empty again.
+  @objc static func videoCadenceReadoutText(for key: String) -> String {
+    inputRuntimeStatusLock.lock()
+    let snapshot = runtimeCadenceReadout(for: key)
+    inputRuntimeStatusLock.unlock()
+
+    guard let snapshot, snapshot.refreshHz > 0 else {
+      return ""
+    }
+    guard snapshot.sourceFps > 0 || snapshot.outputFps > 0 else {
+      return ""
+    }
+
+    let source = String(format: "%.1f", snapshot.sourceFps)
+    let output = String(format: "%.1f", snapshot.outputFps)
+    let refresh = String(format: "%.2f", snapshot.refreshHz)
+    let languageManager = LanguageManager.shared
+    if snapshot.interpolatedFps > 0.05 {
+      let interpolated = String(format: "%.1f", snapshot.interpolatedFps)
+      return String(
+        format: languageManager.localize("Frame Interpolation Cadence Readout Interpolating"),
+        source, output, refresh, interpolated
+      )
+    }
+    return String(
+      format: languageManager.localize("Frame Interpolation Cadence Readout"),
+      source, output, refresh
+    )
+  }
+
+  /// The refresh the renderer measured and the frame rate it would accept, for the page's
+  /// pre-stream advice. `nil` until a stream has measured them: before that the page asks the
+  /// shared policy about the display mode it can see, which is a different measurement, and
+  /// pretending otherwise would put two answers on one screen.
+  @objc static func videoCadenceMeasuredRefreshHz(for key: String) -> Double {
+    inputRuntimeStatusLock.lock()
+    let refresh = runtimeCadenceReadout(for: key)?.refreshHz ?? 0
+    inputRuntimeStatusLock.unlock()
+    return refresh
+  }
+
+  @objc static func videoCadenceSuggestedFps(for key: String) -> Int {
+    inputRuntimeStatusLock.lock()
+    let suggested = runtimeCadenceReadout(for: key)?.suggestedFps ?? 0
+    inputRuntimeStatusLock.unlock()
+    return suggested
+  }
+
+  private static func runtimeCadenceReadout(for key: String) -> CadenceReadoutSnapshot? {
+    videoCadenceReadoutByHost[key] ?? videoCadenceReadoutByHost[SettingsModel.globalHostId]
   }
 
   @objc static func mouseInputRuntimeStatusSummaryKey(for key: String) -> String {

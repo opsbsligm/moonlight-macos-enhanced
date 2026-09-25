@@ -2329,6 +2329,23 @@ for cadence_shape, cadence_arguments in (("its readings", []),
           "the cadence policy gate failed %s: %s"
           % (cadence_shape, (cadence_run.stdout + cadence_run.stderr).strip().splitlines()[-1:]))
 
+# The readout is a laptop's check as well: the publisher is pure Foundation and the policy header is
+# pure C, so its answers can be played here. What it forecloses cannot be -- a settings page that
+# reports numbers from the wrong counters reads as evidence, and a feed attached to the performance
+# overlay's timer goes silent for the players who never enable the overlay, which is a green build
+# and a page full of stale measurements.
+for readout_shape, readout_arguments in (("its readings", []),
+                                         ("its red proofs", ["--self-test"])):
+    readout_run = subprocess.run([sys.executable,
+                                  os.path.join(scripts_dir, "interpolation-readout-tests.py")]
+                                 + readout_arguments,
+                                 capture_output=True, text=True, cwd=root)
+    check(readout_run.returncode == 0,
+          "the interpolation readout gate passes %s" % readout_shape
+          if readout_run.returncode == 0 else
+          "the interpolation readout gate failed %s: %s"
+          % (readout_shape, (readout_run.stdout + readout_run.stderr).strip().splitlines()[-1:]))
+
 # The ownership experiment gets the same treatment, and its controls make the reason stronger
 # rather than different: a probe that retains its own pair reports today's retain cycle as a
 # reading of the app, and a build that ignores the flag reports an empty record as a clean graph.
