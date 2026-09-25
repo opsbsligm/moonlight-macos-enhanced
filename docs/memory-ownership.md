@@ -1008,7 +1008,12 @@ selector 版注册本来就没有 token 可存，但这个名字摆在两个真 
 3. 经辅助方法撤销也算（串流页用 `removeStreamSettingsObservers` 一次撤五个 token，
    规则读进辅助方法体确认它撤的正是这个 token），否则它会因为写得干净而被判红；
 4. 8 个站点全部记进 `notification_registration_sites`：新增未记录的注册要一并登记，
-   记录里的站点消失了也要说明是哪次提交搬走的——只拒新增的规则，覆盖面能缩到零都没人发现。
+   记录里的站点消失了也要说明是哪次提交搬走的——只拒新增的规则，覆盖面能缩到零都没人发现；
+5. **读不到就拒绝**：`appearance_bodies()` 只认 Objective-C 的方法声明。今天 `Limelight` 里
+   没有任何 Swift 文件声明 `viewDidAppear`/`viewWillAppear`（扫描为空），但哪天有人用 Swift
+   写一个页面并在里面注册通知，规则会读出 0 个站点、0 条记录、0 条抱怨——一个「关于它看不见的
+   文件完全正确」的绿。`registration_blind_spots()` 把这种情形点名拒绝，并给出两条出路：
+   把注册挪到规则读得到的地方，或者在同一次提交里让它认 Swift 声明；唯一不允许的是页面不被判定。
 
 这条规则**每次 push 都 armed**，不像 holder 规则那样等 `weak` 翻转才生效：
 它没有未来的触发条件，页面今天就能被打开第二次。
@@ -1016,18 +1021,23 @@ selector 版注册本来就没有 token 可存，但这个名字摆在两个真 
 ### 测试
 
 * 独立程序量出「3 注册 + 1 通知 = 3 回调」（真记录，不是推断）。
-* `ownership-audit --self-test` **71 → 81** 全绿：新增 10 条，覆盖 selector 前置撤销（绿）、
+* `ownership-audit --self-test` **71 → 84** 全绿：13 条新 case，覆盖 selector 前置撤销（绿）、
   完全没有撤销（红）、撤销写在注册之后（红）、block 用 token 撤销（绿）、
   block 无人保存 token（红）、辅助方法撤销（绿）、辅助方法撤的不是这个 token（红）、
   记录没提到的新注册（红）、记录里还在却已消失的注册（红）、 appearance 方法里没有注册（绿）。
-  其中 fixture 是真的 `.m` 文本——规则是源码阅读器，用字典搭 fixture 只能测到它的数据结构。
-* `--red-team` 新增 3 条真树 mutation：出厂树（绿）、删掉应用页那两行撤销（必须点名**两个**注册）、
-  把注册从页面里删掉而不更新记录（必须拒绝）。全绿。
+  外加 Swift 盲点三条（Swift 页面在 appearance 方法里注册＝红；只在 `viewDidLoad` 里注册＝绿，
+  因为拒的是 appearance 方法而不是语言；appearance 方法里不注册＝绿），fixture 是真的 `.m` 文本——
+  规则是源码阅读器，用字典搭 fixture 只能测到它的数据结构。
+* `--red-team` 新增 4 条真树 mutation：出厂树（绿）、删掉应用页那两行撤销（必须点名**两个**注册）、
+  把注册从页面里删掉而不更新记录（必须拒绝）、往真树里注入一个会在 appearance 方法里注册的 Swift
+  页面（必须拒绝）。全绿。
 * 真跑 `--require-partial` 0 failure，绿线多一条 note：`8 registration(s) are made in an
   appearance method, 8 of them withdrawn before re-registering`。
 
 ### 登记
 
+* Swift 那条拒绝**今天不拒任何东西**——仓库里没有 Swift 页面注册通知，所以它是给未来的门；
+  它的红证来自 fixture 与红队注入的假页面，不是真页面被拒。真页面出现那天它才开始承重。
 * 应用页的这条放大**没有**产品探针能测：`render-probe.py` 只呈现设置页，没有通往 `AppsViewController`
   的导航，也没有真 host 与 app 列表可喂给它，所以红证来自独立程序加静态规则，而不是运行期读数。
   若哪天要把它做成读数，入口是给探针加一条「导航进应用页并重复显示 N 次，再发一条

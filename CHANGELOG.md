@@ -512,9 +512,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   object:`, and a withdrawal performed through a helper by reading the helper's own body, so that the
   stream page is not penalised for withdrawing five tokens through one method. All eight sites on
   this tree are recorded, and a site that appeared without being recorded or vanished without being
-  corrected is refused. `--self-test` grew 71 -> 81 cases green (including the order case and the
-  wrong-token helper), and `--red-team` grew three mutations against the real tree, one of which
-  deletes the two withdrawals and has to name both registrations. What is not measured: the apps
+  corrected is refused. The reader's own limit is named rather than skipped: it parses Objective-C
+  declarations, so a Swift page that declares an appearance method and registers for notifications in
+  the same file is refused -- today no Swift file in `Limelight` declares an appearance method at all,
+  so the refusal costs nothing now and stops being free the moment a Swift page appears, which is the
+  day a rule that silently read zero sites would have reported a green about the files it could see.
+  `--self-test` grew 71 -> 84 cases green (including the order case, the wrong-token helper, and the
+  three Swift cases that separate "the language is unread" from "the page registers in the wrong
+  method"), and `--red-team` grew four mutations against the real tree, one of which deletes the two
+  withdrawals and has to name both registrations. What is not measured: the apps
   page has no probe path -- `render-probe.py` presents only the settings page -- so the arithmetic
   here rests on the standalone measurement and the static rule rather than on a runtime reading.
 - **The growth gate refused correct code, and the reason says more about `leaks` than about the
