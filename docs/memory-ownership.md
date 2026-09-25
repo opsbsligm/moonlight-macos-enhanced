@@ -1471,3 +1471,69 @@ selector 版注册本来就没有 token 可存，但这个名字摆在两个真 
 * 反向的过度收紧已被用例咬住：`nil` 与真赋值同时出现时仍是 True。**清空不是撤销配对**，
   `any()` 要回答的是「这个 body 有没有真给过 host」，把它写成 `all()` 会把正确配对的页面冤枉成
   待改 holder——那是一条误红，也是本轮刻意留下的一条守卫。
+
+
+## 25. token 存在 ivar 里，就被判成「没人保留 block」（2026-09-25）
+
+### 触发点
+
+§24 关掉一个静默放行之后，同族还剩一类问法：**这条规则认几种写法？**
+`observer_registration_sites()` 认 token 只认属性拼写：
+
+* 赋值侧 `TOKEN_ASSIGN` 是 `\w+\.(\w*[Oo]bserver\w*)\s*=`，**必须有个点号**；
+* 撤销侧 `REMOVE_TOKEN` 同样要求 `removeObserver:` 后面是 `xxx.`。
+
+于是把 token 存在 ivar 里的页面（`_logObserver = [[NSNotificationCenter defaultCenter]
+addObserverForName:…]`）读不出 token，直接落进 `kind = "block-untokened"` 那条分支——
+也就是本规则措辞最重的判词「block registered and never kept」。
+
+### 方向：误红，而且红在已保护的页面上
+
+实测旧规则看一个**完全正确**的 ivar 页面：
+
+```objc
+if (_logObserver != nil) { [[NSNotificationCenter defaultCenter] removeObserver:_logObserver]; }
+_logObserver = [[NSNotificationCenter defaultCenter] addObserverForName:@"LogDidAppend" …];
+```
+
+读数是 `kind=block-untokened, withdrawn=False` → 报「每次进入都会再注册一遍」。
+这条不危险（不会放行任何东西），但它把「读不出」和「最坏情况」写成了同一句话，
+而这条规则自己反复讲的原则是：**读不到要叫读不到，不能叫成缺陷**。
+
+### 修法
+
+* 两个 pattern 各加一个 ivar 分支：`(?<![\w.])(_{0,2}\w*[Oo]bserver\w*)\s*=` /
+  `removeObserver:\s*(_{0,2}\w*[Oo]bserver\w*)`。`(?<![\w.])` 把属性访问挡在 ivar 分支外，
+  一个名字不会被记两次；
+* 分支变成两个捕获组后，`findall` 返回的就是带空的一半的配对——这正是 `first_group`
+  在通知名上处理的同一个坑。新增 `token_names(pattern, text)` 统一取名，
+  三处调用点（`helper_removes_token` 与站点判定两处）一起改，**不许拿元组和字符串比**。
+
+### 刻意不折叠 `_logObserver` 与 `self.logObserver`
+
+ObjC 里 property 的 backing ivar 通常就是 `_x`，折叠两个拼写看起来很自然。
+本轮**不折叠**，并且写了一条用例把这个选择钉住：注册写 `_logObserver`、撤销写
+`removeObserver:self.logObserver` 的页面**继续判红**。
+理由是折叠等于允许「对另一个变量的撤销」释放「存在这个变量里的注册」——
+那是**该红不红**的方向，与 §23/§24 修的是同一类错误。代价（合法混用会误红）登记在下方。
+
+### 验证
+
+* `--self-test` **111 → 115**，4 条 ivar 用例：ivar 自撤（绿）、ivar 经 helper 撤（绿）、
+  helper 没被调用（红）、存在 ivar 却经 property 撤销（红，就是上面那条钉子的守卫）。
+* 红证：`git show HEAD:` 装回旧的 `TOKEN_ASSIGN` / `REMOVE_TOKEN` 与**旧的两处调用点**
+  （调用点必须一起装，否则新代码拿元组比字符串，测的就不是旧规则了），
+  复跑 27 条注册用例 → **恰好 2 条失败**，正是两条 ivar 误红；
+  两条「必须继续判红」的守卫在旧实现下同样判红，说明用例没有靠收紧来制造失败。
+* **真树读数不变**：8 registrations、8 withdrawn、0 ownership failure。
+  实测真树这 8 处**全部**是 `self.xxxObserver` 写法，没有一处 ivar 拼写。
+* 红队 38 条全绿；`workflow-audit` 25 规则通过；`local-gates.sh` **47 passed / 0 failed / 12 need CI artefact**。
+
+### 登记
+
+* 本轮对今天的树**没有行为改动**（真树 0 处 ivar 拼写），价值是把「读不出」从最重判词里拆出来。
+* `_x` 与 `self.x` 混用的合法页面会被判红 → 误红方向，真树 0 处。真要支持，
+  得先能读出 property 的 backing ivar 名（`@dynamic`、自定义 getter 都要另算），属新增能力。
+* `_{0,2}` 只认 0～2 个下划线前缀（含 Swift 桥接常见的 `__`）。更怪的名字读不到 → 同上，误红方向。
+* 局部变量形式的 token（`id observer = [center addObserverForName:…]`）仍在**跨方法撤销**这条上限里：
+  它的撤销几乎总是写在 `dealloc` / `viewWillDisappear`，需要跨方法读才认，本轮不碰。

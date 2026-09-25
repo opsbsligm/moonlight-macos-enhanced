@@ -285,9 +285,27 @@ REGISTER_SELECTOR = re.compile(r"addObserver:\s*\w+\s+selector:@selector\((\w+:?
                                r"name:\s*(?:@\"([^\"]+)\"|([A-Za-z_][\w.]*))")
 REGISTER_BLOCK = re.compile(r"(?:addObserverForName:|notificationCenter\]\s*\n?\s*"
                             r"addObserverForName:)\s*(?:@\"([^\"]+)\"|([A-Za-z_][\w.]*))")
-TOKEN_ASSIGN = re.compile(r"\w+\.(\w*[Oo]bserver\w*)\s*=")
+# Two ways of naming the object the centre handed back: `self.logObserver` and `_logObserver` are
+# the same token written by a property and by its ivar. The property spelling is the only one either
+# pattern knew, so a page that keeps its token in an ivar read as `block registered and never kept`,
+# which is the worst verdict this rule issues, issued against the page that is in fact protected. The
+# `(?<![\w.])` keeps a property access out of the ivar branch, so a name is never credited twice, and
+# the two branches stay two names: `_logObserver` and `logObserver` are not folded together, because
+# a name that silently matches a different variable is the loosening this rule refuses elsewhere.
+TOKEN_ASSIGN = re.compile(r"\w+\.(\w*[Oo]bserver\w*)\s*=|(?<![\w.])(_{0,2}\w*[Oo]bserver\w*)\s*=")
 REMOVE_BY_NAME = re.compile(r"removeObserver:\s*\w+\s+name:\s*(?:@\"([^\"]+)\"|([A-Za-z_][\w.]*))")
-REMOVE_TOKEN = re.compile(r"removeObserver:\s*\w+\.(\w*[Oo]bserver\w*)")
+REMOVE_TOKEN = re.compile(r"removeObserver:\s*\w+\.(\w*[Oo]bserver\w*)"
+                          r"|removeObserver:\s*(_{0,2}\w*[Oo]bserver\w*)")
+
+
+def token_names(pattern, text):
+    """The observer names one pattern mentions, whichever spelling of the token it answered with.
+
+    Two spellings means two capture groups, and `findall` hands back a pair with one half empty for
+    every name; comparing that pair against a token never matches, which is the same failure
+    `first_group` exists for on the notification-name patterns.
+    """
+    return [first_group(pair) for pair in pattern.findall(text)]
 
 
 def first_group(match_groups):
@@ -422,7 +440,8 @@ def helper_removes_token(text, earlier, token):
         found = re.search(r"^[+-]\s*\([^)]*\)\s*%s\b" % re.escape(helper), text, re.M)
         if not found:
             continue
-        removed = REMOVE_TOKEN.findall(method_text(text, text.index("\n", found.start()) + 1))
+        removed = token_names(REMOVE_TOKEN,
+                              method_text(text, text.index("\n", found.start()) + 1))
         if token in removed:
             return helper
     return None
@@ -460,12 +479,12 @@ def observer_registration_sites(texts):
             for match in REGISTER_BLOCK.finditer(body):
                 name = first_group(match.groups())
                 earlier = body[:match.start()]
-                withdrawn_tokens = REMOVE_TOKEN.findall(earlier)
+                withdrawn_tokens = token_names(REMOVE_TOKEN, earlier)
                 # The token is looked for inside the statement that performs this registration rather
                 # than on the line it starts on: a long call wraps, and the assignment and the name
                 # then sit on different lines.
                 statement = body[body.rfind(";", 0, match.start()) + 1:match.start()]
-                assigned = TOKEN_ASSIGN.findall(statement)
+                assigned = token_names(TOKEN_ASSIGN, statement)
                 token = assigned[0] if assigned else None
                 if token is None:
                     # A block registered where nobody keeps the token can never be withdrawn at
@@ -1448,6 +1467,14 @@ HELPER_METHOD = (
     "- (void)removeFixtureObservers {\n"
     "    [[NSNotificationCenter defaultCenter] removeObserver:self.logObserver];\n"
     "}\n")
+# The same pages with the token kept in an ivar instead of a property. No page on this tree writes
+# this way -- every registration here is `self.somethingObserver` -- so these four fixtures are about
+# a shape the reader would meet the day someone writes it, and what it was measured to do with it.
+IVAR_WITHDRAWN_BLOCK_BODY = WITHDRAWN_BLOCK_BODY.replace("self.logObserver", "_logObserver")
+IVAR_HELPER_WITHDRAWAL_BODY = HELPER_WITHDRAWAL_BODY.replace("self.logObserver", "_logObserver")
+IVAR_HELPER_METHOD = HELPER_METHOD.replace("self.logObserver", "_logObserver")
+IVAR_WITHOUT_WITHDRAWAL_BODY = IVAR_HELPER_WITHDRAWAL_BODY.replace(
+    "    [self removeFixtureObservers];\n", "")
 NO_WITHDRAWAL_BODY = (
     "    [[NSNotificationCenter defaultCenter] addObserver:self"
     " selector:@selector(handleLatency:) name:@\"HostLatencyUpdated\" object:nil];\n")
@@ -1565,6 +1592,24 @@ def observer_self_test(baseline):
          ["runs again on every visit"]),
         ("a block registration whose call is wrapped, token and withdrawal intact",
          registration_case(WRAPPED_BLOCK_BODY, keys=(BLOCK_KEY,)), []),
+        # The token kept in an ivar. Both of these read `block registered and never kept` against the
+        # reader as it was -- the refusal this rule reserves for a registration that cannot possibly
+        # be released, issued against pages that released it.
+        ("a block registration kept in an ivar and withdrawn by that ivar",
+         registration_case(IVAR_WITHDRAWN_BLOCK_BODY, keys=(BLOCK_KEY,)), []),
+        ("an ivar token withdrawn through a helper that names the ivar",
+         registration_case(IVAR_HELPER_WITHDRAWAL_BODY, IVAR_HELPER_METHOD,
+                           keys=(BLOCK_KEY,)), []),
+        # The two refusals that must survive the new spelling: an ivar token nobody withdraws, and a
+        # withdrawal written under the property while the token is stored under the ivar. The second
+        # is a refusal this reader chooses -- the two spellings name two strings, and folding them
+        # would let a withdrawal of one variable release a registration held in another.
+        ("an ivar registration whose helper is never called",
+         registration_case(IVAR_WITHOUT_WITHDRAWAL_BODY, IVAR_HELPER_METHOD,
+                           keys=(BLOCK_KEY,)), ["runs again on every visit"]),
+        ("a token stored in the ivar and withdrawn through the property",
+         registration_case(IVAR_HELPER_WITHDRAWAL_BODY, HELPER_METHOD,
+                           keys=(BLOCK_KEY,)), ["runs again on every visit"]),
         # The reader's own failure modes, which are defects of the gate rather than of a page, and
         # which were measured on the reader before the boundary was changed: both shapes below made
         # a registration invisible, and an invisible registration plus a record that does not name it
