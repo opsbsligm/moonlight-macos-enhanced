@@ -1261,3 +1261,71 @@ selector 版注册本来就没有 token 可存，但这个名字摆在两个真 
   字符串前缀（如 `u"…"`、原始字符串在本仓库无对应物）；真树 129 文件实测未触发。
 * `stream-menu-addressing-tests.py` 的朴素深度计数**不在本轮射程内**：它只读自己
   控制的一个出厂方法，今天成立；若哪天让它读任意页面，必须复用 `past_noise()`。
+
+---
+
+## 22. 撤销写在注册之后，helper 路径原来照样放行（2026-09-25）
+
+### 缺陷
+
+`helper_removes_token(text, body, token)` 在**整个方法体**里找 `[self remove…Observers]` 调用，
+只要找到了、且该 helper 自己确实移除这个 token，就给「已撤销」记账。
+它不看**调用出现在注册的哪一边**。于是：
+
+```objc
+- (void)viewDidAppear {
+    self.logObserver = [[NSNotificationCenter defaultCenter] addObserverForName:…];
+    [self removeFixtureObservers];   // 注册之后才撤销
+}
+```
+
+实测判成 `withdrawn=True via='removeFixtureObservers'` ——**静默绿**。
+而 selector 路径从 §18 起就有「撤销写在注册之后必须判红」的用例
+（`LATE_WITHDRAWAL_BODY`）。同一个规则，直接撤销看顺序、走 helper 撤销不看顺序，
+这条不对称就是漏洞本身。
+
+### 为什么值得修
+
+串流页的 5 个 block 注册**全部**靠这一个 helper 撤销（实测 5 个站点
+`via=removeStreamSettingsObservers`）。也就是说这个规则今天最重的责任，
+正好压在最弱的那条记账路径上：谁把 `[self removeStreamSettingsObservers]`
+挪到 5 行注册之后（重构里很常见），门禁会绿着放行一次 `NSUserDefaultsDidChange`
+打到副标题 5 遍的放大。出厂代码的顺序是对的（692 行的调用在 693+ 的注册之前），
+所以**产品里没有真实放大 bug**，本轮修的是规则判定不完备。
+
+### 修法
+
+记账范围从 `body` 收窄到 `earlier`（该注册之前的文本），与直接撤销同一条边界。
+一句话：**给撤销记账的依据是它写在注册之前，而不是它写在方法里。**
+
+### 验证
+
+* `--self-test` **93 → 94**：新用例「helper 在注册之后调用」必须判红；
+  `git show HEAD:` 把旧实现 exec 回来复跑，**恰好 1 条失败**，其余 22 条不动。
+* `--red-team` **37 → 38**：注入方式不是造新页面，而是**改造真实串流页**——
+  只把那一行 helper 调用挪到它 5 个注册之后，注册、helper、token 一个字符都没改，
+  站点键也不变（仍在记录里），所以唯一还能抱怨的就是顺序。
+  新规则：`5 notification registration(s) are made in a method that runs again`；
+  HEAD 规则：`problems=0`。这组数字才是「洞曾经敞开」的量化证据。
+* 真树读数**不变**：`8 registration(s) … 8 of them withdrawn`、0 failure，
+  其中 5 个仍由 helper 记账——收紧没有冤枉出厂页面，它是靠顺序挣来的记账。
+* `workflow-audit` 25 规则通过；`local-gates.sh` **47 passed / 0 failed / 12 need CI artefact**。
+
+### 这条改动里我自己写错的两处（记下来，都是流程问题）
+
+1. 红队用例第一版注入的是一个**新页面**，旧规则也会因为「未登记的注册」报红，
+   于是它**根本不隔离本次修复**；而我给它的注释写的是「页面在记录里」，与事实相反。
+   红队用例的合格标准不是「新规则会报红」，而是「**旧规则必须放行**」——
+   这条标准写进 §19 之后第一次被我自己违反，靠把用例改造成真树 mutation 才满足。
+2. 改造函数返回的是**页面文本**，而用例列表要的是**整棵树**，红队跑到那条用例时
+   `AttributeError` 中断。暴露它的是 `^ok` 计数从 38 掉到 33——
+   **门禁自己的输出计数也是信号**，一次「变少的绿」和一次红同样值得追。
+
+### 登记
+
+* helper 内部**按条件**撤销（`if (self.x != nil) { removeObserver:self.x; }`）仍然算撤销——
+  规则只问 helper 体里有没有那句移除，不问它在什么条件下执行。今天出厂 helper 正是这种形状，
+  所以这条宽松是必需的；但它也意味着「helper 里有那句」不等于「运行时真的执行了」。
+  要证执行只能靠运行期读数（§18 已登记入口：给探针加一条重复显示页面 N 次再数回调的路径）。
+* helper 若实现**在别的文件**（分类、父类），`helper_removes_token` 在单文件文本里找不到定义，
+  于是不给记账 → **误红**方向，安全；真树今天 0 处（5 个站点的 helper 都在同一个文件里）。
