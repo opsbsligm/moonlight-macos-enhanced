@@ -22,6 +22,16 @@
 const NSEventModifierFlags modifierFlagsMask = NSEventModifierFlagShift | NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand;
 
 - (void)keyDown:(NSEvent *)event {
+    // AppKit only calls this for a keyDown, but the rest of the tree learned that the hard
+    // way: a reader of -keyCode checks, because a value that means "no key" is exactly what
+    // some drivers put in this field for other events (kVK_ANSI_C among them). One line
+    // buys the same guarantee without waiting on a caller, and scripts/key-code-read-site-audit.py
+    // asks every reader for it.
+    if (event == nil || event.type != NSEventTypeKeyDown) {
+        [super keyDown:event];
+        return;
+    }
+
     if ((event.modifierFlags & modifierFlagsMask) == 0) {
         switch (event.keyCode) {
             case kVK_Return:
@@ -128,6 +138,13 @@ const NSEventModifierFlags modifierFlagsMask = NSEventModifierFlagShift | NSEven
 }
 
 - (void)performIntialSelectionIfNeededForEvent:(NSEvent *)event {
+    // The arrow keys this method reads belong to a keyDown and nothing else: an event of
+    // another type carries an undefined keyCode, and a stray value here would move the
+    // selection in the host list without anyone pressing anything.
+    if (event == nil || event.type != NSEventTypeKeyDown) {
+        return;
+    }
+
     if (self.selectionIndexPaths.count == 0) {
         switch (event.keyCode) {
             case kVK_UpArrow:

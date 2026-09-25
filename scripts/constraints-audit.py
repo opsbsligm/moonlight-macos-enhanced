@@ -2297,6 +2297,23 @@ for hotkey_shape, hotkey_arguments in (("its readings", []),
           "the system hotkey gate failed %s: %s"
           % (hotkey_shape, (hotkey_run.stdout + hotkey_run.stderr).strip().splitlines()[-1:]))
 
+# The keyCode reader audit needs nothing but this checkout, and it is the cheapest red on the
+# list: one function that reads an event's keyCode without asking what event it is, and a player
+# double-clicking the left button starts sending C at the host during a game. That bug is old
+# here, it was fixed once, and the rule that keeps it fixed was written in a comment -- so the
+# rule is run, in both directions, before a runner exists to find out.
+for reader_shape, reader_arguments in (("its readings", []),
+                                      ("its red proofs", ["--self-test"])):
+    reader_run = subprocess.run([sys.executable,
+                                 os.path.join(scripts_dir, "key-code-read-site-audit.py")]
+                                + reader_arguments,
+                                capture_output=True, text=True, cwd=root)
+    check(reader_run.returncode == 0,
+          "the keyCode reader audit passes %s" % reader_shape
+          if reader_run.returncode == 0 else
+          "the keyCode reader audit failed %s: %s"
+          % (reader_shape, (reader_run.stdout + reader_run.stderr).strip().splitlines()[-1:]))
+
 # The ownership experiment gets the same treatment, and its controls make the reason stronger
 # rather than different: a probe that retains its own pair reports today's retain cycle as a
 # reading of the app, and a build that ignores the flag reports an empty record as a clean graph.

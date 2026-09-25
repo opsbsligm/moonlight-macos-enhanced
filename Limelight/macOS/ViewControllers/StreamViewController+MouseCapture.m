@@ -2971,7 +2971,12 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 }
 
 - (BOOL)shouldDeferCommandModifierForShortcutHandlingWithEvent:(NSEvent *)event {
-    if (event == nil || self.app.host.uuid.length == 0) {
+    // Entry gate: this reads keyCode, and that field is undefined for the mouse, tablet and
+    // gesture events this category also handles. Some drivers leave a value there that
+    // collides with kVK_ANSI_C, which is the whole "double-click sends C" story: the reader
+    // sees a key nobody pressed, and a press with no release is all an auto-repeat needs.
+    // scripts/key-code-read-site-audit.py fails the tree if this line disappears.
+    if (event == nil || !MLIsKeyboardKeyEvent(event) || self.app.host.uuid.length == 0) {
         return NO;
     }
 

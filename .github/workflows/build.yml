@@ -379,6 +379,18 @@ jobs:
       # viewDidAppear re-registration runs first.
       run: python3 scripts/system-hotkey-capture-tests.py
 
+    - name: Verify every reader of an event's keyCode asks what event it holds
+      # Some drivers leave a value in the keyCode field of a mouse event that collides with
+      # kVK_ANSI_C, and reading it is what once made a fast double-click send C at the host --
+      # a press with no release, which is all an auto-repeat needs. The fix a while back was a
+      # type gate, and the header states it as a rule for ALL readers, which is a rule that
+      # lives in prose: this reads the tree. A reader passes only when its own body asks about
+      # event.type -- not because a caller does, and not because the function is named keyDown:,
+      # since a method with that name in a non-responder class is handed its event by a caller,
+      # one hop from the driver. Its red proofs take the gate out of -[HIDSupport keyDown:], out
+      # of a helper that relied on its callers, and put one into -mouseDown:.
+      run: python3 scripts/key-code-read-site-audit.py
+
     - name: Verify the stick-driven pointer keeps the travel it promises
       # Two files move the cursor with the right stick, and they disagreed. The HID
       # consumer normalised the stick to a fraction, multiplied by 15.0 and truncated

@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Every function that reads an event's `keyCode` now asks what event it is holding.**
+  A user report reopened an old case here: a fast double-click of the left button sending C at
+  the host, over and over. `-keyCode:` is undefined on mouse, tablet and gesture events, some
+  drivers leave a value in it that collides with `kVK_ANSI_C` (8), and one press with no release
+  is everything an auto-repeat needs -- `HIDSupport.m` still carries the comment saying that
+  reading it is what caused "double-click sends C", fixed on 2026-09-13 by `6292cb9`. The bug was
+  not reproduced and no reproducible path was found on this tree: the three entry points that
+  forward keys to a host already answer for their event type, the mouse path never reaches a key
+  sender, and the only two local `CGEventCreateKeyboardEvent` callers pass explicit constants from
+  gamepad navigation. What the report did expose is that the rule keeping that bug dead was prose
+  -- `StreamViewController_Internal.h` states that ALL keyCode readers gate first, and nothing
+  read the tree for it. So: 25 event-keyCode reads across 13 functions were enumerated, and 4 of
+  them were trusting somebody else. One of the four,
+  `shouldDeferCommandModifierForShortcutHandlingWithEvent:`, is exported in a category header with
+  **no caller anywhere** -- a loaded gun waiting for the day it gets wired to a modifier or mouse
+  path. All four state the check themselves now, which changes nothing about the events that reach
+  them today. `scripts/key-code-read-site-audit.py` classifies per function and forgives nothing:
+  not "my caller gates" (that is a call graph, and call graphs rot) and not "I am called
+  `keyDown:`" (`HIDSupport` has two methods of that name in a non-responder class, one hop from
+  the driver, and the old leniency let a same-named view method cover for a stripped gate).
+  Measured here: 13 readers, 13 gates, 0 findings, and its `--self-test` goes red on all three
+  mistakes it can plant. The script is a step in the workflow and `constraints-audit.py` runs both
+  it and its red proofs. Section 28 of `docs/memory-ownership.md` records what was checked, states
+  plainly that the reported symptom was not reproduced, and lists what is still owed: which build
+  the player is running, whether the C appears on the host or on this Mac, and one diagnostics
+  export.
+
 - **A stream can take the system's own keyboard shortcuts, and gives them back on six paths.**
   `HIDSupport.m` has always had a table from `kVK_F1` to `kVK_F19` onward, and the whole repo
   contained no `CGEventTap` and no handling of `NSEventTypeSystemDefined`: F3 and F4 were handed
