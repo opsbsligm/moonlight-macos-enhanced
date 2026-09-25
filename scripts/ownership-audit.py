@@ -188,6 +188,9 @@ def app_assignment_sites(texts):
     return sites
 
 
+# Where a method's text stops: the next declaration at column zero, or the `@end` that closes the
+# implementation it lives in. Both are things a reader can point at, unlike a closing brace.
+METHOD_OR_IMPLEMENTATION_END = re.compile(r"^(?:[+-]\s*\(|@end\b)", re.M)
 APPEARANCE_METHOD = re.compile(r"^[+-]\s*\(\s*void\s*\)\s*(viewDidAppear|viewWillAppear)\b", re.M)
 REGISTER_SELECTOR = re.compile(r"addObserver:\s*\w+\s+selector:@selector\((\w+:?)\)\s*"
                                r"name:\s*(?:@\"([^\"]+)\"|([A-Za-z_][\w.]*))")
@@ -209,6 +212,21 @@ def first_group(match_groups):
     return next((part for part in match_groups if part), "")
 
 
+def method_text(text, start):
+    """The text of one method, from the line after its declaration to the next declaration.
+
+    The boundary used to be the first line that held nothing but a closing brace, which is not where
+    methods close -- it is only where they usually close, and the two failures of that guess were
+    both measured against the reader itself. A block literal whose brace sits at column zero (a
+    common way to lay out a long block) ended the method early, so a registration written after it
+    was invisible to the gate: a page with a hidden registration and a record that did not name it
+    reported nothing at all, which is a green that means the rule stopped reading. A method at the
+    very end of a file with no final newline was dropped outright, with the same silence.
+    """
+    following = METHOD_OR_IMPLEMENTATION_END.search(text, start)
+    return text[start:] if following is None else text[start:following.start()]
+
+
 def appearance_bodies(text):
     """{method name: (body text, line of the body)} for the appearance methods in one file.
 
@@ -221,11 +239,7 @@ def appearance_bodies(text):
     """
     bodies = {}
     for match in APPEARANCE_METHOD.finditer(text):
-        start = text.index("\n", match.start()) + 1
-        end = text.find("\n}\n", start)
-        if end == -1:
-            continue
-        bodies[match.group(1)] = text[start:end]
+        bodies[match.group(1)] = method_text(text, text.index("\n", match.start()) + 1)
     return bodies
 
 
@@ -241,9 +255,7 @@ def helper_removes_token(text, body, token):
         found = re.search(r"^[+-]\s*\([^)]*\)\s*%s\b" % re.escape(helper), text, re.M)
         if not found:
             continue
-        start = text.index("\n", found.start()) + 1
-        end = text.find("\n}\n", start)
-        removed = REMOVE_TOKEN.findall(text[start:end]) if end != -1 else []
+        removed = REMOVE_TOKEN.findall(method_text(text, text.index("\n", found.start()) + 1))
         if token in removed:
             return helper
     return None
@@ -1170,14 +1182,40 @@ NO_WITHDRAWAL_BODY = (
     "    [[NSNotificationCenter defaultCenter] addObserver:self"
     " selector:@selector(handleLatency:) name:@\"HostLatencyUpdated\" object:nil];\n")
 NO_REGISTRATION_BODY = "    [self doSomethingElse];\n"
+# The block literal below closes its brace at column zero, which is how a long block is often laid
+# out and which the reader once took for the end of the method.
+STRAY_BRACE_PREFIX = (
+    "    [self startWatching:^{\n"
+    "NSLog(@\"tick\");\n"
+    "}\n"
+    "];\n")
+FLUSH_LEFT_BRACE_BODY = STRAY_BRACE_PREFIX + NO_WITHDRAWAL_BODY
+FLUSH_LEFT_WITHDRAWAL_BODY = (
+    STRAY_BRACE_PREFIX +
+    "    [[NSNotificationCenter defaultCenter] removeObserver:self"
+    " name:@\"HostLatencyUpdated\" object:nil];\n"
+    "    [[NSNotificationCenter defaultCenter] addObserver:self"
+    " selector:@selector(handleLatency:) name:@\"HostLatencyUpdated\" object:nil];\n")
+
+
+def registration_fixture_without_a_closing_brace(body):
+    """A page that ends inside the implementation, so the method has no closing brace to find.
+
+    This is what a file with no final newline looks like to the reader when the appearance method is
+    the last text it was given. Whether such a file compiles is not the point: a reader that cannot
+    find the end of a method must still report what it can see, because the alternative -- reading
+    nothing and complaining about nothing -- is indistinguishable from a page that is fixed.
+    """
+    return "- (void)viewDidAppear {\n" + body
 
 SELECTOR_KEY = "%s|viewDidAppear|HostLatencyUpdated" % REGISTRATION_FILE
 BLOCK_KEY = "%s|viewDidAppear|LogDidAppend" % REGISTRATION_FILE
 
 
-def registration_case(body, helpers="", keys=()):
+def registration_case(body, helpers="", keys=(), page=None):
     """(sources, baseline) for one case: the tree, and the record that would make it lawful."""
-    sources = {REGISTRATION_FILE: registration_fixture(body, helpers)}
+    sources = {REGISTRATION_FILE: registration_fixture(body, helpers)
+               if page is None else page}
     baseline = {"notification_registration_sites": {key: "fixture" for key in keys}}
     return sources, baseline
 
@@ -1209,6 +1247,22 @@ def observer_self_test(baseline):
          registration_case(HELPER_WITHDRAWAL_BODY,
                            HELPER_METHOD.replace("self.logObserver", "self.someOtherObserver"),
                            keys=(BLOCK_KEY,)), ["runs again on every visit"]),
+        # The reader's own failure modes, which are defects of the gate rather than of a page, and
+        # which were measured on the reader before the boundary was changed: both shapes below made
+        # a registration invisible, and an invisible registration plus a record that does not name it
+        # is silence.
+        ("a registration after a brace at column zero, unrecorded",
+         registration_case(FLUSH_LEFT_BRACE_BODY, keys=()), ["new notification registration"]),
+        ("the same registration, withdrawn before it is taken",
+         registration_case(FLUSH_LEFT_WITHDRAWAL_BODY, keys=(SELECTOR_KEY,)), []),
+        ("a registration in the last text the reader was given, unrecorded",
+         registration_case(NO_WITHDRAWAL_BODY, keys=(),
+                           page=registration_fixture_without_a_closing_brace(NO_WITHDRAWAL_BODY)),
+         ["new notification registration"]),
+        ("the same registration, withdrawn before it is taken",
+         registration_case(WITHDRAWN_SELECTOR_BODY, keys=(SELECTOR_KEY,),
+                           page=registration_fixture_without_a_closing_brace(
+                               WITHDRAWN_SELECTOR_BODY)), []),
         # The record, in both directions. A rule that only ever refuses new things is a rule whose
         # coverage can shrink to nothing without anybody noticing, which is why a registration that
         # left the appearance method has to say so too.
@@ -2078,6 +2132,25 @@ def red_team(sample_path, baseline, decls):
                           "        center.addObserver(forName: nil, object: nil, queue: nil)"
                           " { _ in }\n    }\n}\n"}),
          ["cannot read"]),
+        # The hole in the reader, attacked through the tree it actually judges: a page whose only
+        # registration sits behind a brace at column zero, withdrawn the way the shipped pages do,
+        # and absent from the record. Reading the method early meant seeing no registration at all,
+        # so the tree looked clean; the rule has to notice a registration it was never told about.
+        ("a registration hidden behind a brace at column zero",
+         dict(sources, **{"Limelight/macOS/TailPage.m":
+                          "@implementation TailViewController\n"
+                          "- (void)viewDidAppear {\n"
+                          "    [self startWatching:^{\n"
+                          "NSLog(@\"tick\");\n"
+                          "}\n"
+                          "];\n"
+                          "    [[NSNotificationCenter defaultCenter] removeObserver:self"
+                          " name:@\"TailLatencyUpdated\" object:nil];\n"
+                          "    [[NSNotificationCenter defaultCenter] addObserver:self"
+                          " selector:@selector(handleTail:) name:@\"TailLatencyUpdated\""
+                          " object:nil];\n"
+                          "}\n@end\n"}),
+         ["new notification registration"]),
         ("a registration deleted from a page without saying so",
          dict(sources, **{apps_page: "\n".join(
              line for line in sources[apps_page].splitlines()
