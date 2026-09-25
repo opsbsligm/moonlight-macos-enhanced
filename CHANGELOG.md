@@ -484,6 +484,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **The registration gate can no longer be silenced by the layout of a brace.** The rule from the
+  entry below reads a page's source to ask which of its `viewDidAppear` registrations are withdrawn
+  before they are taken again, and the reader decided where a method ends by looking for the first
+  line holding nothing but a closing brace. That is not where methods end, it is only where they
+  usually end, and both ways it failed were measured against the reader itself. A block literal whose
+  closing brace sits at column zero -- a common way to lay out a long block, in code that compiles
+  without complaint -- ended the method early, so a registration written after it was invisible to
+  the gate; an invisible registration and a baseline record that does not name one produced no
+  problem at all, which is the same green that `registration_blind_spots()` was written to refuse in
+  Swift files, only standing inside the reader. A method at the end of a file with no final newline
+  was dropped outright, with the same silence. The boundary is now something a reader can point at:
+  the next declaration at column zero, or the `@end` that closes the implementation, whichever comes
+  first, and the end of the text when neither exists -- shared by the appearance-method reader and
+  the helper-method reader, which guessed the same way and had no reason to be kept twice. The two
+  shapes are fixtures now (`--self-test` grew 84 -> 88 green), and reverting the boundary through a
+  monkeypatch fails exactly those four cases, so they test this change rather than resting beside
+  it. The red team gained a real-tree injection for the same hole: a page whose one registration sits
+  behind a column-zero brace, withdrawn the way the shipped pages withdraw theirs and absent from the
+  record. The new reader counts 9 sites where the tree ships 8 and refuses the unrecorded
+  registration; the old reader counted 8 and reported nothing, which is the hole stated as a number.
+  On the tree as it is the readings did not change -- still 8 registrations, all 8 withdrawn, 0
+  failures -- so no record was edited and the honest limit is this: no page in this repository trips
+  that layout today, and what the fix buys is that a page can no longer become invisible by how it is
+  indented.
 - **A page shown twice no longer handles one notification twice.** `-viewDidAppear` on the apps page
   registered three notification observers every time the page came into view, and the notification
   centre coalesces nothing: three registrations of one observer/selector/name pair and one
