@@ -1658,3 +1658,72 @@ ObjC 里 property 的 backing ivar 通常就是 `_x`，折叠两个拼写看起�
   本轮不猜表：需要一次真机按键读数（keyCode / subtype / data1）才能把映射写成事实。
 * 设置页呈现期间是否仍抑制快捷键：当前实现按「窗口 + 前台 + 全屏/无边框」判定，
   **内嵌设置页呈现时同样保持抑制**，尚未按真机手感确认这是否 wanted。
+
+## 28. 「双击左键连续发 C」：一次没复现的回归报告，和它照出的四个无闸读数（2026-09-26）
+
+### 触发点
+
+* 用户报告：**串流时快速双击鼠标左键，会连续发送 C 键**。这是行为缺陷报告，不是新功能。
+* 仓库里能找到同名旧案：`HIDSupport.m` 的 `keyDown:` 上方留着一条注释，明说某些驱动会把垃圾值
+  留在鼠标事件的 `keyCode` 字段里、其中一个正好撞上 `kVK_ANSI_C`(8)，而**读它就是当年
+  "double-click sends C" 的成因**；引入这条注释的提交是
+  `6292cb9 fix(input): remove the synthetic keydown detector that drops real keys`（2026-09-13），
+  结论写得很硬：类型闸是完整修法，任何「按时间/按字符猜」的启发式都会吃掉真实按键。
+* 因此本轮的定位问题不是「为什么会发 C」，而是**「闸还在不在，以及是否所有读数点都有闸」**。
+
+### 排查（全部是已验证事实，非推测）
+
+* 三个会向被控端发键盘事件的入口 —— `-[HIDSupport keyDown:]` / `keyUp:` / `flagsChanged:` ——
+  在 HEAD 上**都带着 `event.type` 硬闸**；发往远端的唯一出口 `LiSendKeyboardEventCtx` 只有
+  `HIDSupport*` 调用（全仓 0 个其他调用点）。
+* 鼠标路径干净：`dispatchMouseButton:` → `-[HIDSupport mouseDown:withButton:]` /
+  `sendMouseButton:...` 只调 `LiSendMouseButtonEventCtx`；本机 monitor 的鼠标 handler 只写日志；
+  `CoreHIDMouseDriver.swift` 不含任何键盘发送；Swift 侧快捷键录制器用
+  `switch event.type`，`default` 原样放行。
+* 本机 `CGEventCreateKeyboardEvent` 只有两处（`CollectionView.m`、`NavigatableAlertView.m`），
+  且 keyCode 是显式常量（方向键/Return/Delete），只由手柄导航触发；`OnScreenControls` 不在工程里
+  （`project.pbxproj` 命中 0），不构成串流内的虚拟按键。
+* **照出的真问题**：把「读 `event.keyCode` 的函数」全部列出来后（25 处读数、13 个函数），
+  有 4 个函数**没有自证闸**，其中
+  `shouldDeferCommandModifierForShortcutHandlingWithEvent:` 只在
+  `StreamViewController_Internal.h` 里被声明、**全仓没有任何调用方** —— 一个已导出、只判 nil、
+  直接读 `keyCode` 的方法，等于上膛的枪：哪天有人把它接到 flagsChanged 或鼠标路径上，
+  旧案立刻回来。另三个是 `updateKeyboardPhysicalModifierStateFromEvent:`、
+  `translateKeyCodeWithEvent:`、`performIntialSelectionIfNeededForEvent:`，它们靠调用方有闸。
+
+### 修法
+
+* 四个读数函数各自补上类型闸（`keyDown`/`keyUp`/`flagsChanged` 三选一或二，按各自语义）：
+  今天能走到它们的事件类型不变，所以**行为零改动**；差别是它们不再依赖调用方记得检查。
+  `translateKeyCodeWithEvent:` 用 0 拒绝 —— 那正是它的表「查不到」时已经给的答案，
+  两个调用方都按「两边都忽略」处理，按下与抬起仍然成对。
+* 新增 `scripts/key-code-read-site-audit.py`：**零宽容**审计。判定按函数、不合并同名函数：
+  函数体自己出现 `MLIsKeyboardKeyEvent(` 或 `type [!=]= NSEventType…` 才算过。
+  两条曾被用来「开后门」的宽松都删掉了 —— 「调用方有闸所以我也算过」（那是会腐烂的调用图）
+  和「方法名叫 `keyDown:` 就按 AppKit 契约放行」（`HIDSupport` 的两个 `keyDown:`/`keyUp:`
+  正是**非 responder 类里的同名方法**，事件是调用方给的，离驱动最近，最可能拿到未定义字段）。
+* 匹配只认**事件形状**的接收者（`*event`/`theEvent`/`event`），不认 `shortcut.keyCode`：
+  StreamShortcut 里的 keyCode 是普通整数，没有「未定义状态」问题，全匹配会对着每一处快捷键
+  比较喊狼来了。
+* 已接进 CI 步骤，并由 `constraints-audit.py` 用 `subprocess` 真跑读数与 `--self-test` 两半。
+
+### 验证
+
+* `python3 scripts/key-code-read-site-audit.py`：**13 个读数函数 / 13 个自证闸 / 0 findings**；
+  读数地板 20（今天 25）。
+* `--self-test` **三类红证全部变红**：拆掉 `-[HIDSupport keyDown:]` 的闸（同名函数在别的文件里，
+  以前能互相掩护，现在不能）；拆掉 `-[StreamViewController event:matchesShortcut:]` 的闸
+  （证明「靠调用方」不成立）；往 `-mouseDown:` 里塞一次 `keyCode` 读数。
+* `xcodebuild -scheme "Moonlight for macOS"`(Debug/arm64) **BUILD SUCCEEDED**，
+  `Debug/…/CollectionView.o` 时间戳证实本轮改动确实重编；一方文件 0 warning。
+
+### 登记
+
+* **没有复现，也没有在 HEAD 上找到能复现的路径**。这一节记的是「旧案的同类读数全部补闸 +
+  规则变成门禁」，不是「已修好用户报的那个现象」，两件事不能混。
+* 还需要用户给三样东西才能继续定位：跑的是**哪个构建**（2026-09-13 之前的构建确实带旧案）、
+  C 出现在**被控端还是本机**、以及一次复现后的诊断日志导出（`[diag]`/`[input]` 足以指认发送点）。
+* `shouldDeferCommandModifierForShortcutHandlingWithEvent:` 为什么是「已导出但零调用方」的
+  死方法，本轮没查（只补闸不删）；删与不删留给一次专门的死代码轮。
+* 审计只覆盖第一方 `.m`。Swift 侧的 `keyCode` 读数（`SettingsSharedControls.swift` 两处）今天
+  靠 `switch event.type` 的 `default` 分支挡住，**没有纳入本门禁的强制范围**，这是已知缺口。

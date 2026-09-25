@@ -959,6 +959,16 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
 }
 
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event {
+    // Gate at the door, not at the caller: -keyCode is undefined on the mouse, tablet and
+    // gesture events a stream view also receives, and some drivers leave a value there that
+    // collides with a real kVK_ANSI_* code. The one caller today hands this a flagsChanged,
+    // and the audit (scripts/key-code-read-site-audit.py) refuses a reader that asks a
+    // helper to have remembered to check.
+    if (event == nil || (event.type != NSEventTypeKeyDown && event.type != NSEventTypeKeyUp &&
+                         event.type != NSEventTypeFlagsChanged)) {
+        return;
+    }
+
     HIDKeyboardPhysicalModifierMask mask = HIDPhysicalModifierMaskForKeyCode(event.keyCode);
     NSEventModifierFlags modifierFlag = HIDModifierFlagForKeyCode(event.keyCode);
     if (mask == 0 || modifierFlag == 0) {
@@ -1461,6 +1471,14 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
 }
 
 - (short)translateKeyCodeWithEvent:(NSEvent *)event {
+    // Zero is what this table already answers when it has no entry, and both callers treat
+    // it as "ignore this edge on both halves", so a non-keyboard event is refused with the
+    // same value rather than translated from a field that means nothing. See
+    // scripts/key-code-read-site-audit.py for why every reader carries this itself.
+    if (event == nil || (event.type != NSEventTypeKeyDown && event.type != NSEventTypeKeyUp)) {
+        return 0;
+    }
+
     unsigned short keyCode = event.keyCode;
 
     if (HIDIsModifierKeyCode(keyCode)) {
