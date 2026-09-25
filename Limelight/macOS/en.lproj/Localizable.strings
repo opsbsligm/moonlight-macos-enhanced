@@ -1106,6 +1106,11 @@
 "Ignore Aspect Ratio" = "Ignore Aspect Ratio";
 "Show Local Cursor" = "Show Local Cursor";
 "Edge Sensor Summon" = "Edge Sensor Summon";
+"Capture System Keyboard Shortcuts" = "Capture System Keyboard Shortcuts";
+"Capture System Keyboard Shortcuts detail" = "While the stream owns the screen, F1-F12 and the system's own shortcuts -- Mission Control, Launchpad, Spotlight and input switching -- go to the host instead of this Mac. Follow Fullscreen captures only in fullscreen or borderless; Always Capture also captures a windowed stream; Never Capture leaves every one of them here. The keys come back the moment this app is not frontmost, the stream window closes, or the stream ends.";
+"Follow Fullscreen" = "Follow Fullscreen";
+"Always Capture" = "Always Capture";
+"Never Capture" = "Never Capture";
 "Edge Sensor Summon detail" = "A 24 pt band runs along the edge the stream dock sits on. Holding the pointer within 2 pt of that edge for 150 ms, or pushing inward by 30 pt in total (at most 6 pt per event), opens the dock and folds it away again after 0.82 s. A fast sweep past the edge does not trigger it. With this off, only the pointer-escape route to the dock remains.";
 "Mouse and Cursor" = "Mouse & Cursor";
 "Locked Mouse" = "Locked Mouse";

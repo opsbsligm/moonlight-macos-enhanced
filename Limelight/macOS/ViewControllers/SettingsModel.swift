@@ -462,6 +462,22 @@ class SettingsModel: ObservableObject {
     }
   }
 
+  // 0 follows fullscreen, 1 also captures a windowed stream, 2 leaves every system
+  // shortcut on this Mac -- the last of which is the regression anchor for capture.
+  @Published var systemKeyboardShortcutCapture: Int {
+    didSet {
+      guard !isLoading else { return }
+      let normalized = SettingsModel.systemKeyboardShortcutCaptureModes.contains(systemKeyboardShortcutCapture)
+        ? systemKeyboardShortcutCapture
+        : SettingsModel.defaultSystemKeyboardShortcutCapture
+      if normalized != systemKeyboardShortcutCapture {
+        systemKeyboardShortcutCapture = normalized
+        return
+      }
+      saveSettings()
+    }
+  }
+
   @Published var enableMicrophone: Bool {
     didSet {
       guard !isLoading else { return }
@@ -1286,6 +1302,7 @@ class SettingsModel: ObservableObject {
     ignoreAspectRatio = Self.defaultIgnoreAspectRatio
     showLocalCursor = Self.defaultShowLocalCursor
     edgeSensorSummon = Self.defaultEdgeSensorSummon
+    systemKeyboardShortcutCapture = Self.defaultSystemKeyboardShortcutCapture
     enableMicrophone = Self.defaultEnableMicrophone
     streamResolutionScale = Self.defaultStreamResolutionScale
     streamResolutionScaleRatio = Self.defaultStreamResolutionScaleRatio

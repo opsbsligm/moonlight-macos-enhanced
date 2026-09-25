@@ -128,6 +128,7 @@ extension SettingsModel {
     ignoreAspectRatio = Self.defaultIgnoreAspectRatio
     showLocalCursor = Self.defaultShowLocalCursor
     edgeSensorSummon = Self.defaultEdgeSensorSummon
+    systemKeyboardShortcutCapture = Self.defaultSystemKeyboardShortcutCapture
     enableMicrophone = Self.defaultEnableMicrophone
     streamResolutionScale = Self.defaultStreamResolutionScale
     streamResolutionScaleRatio = Self.defaultStreamResolutionScaleRatio
@@ -261,6 +262,8 @@ extension SettingsModel {
       ignoreAspectRatio = settings.ignoreAspectRatio ?? Self.defaultIgnoreAspectRatio
       showLocalCursor = settings.showLocalCursor ?? Self.defaultShowLocalCursor
       edgeSensorSummon = settings.edgeSensorSummon ?? Self.defaultEdgeSensorSummon
+      systemKeyboardShortcutCapture =
+        settings.systemKeyboardShortcutCapture ?? Self.defaultSystemKeyboardShortcutCapture
       enableMicrophone = settings.enableMicrophone ?? Self.defaultEnableMicrophone
       streamResolutionScale = settings.streamResolutionScale ?? Self.defaultStreamResolutionScale
       streamResolutionScaleRatio =
@@ -685,6 +688,7 @@ extension SettingsModel {
       ignoreAspectRatio: ignoreAspectRatio,
       showLocalCursor: showLocalCursor,
       edgeSensorSummon: edgeSensorSummon,
+      systemKeyboardShortcutCapture: systemKeyboardShortcutCapture,
       enableMicrophone: enableMicrophone,
       streamResolutionScale: streamResolutionScale,
       streamResolutionScaleRatio: streamResolutionScaleRatio,

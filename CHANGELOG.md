@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A stream can take the system's own keyboard shortcuts, and gives them back on six paths.**
+  `HIDSupport.m` has always had a table from `kVK_F1` to `kVK_F19` onward, and the whole repo
+  contained no `CGEventTap` and no handling of `NSEventTypeSystemDefined`: F3 and F4 were handed
+  to Mission Control and Launchpad by the WindowServer before this app ever saw them, so the table
+  had nothing to forward for the three keys a game most wants. The fix is the one moonlight-qt
+  uses -- `CGSSetGlobalHotKeyOperatingMode(cid, 1)` while the stream owns the screen -- reached
+  through `dlopen`/`dlsym` because the symbol is in no linkable header: measured here, an unknown
+  mode answers 0 while a bad connection id answers 1002 (`kCGErrorInvalidConnection`), which is
+  what says the call really takes two words and that only modes 0 and 1 are safe to pass. The
+  state is a claim about the outside world, so only a `CGError` of 0 moves the ledger, and the
+  ledger is the only thing that can hand the keys back. Six existing moments do the taking and
+  returning -- entering and leaving fullscreen, the app becoming and resigning active, the window
+  about to close, and session teardown -- and add no new observer, because a suppression left
+  standing at teardown has nothing left in the process to reverse it. Returning the keys is kept
+  out of `removeStreamSettingsObservers`, which `viewDidAppear` calls before it re-installs them:
+  hung there, the restore would run on every settings refresh. `systemKeyboardShortcutCapture`
+  ships as a three-way choice -- follow fullscreen (default), always, never -- with never the
+  regression anchor: it asks the WindowServer for nothing and the tree behaves as it did.
+  `scripts/system-hotkey-capture-tests.py` drives the shipped state function over 13 checks, reads
+  the six moments with 0 gaps and the preference chain with 0 gaps, and its `--self-test` goes red
+  four ways: a ledger that believes a refused call (7 verdicts), a teardown that stops returning
+  the keys, a "never" that is ignored, and a restore moved onto the re-registration path. The
+  script is a step in the workflow, and `constraints-audit.py` runs both it and its red proofs.
+  Not measured: the thing the player actually asked for. Whether Mission Control really stops on a
+  180 Hz session, and whether Spotlight and input switching really come back afterwards, needs a
+  real stream, and the private call is a Developer ID and notarisation question section 27 of
+  `docs/memory-ownership.md` files as open. Keys that arrive as
+  `NSEventTypeSystemDefined` because the keyboard is set to media-key behaviour are also not
+  normalised yet: their event fields are undocumented, so the mapping waits for a reading taken
+  from real hardware rather than a guess at a keycode.
+
 - **The stream dock answers a player who holds the pointer against the edge it lives on.**
   Opening it used to require the pointer to have already escaped capture:
   `uncaptureFreeMouseForExitEdge:` is the only way in, it is reached through

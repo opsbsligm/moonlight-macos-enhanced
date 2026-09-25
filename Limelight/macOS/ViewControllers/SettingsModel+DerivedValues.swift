@@ -1103,6 +1103,18 @@ extension SettingsModel {
   static let defaultIgnoreAspectRatio = false
   static let defaultShowLocalCursor = false
   static let defaultEdgeSensorSummon = true
+
+  // Which moments the app takes the system's global hotkeys for the stream. The raw values
+  // are the numbers the stream's own enum uses, so the bridge is a pass-through.
+  static let systemKeyboardShortcutCaptureFollowFullscreen = 0
+  static let systemKeyboardShortcutCaptureAlways = 1
+  static let systemKeyboardShortcutCaptureNever = 2
+  static let systemKeyboardShortcutCaptureModes = [
+    systemKeyboardShortcutCaptureFollowFullscreen,
+    systemKeyboardShortcutCaptureAlways,
+    systemKeyboardShortcutCaptureNever,
+  ]
+  static let defaultSystemKeyboardShortcutCapture = systemKeyboardShortcutCaptureFollowFullscreen
   static let defaultEnableMicrophone = false
   static let defaultStreamResolutionScale = false
   static let defaultStreamResolutionScaleRatio = 100
