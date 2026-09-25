@@ -484,6 +484,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **A holder is credited with a host only when the source really hands it one.** `pairedWithHost` is
+  the reading that decides which holders are exempt from the change that turns `app.host` weak, and it
+  had never been tested: `pairing_self_test()` feeds the judgement synthetic sites whose verdict the
+  fixture writes by hand, so nothing in the gate ever asked whether `app_assignment_sites()` reads a
+  page correctly. Three ways it read wrongly, all in the direction that excuses a holder rather than
+  one that refuses it. A comparison was an assignment, because `\s*=` in `HOST_ASSIGNMENT` matches the
+  first `=` of `==`, so `if (retriever.host == nil)` and `NSCAssert(retriever.host == nil, @"wired")`
+  both recorded a holder as already holding its host. A comment was source, because the judgement ran
+  over raw text and a dead implementation left in a `/* */` block inside the method was enough to earn
+  the exemption. And the span was guessed -- nearest column-zero declaration before the statement, next
+  column-zero brace after it, and when no such brace existed, the rest of the file -- so a `.host =`
+  anywhere further down could pair a holder that was never paired. The pattern now captures the
+  receiver and demands an assignment with `(?!=)`; the judgement and the site lookup run over
+  `code_only()`, which blanks comments and literals to spaces without moving a single offset; and
+  method spans are found by walking forward with the brace matcher built in section 21 instead of
+  guessing backwards, which also retires the run-to-end-of-file case.
+
+  The reader has 11 fixtures of its own now (`--self-test` grew 94 -> 105), and they read through
+  `app_assignment_sites` rather than asserting a verdict: genuine pairing, app only, a comparison, an
+  assertion, a different receiver, a comparison guarding a real assignment, pairings written in a block
+  comment and a line comment, a commented-out assignment that must produce no site at all, a pairing
+  located in another method, and a pairing in a method that takes a parameter. Executing the previous
+  implementation out of `git show HEAD:` fails exactly four of them, and all four are false pairings.
+  That last fixture is the regression this commit itself introduced and caught: the first method-header
+  pattern admitted only a parameterless selector, and this tree writes
+  `- (void) retrieveAssetsFromHost:(TemporaryHost*)host {`, so the one holder in the tree that genuinely
+  is paired -- `AppAssetManager.m` assigns `retriever.app` and `retriever.host` on adjacent lines in the
+  same method -- read as unpaired and the gate's own note dropped from one paired holder to none. The
+  header now admits anything up to the opening brace.
+
+  On the tree as it stands the readings are unchanged: `3 site(s) hand an app to a holder and 1 of them
+  also give it a host`, 0 failures, and the red team's quietly-un-paired case still bites at 37 of 38
+  cases green. Nothing shipped is different today; what changed is that a comparison or a comment can no
+  longer excuse a holder from a fix that has to reach it, and the credit is now measured rather than
+  declared. Limits registered in section 23: `(?!=)` guards `==` only, `code_only()` still does not know
+  preprocessor line continuation, and `APP_ASSIGNMENT` records bare receivers -- measured against every
+  `.app =` occurrence in the sources, no assignment in this tree is currently missed, and a chained one
+  would surface as an unexpected new holder rather than being silently accepted.
 - **A withdrawal performed through a helper is only credited when it runs before the registration.**
   The rule from section 18 refuses a notification registered in `viewDidAppear` or `viewWillAppear`
   unless the previous registration is withdrawn first, and it has always judged that ordering for a

@@ -132,21 +132,83 @@ def signature(decls):
 # The other half of section 5: who is allowed to hold an app without holding its host
 # ---------------------------------------------------------------------------
 APP_ASSIGNMENT = re.compile(r"^\s*(?P<holder>[A-Za-z_]\w*)\.app\s*=\s*(?P<value>[^;]+);", re.M)
-HOST_ASSIGNMENT = re.compile(r"\b[A-Za-z_]\w*\.host\s*=")
+# The receiver is captured so the caller can ask whether this body handed *that* holder a host, and
+# the `(?!=)` is the whole point: `\s*=` on its own matches the first `=` of `app.host == nil`, so a
+# page that merely compared a holder's host was recorded as having paired it -- which exempts it from
+# the change that has to happen before `app.host` turns weak, and a holder exempted in that way is the
+# nil dereference this rule exists to prevent.
+HOST_ASSIGNMENT = re.compile(r"\b([A-Za-z_][\w.]*?)\.host\s*=(?!=)")
+
+
+def code_only(text):
+    """A copy of `text` with comments and literals blanked to spaces, the same length and lines.
+
+    The pairing judgement asked whether a body contained `<holder>.host =` and got its answer out of
+    the raw text, so a holder whose host was only ever *mentioned* inside a commented-out
+    implementation was recorded as paired. Section 21 taught the reader to step over comments when
+    finding a boundary; this is the same lesson applied to what the reader then says about the text it
+    found, and it matters more, because a wrong `pairedWithHost` decides which holder is exempt from
+    the fix that turns `app.host` weak. Blanking rather than deleting keeps every offset pointing at
+    the same character, so a match located in the copy still indexes the original.
+    """
+    out = list(text)
+    index = 0
+    while index < len(text):
+        past = past_noise(text, index)
+        if past != index:
+            for position in range(index, past):
+                if out[position] != "\n":
+                    out[position] = " "
+            index = past
+            continue
+        index += 1
+    return "".join(out)
+
+
+def method_spans(text):
+    """Every [(body_start, body_end)] in one file, found by walking the text forward.
+
+    The span used to be guessed backwards -- the nearest column-zero `- (` before the offset, then
+    the next column-zero `}` -- and section 19 and section 21 already cost this file two rounds over
+    exactly those two guesses. Both directions were wrong here too, and the direction that matters
+    is the dangerous one: when no column-zero `}` follows, the span ran to the end of the file, so
+    any `.host =` further down paired a holder that was never paired, which is the reading that
+    decides who is exempt from the fix. Walking forward and reusing the brace matcher fixes the end,
+    and skipping comments and literals before looking for a declaration fixes the start, so a
+    commented-out `- (void)deadCode {` inside a method is no longer mistaken for a method.
+    """
+    spans = []
+    index = 0
+    while index < len(text):
+        skipped = past_noise(text, index)
+        if skipped != index:
+            index = skipped
+            continue
+        at_line_start = text.rfind("\n", 0, index) + 1 == index
+        if at_line_start and text[index] in "+-":
+            line_end = text.find("\n", index)
+            line = text[index:len(text) if line_end == -1 else line_end]
+            if METHOD_HEAD.match(line):
+                body_start = (line_end + 1) if line_end != -1 else len(text)
+                body = method_text(text, body_start)
+                spans.append((body_start, body_start + len(body)))
+                index = body_start
+                continue
+        index += 1
+    return spans
 
 
 def method_span(text, offset):
-    """The (start, end) of the Objective-C method containing `offset`, or None.
+    """The (start, end) of the body of the method containing `offset`, or None.
 
-    The crude version, deliberately: the question asked of the body is "does this same body also
-    hand that holder a host", and a smarter body-finder would answer the same question. Methods
-    here start at column zero with `- (` or `+ (` and end at a `}` at column zero.
+    None means the offset sits outside every method body -- a C function, an `@implementation` line,
+    a top-level statement -- and the caller reads that as "this body does not pair anything", which
+    errs toward asking for a pairing rather than excusing one.
     """
-    start = max(text.rfind("\n- (", 0, offset), text.rfind("\n+ (", 0, offset))
-    if start < 0:
-        return None
-    end = text.find("\n}", start)
-    return (start, len(text)) if end < 0 else (start, end)
+    for body_start, body_end in method_spans(text):
+        if body_start <= offset < body_end:
+            return (body_start, body_end)
+    return None
 
 
 def first_party_sources(root=ROOT):
@@ -175,19 +237,31 @@ def app_assignment_sites(texts):
     """
     sites = []
     for path, text in sorted(texts.items()):
-        for match in APP_ASSIGNMENT.finditer(text):
+        code = code_only(text)
+        for match in APP_ASSIGNMENT.finditer(code):
             holder = match.group("holder")
-            span = method_span(text, match.start())
-            body = text[span[0]:span[1]] if span else ""
-            paired = any(HOST_ASSIGNMENT.search(line) and
-                         line.split(".host")[0].strip().endswith(holder)
-                         for line in body.splitlines() if ".host =" in line)
+            span = method_span(code, match.start())
+            body = code[span[0]:span[1]] if span else ""
+            # The body is read as one text: a pairing written across two lines is still a pairing,
+            # and section 20 already showed what a line-based reader of this kind does to a gate.
+            paired = any(receiver.endswith(holder)
+                         for receiver in HOST_ASSIGNMENT.findall(body))
             sites.append({"file": os.path.basename(path), "holder": holder,
                           "key": "%s|%s.app" % (os.path.basename(path), holder),
                           "statement": match.group(0).strip(), "pairedWithHost": paired})
     return sites
 
 
+# A method definition, anchored at column zero and required to open its brace on the same line: a
+# declaration ending in `;` is a prototype in an interface, and treating one as a definition would
+# make the body run to the next brace that ever appears.
+# Everything between the return type and the opening brace is allowed, because a selector with a
+# parameter is written `- (void) retrieveAssetsFromHost:(TemporaryHost*)host {` and a pattern that
+# stops at the selector name finds no such method: the app-asset manager's pairing then looked like
+# a holder nobody had given a host, which is a refusal against code that was already correct. The
+# brace has to be on the declaration line, which is what keeps a prototype in an interface from
+# being read as a definition whose body runs to the next brace in the file.
+METHOD_HEAD = re.compile(r"[+-]\s*\([^)]*\)\s*[^{;{}]*\{$")
 APPEARANCE_METHOD = re.compile(r"^[+-]\s*\(\s*void\s*\)\s*(viewDidAppear|viewWillAppear)\b", re.M)
 REGISTER_SELECTOR = re.compile(r"addObserver:\s*\w+\s+selector:@selector\((\w+:?)\)\s*"
                                r"name:\s*(?:@\"([^\"]+)\"|([A-Za-z_][\w.]*))")
@@ -757,6 +831,74 @@ def site(key, paired=True):
     holder = key.split("|")[1].split(".")[0]
     return {"file": key.split("|")[0], "holder": holder, "key": key,
             "statement": "%s.app = app;" % holder, "pairedWithHost": paired}
+
+
+def reader_verdict(page, holder="retriever"):
+    """What the pairing reader says about one page: True, False, or a word when it is unsure."""
+    sites = app_assignment_sites({"Reader.m": page})
+    if len(sites) != 1:
+        return "%d sites" % len(sites)
+    return sites[0]["pairedWithHost"]
+
+
+def assignment_reader_self_test(baseline):
+    """(failures, count): whether the reader of the pairing record can read a page.
+
+    `pairing_self_test` hands `judge_pairing` synthetic sites whose `pairedWithHost` is written by
+    the fixture, so across every round so far it never once asked whether `app_assignment_sites`
+    reads source correctly. A credit that is asserted rather than read is untested no matter how many
+    verdicts are then scored on it, and the untested reader had two ways to be wrong: it recorded
+    `if (retriever.host == nil)` as a holder given its host, because `\\s*=` matched the first `=` of
+    `==`; and it recognised no method whose declaration carries a parameter, so the one holder in
+    this tree that really is paired read as unpaired. Both are readings that decide who is exempt
+    when `app.host` turns weak.
+    """
+    head = "@implementation Reader\n"
+    tail = "@end\n"
+    def page(*body):
+        return head + "- (void)wireRetriever {\n" + "".join(body) + "}\n" + tail
+    cases = [
+        ("a holder given its host in the same method",
+         page("    retriever.app = app;\n", "    retriever.host = host;\n"), True),
+        ("a holder given nothing but the app",
+         page("    retriever.app = app;\n"), False),
+        ("a comparison that mentions the holder's host",
+         page("    retriever.app = app;\n",
+              "    if (retriever.host == nil) { [self complain]; }\n"), False),
+        ("an assertion comparing the holder's host",
+         page("    retriever.app = app;\n",
+              '    NSCAssert(retriever.host == nil, @"wired");\n'), False),
+        ("a different receiver given a host",
+         page("    retriever.app = app;\n", "    other.host = host;\n"), False),
+        ("a pairing the page also guards with a comparison",
+         page("    retriever.app = app;\n",
+              "    if (retriever.host != nil) { retriever.host = host; }\n"), True),
+        ("a pairing written on a commented-out implementation",
+         page("    retriever.app = app;\n",
+              "/*\n- (void)dead {\n    retriever.host = host;\n}\n@end\n*/\n"), False),
+        ("a pairing inside a line comment",
+         page("    retriever.app = app;\n", "    // retriever.host = host;\n"), False),
+        ("an app assignment that is itself commented out",
+         page("// retriever.app = app;\n"), "0 sites"),
+        ("a pairing made in a different method of the same file",
+         head + "- (void)wireRetriever {\n    retriever.app = app;\n}\n"
+                "- (void)unrelated {\n    retriever.host = host;\n}\n" + tail, False),
+        # The shape that made the first version of this reader wrong in the safe direction: a
+        # declaration with a parameter is the commonest kind in this tree.
+        ("a pairing in a method that takes a parameter",
+         head + "- (void) retrieveAssetsFromHost:(TemporaryHost*)host {\n"
+                "    retriever.app = app;\n    retriever.host = host;\n}\n" + tail, True),
+    ]
+    failures = total = 0
+    for label, source, want in cases:
+        total += 1
+        got = reader_verdict(source)
+        if got != want:
+            print("FAIL reader fixture: %s read as %r, expected %r. The pairing record is written"
+                  " from this reading, so a wrong answer here exempts a holder from the fix that"
+                  " needs to reach it" % (label, got, want))
+            failures += 1
+    return failures, total
 
 
 def pairing_self_test(baseline):
@@ -2500,6 +2642,9 @@ def main():
         registration_failures, registration_total = observer_self_test(baseline)
         failures += registration_failures
         total += registration_total
+        reader_failures, reader_total = assignment_reader_self_test(baseline)
+        failures += reader_failures
+        total += reader_total
         print("%d/%d ownership fixtures passed" % (total - failures, total))
         return 1 if failures else 0
     if "--red-team" in arguments:
