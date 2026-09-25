@@ -956,3 +956,82 @@ holder 若死不掉，下面所有 `yes` 都属于 harness，整轮作废（§10
   「翻转反向指针的那一次提交必须同时把 host 交给每一个持有者」。本轮改变的是那句话的证据等级。
 * 仍然没有「真会话里 streamVC 读 `app.host`」的直接观测——这需要一次真实串流，
   在能跑真机会话之前，它由源码侧 holder 规则代管，这一边界在探针注释、baseline 与本文三处都写着。
+
+## 18. 一次通知回调几遍：`viewDidAppear` 里的注册是乘数（2026-09-25）
+
+### 现象
+
+§13 把「一次进设置页读几遍库」量成常数之后，本轮在**应用页**（`AppsViewController`）发现另一条
+与页面访问次数成正比的读库路径：它的 `-viewDidAppear` 里注册了三个通知观察者——
+一个 block（`NSWindowDidBecomeKey`）与两个 selector（`NSUserDefaultsDidChange`、
+`HostLatencyUpdated`）。那个 block 有前置撤销（注释写着实测「三个显示/隐藏周期里
+`-viewDidAppear` 跑了三次」），**两个 selector 注册没有**——因为 token 撤不掉
+中心按 selector 记的注册，上一次修复只能修掉它修得起的那一半。
+
+### 实测：中心不做合并
+
+两行程序量出来的（`/tmp/notify/main.m`，与仓库无关的独立记录）：
+
+```
+registrations=3 notifications-posted=1 callbacks=3
+after removeObserver: callbacks=3
+```
+
+同一 observer/selector/name 注册三次 + 发一条通知 = **三次回调**。第二行同样重要：
+`removeObserver:` 一次就清掉该 observer 的**全部**注册——所以修法必须按 name 精确撤销，
+若在 `-viewDidAppear` 开头直接 `removeObserver:self`，会连带清掉 `-viewDidLoad` 里
+那两个只该注册一次的（`LanguageChanged`、`HostAutoAddressSwitched`）。
+
+### 代价
+
+`HostLatencyUpdated → handleHostLatencyUpdate:` 会调 `-syncHostStateFromDatabase`，
+而它读的是 `-[DataManager getHosts]`——正是 §13 逐台 host 计字节的那次整库构造。
+第三次访问之后，一次时延更新会跑三遍整库读取、三遍窗口副标题、三遍 app 发现尝试。
+`NSUserDefaultsDidChange → updateWindowSubtitle` 同样按访问次数放大。
+
+### 修法
+
+在注册之前按 name 撤掉本对象已有的注册（与同一方法里 block 那半完全同构）。
+`AppsViewController.m:61` 那个 `hostLatencyObserver` 属性一并删除：它从未被赋值或读取，
+selector 版注册本来就没有 token 可存，但这个名字摆在两个真 token 旁边，
+等于告诉下一个读者「时延观察者是 token 管理的、重复注册无害」——正是让这个 bug 活下来的信念。
+
+### 接线：这条形状不允许第三次出现
+
+`scripts/ownership-audit.py` 新增 `observer_registration_sites()` /
+`judge_registrations()`，与 §5 的 holder 规则一样**从源码读事实**（探针看不见它：
+对象图在注册两次与一次时毫无区别）：
+
+1. 扫 `-viewDidAppear`/`-viewWillAppear` 里的每个注册（selector 与 block 两类）；
+2. 只承认**注册之前**的撤销：先注册后撤销只是把乘数短暂归一，随即又装回去；
+   block 认它自己的 token，selector 认同 name 的 `removeObserver:name:object:`；
+3. 经辅助方法撤销也算（串流页用 `removeStreamSettingsObservers` 一次撤五个 token，
+   规则读进辅助方法体确认它撤的正是这个 token），否则它会因为写得干净而被判红；
+4. 8 个站点全部记进 `notification_registration_sites`：新增未记录的注册要一并登记，
+   记录里的站点消失了也要说明是哪次提交搬走的——只拒新增的规则，覆盖面能缩到零都没人发现。
+
+这条规则**每次 push 都 armed**，不像 holder 规则那样等 `weak` 翻转才生效：
+它没有未来的触发条件，页面今天就能被打开第二次。
+
+### 测试
+
+* 独立程序量出「3 注册 + 1 通知 = 3 回调」（真记录，不是推断）。
+* `ownership-audit --self-test` **71 → 81** 全绿：新增 10 条，覆盖 selector 前置撤销（绿）、
+  完全没有撤销（红）、撤销写在注册之后（红）、block 用 token 撤销（绿）、
+  block 无人保存 token（红）、辅助方法撤销（绿）、辅助方法撤的不是这个 token（红）、
+  记录没提到的新注册（红）、记录里还在却已消失的注册（红）、 appearance 方法里没有注册（绿）。
+  其中 fixture 是真的 `.m` 文本——规则是源码阅读器，用字典搭 fixture 只能测到它的数据结构。
+* `--red-team` 新增 3 条真树 mutation：出厂树（绿）、删掉应用页那两行撤销（必须点名**两个**注册）、
+  把注册从页面里删掉而不更新记录（必须拒绝）。全绿。
+* 真跑 `--require-partial` 0 failure，绿线多一条 note：`8 registration(s) are made in an
+  appearance method, 8 of them withdrawn before re-registering`。
+
+### 登记
+
+* 应用页的这条放大**没有**产品探针能测：`render-probe.py` 只呈现设置页，没有通往 `AppsViewController`
+  的导航，也没有真 host 与 app 列表可喂给它，所以红证来自独立程序加静态规则，而不是运行期读数。
+  若哪天要把它做成读数，入口是给探针加一条「导航进应用页并重复显示 N 次，再发一条
+  `HostLatencyUpdated`，数 `getHosts` 计数器」的路径。
+* 串流页 5 个 block 注册的保护来自早先一轮的实测修复（窗口两次 hide/show 使
+  `-viewDidAppear` 送达两次，当时测到一次设置变更打到副标题两遍、一条日志行进浮层两遍），
+  本轮只是把它的撤销方式认下来，没有改动它。

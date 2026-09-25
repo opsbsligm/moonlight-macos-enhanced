@@ -484,6 +484,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **A page shown twice no longer handles one notification twice.** `-viewDidAppear` on the apps page
+  registered three notification observers every time the page came into view, and the notification
+  centre coalesces nothing: three registrations of one observer/selector/name pair and one
+  notification produced three callbacks, measured in a two-line program rather than assumed. One of
+  the three -- the window-key block -- already withdrew its previous token before registering, on an
+  earlier round that measured this method arriving three times across three show/hide cycles of one
+  controller; the two selector registrations beside it kept multiplying, because a token cannot
+  release a registration the centre keyed by selector. The cost was not cosmetic.
+  `handleHostLatencyUpdate:` calls `-syncHostStateFromDatabase`, which reads the whole library
+  through `-[DataManager getHosts]` -- the per-row `TemporaryHost`/`TemporaryApp` construction that
+  sections 9 and 13 of `docs/memory-ownership.md` count bytes for -- so a third visit turned every
+  latency update into three library reads, three window relabels and three re-offers of app
+  discovery, and every `NSUserDefaultsDidChange` into three relabels. The registrations are now
+  withdrawn by name before being taken again, which is the narrowest repair available: `
+  removeObserver:` withdraws every registration an object ever made -- measured in the same program,
+  which is why it is not used here -- and would have taken the two `-viewDidLoad` registrations that
+  are registered once and meant to live with the controller. The `hostLatencyObserver` property was
+  deleted: it was never assigned or read, since a selector registration has no token to store, and
+  sitting beside the two real token properties it told the next reader that the latency observer was
+  token-managed and therefore safe to register per visit -- the belief that kept this defect alive.
+  `ownership-audit.py` gained a second rule read off the tree, because no probe can see this one
+  (the object graph is identical whether a selector is registered once or three times): every
+  registration made in `-viewDidAppear`/`-viewWillAppear` has to withdraw its predecessor
+  *before* registering -- a withdrawal that runs afterwards restores the multiplier as soon as it has
+  resolved it -- recognising a block by its token, a selector by the matching `removeObserver:name:
+  object:`, and a withdrawal performed through a helper by reading the helper's own body, so that the
+  stream page is not penalised for withdrawing five tokens through one method. All eight sites on
+  this tree are recorded, and a site that appeared without being recorded or vanished without being
+  corrected is refused. `--self-test` grew 71 -> 81 cases green (including the order case and the
+  wrong-token helper), and `--red-team` grew three mutations against the real tree, one of which
+  deletes the two withdrawals and has to name both registrations. What is not measured: the apps
+  page has no probe path -- `render-probe.py` presents only the settings page -- so the arithmetic
+  here rests on the standalone measurement and the static rule rather than on a runtime reading.
 - **The growth gate refused correct code, and the reason says more about `leaks` than about the
   app.** `ad2d35a` wrote the rule that the extra leaked `TemporaryHost` graphs may not exceed the
   library reads the extra visits performed multiplied by the hosts in the library, and the first
