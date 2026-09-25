@@ -117,12 +117,36 @@ def usable_sdks(default):
 EXTRA_DERIVED = []
 
 
+def generated_stamp(directory, files):
+    """How new the newest generated header in a directory is (0 when none can be read)."""
+    stamp = 0
+    for name in files:
+        if not name.endswith(".h"):
+            continue
+        try:
+            stamp = max(stamp, os.path.getmtime(os.path.join(directory, name)))
+        except OSError:
+            continue
+    return stamp
+
+
 def derived_sources():
     """Directories that hold xcodebuild's generated headers, in any derived-data root.
 
     The layout has one directory per derived-data root, per configuration, per target,
     so it is walked rather than spelled out: `build`, `build-arm64-check`, and
     `$TMPDIR/analyze` are the same thing to this gate.
+
+    One answer per target, and it is the newest one. A developer machine accumulates
+    derived roots -- `build`, `build-analyze`, `build-probe`, `build-header-check`, each
+    left behind by a different job -- and every one of them generates the *same* header
+    name, `Moonlight-Swift.h`, at the same relative path. Clang takes the first search
+    directory that has the name, which for a sorted list is whichever root sorts first:
+    on one such machine that was a root five days older than the build beside it, so a
+    class method added to the Swift side today was reported as not existing, against a
+    product that had compiled it minutes ago. A stale root is not a defect in the tree,
+    and a gate that is red because of the order of directory names teaches people to skip
+    the gate, so the freshest copy of one target's generated headers is the only answer.
     """
     found = []
     for extra in EXTRA_DERIVED:
@@ -131,7 +155,7 @@ def derived_sources():
         for current, directories, files in os.walk(extra):
             directories.sort()
             if os.path.basename(current) == "DerivedSources" and files:
-                found.append(current)
+                found.append((current, generated_stamp(current, files)))
     for name in sorted(os.listdir(ROOT)):
         candidate = os.path.join(ROOT, name)
         if name.startswith(".") or not os.path.isdir(candidate):
@@ -142,8 +166,17 @@ def derived_sources():
         for current, directories, files in os.walk(intermediates):
             directories.sort()
             if os.path.basename(current) == "DerivedSources" and files:
-                found.append(current)
-    return sorted(found)
+                found.append((current, generated_stamp(current, files)))
+
+    marker = os.sep + "Intermediates.noindex" + os.sep
+    newest = {}
+    for path, stamp in found:
+        # The configuration and target, not the root: two roots holding one target's
+        # generated headers are two copies of one answer, not two answers.
+        target = path.split(marker, 1)[1] if marker in path else os.path.basename(path)
+        if target not in newest or stamp > newest[target][0]:
+            newest[target] = (stamp, path)
+    return sorted(pair[1] for pair in newest.values())
 
 
 # Some vendored libraries are imported by package name (`#include "enet/unix.h"`), so
@@ -272,6 +305,40 @@ def controls(clang, flags):
         if code != 0:
             findings.append("the corrected probe still fails, so the flags cannot compile "
                             "the product's own header: %s" % (output.splitlines()[:3],))
+    # The generated headers come from whatever derived roots exist, and the roots a machine
+    # accumulates all generate the same header names. This control makes two of them disagree
+    # about one target and asks which one the audit listened to: an older copy answering would
+    # report today's Swift API as missing, which is a red build nobody in the tree caused.
+    remembered_roots = list(EXTRA_DERIVED)
+    try:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = os.path.join("Moonlight.build", "Debug", "Audit.build", "DerivedSources")
+            older = os.path.join(temporary, "older")
+            newer = os.path.join(temporary, "newer")
+            generated_in = {}
+            for root, when in ((older, 1_600_000_000), (newer, 1_700_000_000)):
+                generated = os.path.join(root, "Build", "Intermediates.noindex", target)
+                generated_in[root] = generated
+                os.makedirs(generated)
+                header = os.path.join(generated, "Moonlight-Swift.h")
+                with open(header, "w", encoding="utf-8") as handle:
+                    handle.write("// generated\n")
+                os.utime(header, (when, when))
+            del EXTRA_DERIVED[:]
+            EXTRA_DERIVED.extend([older, newer])
+            chosen = derived_sources()
+            if generated_in[newer] not in chosen:
+                findings.append("the audit type-checks against an older copy of the generated "
+                                "Swift interface, so a name added today reads as missing")
+            if generated_in[older] in chosen:
+                findings.append("both copies of one target's generated headers are on the search "
+                                "path, so which one answers depends on the order of names")
+    except OSError as unusable:
+        findings.append("the generated-header freshness control could not run: %s" % unusable)
+    finally:
+        del EXTRA_DERIVED[:]
+        EXTRA_DERIVED.extend(remembered_roots)
+
     return findings
 
 
