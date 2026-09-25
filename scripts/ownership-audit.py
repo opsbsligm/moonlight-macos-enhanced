@@ -137,7 +137,25 @@ APP_ASSIGNMENT = re.compile(r"^\s*(?P<holder>[A-Za-z_]\w*)\.app\s*=\s*(?P<value>
 # page that merely compared a holder's host was recorded as having paired it -- which exempts it from
 # the change that has to happen before `app.host` turns weak, and a holder exempted in that way is the
 # nil dereference this rule exists to prevent.
-HOST_ASSIGNMENT = re.compile(r"\b([A-Za-z_][\w.]*?)\.host\s*=(?!=)")
+HOST_ASSIGNMENT = re.compile(r"\b([A-Za-z_][\w.]*?)\.host\s*=(?!=)\s*([^;]*)")
+# `= nil` assigns nothing. The rule asks whether a body *gave* the holder a host, and a page whose
+# only statement of that shape clears the pointer rather than filling it answered yes under the
+# pattern above: the assignment is real, so `(?!=)` was satisfied, and the holder was exempted from
+# the very change that has to reach it. The right-hand side is captured because nil is the one value
+# that is not a host -- `NULL` and `0` are the same instruction spelled another way.
+NO_HOST_ASSIGNED = ("nil", "NULL", "0")
+
+
+def hands_a_host(receiver, value, holder):
+    """Whether one `x.host = y` pairs the holder this site is about.
+
+    The receiver answers the question section 23 asked (somebody else's host is not this holder's);
+    the value answers the one it did not: a pointer set to nothing leaves the holder holding the same
+    nil it will read the day `app.host` turns weak. An empty value stays credited rather than
+    refused, because the blank `code_only` leaves behind a literal is indistinguishable from a shape
+    this reader has not thought of, and a reader that refuses what it cannot spell invents red.
+    """
+    return receiver.endswith(holder) and value.strip() not in NO_HOST_ASSIGNED
 
 
 def code_only(text):
@@ -244,8 +262,8 @@ def app_assignment_sites(texts):
             body = code[span[0]:span[1]] if span else ""
             # The body is read as one text: a pairing written across two lines is still a pairing,
             # and section 20 already showed what a line-based reader of this kind does to a gate.
-            paired = any(receiver.endswith(holder)
-                         for receiver in HOST_ASSIGNMENT.findall(body))
+            paired = any(hands_a_host(match.group(1), match.group(2), holder)
+                         for match in HOST_ASSIGNMENT.finditer(body))
             sites.append({"file": os.path.basename(path), "holder": holder,
                           "key": "%s|%s.app" % (os.path.basename(path), holder),
                           "statement": match.group(0).strip(), "pairedWithHost": paired})
@@ -847,11 +865,12 @@ def assignment_reader_self_test(baseline):
     `pairing_self_test` hands `judge_pairing` synthetic sites whose `pairedWithHost` is written by
     the fixture, so across every round so far it never once asked whether `app_assignment_sites`
     reads source correctly. A credit that is asserted rather than read is untested no matter how many
-    verdicts are then scored on it, and the untested reader had two ways to be wrong: it recorded
+    verdicts are then scored on it, and the untested reader had three ways to be wrong: it recorded
     `if (retriever.host == nil)` as a holder given its host, because `\\s*=` matched the first `=` of
-    `==`; and it recognised no method whose declaration carries a parameter, so the one holder in
-    this tree that really is paired read as unpaired. Both are readings that decide who is exempt
-    when `app.host` turns weak.
+    `==`; it recognised no method whose declaration carries a parameter, so the one holder in this
+    tree that really is paired read as unpaired; and it credited `retriever.host = nil`, which is an
+    assignment that hands the holder nothing at all -- the same nil it will read the day the
+    back-pointer turns weak. All three decide who is exempt when `app.host` turns weak.
     """
     head = "@implementation Reader\n"
     tail = "@end\n"
@@ -888,6 +907,25 @@ def assignment_reader_self_test(baseline):
         ("a pairing in a method that takes a parameter",
          head + "- (void) retrieveAssetsFromHost:(TemporaryHost*)host {\n"
                 "    retriever.app = app;\n    retriever.host = host;\n}\n" + tail, True),
+        # The assignment that is not one. The pattern was written against a comparison, and a
+        # comparison and a clearing look the same to anything that only asks whether an `=` followed
+        # the property, so the page below was the one exempted holder this rule cannot protect.
+        ("a holder whose host is only ever cleared",
+         page("    retriever.app = app;\n", "    retriever.host = nil;\n"), False),
+        ("a holder cleared in another spelling",
+         page("    retriever.app = app;\n", "    retriever.host = NULL;\n"), False),
+        ("a holder cleared and then given a host",
+         page("    retriever.app = app;\n",
+              "    retriever.host = nil;\n    retriever.host = host;\n"), True),
+        ("a holder that is handed the host it came from",
+         page("    retriever.app = app;\n", "    retriever.host = app.host;\n"), True),
+        ("a clearing written for somebody else",
+         page("    retriever.app = app;\n", "    other.host = nil;\n"), False),
+        # The guard against the opposite overreach: nil is a reason to withhold credit, not a reason
+        # to take it away from a body that also assigns a host in the same breath.
+        ("a real pairing beside a commented-out clearing",
+         page("    retriever.app = app;\n",
+              "    retriever.host = host;\n    // retriever.host = nil;\n"), True),
     ]
     failures = total = 0
     for label, source, want in cases:
