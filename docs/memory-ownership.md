@@ -1417,3 +1417,57 @@ selector 版注册本来就没有 token 可存，但这个名字摆在两个真 
   `self.store.app = …`、`items[0].app = …` 一类读不到。
   实测把源码里所有 `.app =` 出现处与规则登记的站点比对，**真树 0 处漏网**；
   将来若出现，方向是漏登记者 → 报「新 holder」→ 误红，安全。
+
+
+## 24. `= nil` 也是赋值：配对阅读器补上的第三个洞（2026-09-25）
+
+### 触发点
+
+§23 把 `pairedWithHost` 从 fixture 断言换成真阅读器，末尾登记了一条「`(?!=)` 只挡 `==`」。
+本轮顺着它问了一句：**挡掉比较之后，`HOST_ASSIGNMENT` 还承认什么？**
+答案是它承认 `retriever.host = nil;`——一行**真赋值**，`(?!=)` 自然放行。
+
+### 为什么这是危险方向，不是瑕疵
+
+这条 verdict 只有一个用途：决定 **`app.host` 转 `weak` 时哪些 holder 免改**（§23）。
+只会把 host 清空的页面，在反指变弱那天读到的正好是 nil——它是最该被点名去补的 holder，
+却因为「body 里有一行 `.host =`」拿到了免改资格。方向和 §23 那三处同源：**该红不红**。
+
+实测 HEAD 的实现：
+
+| 页面形状 | 旧读数 | 应当 |
+|:---|:---|:---|
+| `retriever.host = nil;` | `paired=True` | False |
+| `retriever.host = NULL;` | `paired=True` | False |
+
+### 修法
+
+* `HOST_ASSIGNMENT` 多捕获一个**右值**：`\b([A-Za-z_][\w.]*?)\.host\s*=(?!=)\s*([^;]*)`；
+* 新增 `NO_HOST_ASSIGNED = ("nil", "NULL", "0")` 与 `hands_a_host(receiver, value, holder)`，
+  配对条件从「主语以该 holder 结尾」变成「主语以该 holder 结尾**且值不是空指针的三种写法**」；
+* **读不出的右值保留记账**：既不因此免改，也不额外报红。理由见下方登记。
+
+### 验证
+
+* `--self-test` **105 → 111**，新增 6 条全部跑真阅读器 `app_assignment_sites`：
+  只清空（False）、`NULL` 写法（False）、先清后给（True）、把来路的 host 交回去（True）、
+  清空的是别人的 host（False）、真配对旁边留了一行被注释掉的清空（True）。
+* 红证（标准仍是「**旧实现必须放行**」）：`git show HEAD:` 把旧 `HOST_ASSIGNMENT` 与
+  旧 `app_assignment_sites` 装回当前模块复跑，**恰好 2 条失败**，都是「只清空却被记成已配对」。
+* **真树读数不变**：`3 site(s) hand an app to a holder and 1 of them also give it a host`、
+  0 failure。真树里唯一的 `.host = nil` 在 `AppDelegateForAppKit.m:1170`，那是探针**手工切断反指**
+  的形状，不在任何 `.app =` 站点所属的方法里，因此不参与这条判定——§19 起那条「真树读数不变」的闸
+  第五次派上用场：它这一轮守的是「别把探针的切断读成业务的清空」。
+* 红队 38 条全绿（含「唯一配对 holder 被悄悄取消配对」）；`workflow-audit` 25 规则通过；
+  `local-gates.sh` **47 passed / 0 failed / 12 need CI artefact**。
+
+### 登记
+
+* 本轮对今天的树**仍然没有行为改动**：真树 0 处「只清空不给值」的 holder，
+  `streamVC.app` 与 `item.app` 两处所在方法里连 `.host =` 都没有。价值是把「免改资格」
+  最后一个静默放行口关掉。这条要写明白，否则会被读成又修了一个线上 bug。
+* `NO_HOST_ASSIGNED` 只认字面量 `nil` / `NULL` / `0`。`retriever.host = someEmptyVariable`、
+  `(id)nil`、`nil ?: host` 一类读不出来，方向是**继续记账**（免改），与上一条同族；真树 0 处。
+* 反向的过度收紧已被用例咬住：`nil` 与真赋值同时出现时仍是 True。**清空不是撤销配对**，
+  `any()` 要回答的是「这个 body 有没有真给过 host」，把它写成 `all()` 会把正确配对的页面冤枉成
+  待改 holder——那是一条误红，也是本轮刻意留下的一条守卫。
