@@ -311,15 +311,22 @@ def appearance_bodies(text):
     return bodies
 
 
-def helper_removes_token(text, body, token):
-    """Whether a `[self removeSomethingObservers]` call in the body withdraws this token.
+def helper_removes_token(text, earlier, token):
+    """Whether a `[self removeSomethingObservers]` call made before this registration withdraws it.
 
     The stream page withdraws its five block registrations through one helper rather than five
     copies of the same five lines, and it should not have to be less safe for that. A call counts
     when the helper's own body removes this token, so the credit is given for the withdrawal and not
     for the name of the method that performs it.
+
+    What counts is the text that precedes the registration, not the whole method. Scanning the
+    method was measured to credit a page that registered first and cleaned up afterwards, which is
+    the one ordering this rule exists to refuse: the selector half has had a fixture for it since it
+    was written, and a block withdrawn through a helper was let through by the same shape. The
+    shipped page keeps its credit under the tighter rule because `[self removeStreamSettingsObservers]`
+    sits above the five registrations rather than below them.
     """
-    for helper in set(re.findall(r"\[self\s+(\w*[Rr]emove\w*[Oo]bserver\w*)\]", body)):
+    for helper in set(re.findall(r"\[self\s+(\w*[Rr]emove\w*[Oo]bserver\w*)\]", earlier)):
         found = re.search(r"^[+-]\s*\([^)]*\)\s*%s\b" % re.escape(helper), text, re.M)
         if not found:
             continue
@@ -381,8 +388,8 @@ def observer_registration_sites(texts):
                               "method": method, "name": name, "kind": "block",
                               "statement": "%s; name %s" % (token, name),
                               "withdrawn": token in withdrawn_tokens or
-                                           bool(helper_removes_token(text, body, token)),
-                              "via": helper_removes_token(text, body, token) or ""})
+                                           bool(helper_removes_token(text, earlier, token)),
+                              "via": helper_removes_token(text, earlier, token) or ""})
     return sites
 
 
@@ -1249,6 +1256,14 @@ HELPER_WITHDRAWAL_BODY = (
     "    self.logObserver = [[NSNotificationCenter defaultCenter]"
     " addObserverForName:@\"LogDidAppend\" object:nil queue:nil"
     " usingBlock:^(NSNotification *note) { }];\n")
+# The same helper, called after the registration it is supposed to protect: the multiplier is
+# resolved for a moment at the end of the visit and then restored, which is a defect rather than a
+# fix, and the selector half of this rule already refuses that shape.
+LATE_HELPER_WITHDRAWAL_BODY = (
+    "    self.logObserver = [[NSNotificationCenter defaultCenter]"
+    " addObserverForName:@\"LogDidAppend\" object:nil queue:nil"
+    " usingBlock:^(NSNotification *note) { }];\n"
+    "    [self removeFixtureObservers];\n")
 HELPER_METHOD = (
     "- (void)removeFixtureObservers {\n"
     "    [[NSNotificationCenter defaultCenter] removeObserver:self.logObserver];\n"
@@ -1346,6 +1361,9 @@ def observer_self_test(baseline):
          ["runs again on every visit"]),
         ("a withdrawal performed through a helper",
          registration_case(HELPER_WITHDRAWAL_BODY, HELPER_METHOD, keys=(BLOCK_KEY,)), []),
+        ("a withdrawal performed through a helper called after the registration",
+         registration_case(LATE_HELPER_WITHDRAWAL_BODY, HELPER_METHOD, keys=(BLOCK_KEY,)),
+         ["runs again on every visit"]),
         ("a withdrawal helper that does not name this token",
          registration_case(HELPER_WITHDRAWAL_BODY,
                            HELPER_METHOD.replace("self.logObserver", "self.someOtherObserver"),
@@ -2228,11 +2246,35 @@ def red_team(sample_path, baseline, decls):
         ("the holders that ship, under a weak header", app_assignment_sites(sources),
          fixed_declarations(), ["hand an app"]),
     ]
+    stream_page = next((path for path in sources
+                        if path.endswith("StreamViewController.m")), None)
     apps_page = next((path for path in sources if path.endswith("AppsViewController.m")), None)
     if apps_page is None:
         print("FAIL red team: no apps page in the tree, so the registrations that were measured"
               " multiplying here cannot be broken to prove the rule bites.")
         return failures + 1
+    if stream_page is None:
+        print("FAIL red team: no stream page in the tree, so the helper withdrawal that was measured"
+              " protecting five registrations there cannot be moved to prove the ordering is judged.")
+        return failures + 1
+
+    def stream_page_late_withdrawal(tree, path):
+        """A tree whose stream page calls `[self removeStreamSettingsObservers]` after registering.
+
+        Only the position of the call moves. The registrations, the helper, and the tokens they
+        assign stay as they ship, so a rule that reads the withdrawal as protecting them regardless
+        of where the call sits has nothing left to complain about -- which is the whole point.
+        """
+        text = tree[path]
+        call = "    [self removeStreamSettingsObservers];\n"
+        first = text.find(call)
+        assert first != -1, "the stream page no longer withdraws through that helper"
+        text = text[:first] + text[first + len(call):]
+        last = text.rfind("addObserverForName:")
+        assert last != -1, "the stream page registers nothing"
+        end_of_line = text.index("\n", last) + 1
+        return dict(tree, **{path: text[:end_of_line] + call + text[end_of_line:]})
+
     registration_cases = [
         ("the registrations that ship, withdrawn before they are taken", sources, []),
         # The defect this rule was written for, broken out of the tree that produced it: two
@@ -2299,6 +2341,14 @@ def red_team(sample_path, baseline, decls):
                           "        name:@\"CommentedLatencyUpdated\" object:nil];\n"
                           "}\n@end\n"}),
          ["new notification registration"]),
+        # The stream page's own helper withdrawal moved below the five registrations it protects.
+        # The page stays in the record and no line of the withdrawal itself changes, so the only
+        # thing left to notice is the ordering -- and a rule that credited a helper wherever it sat
+        # in the method noticed nothing: this injection passed with no problem at all before the
+        # credit was restricted to the text preceding each registration.
+        ("the stream page's helper withdrawal moved below its registrations",
+         stream_page_late_withdrawal(sources, stream_page),
+         ["made in a method that runs again"]),
         ("a registration deleted from a page without saying so",
          dict(sources, **{apps_page: "\n".join(
              line for line in sources[apps_page].splitlines()

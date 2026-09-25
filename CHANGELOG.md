@@ -484,6 +484,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **A withdrawal performed through a helper is only credited when it runs before the registration.**
+  The rule from section 18 refuses a notification registered in `viewDidAppear` or `viewWillAppear`
+  unless the previous registration is withdrawn first, and it has always judged that ordering for a
+  withdrawal written out in the method -- a fixture has refused `register, then remove` there since
+  the rule was written. The credit granted to a helper did not check the ordering: 
+`helper_removes_token()` searched the whole method body for a `[self removeSomethingObservers]`
+  call and, if that helper's own body removed the token, recorded the registration as protected.
+  A page that registered first and cleaned up afterwards measured as `withdrawn=True`, which is a
+  green about the one thing the rule exists to refuse -- the multiplier is resolved briefly at the
+  end of the visit and then restored. The asymmetry mattered because the stream page withdraws all
+  five of its block registrations through one helper, so the heaviest responsibility the rule carries
+  sat on its weakest credit path: moving `[self removeStreamSettingsObservers]` below the five
+  registrations, an ordinary refactor, would have shipped a latency or settings change reaching the
+  subtitle five times. The shipped page's ordering is correct -- the call sits above the registrations
+  -- so no live product defect is being fixed here; what was incomplete was the judgement.
+  The credit now considers only the text preceding the registration, the same boundary the direct
+  withdrawal already used. `--self-test` grew 93 -> 94 with the late-helper case, and executing the
+  previous implementation out of `git show HEAD:` fails exactly that case. The red-team case is a
+  real-tree mutation rather than an invented page: one line of the shipped stream page moves below
+  its five registrations, nothing else changes, the site keys stay recorded, and the only complaint
+  left is the ordering. The fixed rule reports five registrations running per visit; the previous
+  rule reported no problem at all, which is the hole as a number. The tree as it ships still reads
+  `8 registration(s) are made in an appearance method, 8 of them withdrawn before re-registering`
+  with 0 failures, five of them credited through the helper -- the tightening does not pardon or
+  condemn the shipped page, it earns its credit by ordering. Limits registered in section 22: a
+  helper that removes the token under a condition is still credited, since the rule asks whether the
+  statement is present rather than whether it executes -- proving execution needs the runtime reading
+  section 18 already registers -- and a helper implemented in a category or superclass is not found
+  in the single-file text, which errs toward refusing a protected page and does not occur in this tree.
 - **A method is now found by counting braces, so commented-out code cannot end it early.** Two
   earlier entries removed two ways the reader of `viewDidAppear` could lose a registration; both
   left it guessing where a method stops, and a sweep of the other source-reading gates first showed
