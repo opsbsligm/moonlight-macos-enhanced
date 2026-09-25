@@ -1344,3 +1344,76 @@ selector 版注册本来就没有 token 可存，但这个名字摆在两个真 
   实测两个相关页面（应用页、串流页）都**没有**实现 `viewWillDisappear` / `viewDidDisappear`，
   清理只在 `dealloc`，所以今天没有这种页面。要支持它需要跨方法读（把 disappear 方法的撤销
   也算进该访问周期的账），属于**新增规则能力**，按基线只登记入口，不在打磨轮里写。
+
+---
+
+## 23. 配对记录是谁写的：一个从没被测过的阅读器（2026-09-25）
+
+§18 的元规则（**看不见就必须抱怨；断言来的记账等于没测**）这轮拿去查 §5 的 holder 规则，
+命中三处，外加一处结构性缺口。结构性缺口最要命：
+
+`pairing_self_test()` 喂给 `judge_pairing()` 的是 `site()` 造的合成站点，
+`pairedWithHost` **由 fixture 直接写死**。也就是说 §5 规则打分的依据，
+从来没有人问过 `app_assignment_sites()` 从源码里读得对不对。
+评分可以一直全绿，而阅读器和「配对」这件事毫无关系。
+
+### 三处缺陷（方向都是危险的）
+
+`pairedWithHost` 决定的是：**将来 `app.host` 转 `weak` 时，哪些 holder 免改。**
+读错的后果不是误红，而是被免改的 holder 手里没有 host → 串流中途 nil 解引用。
+
+1. **比较被当成赋值。** `HOST_ASSIGNMENT` 是 `\b[A-Za-z_]\w*\.host\s*=`，
+   而 `\s*=` 会吃掉 `==` 的第一个等号。于是
+   `if (retriever.host == nil) { … }`、`NSCAssert(retriever.host == nil, @"wired")`
+   都记成「这个 holder 已经拿到自己的 host」。实测两个形状都 `paired=True`。
+2. **注释里的配对也算数。** 判定直接在原始文本上做，
+   方法体里留一段 `/* … retriever.host = host; … */` 死代码就足以换来免改资格。
+3. **`method_span()` 的两个反向猜测。** 它取「最近的列 0 `- (`」作起点、
+   「下一个列 0 `}`」作终点，且**找不到终点时一路读到文件末尾**——
+   那时文件里任何靠后的 `.host =` 都会给前面的 holder 配上对。
+   §19/§21 为这两条猜测付过两轮代价，而 §5 这里猜错的方向更坏。
+
+### 修法
+
+* `HOST_ASSIGNMENT` 捕获**主语**并加 `(?!=)`：`\b([A-Za-z_][\w.]*?)\.host\s*=(?!=)`；
+  判定改为「body 里存在主语以该 holder 结尾的赋值」。
+* 新增 `code_only(text)`：把注释与字符串**抹成空格**（等长、行数不变，偏移仍可索引原文），
+  站点定位与配对判定都在它上面做。这是 §21 那条「括号只在像括号时才算」用到判定层。
+* `method_spans(text)` 改为**前向走**：跳噪声后在列 0 认出方法头，复用 `method_text`
+  的括号匹配定尾；`method_span` 退化成「在 spans 里查包含 offset 的那一段」。
+
+### 本轮我自己引入的回归（第三次被真树读数抓住）
+
+新写的 `METHOD_HEAD` 是 `[+-]\s*\([^)]*\)\s*[A-Za-z_][\w:]*\s*\{$`，
+只吃**无参**选择器；而本仓库最常见的是带参声明
+`- (void) retrieveAssetsFromHost:(TemporaryHost*)host {`。
+结果 `AppAssetManager.m` 里 `retriever.app`（58 行）与 `retriever.host`（59 行）明明同方法相邻两行，
+却读成 `paired=False`——**真树唯一那个配对项被冤枉**，门禁当场从
+`1 of them also give it a host` 掉成 0。
+修法是把声明尾部放开到 `{`：`[+-]\s*\([^)]*\)\s*[^{;{}]*\{$`。
+（§19、§20、§22 之后这是第四次：fixture 全绿不等于读对了真文件。）
+
+### 验证
+
+* `--self-test` **94 → 105**，新增的 11 条全部跑真阅读器 `app_assignment_sites`：
+  同方法配对（True）、只给 app（False）、`==` 比较（False）、断言比较（False）、
+  别人的 `.host =`（False）、比较兼赋值（True）、块注释里的配对（False）、
+  行注释里的配对（False）、被注释掉的 `.app =` 应当**不产生站点**（0 站点）、
+  配对写在别的方法里（False）、**带参数的声明**（True，就是上面那个回归）。
+* `git show HEAD:` 把旧的 `HOST_ASSIGNMENT` / `method_span` / `app_assignment_sites`
+  装回来复跑：**恰好 4 条失败**，全部是危险方向的假配对（比较、断言、两种注释）。
+* 真树读数**不变**：`3 site(s) hand an app to a holder and 1 of them also give it a host`、
+  0 failure；红队 38 条全绿，其中「唯一配对 holder 被悄悄取消配对」仍然咬。
+* `workflow-audit` 25 规则通过；`local-gates.sh` **47 passed / 0 failed / 12 need CI artefact**。
+
+### 登记
+
+* 本轮对今天的树**没有行为改动**（新旧读数一致），价值在关掉「假配对」这条危险方向，
+  以及把阅读器的判定从断言变成实测。这条必须写明白，否则会被读成又修了一个线上 bug。
+* `(?!=)` 只挡 `==`。`.host <= ` / `.host >= ` 这类写法在属性上不可能出现（`<=` 前必有空格与运算符），
+  真树 0 处；`!=` 本来就不匹配（`.host` 后是 `!`）。
+* `code_only()` 仍不认预处理续行，继承 §21 的上限。
+* `APP_ASSIGNMENT` 只认 `^\s*(\w+)\.app\s*=` 这种**裸主语**写法，
+  `self.store.app = …`、`items[0].app = …` 一类读不到。
+  实测把源码里所有 `.app =` 出现处与规则登记的站点比对，**真树 0 处漏网**；
+  将来若出现，方向是漏登记者 → 报「新 holder」→ 误红，安全。
