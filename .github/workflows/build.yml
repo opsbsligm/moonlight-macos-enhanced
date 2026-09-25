@@ -402,6 +402,18 @@ jobs:
       # never recommend.
       run: python3 scripts/interpolation-cadence-policy-tests.py
 
+    - name: Verify the interpolation readout carries measurements to the settings page
+      # The page could name the engine but could not say what frames did, and the one place that
+      # counted them -- the performance overlay -- exists only when the player enabled it. The
+      # harness lifts the shipping publisher out of VideoDecoderRenderer.m and plays it against a
+      # fake settings class, so the frame rate it hands over is the shared policy's answer for the
+      # refresh it was given (180 Hz yields 120, 179 yields 90, 44 yields nothing) rather than a
+      # constant, the four readings arrive from the counters they name, and stopping a stream
+      # zeroes them instead of leaving last second's numbers on screen. Its red proofs move the
+      # feed onto the overlay's timer, which is the shape that would look fine on a laptop and go
+      # quiet for exactly the players who never turn the overlay on.
+      run: python3 scripts/interpolation-readout-tests.py
+
     - name: Verify the stick-driven pointer keeps the travel it promises
       # Two files move the cursor with the right stick, and they disagreed. The HID
       # consumer normalised the stick to a fraction, multiplied by 15.0 and truncated

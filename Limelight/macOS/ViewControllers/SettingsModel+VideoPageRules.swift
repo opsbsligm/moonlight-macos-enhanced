@@ -59,4 +59,45 @@ extension SettingsModel {
   var upscalingExplanationKey: String {
     videoRendererModeIsMetal ? "Upscaling detail" : "Upscaling Metal only detail"
   }
+
+  /// The frame rate this display can actually interpolate at, and the refresh rate it was worked
+  /// out from. While a stream runs the renderer's measured answer wins: it comes from the display
+  /// link and it is the number the admission itself refused against. Before a stream there is
+  /// nothing measured, so the display mode is asked, and the row says which of the two it heard,
+  /// because a 179.82 Hz measured period and a 180 Hz mode name are not the same input to
+  /// 1.5x arithmetic -- that difference is the whole reason 120 FPS can be recommended by a page
+  /// and then refused by the stream.
+  var frameInterpolationCadenceAdviceText: String? {
+    // The raw value rather than the displayed title: a rename in the option list must not be
+    // able to silence a warning by making the comparison stop matching.
+    guard SettingsModel.frameInterpolationModeRawValue(for: selectedFrameInterpolationMode) != 0,
+      frameInterpolationControlIsEnabled
+    else {
+      return nil
+    }
+
+    let hostId = selectedHost?.id ?? Self.globalHostId
+    let measuredRefresh = SettingsClass.videoCadenceMeasuredRefreshHz(for: hostId)
+    let refreshHz = measuredRefresh > 0 ? measuredRefresh : StreamRiskAssessor.currentDisplayRefreshRateHz()
+    guard refreshHz > 0 else {
+      return nil
+    }
+
+    let targetFps = effectiveFpsForBitrate()
+    guard targetFps > 0, !MLInterpolationHasCadenceHeadroom(refreshHz, Int32(targetFps)) else {
+      return nil
+    }
+
+    let languageManager = LanguageManager.shared
+    let refresh = String(format: "%.2f", refreshHz)
+    let suggested = Int(MLInterpolationSuggestedFpsForRefresh(refreshHz))
+    guard suggested > 0 else {
+      return String(
+        format: languageManager.localize("Frame Interpolation Cadence No Headroom"), refresh)
+    }
+    return String(
+      format: languageManager.localize("Frame Interpolation Cadence Advice"),
+      refresh, String(targetFps), String(suggested)
+    )
+  }
 }

@@ -1772,3 +1772,49 @@ ObjC 里 property 的 backing ivar 通常就是 `_x`，折叠两个拼写看起�
   因此若读数集只覆盖 30 以上，这条突变会在 49 条读数里静默通过；故补测 12/20/23/24 区间。
   推论：`refresh-12` 在 `refresh<36` 才可能起约束，而那区间上界已低于 30 → 经「建议值」这一表面**不可观测**。
 * 设置页 `StreamRiskAssessment` 的 1.10/1.50 组规则与本报告判据**不是同一条**，本轮不合并、不改写。
+
+## §30 第 3 项 3b：把「实测帧率」送到看得见的地方（2026-09-26）
+
+### 为什么必须做
+
+出厂状态里，设置页能说出引擎名字，但那句话来自**准入**（决定要不要建引擎），不是来自**帧的遭遇**。
+真正的证据（补了多少帧、对多少 Hz 补）只在性能浮层上，而浮层的定时器由 `setupOverlay` 建立、
+只在主机开启「显示性能浮层」时存在（`StreamViewController.m:1540` 的判断）。
+最需要知道插帧有没有干活的人，恰好是盯着设置页却看不到数字的那个人。
+
+### 落点（全部先读代码再改）
+
+* 发布点在 `CVDisplayLink` 回调里的**每秒结算块**：`_activeWndVideoStats` 的四个 fps 在这里算出来，
+  `_lastDisplayRefreshRate` 在同一次回调里由 `CVDisplayLinkGetActualOutputVideoRefreshPeriod` 测得。
+  放在这里而不是浮层，是因为这条路径与「玩家是否开启浮层」无关。
+* 通道：`[SettingsClass updateVideoCadenceReadoutFor:sourceFps:outputFps:interpolatedFps:refreshHz:suggestedFps:]`
+  （`SettingsObjCBridge.swift`）→ 按 host 存快照 + 复用 `.moonlightVideoRuntimeStatusDidChange`
+  → `SettingsModel.videoCadenceReadoutText` → `SettingsVideoPane` 的 `SettingMeasuredRow`。
+* 「可操作下一步」= `SettingsModel+VideoPageRules.swift` 的 `frameInterpolationCadenceAdviceText`：
+  走 `MLInterpolationHasCadenceHeadroom` / `MLInterpolationSuggestedFpsForRefresh`（已加进
+  `Moonlight-Bridging-Header.h`），**不再抄一遍 1.5 倍**；有实测刷新率时优先用实测值，否则退回
+  `StreamRiskAssessor.currentDisplayRefreshRateHz()`（原 `private`，改为 internal 以免第二份 CGDisplay 读数）。
+* 停流归零：`teardownFrameInterpolationProcessor` 里补发一次全零。
+
+### 实测
+
+* `scripts/interpolation-readout-tests.py`：**编译出厂发布器**并驱动，10 条读数 0 错
+  （180→120、179→90、140→90、100→60、59.94→30、44→不给建议、0→不给建议）；
+  无 hostKey 落到 `__global__`；四个读数原样到达；停流四个字段与建议值全 0。
+  接线 0 gaps；`--self-test` 7 条红证全部变红（含「把喂数搬到浮层定时器」这一条）。
+* **纠正了一条我自己写错的期望**：45Hz 的建议值是 30 而不是 0（45 恰为 30 的 1.5 倍，
+  出厂比较是「严格小于才拒」）；真正给不出建议的起点是 44Hz。已按出厂语义改测试，不改判据。
+* 构建：Debug 全量 `** BUILD SUCCEEDED **`，一方文件 0 warning；新选择子确认进
+  `MoonlightEnhanced.debug.dylib`（Debug 走 dylib 链接，主二进制只有 stub，38KB 属正常）。
+* 既有门禁：`frame-interpolation-status` / `interpolated-frame-count` / `interpolation-source-format` /
+  `interpolation-cadence-policy` / `video-enhancement` / `enhancement-engine-resolution` 全绿；
+  `l10n-audit` 0 failures（en/zh 占位符 `%1$@…%4$@` 对称）；`workflow-audit` 25 规则通过。
+* 门禁基线：`local-gates.sh` 51 → **52 passed / 0 failed**。
+
+### 未实测（不得当成已验证）
+
+* 真实串流下的三数（180Hz + 魔兽 + 插帧）：源帧率、上屏帧率、实测刷新率与补帧速率**一个都没测到**。
+* 由上一条引出的真实风险：若 180Hz 面板实测为 179.8x，出厂判据会**拒掉 120 FPS**（179.8 < 180），
+  此时新文案会诚实地建议 90，玩家看到的将是「180Hz 屏只能 90」。这不是文案错，是判据对
+  「名义 180Hz / 实测略低」没有容差。是否引入名义刷新率容差属于行为变更，需另开一轮 + 真机证据。
+* 超分描述重写（放大的是什么、macOS 26 门槛、按帧尺寸查表、回退链与代价）仍未动。

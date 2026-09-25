@@ -224,6 +224,13 @@ struct VideoView: View {
 
           SettingDescriptionRow(textKey: settingsModel.frameInterpolationExplanationKey)
 
+          // Numbers rather than a second paragraph of prose: a player who is told to lower the
+          // frame rate needs the number this display actually accepts, and it changes with the
+          // panel, so it is computed from the same policy the stream refuses with.
+          if let cadenceAdvice = settingsModel.frameInterpolationCadenceAdviceText {
+            SettingMeasuredRow(text: cadenceAdvice, color: .orange)
+          }
+
           Divider()
 
           InlineSectionLabel(title: "Video runtime status title")
@@ -237,6 +244,7 @@ struct VideoView: View {
           runtimeStatusLabel(labelKey: "Frame Interpolation Engine Label",
                              summaryKey: settingsModel.videoFrameInterpolationRuntimeStatusSummaryKey)
           SettingDescriptionRow(textKey: settingsModel.videoFrameInterpolationRuntimeStatusDetailKey)
+          SettingMeasuredRow(text: settingsModel.videoCadenceReadoutDisplayText)
 
           Divider()
 

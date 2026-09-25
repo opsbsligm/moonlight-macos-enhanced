@@ -654,6 +654,11 @@
 "Video Frame Interpolation Runtime Detail Requires Metal Renderer" = "插帧仅在 Metal 渲染器下可用，切换渲染器模式后即可启用。";
 "Video Frame Interpolation Runtime Detail Disabled For Hdr" = "HDR 串流保留原生上屏链路，插帧保持关闭。需要插帧请关闭 HDR。";
 "Video Frame Interpolation Runtime Detail Refresh Rate Unknown" = "未能测得显示器刷新率，插帧保持关闭。";
+"Frame Interpolation Cadence Idle" = "串流开始后，这里显示实测结果：到达的帧率、真正上屏的帧率，以及显示器刷新率。";
+"Frame Interpolation Cadence Readout" = "到达 %1$@ FPS · 上屏 %2$@ FPS · 显示器 %3$@ Hz";
+"Frame Interpolation Cadence Readout Interpolating" = "到达 %1$@ FPS · 上屏 %2$@ FPS · 显示器 %3$@ Hz · 补帧 %4$@ FPS";
+"Frame Interpolation Cadence Advice" = "这台显示器实测 %1$@ Hz，撑不起 %2$@ FPS 的插帧：补出来的帧同样需要独立的上屏时机。请把串流帧率设为 %3$@ FPS 或更低，插帧才会启用。";
+"Frame Interpolation Cadence No Headroom" = "这台显示器实测 %1$@ Hz，连 30 FPS 的余量都不够，在这里插帧不可用。";
 "Video runtime status title" = "本次串流实际生效";
 "Video runtime status hint" = "以下内容由渲染器在串流过程中实时上报；未开始串流时显示为空闲状态。";
 "Video Runtime Path Label" = "渲染路径";

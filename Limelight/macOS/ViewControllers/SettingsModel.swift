@@ -1043,7 +1043,9 @@ class SettingsModel: ObservableObject {
   @Published var videoEnhancementRuntimeStatusDetailKey: String
   @Published var videoFrameInterpolationRuntimeStatusSummaryKey: String
   @Published var videoFrameInterpolationRuntimeStatusDetailKey: String
-
+  /// The renderer's own per-second readings, formatted where the numbers become a sentence. Empty
+  /// until a stream has measured something; `videoCadenceReadoutDisplayText` is what the page shows.
+  @Published var videoCadenceReadoutText: String = ""
   var connectionCandidates: [ConnectionCandidate] {
     var candidates: [ConnectionCandidate] = []
     candidates.append(ConnectionCandidate(id: "Auto", label: LanguageManager.shared.localize("Auto (Recommended)"), state: 1))
@@ -1392,6 +1394,7 @@ class SettingsModel: ObservableObject {
     videoEnhancementRuntimeStatusDetailKey = "Video Enhancement Runtime Detail Idle"
     videoFrameInterpolationRuntimeStatusSummaryKey = "Off"
     videoFrameInterpolationRuntimeStatusDetailKey = "Video Frame Interpolation Runtime Detail Idle"
+    videoCadenceReadoutText = ""
 
     NotificationCenter.default.addObserver(
       self, selector: #selector(handleHostLatencyUpdate),
@@ -1520,6 +1523,16 @@ class SettingsModel: ObservableObject {
       SettingsClass.videoFrameInterpolationRuntimeStatusSummaryKey(for: hostId)
     videoFrameInterpolationRuntimeStatusDetailKey =
       SettingsClass.videoFrameInterpolationRuntimeStatusDetailKey(for: hostId)
+    videoCadenceReadoutText = SettingsClass.videoCadenceReadoutText(for: hostId)
+  }
+
+  /// What the cadence row shows: the measurements while a stream is running, and the sentence
+  /// that says measurements are coming before one is. Both are on the same row so the page never
+  /// shows a number next to a promise of one.
+  var videoCadenceReadoutDisplayText: String {
+    videoCadenceReadoutText.isEmpty
+      ? LanguageManager.shared.localize("Frame Interpolation Cadence Idle")
+      : videoCadenceReadoutText
   }
 
   func applyEnhancedAudioPresetIfNeeded() {

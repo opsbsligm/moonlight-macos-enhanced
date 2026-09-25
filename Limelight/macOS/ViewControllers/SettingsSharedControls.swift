@@ -244,6 +244,20 @@ struct SettingDescriptionRow: View {
   }
 }
 
+/// A row for a sentence that already exists -- a measurement, or advice built from one -- where
+/// localising a key would be wrong because the text carries numbers.
+struct SettingMeasuredRow: View {
+  let text: String
+  var color: Color = .secondary
+
+  var body: some View {
+    Text(text)
+      .font(.footnote)
+      .foregroundColor(color)
+      .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
 struct InlineSectionLabel: View {
   let title: String
   @ObservedObject var languageManager = LanguageManager.shared
