@@ -484,6 +484,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **A method is now found by counting braces, so commented-out code cannot end it early.** Two
+  earlier entries removed two ways the reader of `viewDidAppear` could lose a registration; both
+  left it guessing where a method stops, and a sweep of the other source-reading gates first showed
+  that this reader was the exception rather than the rule -- `enum_block()` in three test scripts,
+  `workflow-audit`'s unclosed `${{}` check, `constraints-audit`'s timer scan and the two anchor
+  lookups all raise or report when their search comes back empty. Two candidate shapes were then
+  disproven by measurement rather than argument: a declaration or `@end` commented out at column
+  zero does not satisfy the old boundary, because it demands those tokens at the start of a line,
+  and no file in the 129 first-party sources contains two appearance methods of one name to collide
+  in the reader's dictionary. A third shape was real. A dead implementation left inside a live
+  method inside a `/* */` block -- an ordinary way to keep old code rather than delete it -- puts a
+  column-zero `@end` in the middle of a method body, which ended the method there, so the
+  registration after it read as `sites=0` with no record entry and no complaint. The method is now
+  found by counting braces, which is what closes the limit those entries had to leave registered.
+  Counting is not enough on its own: the in-tree precedent, `stream-menu-addressing-tests.py`'s
+  `method_body`, counts naively and was measured to end a method early on `// }`, so
+  `past_noise()` skips line and block comments, string literals with escapes, and character
+  literals before a brace is counted, and a declaration whose opening brace is on the next line
+  returns the rest of the text -- over-reading, which is annoying, rather than under-reading, which
+  is green. `--self-test` grew 90 -> 93, and executing the previous implementation back out of
+  `git show HEAD:` fails exactly the commented-out-`@implementation` case; the two other new cases
+  (a brace in a comment, braces in a string) also pass under the previous implementation and are
+  guards on the new matcher's own failure mode rather than red evidence, as their comments say. The
+  red team grew 36 -> 37 with an injected page whose registration follows a commented-out
+  implementation: the old reader saw no site and no problem, the new one refuses it as unrecorded.
+  On the shipped tree the reading is unchanged -- 8 registrations, all withdrawn, 0 failures -- and
+  the method bodies are back to plausible sizes (750 and 2971 characters for the apps page's two
+  appearance methods) rather than the whole file. Limits registered in section 21: the statement
+  window from the entry above still narrows on a nested `;`, ivar-held tokens and the two-method
+  name list are unchanged, and the noise skipper does not know preprocessor line continuation.
 - **The registration gate no longer depends on where a call is wrapped.** The entry below removed one
   way the reader of `viewDidAppear` could lose a registration; the same reader scanned each method
   body a line at a time, which is the other half of the same dependence on the author's formatting.
