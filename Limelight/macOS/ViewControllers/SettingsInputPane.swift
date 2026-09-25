@@ -287,6 +287,27 @@ struct InputView: View {
 
       Divider()
 
+      PickerSettingRow(
+        title: "Capture System Keyboard Shortcuts",
+        hintKey: "Capture System Keyboard Shortcuts detail",
+        content: {
+          Picker("", selection: $settingsModel.systemKeyboardShortcutCapture) {
+            ForEach(SettingsModel.systemKeyboardShortcutCaptureModes, id: \.self) { mode in
+              Text(
+                languageManager.localize(
+                  mode == SettingsModel.systemKeyboardShortcutCaptureAlways
+                    ? "Always Capture"
+                    : (mode == SettingsModel.systemKeyboardShortcutCaptureNever
+                      ? "Never Capture" : "Follow Fullscreen"))
+              )
+              .tag(mode)
+            }
+          }
+          .labelsHidden()
+        })
+
+      Divider()
+
       DisclosureGroup(
         isExpanded: $mouseAdvancedExpanded,
         content: {

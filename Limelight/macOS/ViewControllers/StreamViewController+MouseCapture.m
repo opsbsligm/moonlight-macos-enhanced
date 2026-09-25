@@ -6,6 +6,7 @@
 #import "StreamViewController_Internal.h"
 #import "Moonlight-Swift.h"
 #import "PointerEntryPolicy.h"
+#import <dlfcn.h>
 
 // ---------------------------------------------------------------------------
 // SIMPLIFIED REFACTOR (2026-08-02): Deferred Command Logic REMOVED.
@@ -952,6 +953,126 @@ static BOOL MLEdgeSensorPushAccumulate(CGFloat accumulator,
         return YES;
     }
     return NO;
+}
+
+// Taking the system's global hotkeys is a WindowServer call that Apple does not document
+// and does not put in a linkable header, so it is resolved at run time: a tree that links
+// it would refuse to launch where the entry point is gone, which is worse than a stream
+// that keeps the player's Mission Control. Measured on this host: a bad connection id
+// answers 1002 (kCGErrorInvalidConnection) while an unknown mode answers 0, which is what
+// says the first word is a connection and that the call really takes two arguments.
+#define MLkCGErrorSuccess 0
+#define MLkCGErrorUnavailable (-1)
+
+typedef int (*MLSetGlobalHotKeyOperatingModeFunction)(uint32_t connectionID, uint32_t mode);
+typedef uint32_t (*MLMainConnectionIDFunction)(void);
+
+typedef struct {
+    MLMainConnectionIDFunction connectionID;
+    MLSetGlobalHotKeyOperatingModeFunction setMode;
+} MLSystemHotkeyBridge;
+
+static MLSystemHotkeyBridge MLSystemHotkeyBridgeResolve(void) {
+    static MLSystemHotkeyBridge bridge;
+    static BOOL resolved = NO;
+    if (resolved) {
+        return bridge;
+    }
+    resolved = YES;
+    void *handle = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW);
+    if (handle == NULL) {
+        handle = dlopen("CoreGraphics", RTLD_NOW);
+    }
+    if (handle == NULL) {
+        return bridge;
+    }
+    // The handle is deliberately left open for the life of the process: the two pointers
+    // above stay valid only while it is mapped, and a stream may ask for either direction
+    // at any moment afterwards.
+    bridge.connectionID = (MLMainConnectionIDFunction)dlsym(handle, "CGSMainConnectionID");
+    bridge.setMode = (MLSetGlobalHotKeyOperatingModeFunction)dlsym(handle, "CGSSetGlobalHotKeyOperatingMode");
+    if (bridge.connectionID == NULL || bridge.setMode == NULL) {
+        bridge.connectionID = NULL;
+        bridge.setMode = NULL;
+    }
+    return bridge;
+}
+
+// Pure so the gate can drive it: the state to remember is the requested one only when the
+// call agreed. Remembering a suppression that never happened is how hotkeys stay gone after
+// the stream ended -- with nothing left in the app able to hand them back.
+static BOOL MLSystemHotkeyStateAfter(int error, BOOL wantSuppressed, BOOL wasSuppressed) {
+    return error == MLkCGErrorSuccess ? wantSuppressed : wasSuppressed;
+}
+
+static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
+    MLSystemHotkeyBridge bridge = MLSystemHotkeyBridgeResolve();
+    if (bridge.connectionID == NULL || bridge.setMode == NULL) {
+        return MLkCGErrorUnavailable;
+    }
+    return bridge.setMode(bridge.connectionID(), enabled ? 0u : 1u);
+}
+
+- (void)refreshSystemKeyboardShortcutCapturePreference {
+    NSDictionary *prefs = [SettingsClass getSettingsFor:self.app.host.uuid];
+    id value = prefs ? prefs[@"systemKeyboardShortcutCapture"] : nil;
+    // Absent is "follow fullscreen", which is also what a player who never opened the
+    // settings page gets. Anything outside the three cases is read back to it too.
+    NSInteger mode = value ? [value integerValue] : MLSystemKeyboardShortcutCaptureFollowFullscreen;
+    if (mode != MLSystemKeyboardShortcutCaptureAlways && mode != MLSystemKeyboardShortcutCaptureNever) {
+        mode = MLSystemKeyboardShortcutCaptureFollowFullscreen;
+    }
+    self.systemKeyboardShortcutCapture = mode;
+}
+
+- (BOOL)shouldSuppressSystemHotkeys {
+    if (self.systemKeyboardShortcutCapture == MLSystemKeyboardShortcutCaptureNever) {
+        return NO;
+    }
+    if (self.view.window == nil) {
+        return NO;
+    }
+    // Handing the keys back while another app is in front is not a courtesy, it is a
+    // requirement: the WindowServer scope is this process, and a player stuck behind a
+    // stream window with no Mission Control has no way to leave.
+    if (!NSApp.isActive) {
+        return NO;
+    }
+    if (self.systemKeyboardShortcutCapture == MLSystemKeyboardShortcutCaptureFollowFullscreen &&
+        ![self isWindowFullscreen] && ![self isWindowBorderlessMode]) {
+        return NO;
+    }
+    return YES;
+}
+
+- (void)updateSystemHotkeySuppression {
+    BOOL wants = [self shouldSuppressSystemHotkeys];
+    if (wants == self.systemHotkeysSuppressed) {
+        return;
+    }
+
+    int error = MLSystemGlobalHotkeysSetEnabled(!wants);
+    BOOL next = MLSystemHotkeyStateAfter(error, wants, self.systemHotkeysSuppressed);
+    if (next != self.systemHotkeysSuppressed) {
+        Log(LOG_I, @"[diag] System hotkey capture: %@ -> %@ (CGError %d)",
+            self.systemHotkeysSuppressed ? @"suppressing" : @"released",
+            next ? @"suppressing" : @"released",
+            error);
+        self.systemHotkeysSuppressed = next;
+    } else if (error != MLkCGErrorSuccess) {
+        Log(LOG_W, @"[diag] System hotkey capture refused (CGError %d), state kept at %@",
+            error, self.systemHotkeysSuppressed ? @"suppressing" : @"released");
+    }
+}
+
+- (void)restoreSystemHotkeySuppressionForReason:(NSString *)reason {
+    if (!self.systemHotkeysSuppressed) {
+        return;
+    }
+    int error = MLSystemGlobalHotkeysSetEnabled(YES);
+    self.systemHotkeysSuppressed = MLSystemHotkeyStateAfter(error, NO, self.systemHotkeysSuppressed);
+    Log(LOG_I, @"[diag] System hotkey capture released for %@ (CGError %d, now %@)",
+        reason ?: @"unknown", error, self.systemHotkeysSuppressed ? @"still suppressed" : @"released");
 }
 
 - (void)logMouseClickDiagnosticsForPhase:(NSString *)phase event:(NSEvent *)event {
@@ -3317,6 +3438,8 @@ static BOOL MLEdgeSensorPushAccumulate(CGFloat accumulator,
     }
 
     [self refreshEdgeSensorSummonPreference];
+    [self refreshSystemKeyboardShortcutCapturePreference];
+    [self updateSystemHotkeySuppression];
 
     if (self.stopStreamInProgress || self.reconnectInProgress) {
         return;

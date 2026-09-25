@@ -2280,6 +2280,23 @@ for sensor_shape, sensor_arguments in (("its readings", []),
           "the edge summon gate failed %s: %s"
           % (sensor_shape, (sensor_run.stdout + sensor_run.stderr).strip().splitlines()[-1:]))
 
+# The hotkey handoff is a claim about the outside world, so its gate is worth running here even
+# though the call itself is not: what the gate judges is which error code is allowed to move the
+# ledger and whether every moment that takes the keys is matched by one that returns them. Both
+# are readings of this tree, and a stream that leaves a player without a Mission Control is not a
+# failure that announces itself -- the player notices it after the game, when the app has to quit.
+for hotkey_shape, hotkey_arguments in (("its readings", []),
+                                       ("its red proofs", ["--self-test"])):
+    hotkey_run = subprocess.run([sys.executable,
+                                 os.path.join(scripts_dir, "system-hotkey-capture-tests.py")]
+                                + hotkey_arguments,
+                                capture_output=True, text=True, cwd=root)
+    check(hotkey_run.returncode == 0,
+          "the system hotkey gate passes %s" % hotkey_shape
+          if hotkey_run.returncode == 0 else
+          "the system hotkey gate failed %s: %s"
+          % (hotkey_shape, (hotkey_run.stdout + hotkey_run.stderr).strip().splitlines()[-1:]))
+
 # The ownership experiment gets the same treatment, and its controls make the reason stronger
 # rather than different: a probe that retains its own pair reports today's retain cycle as a
 # reading of the app, and a build that ignores the flag reports an empty record as a clean graph.

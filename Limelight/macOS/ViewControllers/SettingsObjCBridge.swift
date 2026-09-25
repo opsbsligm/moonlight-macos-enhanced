@@ -105,6 +105,9 @@ class SettingsClass: NSObject {
         // The key the stream reads before arming the edge summon band. Absent and true
         // mean the same thing to it, and both mean armed.
         "edgeSensorSummon": settings.edgeSensorSummon ?? true,
+        // The stream reads this to decide when the system's global hotkeys are its own.
+        // Anything it does not recognise is read back as "follow fullscreen".
+        "systemKeyboardShortcutCapture": settings.systemKeyboardShortcutCapture ?? 0,
         "microphone": settings.enableMicrophone ?? false,
         "streamResolutionScale": settings.streamResolutionScale ?? false,
         "streamResolutionScaleRatio": settings.streamResolutionScaleRatio ?? 100,
@@ -318,6 +321,7 @@ class SettingsClass: NSObject {
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
       edgeSensorSummon: settings.edgeSensorSummon,
+      systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,
       streamResolutionScaleRatio: settings.streamResolutionScaleRatio,
@@ -430,6 +434,7 @@ class SettingsClass: NSObject {
         ignoreAspectRatio: updated.ignoreAspectRatio,
         showLocalCursor: updated.showLocalCursor,
         edgeSensorSummon: updated.edgeSensorSummon,
+        systemKeyboardShortcutCapture: updated.systemKeyboardShortcutCapture,
         enableMicrophone: updated.enableMicrophone,
         streamResolutionScale: updated.streamResolutionScale,
         streamResolutionScaleRatio: updated.streamResolutionScaleRatio,
@@ -538,6 +543,7 @@ class SettingsClass: NSObject {
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
       edgeSensorSummon: settings.edgeSensorSummon,
+      systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,
       streamResolutionScaleRatio: settings.streamResolutionScaleRatio,

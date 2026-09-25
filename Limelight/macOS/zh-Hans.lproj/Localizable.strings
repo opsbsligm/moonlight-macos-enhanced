@@ -1106,6 +1106,11 @@
 "Ignore Aspect Ratio" = "忽略宽高比限制";
 "Show Local Cursor" = "显示本地光标";
 "Edge Sensor Summon" = "边缘感应唤出功能栏";
+"Capture System Keyboard Shortcuts" = "接管系统键盘快捷键";
+"Capture System Keyboard Shortcuts detail" = "串流占据屏幕期间，F1-F12 与系统自己的快捷键（调度中心、启动台、Spotlight、输入法切换）发往被控端而不是本机。跟随全屏：只在全屏或无边框时接管；始终接管：窗口化串流也接管；从不接管：全部留在本机。本应用不再是前台应用、串流窗口关闭或串流结束时，这些按键一定交还本机。";
+"Follow Fullscreen" = "跟随全屏";
+"Always Capture" = "始终接管";
+"Never Capture" = "从不接管";
 "Edge Sensor Summon detail" = "在功能栏所在的那条边设 24pt 常驻感应带：贴边不超过 2pt 并停住 150ms，或向内累计推压 30pt（单个事件最多计 6pt），即唤出功能栏并在 0.82s 后自动收起。快速掠边与甩视角不会触发。关闭后只保留原有的指针逃逸唤出方式。";
 "Mouse and Cursor" = "鼠标与光标";
 "Locked Mouse" = "锁定鼠标";

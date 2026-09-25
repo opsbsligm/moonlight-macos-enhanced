@@ -92,6 +92,14 @@ static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.15;
 static CGFloat const MLEdgeSensorPushBudget = 30.0;
 static CGFloat const MLEdgeSensorPushPerEventCap = 6.0;
 
+// Which moments the app takes the system's own global hotkeys away for. Always captures
+// covers a borderless window that is not fullscreen; never is the regression anchor.
+typedef NS_ENUM(NSInteger, MLSystemKeyboardShortcutCapture) {
+    MLSystemKeyboardShortcutCaptureFollowFullscreen = 0,
+    MLSystemKeyboardShortcutCaptureAlways = 1,
+    MLSystemKeyboardShortcutCaptureNever = 2,
+};
+
 static CGFloat const MLFreeMouseReentryDelayMs = 140.0;
 static CGFloat const MLFreeMouseReentryInset = 32.0;
 static BOOL const MLUseOnScreenControlCenterEntrypoints = YES;
@@ -454,6 +462,11 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) BOOL edgeSensorSummonEnabled;
 @property (nonatomic, strong) NSTimer *edgeSensorDwellTimer;
 @property (nonatomic) CGFloat edgeSensorPushAccumulator;
+// The three-way capture mode read from settings, and whether the system's global hotkeys
+// are ours to suppress right now. The second is a claim about the outside world, so it is
+// only written after the call that changes it reported success.
+@property (nonatomic) NSInteger systemKeyboardShortcutCapture;
+@property (nonatomic) BOOL systemHotkeysSuppressed;
 
 @property (nonatomic, strong) NSSlider *menuVolumeSlider;
 @property (nonatomic, strong) NSSlider *menuBitrateSlider;
@@ -619,6 +632,12 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)beginEdgeSensorDwellTimerIfNeededForEdge:(MLFreeMouseExitEdge)edge;
 - (void)finishEdgeSensorSummonIfStillArmedForEdge:(MLFreeMouseExitEdge)edge;
 - (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason;
+// System hotkey capture: the state machine lives in the capture category because every
+// moment that decides it is an input or window moment that category already watches.
+- (BOOL)shouldSuppressSystemHotkeys;
+- (void)updateSystemHotkeySuppression;
+- (void)restoreSystemHotkeySuppressionForReason:(NSString *)reason;
+- (void)refreshSystemKeyboardShortcutCapturePreference;
 @end
 @interface StreamViewController (MenuUI) <MLStreamScopedCallbackOwner>
 - (NSString *)mouseModeDisplayNameForMode:(NSString *)mode;

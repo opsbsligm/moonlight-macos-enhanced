@@ -1596,3 +1596,65 @@ ObjC 里 property 的 backing ivar 通常就是 `_x`，折叠两个拼写看起�
   事件计时会永远不触发；timer 是这里唯一能覆盖「静止贴住」的形式。
 * dock 停在哪条边由 `edgeMenuDockEdge` 决定，感应带跟着它走；拖动 dock 换边时感应带随之换边
   （`resetEdgeSensorSummonState` 在收起与重新捕获时都会清账，不会把旧边的账带到新边）。
+
+## 27. 系统快捷键是谁的：一次「借」与六条「还」（2026-09-25）
+
+### 触发点
+
+* 目标第 2 项要求 F1–F12 在串流时直达被控端。已验证事实：`Limelight/Input/HIDSupport.m` 的码表
+  从 `kVK_F1` 起一直排到 `kVK_F20`，但全仓 **0 个 `CGEventTap`、0 个 `NSEventTypeSystemDefined`
+  处理** —— F3/F4 在 WindowServer 层就被调度中心/启动台吃掉，本端从来没看到过这两个键。
+* 所以「码表里有 F 键」不等于「F 键能用」：缺的不是编码，是**借键**这一步。
+
+### 修法
+
+* **私有 API 只能运行时解析**：`nm` 在 macOS 的 dyld shared cache 上探不到
+  `CGSSetGlobalHotKeyOperatingMode`，而项目此前**私有 API 用法为 0**，直接 `extern` 会因 `.tbd`
+  缺符号而链接失败。改为 `dlopen` CoreGraphics + `dlsym` 两个入口
+  （`CGSMainConnectionID` / `CGSSetGlobalHotKeyOperatingMode`），**故意不 `dlclose`**：两个指针
+  只在镜像映射期间有效，而之后任意时刻都可能要回退方向。任一入口缺失 → 整对指针置 NULL，
+  `MLSystemGlobalHotkeysSetEnabled` 返回 -1（不可用），状态机停在「没借过」。
+* **arity 与错误码是实测出来的**：非法 connection id 返回 **1002**（`kCGErrorInvalidConnection`），
+  非法 mode（99 / 0xFFFF）返回 **0**。前者说明第一个字确实是连接、调用确实是两参数；后者说明
+  **mode 不做校验**，因此只允许传 0 和 1，绝不把用户输入或枚举越界值透传。
+* **账本只信成功的调用**：纯 C 的 `MLSystemHotkeyStateAfter(error, want, was)` 规定
+  只有 `CGError == 0` 才把「已抑制」记进 `systemHotkeysSuppressed`。记下一次没发生的抑制，
+  就是串流结束后快捷键永久消失、而应用里再没有任何东西能归还它。
+* **借一次，还六处**（全部挂在既有钩子上，**0 个新增 observer 注册**）：进入全屏、退出全屏、
+  应用转为前台 → `updateSystemHotkeySuppression`；应用转后台、窗口即将关闭 →
+  `restoreSystemHotkeySuppressionForReason:`；`tearDownStreamLifecycleObserversAndTimers`
+  内再还一次 —— 这是串流仍可能占着屏幕时进程里的最后一句话。
+* **归还不能写进 `removeStreamSettingsObservers` 本体**：`viewDidAppear` 会先调用它再重新注册，
+  挂在那里等于每次设置页刷新都还一次键；实测放在 teardown 里，注册路径不再触发归还。
+* **转后台必须还**：抑制的作用域是本进程，把用户按在串流窗口后面却没有调度中心，等于没有退路。
+* 三态偏好 `systemKeyboardShortcutCapture`（Int，默认 0 跟随全屏 / 1 始终 / 2 从不）全链路落地：
+  `SettingsStore` → `SettingsModel+DerivedValues` → `SettingsModel` → `+Persistence` →
+  `SettingsObjCBridge` → `SettingsInputPane`，中英双语句 case 成对；越界值在
+  `refreshSystemKeyboardShortcutCapturePreference` 与 Swift `didSet` 两侧都归一化回 0。
+
+### 验证
+
+* `scripts/system-hotkey-capture-tests.py`：**13 条行为断言全绿**（只有 error 0 能推进账本、
+  被拒的调用保持原状态、不可用返回 -1 等）、接线 **0 gaps**（六个借键时刻都有归还配对）、
+  偏好链路 **0 gaps**（三态出厂、双语命名一致）。
+* 同一脚本 `--self-test` **四类红证全部变红**：账本相信被拒的调用 → 7 条红；teardown 不归还 →
+  1 gap；忽略「从不接管」→ 1 gap；把归还挪到 `viewDidAppear` 先走的那条刷新路径 → 1 gap。
+* `swift-typecheck.py` clean（33 files）、`l10n-audit.py` 0 failures、
+  `xcodebuild`(Debug/arm64) **BUILD SUCCEEDED**、一方文件 0 warning
+  （第一轮 Swift 里多写了一个右括号，被 swift-typecheck 当场抓住）。
+* CI 步骤与本地聚合都跑它：`build.yml` 新增步骤，`constraints-audit.py` 用 `subprocess`
+  真跑读数与 `--self-test` 两半（否则 parity 规则会报「CI 跑了本地不跑的 gate」）。
+
+### 登记
+
+* **真正要验收的那件事还没实测**：180 Hz 串流下调度中心是否真的不弹、退出串流后 Spotlight 与
+  输入法切换是否真的全部恢复，都需要一次真实串流。数字与恢复路径目前只有代码级证据。
+* **私有 API 的分发风险未评估**：`CGSSetGlobalHotKeyOperatingMode` 是私有符号，Developer ID
+  签名 + 公证路径上会不会被拦、是否影响上架，仓库里此前没有先例，本轮没有凭据可测。
+* **mode 不校验**：越界 mode 返回 0（成功）而不报错，意味着一旦把不可信值透传，
+  会得到「调用成功但什么都没发生」的假绿灯 —— 故两侧入口都硬性只允许 0/1。
+* **`NSEventTypeSystemDefined` 归一化未实现（目标第 2 项的第 2 子项）**：键盘被设为「当作媒体键」
+  时，F3/F4 以系统定义事件到达，其字段没有公开文档，反推 F 键码会因键盘型号而异。
+  本轮不猜表：需要一次真机按键读数（keyCode / subtype / data1）才能把映射写成事实。
+* 设置页呈现期间是否仍抑制快捷键：当前实现按「窗口 + 前台 + 全屏/无边框」判定，
+  **内嵌设置页呈现时同样保持抑制**，尚未按真机手感确认这是否 wanted。

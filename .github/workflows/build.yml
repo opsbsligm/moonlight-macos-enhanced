@@ -367,6 +367,18 @@ jobs:
       # spends the budget or the switch stopped being the first question asked.
       run: python3 scripts/edge-sensor-summon-tests.py
 
+    - name: Verify the system hotkey handoff is paired in both directions
+      # Taking the player's Mission Control, Launchpad, Spotlight and input-source switch is a
+      # WindowServer call Apple neither documents nor links, and a suppression that outlives the
+      # stream is worse than a key that stays local: the app has nothing left to give the keys
+      # back, so the player quits the app to get their desktop back. The harness drives the
+      # shipped state function (only a CGError of 0 may move the ledger, so a refused call cannot
+      # leave a claim behind), reads the six window and activation moments that take the keys
+      # against the ones that return them, and refuses a tree where teardown stops returning them,
+      # where "never capture" is ignored, or where the return is moved onto the path that a
+      # viewDidAppear re-registration runs first.
+      run: python3 scripts/system-hotkey-capture-tests.py
+
     - name: Verify the stick-driven pointer keeps the travel it promises
       # Two files move the cursor with the right stick, and they disagreed. The HID
       # consumer normalised the stick to a fraction, multiplied by 15.0 and truncated

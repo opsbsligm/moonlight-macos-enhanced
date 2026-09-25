@@ -267,6 +267,9 @@ highFreqMotor:(unsigned short)highFreqMotor {
     self.windowDidExitFullScreenNotification = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidExitFullScreenNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         if ([weakSelf isOurWindowTheWindowInNotiifcation:note]) {
             weakSelf.fullscreenTransitionInProgress = NO;
+            // Leaving the screen the stream owns hands the system's keys back, even for a
+            // player who asked to always capture them.
+            [weakSelf updateSystemHotkeySuppression];
             [weakSelf logCurrentWindowStateWithContext:@"window-did-exit-fullscreen"];
             if (weakSelf.pendingWindowMode == PendingWindowModeBorderless) {
                 weakSelf.pendingWindowMode = PendingWindowModeNone;
@@ -294,6 +297,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
     self.windowDidEnterFullScreenNotification = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidEnterFullScreenNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         if ([weakSelf isOurWindowTheWindowInNotiifcation:note]) {
             weakSelf.fullscreenTransitionInProgress = NO;
+            [weakSelf updateSystemHotkeySuppression];
             [weakSelf logCurrentWindowStateWithContext:@"window-did-enter-fullscreen"];
             [weakSelf requestStreamMenuEntrypointsVisibilityUpdate];
             [weakSelf scheduleDeferredStreamMenuEntrypointsVisibilityRetries];
@@ -360,6 +364,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
             // modifier state here so the next stream session starts clean,
             // and so any flagsChanged: events still queued on the main queue
             // don't produce NSBeep.
+            [weakSelf restoreSystemHotkeySuppressionForReason:@"window-will-close"];
             [weakSelf.hidSupport tearDownKeyboardStateForSessionEnd:"window-will-close"];
             [weakSelf beginStopStreamIfNeededWithReason:@"window-will-close"];
         }
@@ -367,10 +372,14 @@ highFreqMotor:(unsigned short)highFreqMotor {
 
     self.appDidResignActiveObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidResignActiveNotification object:NSApp queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         weakSelf.globalInactivePointerInsideStreamView = NO;
+        // The suppression belongs to this process, so another app in front has to find its
+        // Mission Control, Spotlight and input-source switch waiting for it.
+        [weakSelf restoreSystemHotkeySuppressionForReason:@"app-resigned-active"];
         [weakSelf requestMouseUncaptureWhenSafeWithReason:@"app-resigned-active" code:@"MUC006"];
     }];
     self.appDidBecomeActiveObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidBecomeActiveNotification object:NSApp queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         weakSelf.globalInactivePointerInsideStreamView = NO;
+        [weakSelf updateSystemHotkeySuppression];
         if ([weakSelf isWindowInCurrentSpace] && [weakSelf isCurrentPointerInsideStreamView]) {
             [weakSelf ensureStreamWindowKeyIfPossible];
         }
@@ -909,6 +918,11 @@ highFreqMotor:(unsigned short)highFreqMotor {
         [defaultCenter removeObserver:self.appDidResignActiveObserver];
         self.appDidResignActiveObserver = nil;
     }
+    // This is the session's last word inside the process while a stream may have had the
+    // screen: a suppression left standing here has nothing left in this process to hand it
+    // back, and the player would have to quit the app to get Mission Control again.
+    [self restoreSystemHotkeySuppressionForReason:@"stream-teardown"];
+
     [self removeStreamSettingsObservers];
 
     [defaultCenter removeObserver:self name:HIDMouseModeToggledNotification object:nil];
