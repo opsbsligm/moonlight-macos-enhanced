@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Whether a display can carry frame interpolation is now one answer, not two copies.**
+  The rule -- refresh at least 1.5x the stream rate and at least 12 Hz above it, or the renderer
+  reports `NoCadenceHeadroom` -- lived as arithmetic inside
+  `shouldUseFrameInterpolationForDisplayRefreshRate:`, while the settings page had to warn a
+  player *before* a stream starts and name a frame rate that would work. Two copies of a
+  formula is how a player ends up being told to select a rate the renderer then refuses, which
+  is worse than no warning at all: they already did what they were asked. `InterpolationCadencePolicy.h`
+  is the single copy (the `#import`-only header pattern this tree already uses for
+  `PointerEntryPolicy`, minus the "keep in step with" comment this makes unnecessary), and the
+  admission calls it. Measured by driving the shipped functions: 180 Hz carries exactly 120 FPS
+  and not 121, 144 Hz caps at 96 and recommends 90, 120 Hz recommends 60, 60 Hz recommends 30,
+  a 30 Hz or unknown refresh gets no recommendation rather than a hopeful one, and the exact
+  boundary answers yes (`180 >= 180`) because the shipped comparison refuses only when strictly
+  below. One reading this surfaced on the way: the 12 Hz term binds only below 24 FPS, so for
+  every rate the settings page offers (30, 60, 90, 120, 144) the 1.5x ratio is what actually
+  decides -- which is why the harness drives the sub-24 range too, or a mutation loosening that
+  term would pass 49 readings unnoticed. `scripts/interpolation-cadence-policy-tests.py` compiles
+  the shipped header with `-Wall -Wextra`, drives 49 readings, reads the wiring with 0 gaps (the
+  renderer imports the policy, calls it, and no longer carries its own copy; the page's `fpss`
+  list and the policy's recommendation list are the same list), and its `--self-test` goes red on
+  a ten-hertz loosening, on arithmetic restored beside the shared call, and on a frame rate
+  changed in the settings list alone. The script is a step in the workflow and
+  `constraints-audit.py` runs both halves. This commit changes no player-visible sentence yet: it
+  is the ground the runtime readings, the pre-stream warning and the rewritten interpolation and
+  super-resolution copy stand on, and section 29 of `docs/memory-ownership.md` says so.
+
 - **Every function that reads an event's `keyCode` now asks what event it is holding.**
   A user report reopened an old case here: a fast double-click of the left button sending C at
   the host, over and over. `-keyCode:` is undefined on mouse, tablet and gesture events, some

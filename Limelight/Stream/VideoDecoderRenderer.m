@@ -9,6 +9,7 @@
 #import "VideoDecoderRenderer.h"
 #include "Limelight-internal.h"
 #import "RendererLayerContainer.h"
+#import "InterpolationCadencePolicy.h"
 
 #include "Limelight.h"
 #include <math.h>
@@ -3725,7 +3726,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         return NO;
     }
 
-    double minimumRefreshRate = MAX((double)self.frameRate * 1.5, (double)self.frameRate + 12.0);
+    // The same answer the settings page gives before a stream starts
+    // (InterpolationCadencePolicy.h), rather than a second copy of the arithmetic that could
+    // drift away from it: a warning that names a frame rate this branch then refuses is worse
+    // than no warning, because the player has already done what they were told.
+    double minimumRefreshRate = MLInterpolationMinimumRefreshForSourceFps((double)self.frameRate);
     if (displayRefreshRate < minimumRefreshRate) {
         if (reportOut != NULL) {
             *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;

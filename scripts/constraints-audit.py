@@ -2314,6 +2314,21 @@ for reader_shape, reader_arguments in (("its readings", []),
           "the keyCode reader audit failed %s: %s"
           % (reader_shape, (reader_run.stdout + reader_run.stderr).strip().splitlines()[-1:]))
 
+# The cadence policy is pure C with no Apple dependency, so its answers are a laptop's for free --
+# and the failure this forecloses is silent: an interpolation warning that names a frame rate the
+# renderer also refuses is a green build, a following player, and a feature that still does nothing.
+for cadence_shape, cadence_arguments in (("its readings", []),
+                                         ("its red proofs", ["--self-test"])):
+    cadence_run = subprocess.run([sys.executable,
+                                  os.path.join(scripts_dir, "interpolation-cadence-policy-tests.py")]
+                                 + cadence_arguments,
+                                 capture_output=True, text=True, cwd=root)
+    check(cadence_run.returncode == 0,
+          "the cadence policy gate passes %s" % cadence_shape
+          if cadence_run.returncode == 0 else
+          "the cadence policy gate failed %s: %s"
+          % (cadence_shape, (cadence_run.stdout + cadence_run.stderr).strip().splitlines()[-1:]))
+
 # The ownership experiment gets the same treatment, and its controls make the reason stronger
 # rather than different: a probe that retains its own pair reports today's retain cycle as a
 # reading of the app, and a build that ignores the flag reports an empty record as a clean graph.
