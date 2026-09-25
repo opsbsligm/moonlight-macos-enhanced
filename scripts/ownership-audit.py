@@ -299,6 +299,33 @@ def observer_registration_sites(texts):
     return sites
 
 
+def registration_blind_spots(texts):
+    """Registrations this rule cannot read, named instead of skipped.
+
+    The reader understands `- (void)viewDidAppear {`, which is the language every page in this
+    application is written in today. A Swift page would declare `override func viewDidAppear()` and
+    register with `addObserver(forName:object:queue:using:)`, and the rule would find nothing to
+    complain about -- a rule that reads one language is a rule that passes the other, which is the
+    failure mode this repository refuses everywhere else by asking for a number and finding no field.
+    Refusing the unread case costs one page a rule extension, and turns the alternative -- a green
+    that never looked -- into a message.
+    """
+    problems = []
+    for path, text in sorted(texts.items()):
+        if not path.endswith(".swift"):
+            continue
+        if not re.search(r"func\s+viewDidAppear|func\s+viewWillAppear", text):
+            continue
+        if not re.search(r"addObserver", text):
+            continue
+        problems.append("%s registers for notifications in a file with an appearance method that "
+                        "this rule cannot read (it parses Objective-C method declarations only). "
+                        "Move the registration somewhere the rule can see it, or teach "
+                        "appearance_bodies() the Swift declaration in the same commit -- the option "
+                        "that is not allowed is leaving the page unjudged" % path)
+    return problems
+
+
 def judge_registrations(sites, baseline):
     """(problems, notes): a registration that repeats per visit is a callback multiplier.
 
@@ -1191,10 +1218,27 @@ def observer_self_test(baseline):
          registration_case(NO_REGISTRATION_BODY, keys=(SELECTOR_KEY,)), ["no longer made"]),
         ("a page with no registration in its appearance method",
          registration_case(NO_REGISTRATION_BODY, keys=()), []),
+        # The reader's own limit, tested so that growing the rule is the only way to silence it.
+        ("a Swift page the rule cannot read",
+         ({"Page.swift": "final class Page: NSViewController {\n"
+           "    override func viewDidAppear() {\n"
+           "        center.addObserver(forName: nil, object: nil, queue: nil) { _ in }\n"
+           "    }\n}\n"}, {"notification_registration_sites": {}}),
+         ["cannot read"]),
+        ("a Swift page that registers nowhere near an appearance method",
+         ({"Page.swift": "final class Page: NSViewController {\n"
+           "    override func viewDidLoad() {\n"
+           "        center.addObserver(forName: nil, object: nil, queue: nil) { _ in }\n"
+           "    }\n}\n"}, {"notification_registration_sites": {}}), []),
+        ("a Swift appearance method that registers nothing",
+         ({"Page.swift": "final class Page: NSViewController {\n"
+           "    override func viewDidAppear() { redraw() }\n}\n"},
+          {"notification_registration_sites": {}}), []),
     ]
     failures = 0
     for label, (sources, base), expected in cases:
         problems, _notes = judge_registrations(observer_registration_sites(sources), base)
+        problems = problems + registration_blind_spots(sources)
         if expected and not problems:
             print("FAIL fixture: %s passed, and it should have been refused" % label)
             failures += 1
@@ -2016,29 +2060,34 @@ def red_team(sample_path, baseline, decls):
               " multiplying here cannot be broken to prove the rule bites.")
         return failures + 1
     registration_cases = [
-        ("the registrations that ship, withdrawn before they are taken",
-         observer_registration_sites(sources), []),
+        ("the registrations that ship, withdrawn before they are taken", sources, []),
         # The defect this rule was written for, broken out of the tree that produced it: two
         # withdrawals deleted from the apps page, which is the page where the multiplier was
         # measured, and the rule has to name both registrations rather than one.
         ("the apps page's selector withdrawals deleted",
-         observer_registration_sites(dict(
-             sources, **{apps_page: "\n".join(
-                 line for line in sources[apps_page].splitlines()
-                 if "removeObserver:self name:@\"HostLatencyUpdated\"" not in line
-                 and "removeObserver:self name:NSUserDefaultsDidChangeNotification"
-                 not in line)})),
+         dict(sources, **{apps_page: "\n".join(
+             line for line in sources[apps_page].splitlines()
+             if "removeObserver:self name:@\"HostLatencyUpdated\"" not in line
+             and "removeObserver:self name:NSUserDefaultsDidChangeNotification"
+             not in line)}),
          ["2 notification registration(s) are made in a method that runs again"]),
+        ("a Swift page with an appearance method and a registration",
+         dict(sources, **{"Limelight/macOS/Page.swift":
+                          "final class Page: NSViewController {\n"
+                          "    override func viewDidAppear() {\n"
+                          "        center.addObserver(forName: nil, object: nil, queue: nil)"
+                          " { _ in }\n    }\n}\n"}),
+         ["cannot read"]),
         ("a registration deleted from a page without saying so",
-         observer_registration_sites(dict(
-             sources, **{apps_page: "\n".join(
-                 line for line in sources[apps_page].splitlines()
-                 if "addObserver:self selector:@selector(handleHostLatencyUpdate:)"
-                 not in line)})),
+         dict(sources, **{apps_page: "\n".join(
+             line for line in sources[apps_page].splitlines()
+             if "addObserver:self selector:@selector(handleHostLatencyUpdate:)"
+             not in line)}),
          ["no longer made"]),
     ]
-    for label, sites, want in registration_cases:
-        problems, _notes = judge_registrations(sites, baseline)
+    for label, tree, want in registration_cases:
+        problems, _notes = judge_registrations(observer_registration_sites(tree), baseline)
+        problems = problems + registration_blind_spots(tree)
         if want and not problems:
             print("FAIL red team: %s passed. The registration rule did not notice the tree it was"
                   " written to read." % label)
@@ -2206,6 +2255,7 @@ def main():
     registrations, registration_notes = judge_registrations(
         observer_registration_sites(first_party_sources()), baseline)
     problems += registrations
+    problems += registration_blind_spots(first_party_sources())
     notes += registration_notes
     if problems:
         for problem in problems:
