@@ -58,7 +58,11 @@
 @property (nonatomic, strong) NSViewController *lockOverlayHostingController;
 @property (nonatomic, strong) NSViewController *offlineOverlayHostingController;
 @property (nonatomic, strong) id streamingStateObserver;
-@property (nonatomic, strong) id hostLatencyObserver;
+// `hostLatencyObserver` was removed on 2026-09-25. Nothing ever assigned or read it: the latency
+// registration is selector-based (`-addObserver:selector:name:object:` returns nothing), so no
+// token for it has ever existed to store. A property of that name sat beside the two real ones and
+// told the next reader the latency observer was token-managed and therefore already safe to appear
+// more than once -- which is the belief that let its registration repeat per visit.
 @property (nonatomic, copy) NSString *currentHostUUID;
 @property (nonatomic, copy) NSString *offlineOverlayHostUUID;
 @property (nonatomic, copy) NSString *pendingSessionSunshineTargetDisplayNameOverride;
@@ -215,6 +219,20 @@ static NSUserInterfaceItemIdentifier const MLSunshineRefreshDisplaysMenuItemIden
         [weakSelf updateWindowSubtitle];
     }];
     
+    // The two registrations below are the same mistake the block above was written
+    // to avoid, and they were the half of it that the block could not fix: a token
+    // cannot release a registration the centre keyed by selector. The centre does
+    // not coalesce an observer/selector/name pair -- three registrations of it and
+    // one notification produced three callbacks, measured -- so a third visit to
+    // this page made every `HostLatencyUpdated` run `handleHostLatencyUpdate:`
+    // three times, each pass rereading the whole library through
+    // `syncHostStateFromDatabase`, relabelling the window, and re-offering app
+    // discovery, and every `NSUserDefaultsDidChange` relabel the window three
+    // times. Dropping by name is the narrowest repair: `removeObserver:` would
+    // take away `LanguageChanged` and `HostAutoAddressSwitched` from -viewDidLoad
+    // as well, which are registered once and meant to live with the controller.
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:NSUserDefaultsDidChangeNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"HostLatencyUpdated" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateWindowSubtitle) name:NSUserDefaultsDidChangeNotification object:nil];
     // Also listen for latency updates to update the IP in Auto mode
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleHostLatencyUpdate:) name:@"HostLatencyUpdated" object:nil];

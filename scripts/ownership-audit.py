@@ -188,6 +188,160 @@ def app_assignment_sites(texts):
     return sites
 
 
+APPEARANCE_METHOD = re.compile(r"^[+-]\s*\(\s*void\s*\)\s*(viewDidAppear|viewWillAppear)\b", re.M)
+REGISTER_SELECTOR = re.compile(r"addObserver:\s*\w+\s+selector:@selector\((\w+:?)\)\s*"
+                               r"name:\s*(?:@\"([^\"]+)\"|([A-Za-z_][\w.]*))")
+REGISTER_BLOCK = re.compile(r"(?:addObserverForName:|notificationCenter\]\s*\n?\s*"
+                            r"addObserverForName:)\s*(?:@\"([^\"]+)\"|([A-Za-z_][\w.]*))")
+TOKEN_ASSIGN = re.compile(r"\w+\.(\w*[Oo]bserver\w*)\s*=")
+REMOVE_BY_NAME = re.compile(r"removeObserver:\s*\w+\s+name:\s*(?:@\"([^\"]+)\"|([A-Za-z_][\w.]*))")
+REMOVE_TOKEN = re.compile(r"removeObserver:\s*\w+\.(\w*[Oo]bserver\w*)")
+
+
+def first_group(match_groups):
+    """The one non-empty alternative out of a pattern with two ways to name a thing.
+
+    `NSUserDefaultsDidChangeNotification` is a symbol and `@"HostLatencyUpdated"` is a string, so the
+    patterns that find a notification name carry both branches and `findall` hands back a pair with
+    one half empty. Comparing the pair against a name never matches, which would report a protected
+    registration as a defect; emptying the pair first is what makes the comparison a comparison.
+    """
+    return next((part for part in match_groups if part), "")
+
+
+def appearance_bodies(text):
+    """{method name: (body text, line of the body)} for the appearance methods in one file.
+
+    `viewDidAppear` and `viewWillAppear` are the methods this rule is about because they are not run
+    once per object: two measurements in this tree -- one of the apps page across three show/hide
+    cycles, one of the stream page across two window hide/show cycles -- recorded them arriving
+    again to the same controller. The notification centre coalesces nothing: three registrations of
+    one observer/selector/name pair and one notification produced three callbacks, which is a number
+    taken from a two-line program rather than an assumption.
+    """
+    bodies = {}
+    for match in APPEARANCE_METHOD.finditer(text):
+        start = text.index("\n", match.start()) + 1
+        end = text.find("\n}\n", start)
+        if end == -1:
+            continue
+        bodies[match.group(1)] = text[start:end]
+    return bodies
+
+
+def helper_removes_token(text, body, token):
+    """Whether a `[self removeSomethingObservers]` call in the body withdraws this token.
+
+    The stream page withdraws its five block registrations through one helper rather than five
+    copies of the same five lines, and it should not have to be less safe for that. A call counts
+    when the helper's own body removes this token, so the credit is given for the withdrawal and not
+    for the name of the method that performs it.
+    """
+    for helper in set(re.findall(r"\[self\s+(\w*[Rr]emove\w*[Oo]bserver\w*)\]", body)):
+        found = re.search(r"^[+-]\s*\([^)]*\)\s*%s\b" % re.escape(helper), text, re.M)
+        if not found:
+            continue
+        start = text.index("\n", found.start()) + 1
+        end = text.find("\n}\n", start)
+        removed = REMOVE_TOKEN.findall(text[start:end]) if end != -1 else []
+        if token in removed:
+            return helper
+    return None
+
+
+def observer_registration_sites(texts):
+    """Every notification registration made in an appearance method, and how it is withdrawn.
+
+    A registration made in a method that runs once per visit is a multiplier: the centre holds what
+    it was given, so visit N leaves N registrations live and one notification then runs its callback
+    N times. For a block the withdrawal is the token it was handed; for a selector there is no token
+    to hold, which is exactly why half of one page stayed unprotected after the other half was fixed
+    -- a token cannot release a registration the centre keyed by selector.
+    """
+    sites = []
+    for path, text in sorted(texts.items()):
+        for method, body in sorted(appearance_bodies(text).items()):
+            lines = body.splitlines()
+            for offset, line in enumerate(lines):
+                # Only what precedes the registration counts as its withdrawal: a page that removes
+                # the registration after adding it again has the multiplier, just briefly resolved.
+                earlier = "\n".join(lines[:offset])
+                withdrawn_names = [first_group(pair) for pair in REMOVE_BY_NAME.findall(earlier)]
+                withdrawn_tokens = REMOVE_TOKEN.findall(earlier)
+                for match in REGISTER_SELECTOR.finditer(line):
+                    sites.append({"key": "%s|%s|%s" % (path, method,
+                                                       first_group(match.groups()[1:])),
+                                  "file": path, "method": method,
+                                  "name": first_group(match.groups()[1:]), "kind": "selector",
+                                  "statement": "%s; name %s" % (match.group(1),
+                                                                first_group(match.groups()[1:])),
+                                  "withdrawn": first_group(match.groups()[1:]) in withdrawn_names,
+                                  "via": ""})
+                for match in REGISTER_BLOCK.finditer(line):
+                    name = first_group(match.groups())
+                    assigned = TOKEN_ASSIGN.findall(line)
+                    token = assigned[0] if assigned else None
+                    if token is None:
+                        # A block registered where nobody keeps the token can never be withdrawn at
+                        # all, which is the worst case of this rule rather than an unread one.
+                        sites.append({"key": "%s|%s|%s" % (path, method, name), "file": path,
+                                      "method": method, "name": name,
+                                      "kind": "block-untokened",
+                                      "statement": "block registered and never kept",
+                                      "withdrawn": False, "via": ""})
+                        continue
+                    sites.append({"key": "%s|%s|%s" % (path, method, name), "file": path,
+                                  "method": method, "name": name, "kind": "block",
+                                  "statement": "%s; name %s" % (token, name),
+                                  "withdrawn": token in withdrawn_tokens or
+                                               bool(helper_removes_token(text, body, token)),
+                                  "via": helper_removes_token(text, body, token) or ""})
+    return sites
+
+
+def judge_registrations(sites, baseline):
+    """(problems, notes): a registration that repeats per visit is a callback multiplier.
+
+    Armed on every run rather than on the day of a change: unlike the holder rule this one has no
+    future trigger, because the defect is already possible today -- every page in this application
+    can be shown more than once, and the centre has never coalesced anything.
+    """
+    problems, notes = [], []
+    recorded = sorted((baseline.get("notification_registration_sites") or {}).keys())
+    keys = sorted(site["key"] for site in sites)
+    unprotected = [site for site in sites if not site["withdrawn"]]
+    if unprotected:
+        problems.append("%d notification registration(s) are made in a method that runs again on"
+                        " every visit without withdrawing what is already held: %s. The centre"
+                        " keeps every registration it is given -- measured: three registrations of"
+                        " one observer/selector/name pair turn one notification into three"
+                        " callbacks -- so the page's callback work grows by one copy per visit."
+                        " Withdraw the previous registration first (`removeObserver:name:object:`"
+                        " for a selector, whose registration has no token; the token itself for a"
+                        " block), which changes nothing on the first appearance and caps every"
+                        " later one at one callback each"
+                        % (len(unprotected), ", ".join(sorted("%s (%s, %s)"
+                                                              % (site["key"], site["kind"],
+                                                                 site["statement"])
+                                                              for site in unprotected))))
+    new = [key for key in keys if key not in recorded]
+    gone = [key for key in recorded if key not in keys]
+    if new:
+        problems.append("a new notification registration appeared in an appearance method: %s."
+                        " Today it is protected, so it is not a defect -- it is a record that has"
+                        " to gain an entry in the same commit that added it, because the next"
+                        " reader cannot tell a protected registration from a rule that stopped"
+                        " matching" % ", ".join(new))
+    if gone:
+        problems.append("these registrations are no longer made in an appearance method: %s. Say"
+                        " which moved them, in the commit that moved them: a record that loses an"
+                        " entry nobody removed is a rule that has quietly stopped reading the tree"
+                        % ", ".join(gone))
+    notes.append("%d registration(s) are made in an appearance method, %d of them withdrawn before"
+                 " re-registering" % (len(sites), len(sites) - len(unprotected)))
+    return problems, notes
+
+
 def judge_pairing(sites, decls, baseline):
     """Refusals about holders, separate from the graph because it answers a different question."""
     problems, notes = [], []
@@ -937,6 +1091,125 @@ def summary(ownership):
 # ---------------------------------------------------------------------------
 # The fixtures: every refusal this gate can issue, driven from a synthetic report
 # ---------------------------------------------------------------------------
+REGISTRATION_FILE = "Fixture.m"
+
+
+def registration_fixture(body, helpers=""):
+    """A page whose appearance method contains exactly the statements a case is about.
+
+    The registrations have to be read out of text that looks like the real thing -- the rule is a
+    reader of source, so a fixture made of dictionaries would test the reader's data structure and
+    not the reader. `viewDidLoad` is present and unregistered from the record on purpose: it is where
+    a registration that should live with the controller belongs, and the rule must not claim it.
+    """
+    return ("@implementation FixtureViewController\n"
+            "- (void)viewDidLoad {\n"
+            "    [[NSNotificationCenter defaultCenter] addObserver:self"
+            " selector:@selector(languageChanged:) name:@\"LanguageChanged\" object:nil];\n"
+            "}\n"
+            "- (void)viewDidAppear {\n" + body + "}\n" + helpers + "@end\n")
+
+
+WITHDRAWN_SELECTOR_BODY = (
+    "    [[NSNotificationCenter defaultCenter] removeObserver:self"
+    " name:@\"HostLatencyUpdated\" object:nil];\n"
+    "    [[NSNotificationCenter defaultCenter] addObserver:self"
+    " selector:@selector(handleLatency:) name:@\"HostLatencyUpdated\" object:nil];\n")
+LATE_WITHDRAWAL_BODY = (
+    "    [[NSNotificationCenter defaultCenter] addObserver:self"
+    " selector:@selector(handleLatency:) name:@\"HostLatencyUpdated\" object:nil];\n"
+    "    [[NSNotificationCenter defaultCenter] removeObserver:self"
+    " name:@\"HostLatencyUpdated\" object:nil];\n")
+WITHDRAWN_BLOCK_BODY = (
+    "    if (self.logObserver != nil) {\n"
+    "        [[NSNotificationCenter defaultCenter] removeObserver:self.logObserver];\n"
+    "    }\n"
+    "    self.logObserver = [[NSNotificationCenter defaultCenter]"
+    " addObserverForName:@\"LogDidAppend\" object:nil queue:nil"
+    " usingBlock:^(NSNotification *note) { }];\n")
+UNTOKENED_BLOCK_BODY = (
+    "    [[NSNotificationCenter defaultCenter] addObserverForName:@\"LogDidAppend\" object:nil"
+    " queue:nil usingBlock:^(NSNotification *note) { }];\n")
+HELPER_WITHDRAWAL_BODY = (
+    "    [self removeFixtureObservers];\n"
+    "    self.logObserver = [[NSNotificationCenter defaultCenter]"
+    " addObserverForName:@\"LogDidAppend\" object:nil queue:nil"
+    " usingBlock:^(NSNotification *note) { }];\n")
+HELPER_METHOD = (
+    "- (void)removeFixtureObservers {\n"
+    "    [[NSNotificationCenter defaultCenter] removeObserver:self.logObserver];\n"
+    "}\n")
+NO_WITHDRAWAL_BODY = (
+    "    [[NSNotificationCenter defaultCenter] addObserver:self"
+    " selector:@selector(handleLatency:) name:@\"HostLatencyUpdated\" object:nil];\n")
+NO_REGISTRATION_BODY = "    [self doSomethingElse];\n"
+
+SELECTOR_KEY = "%s|viewDidAppear|HostLatencyUpdated" % REGISTRATION_FILE
+BLOCK_KEY = "%s|viewDidAppear|LogDidAppend" % REGISTRATION_FILE
+
+
+def registration_case(body, helpers="", keys=()):
+    """(sources, baseline) for one case: the tree, and the record that would make it lawful."""
+    sources = {REGISTRATION_FILE: registration_fixture(body, helpers)}
+    baseline = {"notification_registration_sites": {key: "fixture" for key in keys}}
+    return sources, baseline
+
+
+def observer_self_test(baseline):
+    """(failures, count) for the registration rule.
+
+    The order cases matter most here: a withdrawal that runs after the registration resolves the
+    multiplier for a moment and then restores it, and a rule that only asks whether a withdrawal
+    exists somewhere in the method would score that as protected.
+    """
+    cases = [
+        ("a selector registration withdrawn before it is taken",
+         registration_case(WITHDRAWN_SELECTOR_BODY, keys=(SELECTOR_KEY,)), []),
+        ("a selector registration that multiplies per visit",
+         registration_case(NO_WITHDRAWAL_BODY, keys=(SELECTOR_KEY,)),
+         ["runs again on every visit"]),
+        ("a withdrawal written after the registration it protects",
+         registration_case(LATE_WITHDRAWAL_BODY, keys=(SELECTOR_KEY,)),
+         ["runs again on every visit"]),
+        ("a block registration withdrawn by its own token",
+         registration_case(WITHDRAWN_BLOCK_BODY, keys=(BLOCK_KEY,)), []),
+        ("a block registration nobody kept a token for",
+         registration_case(UNTOKENED_BLOCK_BODY, keys=(BLOCK_KEY,)),
+         ["runs again on every visit"]),
+        ("a withdrawal performed through a helper",
+         registration_case(HELPER_WITHDRAWAL_BODY, HELPER_METHOD, keys=(BLOCK_KEY,)), []),
+        ("a withdrawal helper that does not name this token",
+         registration_case(HELPER_WITHDRAWAL_BODY,
+                           HELPER_METHOD.replace("self.logObserver", "self.someOtherObserver"),
+                           keys=(BLOCK_KEY,)), ["runs again on every visit"]),
+        # The record, in both directions. A rule that only ever refuses new things is a rule whose
+        # coverage can shrink to nothing without anybody noticing, which is why a registration that
+        # left the appearance method has to say so too.
+        ("a registration the record does not mention",
+         registration_case(WITHDRAWN_SELECTOR_BODY, keys=()), ["new notification registration"]),
+        ("a registration the record still names",
+         registration_case(NO_REGISTRATION_BODY, keys=(SELECTOR_KEY,)), ["no longer made"]),
+        ("a page with no registration in its appearance method",
+         registration_case(NO_REGISTRATION_BODY, keys=()), []),
+    ]
+    failures = 0
+    for label, (sources, base), expected in cases:
+        problems, _notes = judge_registrations(observer_registration_sites(sources), base)
+        if expected and not problems:
+            print("FAIL fixture: %s passed, and it should have been refused" % label)
+            failures += 1
+        elif expected and expected[0] not in "; ".join(problems):
+            print("FAIL fixture: %s refused for the wrong reason: wanted %r, got %s"
+                  % (label, expected[0], problems[0][:170] if problems else "nothing"))
+            failures += 1
+        elif not expected and problems:
+            print("FAIL fixture: %s was refused: %s" % (label, problems[0][:200]))
+            failures += 1
+        else:
+            print("ok   fixture: %s" % label)
+    return failures, len(cases)
+
+
 def shipped_report():
     """The shape today's declarations promise, as the laptop measured it.
 
@@ -1737,6 +2010,49 @@ def red_team(sample_path, baseline, decls):
         ("the holders that ship, under a weak header", app_assignment_sites(sources),
          fixed_declarations(), ["hand an app"]),
     ]
+    apps_page = next((path for path in sources if path.endswith("AppsViewController.m")), None)
+    if apps_page is None:
+        print("FAIL red team: no apps page in the tree, so the registrations that were measured"
+              " multiplying here cannot be broken to prove the rule bites.")
+        return failures + 1
+    registration_cases = [
+        ("the registrations that ship, withdrawn before they are taken",
+         observer_registration_sites(sources), []),
+        # The defect this rule was written for, broken out of the tree that produced it: two
+        # withdrawals deleted from the apps page, which is the page where the multiplier was
+        # measured, and the rule has to name both registrations rather than one.
+        ("the apps page's selector withdrawals deleted",
+         observer_registration_sites(dict(
+             sources, **{apps_page: "\n".join(
+                 line for line in sources[apps_page].splitlines()
+                 if "removeObserver:self name:@\"HostLatencyUpdated\"" not in line
+                 and "removeObserver:self name:NSUserDefaultsDidChangeNotification"
+                 not in line)})),
+         ["2 notification registration(s) are made in a method that runs again"]),
+        ("a registration deleted from a page without saying so",
+         observer_registration_sites(dict(
+             sources, **{apps_page: "\n".join(
+                 line for line in sources[apps_page].splitlines()
+                 if "addObserver:self selector:@selector(handleHostLatencyUpdate:)"
+                 not in line)})),
+         ["no longer made"]),
+    ]
+    for label, sites, want in registration_cases:
+        problems, _notes = judge_registrations(sites, baseline)
+        if want and not problems:
+            print("FAIL red team: %s passed. The registration rule did not notice the tree it was"
+                  " written to read." % label)
+            failures += 1
+        elif want and want[0] not in "; ".join(problems):
+            print("FAIL red team: %s refused for the wrong reason: wanted %r, got %s"
+                  % (label, want[0], problems[0][:170] if problems else "nothing"))
+            failures += 1
+        elif not want and problems:
+            print("FAIL red team: %s was refused: %s" % (label, problems[0][:200]))
+            failures += 1
+        else:
+            print("ok   red team: %s" % label)
+
     for label, sites, tree_decls, want in tree_cases:
         problems, _notes = judge_pairing(sites, tree_decls, baseline)
         if want and not problems:
@@ -1861,6 +2177,9 @@ def main():
         pairing_failures, pairing_total = pairing_self_test(baseline)
         failures += pairing_failures
         total += pairing_total
+        registration_failures, registration_total = observer_self_test(baseline)
+        failures += registration_failures
+        total += registration_total
         print("%d/%d ownership fixtures passed" % (total - failures, total))
         return 1 if failures else 0
     if "--red-team" in arguments:
@@ -1880,6 +2199,14 @@ def main():
                                            decls, baseline)
     problems += pairing
     notes += pairing_notes
+    # The second fact read off the tree rather than off this run. A notification registration made
+    # where a visit runs it again is a multiplier on whatever its callback does -- on the apps page
+    # that callback rereads the whole library -- and no probe can see it, because nothing about the
+    # object graph changes when the same selector is registered twice.
+    registrations, registration_notes = judge_registrations(
+        observer_registration_sites(first_party_sources()), baseline)
+    problems += registrations
+    notes += registration_notes
     if problems:
         for problem in problems:
             print("FAIL %s" % problem)
