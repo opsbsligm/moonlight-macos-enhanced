@@ -56,6 +56,10 @@ static NSMutableSet<NSNumber *> *gMLPhysicallyHeldKeys;
 static bool MLProbeKeyState(CGEventSourceStateID stateID, CGKeyCode key) {
     return [gMLPhysicallyHeldKeys containsObject:@(key)];
 }
+// The shipped switch is opt-in, and the scenarios are about the behaviour behind it. Asked through
+// one function precisely so this harness never writes into a real defaults domain.
+#define HIDKeyboardHoldEnabled MLProbeHoldEnabled
+static bool MLProbeHoldEnabled(void) { return true; }
 // The clock the grace window is measured against, owned by the scenario.
 static uint64_t gMLProbeNowMs = 0;
 static uint64_t LiGetMillis(void) { return gMLProbeNowMs; }
@@ -120,7 +124,7 @@ IMPL_HEAD = r"""
         _keyboardForwardedKeyDownAtMs = [NSMutableDictionary dictionary];
         _keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
         // W is the gameplay key, Shift the chord. Codes are the Windows ones the host would see.
-        _mappings = @{ @13: @(0x57), @56: @(0xA0) };
+        _mappings = @{ @13: @(0x57), @56: @(0xA0), @123: @(0x25) };
     }
     return self;
 }
@@ -218,6 +222,8 @@ int main(void) {
                  13, YES, YES, 300, @"8057D");
         Scenario(@"inside the race allowance nothing is released",
                  13, YES, NO, 100, @"8057D");
+        // Outside the region the key state speaks for, so the modifier is forwarded and not healed:
+        // the region rule is what keeps the chord state machine's keys out of the held-back drawer.
         Scenario(@"a modifier press is left to the modifier state machine",
                  56, NO, NO, 300, @"80A0D");
         // The ghost: the keyboard denies the key at the press and still denies it at the loop, so
@@ -229,6 +235,11 @@ int main(void) {
         Scenario(@"a press the keyboard admits at the loop still reaches the host",
                  13, NO, YES, 30, @"8057D");
         ScenarioDeniedOnceThenAdmitted();
+        // The key state does not track the navigation cluster, so "nobody is holding it" is not
+        // evidence of a phantom there: the left arrow must reach the host untouched. A real capture
+        // dropped one of these while the ghost filter had no region boundary.
+        Scenario(@"a navigation key the keyboard denies is forwarded anyway",
+                 123, NO, NO, 100, @"8025D");
         return gFailed == 0 ? 0 : 1;
     }
 }
@@ -264,10 +275,10 @@ GUARDS = {
         "    if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physicalKeyCode)) {\n"
         "        return NO;  // physically down: forward it now, this is an ordinary press\n"
         "    }\n",
-    "the exclusion that leaves a modifier press to be forwarded at once":
-        "    if (HIDIsModifierKeyCode(physicalKeyCode)) {\n        return NO;\n    }\n",
     "the window a denied press waits out before it is dropped":
         "        if (ageMs < HIDKeyStateHoldConfirmMs) {\n            continue;\n        }\n",
+    "the region the key state is able to speak for":
+        "    if (!HIDWireCodeIsKeyStateDetectable(wireCode)) {\n        return NO;\n    }\n",
 }
 # Which scenario each guard is the only thing protecting.
 GUARD_VICTIMS = {
@@ -275,8 +286,8 @@ GUARD_VICTIMS = {
     "the grace window that waits out the key-state race": "inside the race allowance nothing is released",
     "the exclusion that leaves modifiers to their own state machine": "a modifier press is left to the modifier state machine",
     "the question a real press answers for itself": "a key the player is really holding is left alone",
-    "the exclusion that leaves a modifier press to be forwarded at once": "a modifier press is left to the modifier state machine",
     "the window a denied press waits out before it is dropped": "a press denied inside its window is kept, not dropped",
+    "the region the key state is able to speak for": "a navigation key the keyboard denies is forwarded anyway",
 }
 
 
@@ -288,14 +299,27 @@ def constants(text):
     if len(lines) != 3:
         raise SystemExit("the heal loop's waiting numbers are no longer where they were: %r" % lines)
     hatch = [line for line in text.splitlines()
-             if line.startswith("static NSString * const HIDKeyStateHoldDisabledDefault")]
+             if line.startswith("static NSString * const HIDKeyStateHoldEnabledDefault")]
     if len(hatch) != 1:
-        raise SystemExit("the held-press escape hatch is no longer where it was: %r" % hatch)
+        raise SystemExit("the held-press switch is no longer where it was: %r" % hatch)
     return "\n".join(lines + hatch) + "\n"
 
 
+def detectable_helper(text):
+    """The shipped 'can the key state speak for this key' rule, verbatim, so the harness measures the
+    real region rather than a copy that could drift out of step with it."""
+    signature = "static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {"
+    start = text.find(signature)
+    if start < 0:
+        raise SystemExit("the detectable-region rule is no longer where it was")
+    end = text.find("\n}\n", start)
+    if end < 0:
+        raise SystemExit("the detectable-region rule has no end")
+    return text[start:end + 3]
+
+
 def build(support_text):
-    parts = [PROLOGUE, constants(support_text), IMPL_HEAD]
+    parts = [PROLOGUE, constants(support_text), detectable_helper(support_text), IMPL_HEAD]
     parts += [method(support_text, s) for s in SIGNATURES]
     parts.append(TAIL)
     return "\n".join(parts) + DRIVER

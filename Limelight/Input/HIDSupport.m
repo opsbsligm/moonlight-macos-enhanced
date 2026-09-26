@@ -63,9 +63,14 @@ static uint64_t const HIDKeyStateHoldConfirmMs = 60;
 // The escape hatch, off by default: a player who wants this app to stop answering for a release it
 // never received sets input.disableKeyStateHeal.
 static NSString * const HIDKeyStateHealDisabledDefault = @"input.disableKeyStateHeal";
-// The second escape hatch, also off by default: with this set, every press that arrives is put on
-// the wire whatever the HID key state says, which is the behaviour before the ghost-press filter.
-static NSString * const HIDKeyStateHoldDisabledDefault = @"input.disableKeyStateHold";
+// The hold is opt-IN, and that direction is not laziness but the finding of a capture. On one
+// receiver the left button reaches this app only as a keyboard press that the key state denies -
+// the button bit is parsed into the device's keyboard collection - so holding that press back
+// removes the only click the host ever received. Until the captured-mouse button path reads the
+// device's button elements directly, the default has to be the behaviour that never loses a click.
+// With this set, presses the key state denies are held back instead: the diagnostic and the
+// remediation for a device whose phantom keys are genuinely extra.
+static NSString * const HIDKeyStateHoldEnabledDefault = @"input.enableKeyStateHold";
 
 
 struct KeyMapping {
@@ -803,6 +808,47 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
 // it, which is why this cannot drop input the way the 2026-09-13 note warns about. Modifiers are
 // excluded: -releaseAllModifierKeys and flagsChanged: own chords, and healing a Command that is
 // genuinely held would break shortcuts.
+// Whether the held-back press behaviour is switched on for this user. One function so the scenario
+// harness can switch it without writing into anybody's defaults domain.
+static BOOL HIDKeyboardHoldEnabled(void) {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:HIDKeyStateHoldEnabledDefault];
+}
+
+// Which keys the HID key state can actually answer for. `CGEventSourceKeyState` reports the state of
+// the keys a keyboard layout types with - letters, digits, the numpad, the OEM punctuation, space,
+// return, tab, escape and backspace. It does NOT track the rest: the navigation cluster (arrows,
+// Home/End/PageUp/PageDown/ForwardDelete), the function row, media keys like VolumeUp, and the Apple
+// special keys. Observed in a real capture: those keys show up as a press whose state reads "not
+// held", which is exactly the shape the ghost filter is meant to catch - so without this boundary
+// the filter would silently eat the left arrow (kVK=123 was dropped once in the same capture that
+// proved the phantom C) along with every F-key and media key. A key outside the detectable region is
+// therefore never held back: forwarding it is the only safe answer, whatever the state says.
+static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
+    short vk = (short)(wireCode & 0xFF);
+    if (vk >= 0x41 && vk <= 0x5A) {  // A-Z
+        return YES;
+    }
+    if (vk >= 0x30 && vk <= 0x39) {  // 0-9 on the number row
+        return YES;
+    }
+    if (vk >= 0x60 && vk <= 0x69) {  // numpad 0-9
+        return YES;
+    }
+    switch (vk) {
+        case 0x08:  // Backspace
+        case 0x09:  // Tab
+        case 0x0D:  // Return
+        case 0x1B:  // Escape
+        case 0x20:  // Space
+        case 0xBA: case 0xBB: case 0xBC: case 0xBD:  // ; = , -
+        case 0xBE: case 0xBF: case 0xC0:             // . / `
+        case 0xDB: case 0xDC: case 0xDD: case 0xDE:  // [ \ ] '
+            return YES;
+        default:
+            return NO;
+    }
+}
+
 // A keyboard press whose key the HID layer says is not down cannot be a keystroke the player made:
 // the same key state that `-keyUp:` leaves behind is what answers this, and it is a state, not a
 // timing window or a glyph. Returns YES when the press was taken aside instead of forwarded.
@@ -812,12 +858,17 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
     if (self.keyboardHeldUnconfirmedKeyDowns == nil) {
         self.keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
     }
-    if ([[NSUserDefaults standardUserDefaults] boolForKey:HIDKeyStateHoldDisabledDefault]) {
-        return NO;
+    if (!HIDKeyboardHoldEnabled()) {
+        return NO;  // opt-in: never lose a click because a device reported it as a key
     }
-    // Modifiers are the chord state machine's own business, as they are for the heal loop:
-    // holding a Command back would break a local shortcut on the way through.
-    if (HIDIsModifierKeyCode(physicalKeyCode)) {
+    // The state can only speak for the keys a layout types with; everything else is forwarded
+    // untouched, because "the state does not track this key" and "nobody is holding this key" read
+    // identically and only one of them is a phantom. This one rule also covers the modifiers: every
+    // Windows code the table gives a modifier (0x5B-0x5D, 0xA0-0xA5) is outside the region, so a
+    // held-back Command - which would break a local shortcut mid-keystroke - cannot be constructed.
+    // The heal loop still excludes modifiers on its own, because it works from presses that were
+    // forwarded before this boundary existed.
+    if (!HIDWireCodeIsKeyStateDetectable(wireCode)) {
         return NO;
     }
     if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physicalKeyCode)) {
