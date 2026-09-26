@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The heal was firing on every orphaned press and the player still saw a run of key presses,
+  because the release was timed against this app instead of against the host.** The same capture that
+  refuted the residue (section 33) also reported the ages at which it healed: fourteen releases for
+  `kVK=8`, every one between 252 and 376 ms. That band is not noise, it is the old 250 ms grace plus
+  a 100 ms poll, and it lands after the thing the release exists to prevent - a guest keyboard
+  auto-repeat whose fastest configured first-repeat delay is about 250 ms. The grace is now 120 ms
+  polled every 25 ms with a 5 ms leeway, which puts the release in front of the fastest repeat the
+  guest is configured to start, while staying a thousand times wider than the one race the grace
+  exists to wait out, the case where `-keyDown:` reaches us before the HID key state flips. It still
+  only ever adds a release and never suppresses a press; the scenario suite reads the constants out
+  of the shipped source, so it verified the new window without being told the numbers, and
+  `input-wire-trace-tests` and a Release build still pass. Not claimed: whether the host now stops at
+  one `C` is a player's observation and no log line carries it, and if it does not, the next question
+  is whether refusing a press the HID layer says nobody is holding is worth crossing the line
+  `6292cb9` drew against swallowing input. Section 34.
 - **A phantom key can now be attributed to a device that is allowed to type while it pretends to be
   a mouse.** A live capture answered the two questions section 32 left open and moved the suspect from
   a macOS driver to something unpluggable: not one `mouse-button key-residue` line was written during

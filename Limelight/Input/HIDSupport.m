@@ -46,8 +46,16 @@ NSString *const HIDGamepadQuitNotification = @"HIDGamepadQuitNotification";
 // about it, and how often that question is asked. The grace is a race allowance -- AppKit can hand
 // over keyDown: before the HID key state flips -- and it only ever delays a RELEASE. Nothing in this
 // loop can drop a press, so no gameplay key is ever lost to it. docs/memory-ownership.md S32.
-static uint64_t const HIDKeyStateHealGraceMs = 250;
-static uint64_t const HIDKeyStateHealIntervalMs = 100;
+//
+// The grace is sized against the host, not against this app. The whole point of the release is to
+// reach the guest before its keyboard auto-repeat starts, and the fastest first-repeat delay a
+// Windows guest is configured with is about 250 ms. Measured ages in a real capture were 252-376 ms
+// with the previous 250 ms grace plus a 100 ms poll, which means the release arrived after the guest
+// had already begun repeating: the heal was firing and the player still saw a run of key presses.
+// A 120 ms grace polled every 25 ms puts the release in front of that first repeat while still being
+// a thousand times wider than the key-state race it exists to wait out.
+static uint64_t const HIDKeyStateHealGraceMs = 120;
+static uint64_t const HIDKeyStateHealIntervalMs = 25;
 // The escape hatch, off by default: a player who wants this app to stop answering for a release it
 // never received sets input.disableKeyStateHeal.
 static NSString * const HIDKeyStateHealDisabledDefault = @"input.disableKeyStateHeal";
@@ -852,7 +860,7 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
             return;
         }
         dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC * 2),
-                                  NSEC_PER_MSEC * HIDKeyStateHealIntervalMs, NSEC_PER_MSEC * 50);
+                                  NSEC_PER_MSEC * HIDKeyStateHealIntervalMs, NSEC_PER_MSEC * 5);
         __weak typeof(self) weakSelf = self;
         dispatch_source_set_event_handler(timer, ^{
             [weakSelf healUnpairedForwardedKeyDowns];
