@@ -391,6 +391,22 @@ jobs:
       # of a helper that relied on its callers, and put one into -mouseDown:.
       run: python3 scripts/key-code-read-site-audit.py
 
+    - name: Verify the input wire trace answers a phantom-key report
+      # The other gate proves no reader can invent a key from a field that means nothing on
+      # a mouse event. Neither gate can say which side a player's next report came from, and
+      # every instrument that could was unavailable where the symptom lived: the answer lived
+      # in a debug build, a session-level observer goes blind while a fullscreen stream owns
+      # the pointer, and the IOHID keyboard channel needs a grant only a Finder-launched
+      # instance gets. So the answer is in the log the player already has -- one line per
+      # keyboard edge, from the responder chain through to the dispatch, plus the double-click
+      # beside them. This reads the shipping sources to check each line still sits at the
+      # decision it answers, under the tag the grep asks for, at a level that costs nothing
+      # when the switch is off; its red proofs rename a send, move a line ahead of its type
+      # gate, raise one to LOG_I, and drop the edge from the Logger's persistable rule.
+      run: |
+        python3 scripts/input-wire-trace-tests.py --self-test
+        python3 scripts/input-wire-trace-tests.py
+
     - name: Verify the frame interpolation cadence answer is one answer
       # Whether a display can carry interpolation at a stream rate is one arithmetic fact, but the
       # renderer (which refuses to build the engine) and the settings page (which has to warn

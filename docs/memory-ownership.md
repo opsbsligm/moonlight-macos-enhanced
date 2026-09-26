@@ -1818,3 +1818,159 @@ ObjC 里 property 的 backing ivar 通常就是 `_x`，折叠两个拼写看起�
   此时新文案会诚实地建议 90，玩家看到的将是「180Hz 屏只能 90」。这不是文案错，是判据对
   「名义 180Hz / 实测略低」没有容差。是否引入名义刷新率容差属于行为变更，需另开一轮 + 真机证据。
 * 超分描述重写（放大的是什么、macOS 26 门槛、按帧尺寸查表、回退链与代价）仍未动。
+
+## 31. 「双击左键连续发 C」根因排查：应用链路无罪已证，嫌疑钉在 KVM 型接收器的键盘接口（2026-09-26）
+
+### 报告与前提
+
+* 用户报告（09-26）：串流期间**快速双击**鼠标左键，被控端收到**连续 C**。
+* 复现环境 = `/Applications/MoonlightEnhanced.app` 1.6.0(1574)（09-25 17:10 二进制，
+  strings 证实不含 d4076e2/06a93d6，即无本轮插桩）；该树与 HEAD 的全部键盘发送口同样有 §28 类型闸。
+
+### 已排除（每条都有当期证据，不是推理）
+
+* **应用链路（合成层）无罪**：插桩 Debug 版（`[c-probe]`，本工作区未提交）真实串流中
+  合成双击 ×5 → monitor 抓到全部 10 条 LMB clickCount=2，**零条 keyDown**；
+  同会话物理/注入 C 校准 → `sv keyDown kVK=8 → HIDSupport keyDown → SEND-DOWN VK=0x43 → 成对 UP` 链路完整。
+* §28 类型闸审计复跑 15/15 有闸 0 findings；用户翻译规则空数组；MouseKeys/粘滞/慢速键关；
+  无障碍无改键；无罗技/雷蛇/Mos/LinearMouse。
+* **UU 远程**：IOHIDDevice 层枚举无其虚拟键盘产品名 → 嫌疑降级为备选，不再占主线。
+* **Computer History 事件流**：键盘记录是 AX 语义层（text_input/shortcut），串流全屏窗口不暴露
+  AX 输入，Moonlight 时段仅录到退出 Cmd+Q → 对本案是**无效证据源**，已永久排除。
+* **shell 沙箱事件面隔离**：同进程 CGEventTap 与 CGEventPost 互相不可见 → 探针必须经
+  `launchctl bootstrap gui/501` 跑进 Aqua 会话（已这样做，pid 47168 常驻）。
+* `IOHIDPostEvent`/`IOHIDEventSystemClient` 虽在 IOKit 有导出，但新系统需私有事件对象 ABI，弃用。
+* TCC.db 无 FDA 读不了；统一日志 30 分钟窗口无 ListenEvent 拒绝记录（弱证据）。
+
+### 结构性证据（决定性方向）
+
+`ioreg`/IORegistry 枚举（快照存 /tmp/mlprobe/evidence-devicemap.txt）：
+**HS USB Dongle = KVM 型复合键鼠接收器，5 接口 = 键盘(1/6)@0 + 鼠标(1/2)@1 + 键盘(1/6)@2 + 厂商私有@3/@4。**
+对照组 AJAZZ 2.4G 只有鼠标接口、无键盘接口。
+
+### 主假设（待物理证据，未钉死不落码）
+
+快速双击时 dongle **固件在键盘 passthrough 通道误发 usage 0x06=C**（缺 release → 被控端
+auto-repeat「连续 C」）。macOS 将其当**真实键盘设备事件**（类型合法、keyCode 合法），
+§28 类型闸按构造拦不住——这是唯一同时解释「代码干净却复现 / 合成点击不可复现 / 连续发送」的模型。
+
+### 待办（唯一 gap：物理双击证据）
+
+双通道监听器（launchd 常驻 Aqua 会话，日志 /tmp/mlprobe/hidwatch2.log）：
+通道 A = IOHIDManager 键盘 usage → `KEYPID device=…`；通道 B = CGEventTap → `TAP keyDown kc=… srcDevID=…`。
+判读矩阵：双击期出现 `KEYPID device=HS USB Dongle usage=0x6` → 主假设钉死；
+只有 Apple 内置键盘 C → 回查 UU 远程/其他设备；全程零事件但物理 C 校准可见 → macOS 层无键盘事件，
+嫌疑转向接收器/被控端侧；校准 C 也不可见 → 监听器缺输入监控权限，先补 TCC 再来一轮。
+
+### 修复预案（证据齐后择一，禁走时序启发式）
+
+6292cb9 教训仍然有效：**任何 timing/glyph 启发式都会吃掉真实游戏输入**。合法方向只有：
+a) 硬件侧规避（绕开 dongle 键盘接口/换接收器/KVM 设置）；
+b) 设备级过滤（应用内对指定复合设备的键盘接口 IOHIDInterface seize，事件不进系统流），
+   作为显式开关，默认关。srcDevID 是否可稳定读数由通道 B 的实测一并回答。
+
+### 未实测（不得当成已验证）
+
+* 物理双击下的 KEYPID/TAP 事件与设备归属（用户机器锁屏，实验未做）。
+* 用户复现所用鼠标型号（HS dongle 套还是 AJAZZ 套）——决定嫌疑面，需用户确认。
+* srcDevID（CGEvent 私有 field 11）可读性。
+
+### 校准补录（同日午间，推翻一条方法论而非结论）
+
+* Debug 插桩实例自带 `[prov]` 双通道首跑自证：**`tap=live` 抓到真实鼠标点击、
+  `hidOpen=0xe00002e2`（键盘 usage 通道仍被 TCC 拒）**。由此确认：/tmp 下 hidwatch2
+  的「全程安静」**没有信息量**（TCC 未授权，非无事件）。
+* AX 层注入（cua pressKey）能到达 app 的 keyDown: responder（旧案校准 sendOK=1 为真），
+  但**不进 CGEventTap 系统流**（TAP 零事件）→ 旧「合成双击 app 内零 keyDown」结论对
+  app 层仍成立，对「macOS 是否收到过幽灵 C」**不可作为证据**。系统层判据以 `[prov] TAP` 为准。
+* `srcDevID`（CGEvent 私有 field 11）实测=0 不可读 → 设备归属只能走 IOHIDManager 通道；
+  该通道需用户在 系统设置→输入监控 勾选 Debug 实例后重启（KEYPID 为加分项，非必需）。
+* 实验判读器：/tmp/mlprobe/prov-judge.py（规则：双击簇后 300ms 内出现 keyDown kc=8 = 幽灵 C
+  进过 macOS 事件流；簇外独立 kc=8 = 键盘通道校准有效）。
+
+### 工作区门禁快照（诊断轮就绪状态，锁屏等待实验期间）
+
+* `local-gates.sh`：**51 passed / 1 failed / 12 需 CI 产物**。唯一 FAIL 是
+  `constraints-audit`：`enhancement-report-tests.py`（超分任务的 untracked 脚本，
+  git 历史无它、CI workflow 零引用）——**既有红灯，属超分任务待办**，与本轮
+  `[prov]`/`[c-probe]` 改动零交集（audit 输出中除该文件外无任何探针相关 finding）。
+* Debug 全量 `** BUILD SUCCEEDED **`；`key-code-read-site-audit` 15/15 绿
+  （prov 回调以 `switch (type)` 自证闸）。
+* 探针仪器状态：Debug 实例 `tap=live`（真实事件验证过）+ 超时自动 re-arm；
+  `hidOpen=0xe00002e2`（IOHID 键盘通道待用户在输入监控勾选，仅影响 KEYPID 加分项）。
+
+### 再补录：`hidOpen=0xe00002e2` 的机制解释（推翻“缺 entitlement”猜测）
+
+* Debug 实例 entitlements **没有** `com.apple.security.app-sandbox`（network.* 键在非沙箱
+  应用是无害残留）→ 非沙箱应用，排除沙箱原因。
+* 机制：**由 shell `open -n` 拉起时 TCC 责任进程归调用方（Codex，已授权）** → CGEventTap
+  判定继承（tap=live 是继承假象），而 IOHIDManagerOpen 按实例自身身份 → NotPermitted。
+* 修复动作：用户从 Finder 双击 Debug 实例启动（TCC 提示才会归 MoonlightEnhanced 本体），
+  允许「输入监控」后重启实例，预期 `hidOpen=0x0`，KEYPID 设备署名通道开启。
+  （KEYPID 为加分项；TAP+插桩链路足以完成根因判读。）
+
+### 实测时间线与仪器教训（2026-09-26 午间，用户实验轮）
+
+* 桌面实验（用户，11:37 一轮 / 12:05-12:08 一轮）：**双击快速连击全部被 TAP 抓到，
+  键盘通道零事件**（心跳证明 tap=enabled 期间）→ 桌面双击不产生幽灵 C。
+* 用户在 release 实例串流会话内可稳定复现（「快速双击立刻出现」），且**串流期间
+  TAP 对鼠标事件完全失明**——鼠标 grab 后事件走 HID 直连路径、绕过 session tap。
+  结构性拼图：非 grab 时鼠标报告经**键盘通道**（KVM 键盘 HID 转发，故 session 可见）、
+  grab 时切到鼠标 HID；幽灵 C 只可能出现在 grab 态的键盘通道污染 → **桌面干净不构成无罪**。
+* 仪器教训（全部已修）：① TAP 回调内同步写日志 → 超时被系统禁用（heartbeat 揪出）；
+  ② ARC 释放局部 dispatch_source → 心跳死；③ session tap 看不见 grab 输入 = 结构性盲区，
+  抓 grab 态键盘通道误报必须 IOHIDManager 级（KEYPID），而其需 TCC 授权且**责任进程归
+  Finder 启动的宿主**——shell `open -n` 拉起的实例永拿不到 → 用户须 Finder 双击 Debug 实例。
+* 判读器升级：键盘校准 = 物理按 **F13**（kVK=100，日常无绑定、日志可辨识）+ 一次 C。
+
+### 串流期 TAP flap 观察（12:16-12:20，自动化副产物，勿当用户实验）
+
+* 12:16:54 重启后，re-arm 每 3s 反复触发（`heartbeat re-armed a disabled tap` 洪水）：
+  **全屏串流期间 session tap 被系统反复 disable**。这解释了 11:37 / 12:16 两次
+  「用户在串流里复现 C，TAP 却零记录」——session tap 在该场景不可信。
+  修复：transition-only 日志 + 每 tick re-arm。**结论不变：串流 grab 场景的观察者
+  必须是 IOHID 级（KEYPID），session TAP 只能覆盖桌面/非 grab 场景。**
+* cua 键表无 f13/§/return——校准锚点维持「物理 C 一次」，不再追求无副作用键。
+
+### 判读结论（2026-09-26 下午）：串流内「零键盘事件上 wire」已实证，剩余归属交给 Release 线路追踪一次判定
+
+* **受控实验（Debug 探针实例，同一会话内阳性对照 + 复现手势）**
+  - 07:40:12 进入全屏串流（HOME-PC 会话活跃、`Audio stream starting`、输入转发 live）。
+  - 07:41:15 物理按 C 一次 → 日志出现完整一条链：`sv keyDown kVK=8` → `keyDown … sendOK=1` →
+    `SEND-DOWN` → `SEND-UP`。**阳性对照成立：这台仪器看得见 C 上线。**
+  - 07:42:58 串流视图内快速左键双击 5 组（.134/.139、.180/.183、.234/.236、.273/.278、.329/.331，
+    down→up 仅 3–5 ms）→ **键盘通道零行**（keyDown / keyUp / synthetic / sent-* 全无）。
+  - 全量 `moonlight-debug.log*` 里 `kVK=8` 仅出现 07:41:15 那一次。
+  - 结论：**HEAD+探针的构建在该手势下没有把任何键放上 wire。**
+* **历史路径在用户实际使用的 build 里同样已封。** `/Applications/MoonlightEnhanced.app` =
+  1.6.0/1574，可执行文件 09-25 17:10 构建 = `85d13f6`；`git show 85d13f6:` 核对过
+  `keyDown:` 入口类型闸与 `onKeyboardEquivalent:` 单一入口闸都在位。该 build 落后 HEAD 六个提交，
+  其中涉输入的是 `d4076e2`（系统快捷键接管）与 `06a93d6`（补 4 个非入口读取点；其中
+  `shouldDeferCommandModifierForShortcutHandlingWithEvent:` 全仓无调用方）。
+  → 「驱动在 keyCode 字段填垃圾」不再是可用的解释。
+* **由是收窄到两类**：① 幽灵 C 以**真实 `NSEventTypeKeyDown`(kVK=8)** 进入 app（接收器上的键盘
+  接口 / 输入法 / 第三方注入），app 忠实转发；② C **根本不经过 Mac**（同一键鼠的第二条链路直达
+  游戏机，或 KVM 侧行为）。两类用同一次 grep 区分，见下。
+* **本轮改动**：临时 `[c-probe]` 取证转正为 **Release 可见、零权限、opt-in** 的
+  `[inputdiag] keyboard-wire` 线路追踪 —— stream view 入口（view-down/view-up，含被本地吞掉的键）、
+  `HIDSupport` 入口（down/up/send 状态）、`LiSendKeyboardEventCtx` 落线处（sent-down/sent-up，
+  按 `(unsigned short)` 打印，修掉 `%x` 打 short 把 C 显示成 `0xffff8043` 的诊断自身 bug）、
+  合成快捷方式（synthetic）、以及左键双击锚点行（`mouse-button left-double`）。
+  `Logger.m` 把 keyboard-wire 纳入「可持久化输入诊断行」：开关关闭零成本，打开后一行一键。
+* **判读方式（用户 30 秒，无需 TCC、无需 Debug）**：设置打开「输入诊断」→ 正常串流 → 复现快速双击
+  → 退出 → `grep '\[inputdiag\]' ~/Library/Logs/Moonlight/moonlight-debug.log | tail -80`。
+  有 `keyboard-wire down kVK=8` / `sent-down` = macOS 真给了键盘事件（继续查设备与注入来源）；
+  只有 `mouse-button left-double` 而无键盘行 = **app 从未发送**，C 来自 Mac 之外。
+* **仪器边界（已钉死，此后不再作为判读前提）**：全屏串流期间 session tap 被系统反复 disable；
+  鼠标 grab 后事件绕过 session tap；IOHID 键盘通道 `IOHIDManagerOpen` 需 TCC 输入监控且责任进程
+  必须是 Finder 启动的实例（实测 `hidOpen=0xe00002e2`）。`[prov]` 通道（DEBUG-only、
+  `MLOutputSourceDiagnostics` 开关、写在工作区未提交）只作设备署名加分项：若线路追踪显示 macOS
+  真的递进来了 kVK=8，才值得让 App 从 Finder 启动一次去解锁它，问「是哪个 HID 接口报的键盘」。
+* **本轮验证**：Release `** BUILD SUCCEEDED **`（`build-warning-audit` 一方源码 0 警告）；
+  `key-code-read-site-audit` 15/15 绿（新增/保留读取点全部自带类型闸）。
+* **本轮补上的机器闸**：`scripts/input-wire-trace-tests.py`（已接入 CI `build_arch` 与
+  `constraints-audit.py` 电池）把这组线路当 wiring 读：每条 trace 必须在授权它的类型闸之后、
+  它描述的 dispatch 之前、带 `[inputdiag] keyboard-wire` 标签、且是 `LOG_D`；
+  Logger 侧要求持久化规则里真的有 `rangeOfString:@"keyboard-wire"` 这条子句（注释里提到该词不算）。
+  12 项检查全绿；`--self-test` 7 个植入缺陷全部转红（提前到闸前 / 改名 / 升 LOG_I /
+  删 Logger 子句 / 用 `%x` 打 short / 撤掉视图层记录 / 撤掉双击锚点）。

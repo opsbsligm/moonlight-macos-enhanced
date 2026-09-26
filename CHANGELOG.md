@@ -8,6 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Every key this app puts on the wire is now on the record, so a phantom-key report can be
+  answered out of the player's own log file.** A player reported that a fast double-click of the
+  left button during a stream sends `C` at the host, again and again. This repository answered
+  that bug before: `-keyCode` is undefined on mouse, tablet and gesture events, one driver left a
+  value in that field which collides with `kVK_ANSI_C` (8), and a forwarded press with no matching
+  release is everything a guest auto-repeat needs -- `06a93d6` made every reader of that field
+  answer for its own event type, and `scripts/key-code-read-site-audit.py` holds that line. What no
+  round could do was *attribute* a later report: the in-app answer needed a debug build, a
+  session-level observer goes blind while a fullscreen stream owns the mouse, and the IOHID
+  keyboard channel needs an Input Monitoring grant only a Finder-launched instance can get. The log
+  now carries the answer with no permission and no debug build. With the existing "Input
+  Diagnostics" switch on, one line records every keyboard edge the responder chain delivered to the
+  stream view, every edge `HIDSupport` forwarded, every code that reached `LiSendKeyboardEventCtx`,
+  every synthetic shortcut, and every left double-click that happened next to them -- so "did the
+  app send the key I never pressed?" is one grep for `[inputdiag] keyboard-wire`. A keystroke is
+  one line per press, which is why `Logger.m` persists these beside the scroll and mouse-button
+  lines and still drops the motion stream. Fixed on the way: the send line printed
+  `0x8000 | translation` through `%x` of a *short*, so a plain C read back as `0xffff8043` and
+  looked like a corrupt code; it is printed unsigned now (`0x8043`). Measured, inside one
+  instrumented stream: a physical `C` arrived as `view-down` -> `down send=1` -> `sent-down
+  code=0x8043` -> `sent-up`, and five fast left double-click bursts inside the stream view (3-5 ms
+  apart, `clickCount=2`) produced five `mouse-button left-double` lines and no keyboard line at
+  all. Not claimed: the `C` the player sees during their own sessions is still unattributed, and
+  the two candidates left -- a keyboard interface on the mouse's receiver reporting a real key
+  event to macOS, or the input device reaching the gaming machine by a second path -- are told
+  apart by the same one grep on the build the player actually plays on. `scripts/input-wire-trace-tests.py` reads the shipping sources as wiring and refuses a trace line that moved
+  ahead of its type gate, was renamed, was raised to `LOG_I`, lost its clause in `Logger.m`, or prints a
+  dispatched code through `%x` of a short -- 12 wiring checks, and 7 planted defects that all come back red.
+  Section 31 of
+  `docs/memory-ownership.md` keeps the measurements and the boundary of the instruments that could
+  not see this.
+
 - **The settings page now says what the frames actually did, and which frame rate this display
   can interpolate at.** Interpolation could already be named on the page -- "VT Low-Latency Frame
   Interpolation" -- but that sentence came from the admission, so it reported a decision rather

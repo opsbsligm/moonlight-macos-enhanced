@@ -2314,6 +2314,28 @@ for reader_shape, reader_arguments in (("its readings", []),
           "the keyCode reader audit failed %s: %s"
           % (reader_shape, (reader_run.stdout + reader_run.stderr).strip().splitlines()[-1:]))
 
+# The audit above proves no reader can invent a key from a field that means nothing on a mouse
+# event. It cannot say which side a player's next phantom-key report came from, and every
+# instrument that could was unavailable where the symptom lived: the answer sat in a debug build,
+# a session-level observer goes blind while a fullscreen stream owns the pointer, and the IOHID
+# keyboard channel needs a grant only a Finder-launched instance gets. So the answer moved into
+# the log the player already has -- one line per keyboard edge, from the responder chain through
+# to the dispatch, with the left double-click anchored beside them. This gate reads the shipping
+# sources to check each line still sits at the decision it answers, and it is run in both
+# directions: a renamed send, a line moved ahead of its type gate, one raised to LOG_I, a Logger
+# that drops the edge, and a code printed as a signed short all have to come back red.
+for wire_shape, wire_arguments in (("its wiring", []),
+                                   ("its red proofs", ["--self-test"])):
+    wire_run = subprocess.run([sys.executable,
+                               os.path.join(scripts_dir, "input-wire-trace-tests.py")]
+                              + wire_arguments,
+                              capture_output=True, text=True, cwd=root)
+    check(wire_run.returncode == 0,
+          "the input wire trace gate passes %s" % wire_shape
+          if wire_run.returncode == 0 else
+          "the input wire trace gate failed %s: %s"
+          % (wire_shape, (wire_run.stdout + wire_run.stderr).strip().splitlines()[-1:]))
+
 # The cadence policy is pure C with no Apple dependency, so its answers are a laptop's for free --
 # and the failure this forecloses is silent: an interpolation warning that names a frame rate the
 # renderer also refuses is a green build, a following player, and a feature that still does nothing.
