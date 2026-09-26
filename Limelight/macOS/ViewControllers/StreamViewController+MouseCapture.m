@@ -2403,6 +2403,11 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
             return event;
         }
 
+        if (event.buttonNumber == 0) {
+            // The same field read one layer earlier, so a driver that rewrites the event on the way
+            // in is visible as a difference between the two lines instead of a guess.
+            [strongSelf.hidSupport logMouseKeyboardFieldResidueForEvent:event where:@"view"];
+        }
         NSPoint viewPoint = [strongSelf viewPointForMouseEvent:event];
         if (event.buttonNumber == 0 && event.clickCount >= 2) {
             // The anchor line for "a key arrived when I clicked": a left double-click is

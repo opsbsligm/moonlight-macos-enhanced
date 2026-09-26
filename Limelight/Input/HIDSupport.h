@@ -125,6 +125,9 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 @interface HIDSupport (PointerInput)
 - (BOOL)hasPressedMouseButtons;
 - (void)releaseAllPressedMouseButtons;
+// Prints what the undefined keyCode field of a mouse edge carries. Diagnosis only: the value it
+// logs is never compared to a key code and cannot reach the host. docs/memory-ownership.md S32.
+- (void)logMouseKeyboardFieldResidueForEvent:(NSEvent *)event where:(NSString *)where;
 - (void)mouseDown:(NSEvent *)event withButton:(int)button;
 - (void)mouseUp:(NSEvent *)event withButton:(int)button;
 - (void)mouseMoved:(NSEvent *)event;

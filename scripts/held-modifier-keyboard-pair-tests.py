@@ -164,6 +164,10 @@ int LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode,
                             (unsigned)(unsigned char)modifiers]];
     return 0;
 }
+// The heal loop reads the clock, so the probe owns one: an age the harness sets is how a press is
+// made "still inside the race allowance" or "old enough to ask the keyboard about".
+static uint64_t gMLProbeNowMs = 0;
+static uint64_t LiGetMillis(void) { return gMLProbeNowMs; }
 static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
     static struct MLInputStreamContext ctx = { 1 };
     return &ctx;
@@ -209,6 +213,12 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 @property (nonatomic) NSUInteger keyboardRemoteModifierMask;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+// The heal loop's companion state (docs/memory-ownership.md S32): when each press above went out,
+// and the source that asks the HID layer whether anybody still holds it. Declared so a probe that
+// compiles HIDSupport.m sees the same class the shipped one is; the loop itself is pinned by
+// key-state-heal-tests.py, and a probe that never spins a runloop never starts it.
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;
+@property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event;
@@ -216,6 +226,9 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 - (void)flagsChanged:(NSEvent *)event;
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
+- (void)startKeyboardStateHealTimerIfNeeded;
+- (void)stopKeyboardStateHealTimer;
+- (void)healUnpairedForwardedKeyDowns;
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
 - (char)translatedModifierFlagsForEvent:(NSEvent *)event;
 - (char)translateKeyModifierWithEvent:(NSEvent *)event;
@@ -228,6 +241,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
         _shouldSendInputEvents = YES;
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
         _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
+        _keyboardForwardedKeyDownAtMs = [NSMutableDictionary dictionary];
         // W and Space are the keys from the report; the shifts are the sprint.
         _mappings = @{ @13: @(0x57), @49: @(0x20),
                        @56: @(0xA0), @60: @(0xA1) };

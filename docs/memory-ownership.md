@@ -1974,3 +1974,50 @@ b) 设备级过滤（应用内对指定复合设备的键盘接口 IOHIDInterfac
   Logger 侧要求持久化规则里真的有 `rangeOfString:@"keyboard-wire"` 这条子句（注释里提到该词不算）。
   12 项检查全绿；`--self-test` 7 个植入缺陷全部转红（提前到闸前 / 改名 / 升 LOG_I /
   删 Logger 子句 / 用 `%x` 打 short / 撤掉视图层记录 / 撤掉双击锚点）。
+
+## 32. 「双击左键连续发 C」：残留读数变成可打印的证据，未配对的按下由本机补上释放（2026-09-26）
+
+§31 把「本 app 从未发送」证到位之后，现场只剩两个缺口：一是**残留读数从来没有被看见过一次**
+（哪个驱动在鼠标事件里留了 8，仍只是历史结论）；二是**症状侧没有任何不变量**——只要有一次
+「按下」没有配对的「释放」到达主机，主机就会自动重复，无论那次按下从哪来。本轮各补一件。
+
+* **残留探针（Release 可用、零权限、全屏可用）**：`-[HIDSupport logMouseKeyboardFieldResidueForEvent:where:]`
+  只认鼠标边沿（左右中三种 down/up 的类型闸写在函数自己身上），把该事件自身的 `keyCode`/`subtype`
+  打成一行。两层各打一次：视图层 `where=view`（AppKit 递给 stream view 的那一刻）、线路层
+  `where=wire-down|wire-up`（`mouseDown:/mouseUp:withButton:` 入口，即即将发出鼠标包的地方）——
+  两层数值不一致就说明事件在中间被重写过。这是 §31 三条仪器边界（session tap 全屏失明、IOHID 需
+  TCC、`[prov]` 只在 DEBUG）之后唯一还在的观测面。
+* **Logger 边界（本轮实测钉死）**：`IsHighFrequencyDiagnosticLine` 认的是 `[inputdiag]` 前缀，
+  `ShouldForcePersistDiagnosticLine` 又要求 `level == LOG_D`。因此凡是带 `[inputdiag]` 的行，
+  LOG_I 会被丢、且必须在持久化子句里点名：**标签里必须含 `mouse-button` / `scroll` / `keyboard-wire`
+  三个子句词之一**。残留探针因此叫 `[inputdiag] mouse-button key-residue`（不是独立标签），
+  补发释放叫 `[inputdiag] keyboard-wire healed`。写成 `[inputheal]` 或 LOG_I 都会静默消失。
+* **闸的边界同步收紧**：`key-code-read-site-audit.py` 原本只看「函数自己有没有类型闸」，而闸写的是
+  鼠标类型同样算闸——这条宽容刚好能让「鼠标闸 + 拿残留去发键」过关。新增规则：只被非键盘类型授权的
+  读数，函数体内不得出现键盘动作（`LiSendKeyboard`/`KEY_ACTION_`/`mappings`/`keyboardForwarded`/
+  `keyboardSuppressed`/`translateKeyCode`）。打印残留可以，用残留决定输入不行。
+  `--self-test` 第 4 个植入（鼠标类型闸 + 拿 `event.keyCode` 去 `LiSendKeyboardEventCtx`）必须转红。
+* **症状侧不变量（`healUnpairedForwardedKeyDowns`）**：已转发的按下记在
+  `keyboardForwardedKeyDownKeyCodes`，本轮给它配一份时间戳 `keyboardForwardedKeyDownAtMs`；
+  100ms 一次、满 250ms 仍未配对的按下，逐个问 `CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVK)`：
+  物理按住 → 不动（玩家真按住 W 多久都不会被吞）；物理已松开而我们没有收到 `keyUp:` → 释放丢了，
+  按原线路码补发一次 UP（与 `releaseAllHeldKeys` 同一份编码、同一条 dispatch），并打
+  `keyboard-wire healed kVK=… code=0x… age=…ms`。**它只补释放，从不抑制按下**，所以 6292cb9 警告的
+  「启发式吞输入」在这里结构上不可能发生。修饰键排除在外（和弦归 `releaseAllModifierKeys`/
+  `flagsChanged:` 管，误补 Command 会打断快捷键）。逃生开关：`defaults write std.skyhua.MoonlightMac2 input.disableKeyStateHeal -bool YES`。
+* **新的机器闸 `scripts/key-state-heal-tests.py`（已接入 CI）**：把 `CGEventSourceKeyState` 用
+  `#define` 换成探针自己的「键盘现在按住哪些键」，抽真实 shipped 的 `keyDown:`/`keyUp:`/
+  `translateKeyCodeWithEvent:`/`healUnpairedForwardedKeyDowns` 跑四个场景：孤儿按下被补上释放（同一
+  线路码）、真按住的键不动、宽限窗口内不动、修饰键不动；再把三道闸逐个删掉，必须各红一次
+  （删状态询问 → 「真按住的键」红；删宽限 → 「窗口内不动」红；删修饰键豁免 → 修饰键场景红）。
+  探针侧配套：harness 现在自己拥有时钟（`LiGetMillis` 桩）——**凡抽了 `keyDown:` 的探针都必须给一个**，
+  否则会报 implicit-function-declaration；`keyboard-concurrency-tests.py` 是手写实现，
+  `-Wincomplete-implementation` 被当错误，所以那一份只补属性不补方法声明。
+* **本轮验证**：Release `** BUILD SUCCEEDED **`；`key-code-read-site-audit` 16/16 绿（新增读数自带闸），
+  `--self-test` 4/4 红得回来；`input-wire-trace-tests` 12 项绿（新增的 healed 行走 LOG_D + keyboard-wire 子句，
+  未破坏 8 条边的标签与顺序约束）；`key-state-heal-tests` 4 场景绿 + 3 个删闸证明全红。
+* **仍未证（下一轮不要当已证）**：① 真机串流里 `key-residue kVK=8` 至今**一次都没出现过**，
+  「驱动在鼠标事件里留 8」仍是历史结论而非本轮观测；② heal 的实际效果要等一次真实复现：
+  出现 `keyboard-wire healed` = 「按下未配对」真的发生且被本机修好；
+  只出现 `key-residue kVK=8` 而无 healed = macOS 给了配对事件，C 另有来源；
+  两者都不出现 = 该 Mac 的 AppKit 根本没收到残留，C 来自 Mac 之外（§31 的 KVM 型接收器嫌疑不变）。

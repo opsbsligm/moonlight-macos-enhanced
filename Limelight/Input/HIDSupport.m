@@ -11,6 +11,7 @@
 #import "KeyboardMapResolver.h"
 
 #import <IOKit/hid/IOHIDElement.h>
+#import <ApplicationServices/ApplicationServices.h>  // CGEventSourceKeyState: what the keyboard is physically doing
 #import <IOKit/hidsystem/IOLLEvent.h>
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,17 @@
 
 NSString *const HIDMouseModeToggledNotification = @"HIDMouseModeToggledNotification";
 NSString *const HIDGamepadQuitNotification = @"HIDGamepadQuitNotification";
+
+
+// How long a forwarded press may sit without its release before the physical key state is asked
+// about it, and how often that question is asked. The grace is a race allowance -- AppKit can hand
+// over keyDown: before the HID key state flips -- and it only ever delays a RELEASE. Nothing in this
+// loop can drop a press, so no gameplay key is ever lost to it. docs/memory-ownership.md S32.
+static uint64_t const HIDKeyStateHealGraceMs = 250;
+static uint64_t const HIDKeyStateHealIntervalMs = 100;
+// The escape hatch, off by default: a player who wants this app to stop answering for a release it
+// never received sets input.disableKeyStateHeal.
+static NSString * const HIDKeyStateHealDisabledDefault = @"input.disableKeyStateHeal";
 
 
 struct KeyMapping {
@@ -434,6 +446,11 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 - (void)setInputContext:(void *)inputContext {
     _inputContext = inputContext;
     [self syncScrollTraceDiagnosticsPreferenceToInputContext];
+    // The heal loop belongs to the input channel, not to a key press: arming it here means the first
+    // press of a session is already covered, and a harness that drives -keyDown: directly (the
+    // pairing and identity probes) never starts a timer it has no runloop for. The loop itself is
+    // pinned by key-state-heal-tests.py.
+    [self startKeyboardStateHealTimerIfNeeded];
 }
 
 - (void)refreshInputDiagnosticsPreference {
@@ -738,6 +755,124 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
     }
 }
 
+// The residue probe, and the only place in this app that reads -keyCode on a mouse edge on purpose.
+// The gate states what this function holds: a mouse edge, never a key event. The value is undefined
+// for that kind of event, and that is the point -- the report claims a driver leaves 8 (kVK_ANSI_C)
+// in the field, and printing the field is the only instrument left that works during a fullscreen
+// stream: the session observer goes blind there and the device-level keyboard channel needs a grant
+// a Release build cannot ask for. The value is never compared to a key code, never stored, and never
+// reaches the wire -- scripts/key-code-read-site-audit.py refuses a reader that gates to the mouse
+// family and still names a keyboard action. "mouse-button" in the tag is what keeps the line out of
+// Logger.m's high-frequency discard rule. docs/memory-ownership.md S32.
+- (void)logMouseKeyboardFieldResidueForEvent:(NSEvent *)event where:(NSString *)where {
+    if (event == nil ||
+        (event.type != NSEventTypeLeftMouseDown && event.type != NSEventTypeLeftMouseUp &&
+         event.type != NSEventTypeRightMouseDown && event.type != NSEventTypeRightMouseUp &&
+         event.type != NSEventTypeOtherMouseDown && event.type != NSEventTypeOtherMouseUp)) {
+        return;
+    }
+    if (!self.inputDiagnosticsEnabled) {
+        return;
+    }
+    Log(LOG_D, @"[inputdiag] mouse-button key-residue where=%@ kVK=%hu subtype=0x%hx clicks=%lu type=%ld",
+        where ?: @"unknown", event.keyCode, (unsigned short)event.subtype,
+        (unsigned long)event.clickCount, (long)event.type);
+}
+
+// A press this app forwarded, and the keyboard says nobody is holding that key: the release was lost
+// somewhere between the driver and -keyUp:, and the host is auto-repeating the key for the rest of
+// the session. That is the whole "double-click sends C over and over" symptom, whatever put the press
+// in here. Asking the HID layer is not a timing guess and not a glyph heuristic -- it is the physical
+// state of the same key, read after the fact, and the only action it takes is the one -keyUp: would
+// have taken. A key the player really holds answers true and is left alone for as long as they hold
+// it, which is why this cannot drop input the way the 2026-09-13 note warns about. Modifiers are
+// excluded: -releaseAllModifierKeys and flagsChanged: own chords, and healing a Command that is
+// genuinely held would break shortcuts.
+- (void)healUnpairedForwardedKeyDowns {
+    if (self.keyboardForwardedKeyDownKeyCodes.count == 0 || !self.shouldSendInputEvents) {
+        return;  // teardown owns that path, and it already releases every held key
+    }
+    uint64_t nowMs = LiGetMillis();
+    NSMutableArray<NSNumber *> *orphaned = [NSMutableArray array];
+    for (NSNumber *physicalKeyCode in self.keyboardForwardedKeyDownKeyCodes.allKeys) {
+        NSNumber *sinceMs = self.keyboardForwardedKeyDownAtMs[physicalKeyCode];
+        if (sinceMs == nil) {
+            continue;
+        }
+        uint64_t ageMs = nowMs >= sinceMs.unsignedLongLongValue ? nowMs - sinceMs.unsignedLongLongValue : 0;
+        if (ageMs < HIDKeyStateHealGraceMs) {
+            continue;
+        }
+        unsigned short physical = (unsigned short)physicalKeyCode.unsignedShortValue;
+        if (HIDIsModifierKeyCode(physical)) {
+            continue;
+        }
+        if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physical)) {
+            continue;  // physically down: this press is held, not orphaned
+        }
+        [orphaned addObject:physicalKeyCode];
+    }
+    if (orphaned.count == 0) {
+        return;
+    }
+    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    if (!HIDValidateInputContext(inputCtx, "healUnpairedForwardedKeyDowns")) {
+        return;
+    }
+    for (NSNumber *physicalKeyCode in orphaned) {
+        NSNumber *wireCode = self.keyboardForwardedKeyDownKeyCodes[physicalKeyCode];
+        NSNumber *sinceMs = self.keyboardForwardedKeyDownAtMs[physicalKeyCode];
+        if (wireCode == nil || sinceMs == nil) {
+            continue;
+        }
+        uint64_t ageMs = nowMs >= sinceMs.unsignedLongLongValue ? nowMs - sinceMs.unsignedLongLongValue : 0;
+        [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:physicalKeyCode];
+        [self.keyboardForwardedKeyDownAtMs removeObjectForKey:physicalKeyCode];
+        short code = wireCode.shortValue;
+        Log(LOG_D, @"[inputdiag] keyboard-wire healed kVK=%hu code=0x%hx age=%llums",
+            (unsigned short)physicalKeyCode.unsignedShortValue, (unsigned short)code,
+            (unsigned long long)ageMs);
+        HIDDispatchInput(self, inputCtx, ^{
+            LiSendKeyboardEventCtx(inputCtx, code, KEY_ACTION_UP, 0);
+        });
+    }
+}
+
+- (void)startKeyboardStateHealTimerIfNeeded {
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:HIDKeyStateHealDisabledDefault]) {
+        return;
+    }
+    @synchronized (self) {
+        if (self.keyboardStateHealTimer != nil) {
+            return;
+        }
+        dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                                         dispatch_get_main_queue());
+        if (timer == NULL) {
+            return;
+        }
+        dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC * 2),
+                                  NSEC_PER_MSEC * HIDKeyStateHealIntervalMs, NSEC_PER_MSEC * 50);
+        __weak typeof(self) weakSelf = self;
+        dispatch_source_set_event_handler(timer, ^{
+            [weakSelf healUnpairedForwardedKeyDowns];
+        });
+        self.keyboardStateHealTimer = timer;  // strong: an ARC local source dies at scope exit
+        dispatch_resume(timer);
+    }
+}
+
+- (void)stopKeyboardStateHealTimer {
+    @synchronized (self) {
+        dispatch_source_t timer = self.keyboardStateHealTimer;
+        if (timer == NULL) {
+            return;
+        }
+        dispatch_source_cancel(timer);
+        self.keyboardStateHealTimer = nil;
+    }
+}
+
 - (void)recordScrollInputDiagnosticsMode:(NSString *)mode
                                  traceId:(uint64_t)traceId
                                rawDeltaX:(CGFloat)rawDeltaX
@@ -821,6 +956,7 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
         // message to nil drops the record silently, which is the same stuck-key
         // bug this table exists to prevent, just quieter.
         self.keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
+        self.keyboardForwardedKeyDownAtMs = [NSMutableDictionary dictionary];
         [self resetInputDiagnostics];
 
         // SIMPLIFIED: Print the active keyboard mapping matrix once at init.
@@ -1182,6 +1318,7 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
         // would make Return and Keypad Enter share one slot and let the release
         // of one spend the record of the other.
         self.keyboardForwardedKeyDownKeyCodes[@(event.keyCode)] = @(keyCode);
+        self.keyboardForwardedKeyDownAtMs[@(event.keyCode)] = @((unsigned long long)LiGetMillis());
         HIDDispatchInput(self, inputCtx, ^{
             // Printed as the unsigned code it is: this short is 0x8000 | translation, so
             // %x of the short itself would report 0xffff8043 for a plain C and read like
@@ -1226,6 +1363,7 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
         // dispatched code, so spending by that code would forget a key the
         // player is still holding.
         [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(event.keyCode)];
+        [self.keyboardForwardedKeyDownAtMs removeObjectForKey:@(event.keyCode)];
         PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
         if (!HIDValidateInputContext(inputCtx, "keyUp")) {
             return;
@@ -1318,6 +1456,7 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
     // missing one is a key that stays down for the rest of the session.
     NSArray<NSNumber *> *held = self.keyboardForwardedKeyDownKeyCodes.allValues;
     [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];
+    [self.keyboardForwardedKeyDownAtMs removeAllObjects];
     if (held.count == 0) {
         self.keyboardHeldKeyReleaseInProgress = NO;
         return;
@@ -1354,6 +1493,7 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
         return;
     }
     self.keyboardTeardownAlreadyCalled = YES;
+    [self stopKeyboardStateHealTimer];
     [self.keyboardSuppressedKeyDownKeyCodes removeAllObjects];
     Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: start (physicalMask=0x%lx remoteMask=0x%lx send=%d)",
         reason ?: "",
