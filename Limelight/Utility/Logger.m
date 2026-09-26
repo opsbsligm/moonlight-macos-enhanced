@@ -92,8 +92,13 @@ static BOOL IsPersistableInputDiagnosticLine(NSString *line) {
         return NO;
     }
 
+    // Scroll and mouse-button lines are kept, and keyboard-wire lines with them: a
+    // keystroke is one line per press, not one per pixel, so it cannot do to the log
+    // file what a motion stream does. That is the whole difference between an edge
+    // worth keeping and a rate worth dropping.
     return [line rangeOfString:@"scroll" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-           [line rangeOfString:@"mouse-button" options:NSCaseInsensitiveSearch].location != NSNotFound;
+           [line rangeOfString:@"mouse-button" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+           [line rangeOfString:@"keyboard-wire" options:NSCaseInsensitiveSearch].location != NSNotFound;
 }
 
 static BOOL ShouldForcePersistDiagnosticLine(LogLevel level, NSString *line) {

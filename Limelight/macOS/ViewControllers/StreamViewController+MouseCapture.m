@@ -2404,6 +2404,13 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         }
 
         NSPoint viewPoint = [strongSelf viewPointForMouseEvent:event];
+        if (event.buttonNumber == 0 && event.clickCount >= 2) {
+            // The anchor line for "a key arrived when I clicked": a left double-click is
+            // recorded in the same tag space as the keyboard edges, so the log can answer
+            // whether the two ever coincide. One line per gesture, not per motion event.
+            Log(LOG_D, @"[inputdiag] mouse-button left-double clicks=%lu type=%ld inside=%d",
+                (unsigned long)event.clickCount, (long)event.type, NSPointInRect(viewPoint, strongSelf.view.bounds) ? 1 : 0);
+        }
         if (!NSPointInRect(viewPoint, strongSelf.view.bounds)) {
             [strongSelf logMouseClickDiagnosticsForPhase:[strongSelf mouseClickDiagnosticPhaseForMonitoredEvent:event] event:event];
         }
@@ -2661,6 +2668,15 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     // out of the game, and connection warnings muted for two seconds.
     self.pendingOptionUncaptureToken += 1;
 
+    // Recorded before anything here can consume the key: HIDSupport reports only the
+    // edges it receives, and a key the settings page or a local shortcut takes never
+    // reaches it, so without this line a swallowed key looks exactly like a key macOS
+    // never delivered. The type test is this reader's own gate.
+    if (event.type == NSEventTypeKeyDown) {
+        Log(LOG_D, @"[inputdiag] keyboard-wire view-down kVK=%hu repeat=%d keyWindow=%d",
+            event.keyCode, event.isARepeat ? 1 : 0, self.view.window.isKeyWindow ? 1 : 0);
+    }
+
     // The settings page is a child of this content region, so a key the page does
     // not use still walks the responder chain back to this view. While the page
     // owns the region that key belongs to the page: forwarding it would make
@@ -2676,6 +2692,9 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 }
 
 - (void)keyUp:(NSEvent *)event {
+    if (event.type == NSEventTypeKeyUp) {
+        Log(LOG_D, @"[inputdiag] keyboard-wire view-up kVK=%hu", event.keyCode);
+    }
     [self.hidSupport keyUp:event];
 }
 

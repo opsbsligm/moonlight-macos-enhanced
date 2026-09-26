@@ -1140,6 +1140,15 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
         return;
     }
 
+    // Every keyboard edge the host is about to hear starts here, so this is where the
+    // record of it begins. With input diagnostics on, the log answers a phantom-key
+    // report from the player's own machine: a line here means the key really reached
+    // this app from macOS, and no line means whatever arrived did not come from here.
+    // LOG_D keeps the answer off the log until somebody asks for it.
+    Log(LOG_D, @"[inputdiag] keyboard-wire down kVK=%hu repeat=%d send=%d window=%@",
+        event.keyCode, event.isARepeat ? 1 : 0, self.shouldSendInputEvents ? 1 : 0,
+        event.window ? NSStringFromClass(event.window.class) : @"nil");
+
     // Real keyboard events only. keyCode is undefined on mouse, tablet and
     // gesture events, and some drivers leave garbage there that collides with
     // kVK_ANSI_C - reading it is what caused "double-click sends C". The type
@@ -1174,6 +1183,11 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
         // of one spend the record of the other.
         self.keyboardForwardedKeyDownKeyCodes[@(event.keyCode)] = @(keyCode);
         HIDDispatchInput(self, inputCtx, ^{
+            // Printed as the unsigned code it is: this short is 0x8000 | translation, so
+            // %x of the short itself would report 0xffff8043 for a plain C and read like
+            // a corrupt value to whoever is looking at the log.
+            Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx",
+                (unsigned short)keyCode, modifiers);
             LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
         });
     }
@@ -1183,6 +1197,9 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
     if (event == nil || event.type != NSEventTypeKeyUp) {
         return;
     }
+
+    Log(LOG_D, @"[inputdiag] keyboard-wire up kVK=%hu send=%d",
+        event.keyCode, self.shouldSendInputEvents ? 1 : 0);
     if (self.shouldSendInputEvents) {
         NSNumber *physicalKeyCode = @(event.keyCode);
         if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {
@@ -1191,6 +1208,7 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
             // itself, which is what made local shortcuts look like gameplay keys
             // releasing mid-action.
             [self.keyboardSuppressedKeyDownKeyCodes removeObject:physicalKeyCode];
+            Log(LOG_D, @"[inputdiag] keyboard-wire up-swallowed kVK=%hu", event.keyCode);
             return;
         }
 
@@ -1213,6 +1231,8 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
             return;
         }
         HIDDispatchInput(self, inputCtx, ^{
+            Log(LOG_D, @"[inputdiag] keyboard-wire sent-up code=0x%hx mods=0x%hhx",
+                (unsigned short)keyCode, modifiers);
             LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_UP, modifiers);
         });
     }
@@ -1393,6 +1413,10 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
     if (shortcut == nil || shortcut.modifierOnly || shortcut.keyCode == StreamShortcut.noKeyCode) {
         return;
     }
+
+    // The one path that puts a key on the wire without a key event behind it, so it
+    // belongs on the same record as the edges that came from hardware.
+    Log(LOG_D, @"[inputdiag] keyboard-wire synthetic kVK=%hu", shortcut.keyCode);
 
     NSNumber *mappedKey = [self.mappings objectForKey:@(shortcut.keyCode)];
     if (mappedKey == nil) {
