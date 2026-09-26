@@ -2094,3 +2094,52 @@ b) 设备级过滤（应用内对指定复合设备的键盘接口 IOHIDInterfac
   ③ 若玩家回报「仍然一串」，说明主机的 auto-repeat 首帧比 250ms 更快，或者 C 在主机上还有第二个来源，
   那时才考虑设备级抑制（把「按下到达时 HID 状态说没人按着」作为不转发的判据——注意那已经开始
   接近 6292cb9 禁止的吞输入，必须另立教义章节论证）。
+
+## 35. 一次「本地不出 C、串流出整串 C」的回报，把 heal 判成了无效药，于是幽灵按下被拦在本机（2026-09-26）
+
+§34 把释放提到主机 auto-repeat 之前，赌的是「一串 C = 一次按下被无限重复」。玩家的回报否掉了这个赌注：
+**不串流、在桌面上用同一只鼠标快速双击，一个 c 都没有**；**串流里同样双击，出来一整串 c**。
+把这条和现场计数并在一起看——`kVK=8` 按下 24 次、释放 6 次——真正的图景是：
+**每一次幽灵按下都各自被转发给主机，主机就各自打出一个 c**。heal 只能结束「一个键没完没了」，
+它没法让已经发出去的按下消失，所以无论把释放提得多早，转录都不会停。药不对症。
+
+* **新拦的是按下本身，判据仍然是状态**：`-[HIDSupport holdKeyboardPressIfUnconfirmedForKeyCode:wireCode:modifiers:]`
+  在 `keyDown:` 即将转发的最后一刻问一次 `CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVK)`。
+  答「有人按着」→ **原样立即转发，零额外延迟**（这是全部真按键走的路径，玩家不会为此付任何手感代价）；
+  答「没人按着」→ 这条按下不进线路，记进 `keyboardHeldUnconfirmedKeyDowns`。
+* **扣住不等于丢掉**：heal 的同一个循环每 25ms 顺手结算这些被扣住的按下（`settleHeldKeyboardPresses`）——
+  状态翻转了就补发按下（`keyboard-wire released-held`），并按正常规则登记，后续释放仍由 heal 兜底；
+  到 `HIDKeyStateHoldConfirmMs=60ms`（约两次轮询）仍被否认，才算确认是幽灵：**不转发，同时把配对的释放
+  一起吞掉**（复用既有的 `keyboardSuppressedKeyDownKeyCodes`，主机既然没见过按下，就不该见过松手），
+  打 `keyboard-wire dropped-ghost`。
+* **为什么这不算踩 6292cb9 那条线**：那条教义禁的是**用时序窗口或字符猜测来决定转发**。这里唯一的输入是
+  HID 层的键位状态——就是 `-keyUp:` 缺席时 heal 用来区分「真按住」和「释放丢了」的同一个状态，
+  现场 24 次按下里它能连续 14 次判对。它不猜时间、不看字符、不看重复次数。剩下的风险窗口是
+  「HID 状态与事件派发不一致」，对此的处置是 60ms 的确认窗口、三次机会、以及
+  `defaults write std.skyhua.MoonlightMac2 input.disableKeyStateHold -bool YES` 这把逃生开关；
+  修饰键一律不参与（和弦仍归 `flagsChanged:`/`releaseAllModifierKeys`），会话结束时这张表随其余状态清空。
+* **本地那条阴性结果不是多余的**：它说明这些 keyDown 只在串流会话里出现，而不是这台设备的位图在桌面上
+  也在漏。grab 期间鼠标边沿走 `CoreHIDMouseDriver`（所以 §33 数到 0 行 `left-double`），键盘 collection
+  却仍由 macOS 事件链递给 stream view——一台设备被拆成「一半独占、一半走系统」，正是 §33 那台复合接收器
+  最容易被撕开的形态。
+* **本轮验证**：`scripts/key-state-heal-tests.py` 从 4 个场景扩到 6 个场景 + 1 个跨两次结算的场景
+  （新增「两个端点都被键盘否认的按下永不到主机」「键盘在结算时才承认的按下仍会到主机」
+  「窗口内被否认的按下被保留而不是丢弃」），守卫从 3 条增到 6 条且**全部能红**（真按键自证放行、
+  修饰键直接放行、否认窗口各红一次）。
+  手写实现的 harness 有六份，改一次 `keyDown:` 要挨个喂：`-Wincomplete-implementation` 在它们那里被当错误，
+  所以新方法必须**既声明又回答**——只声明会在运行时 `unrecognized selector`，症状是某一分组一行输出都没有、
+  红却记在别的分组名下。名单：`keyboard-concurrency-tests`、`keyboard-shortcut-modifier-tests`、
+  `keyboard-modifier-mapping-tests`、`held-key-identity-tests`、`held-modifier-keyboard-pair-tests`，
+  另有 `key-order-exhaustive-tests` 与 `translation-rule-consumption-tests` 两份**复用 held-modifier 的
+  harness**（改一处即愈）。还有第二个坑：这些 harness 若没把 `CGEventSourceKeyState` 换成假接口，
+  `keyDown:` 里的新判据就会**去问跑探针这台机器的键盘**——那台机器没人按着键，于是所有按下被扣住，
+  症状是「host saw []」而不是编译错误；`keyboard-concurrency-tests` 与 `held-key-identity-tests` 因此各加了
+  `#define CGEventSourceKeyState(stateID, key) true`，真问的那一份只留 `key-state-heal-tests.py`。
+  全量本地闸最终 **54 passed / 1 failed / 12 need a CI artefact**，唯一那条 FAIL 是上一轮（超分）留下的
+  `enhancement-report-tests.py` 没接进 CI，与本轮无关。Release `** BUILD SUCCEEDED **`，已替换安装
+  （旧包备份 `MoonlightEnhanced-82cd2c9-prev-*.app`，替换前 ESTABLISHED=0）。
+* **仍未证（下一轮不要当已证）**：① 装了含 hold 的包之后主机上是否不再出 c，只有玩家能回报；
+  日志这边看的是 `dropped-ghost` 的次数与玩家报出的 c 数是否一致；② 那一帧究竟来自哪个 `IOHIDInterface`
+  仍待「输入监控」授权 + DEBUG 包；③ 若 `dropped-ghost` 频繁命中而玩家**同时**报告打字丢键，
+  说明 HID 状态与事件派发在这台设备上不同步，那时要把确认窗口拉长或改成「只在 grab 期间启用」，
+  不能靠调小窗口赌运气。

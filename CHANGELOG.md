@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A press the keyboard denies is now held back at the last moment instead of forwarded and
+  corrected afterwards.** Two observations from the player ended the previous theory: on the desktop,
+  with the same mouse and the same double-click, not one `C` appeared, and in a stream the same
+  double-click produced a run of them. Set beside the wire counts - 24 presses of `kVK=8`, 6 releases -
+  that means every ghost press reached the host and each one printed its own character, which is why
+  no timing of the release could have helped: healing a press ends a repeat, it does not unsend a
+  press. So the moment that matters is the press, and the question asked of it is the same one the
+  heal already asks: is anybody holding this key, according to the HID layer. A press whose key is
+  held is forwarded exactly as before with nothing added to its path, which is the route every real
+  keystroke takes; a press the HID layer denies does not go out, and the heal loop settles it on the
+  next 25 ms tick - the state flipped, so the host gets the press late rather than never, or the
+  denial held for the whole 60 ms window, so neither edge of it is ever sent, the release suppressed
+  with the press it belongs to. Modifiers are not eligible, `input.disableKeyStateHold` turns the
+  whole thing off, and the drawer empties at session end with the rest of the keyboard state. This
+  is a state and not a guess: section `6292cb9` forbids deciding what to forward from a timing window
+  or a character, and this decision is made of neither - it is made of the same key state that
+  answered correctly fourteen times in the capture that diagnosed this. Section 35.
 - **The heal was firing on every orphaned press and the player still saw a run of key presses,
   because the release was timed against this app instead of against the host.** The same capture that
   refuted the residue (section 33) also reported the ages at which it healed: fourteen releases for

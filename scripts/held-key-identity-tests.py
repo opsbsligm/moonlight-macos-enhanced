@@ -104,6 +104,10 @@ def collisions(rows):
 
 PROLOGUE = r"""
 #import <AppKit/AppKit.h>
+// Nothing is held back inside this harness: it is about which presses are remembered and which
+// release ends the session, and the state question behind the hold-back is pinned, with its own
+// scenarios, by key-state-heal-tests.py. Left alone it would ask the machine running the probe.
+#define CGEventSourceKeyState(stateID, key) true
 
 typedef struct MLInputStreamContext { int alive; } *PML_INPUT_STREAM_CONTEXT;
 enum { KEY_ACTION_UP = 0, KEY_ACTION_DOWN = 1 };
@@ -154,6 +158,11 @@ RECORD_PROPERTY
 - (void)startKeyboardStateHealTimerIfNeeded;
 - (void)stopKeyboardStateHealTimer;
 - (void)healUnpairedForwardedKeyDowns;
+// Declared and answered because this class is implemented by hand and -Wincomplete-implementation
+// is an error; key-state-heal-tests.py is where the held-back press actually has scenarios.
+- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
+                                        wireCode:(short)wireCode
+                                       modifiers:(char)modifiers;
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
 @end
 """
@@ -169,6 +178,9 @@ def declarations(record):
 def epilogue(mapping_literal):
     return r"""
 @implementation MLKeyboardUnderProbe
+- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
+                                        wireCode:(short)wireCode
+                                       modifiers:(char)modifiers { return NO; }
 - (instancetype)init {
     if ((self = [super init])) {
         _shouldSendInputEvents = YES;
