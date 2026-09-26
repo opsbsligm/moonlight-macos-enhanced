@@ -1714,6 +1714,43 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     self.pendingHybridRemoteCursorSync = NO;
 }
 
+// Where a press that the HID key state denied gets spent. A 2.4G composite receiver can answer the
+// left button as a keyboard usage: in the 2026-09-26 capture an AJAZZ 2.4G sent 126 short presses of
+// kVK_ANSI_C, none of them a repeat, while [clickdiag] recorded 32 right clicks and no left click in
+// the same window. The build that dropped those presses as phantoms left the player with no left
+// button at all, so on a device that reports the click this way the press is the click. While the
+// mouse is captured in a game cursor mode it becomes one. Every other case -- the free mouse, remote
+// desktop mode, a teardown in progress, or a key this device is not known to leak -- keeps the old
+// answer of dropping it, because a click nobody asked for is as wrong as a click that never arrives.
+// docs/memory-ownership.md S36.
+- (BOOL)handleStrayKeyPressAsMouseClick:(unsigned short)physicalKeyCode ageMs:(uint64_t)ageMs {
+    if (physicalKeyCode != kVK_ANSI_C ||
+        !self.isMouseCaptured ||
+        self.isRemoteDesktopMode ||
+        self.stopStreamInProgress ||
+        self.reconnectInProgress) {
+        return NO;
+    }
+
+    Log(LOG_D, @"[clickdiag] phase=stray-c-left-click kVK=%hu ageMs=%llu captured=%d remoteMode=%d",
+        physicalKeyCode, (unsigned long long)ageMs,
+        self.isMouseCaptured ? 1 : 0, self.isRemoteDesktopMode ? 1 : 0);
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || !strongSelf.isMouseCaptured || strongSelf.isRemoteDesktopMode) {
+            return;
+        }
+        // Both edges together: the device gave one short press, and a short press of a mouse button
+        // is a click. Sending only the down would hand the host a left button stuck until the next
+        // uncapture, which is the failure this whole path exists to avoid.
+        [strongSelf.hidSupport mouseDown:nil withButton:BUTTON_LEFT];
+        [strongSelf.hidSupport mouseUp:nil withButton:BUTTON_LEFT];
+    });
+    return YES;
+}
+
 - (BOOL)consumePendingHybridRemoteCursorSyncForEvent:(NSEvent *)event reason:(NSString *)reason {
     if (!self.pendingHybridRemoteCursorSync ||
         !self.isRemoteDesktopMode ||

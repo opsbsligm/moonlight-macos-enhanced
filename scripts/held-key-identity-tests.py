@@ -27,6 +27,7 @@ import os, re, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import apple_toolchain
+import ml_probe_fixture
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE = os.path.join(ROOT, "Limelight", "Input", "HIDSupport.m")
@@ -340,7 +341,7 @@ def build_run(source, label):
     with tempfile.TemporaryDirectory(prefix="held-key-identity-") as tmp:
         path = os.path.join(tmp, "probe.m")
         with open(path, "w", encoding="utf-8") as handle:
-            handle.write(source)
+            handle.write(ml_probe_fixture.apply(source))
         exe = os.path.join(tmp, "probe")
         build = subprocess.run([cc, "-fobjc-arc", "-O1", "-isysroot", sdk,
                                 "-framework", "AppKit", "-o", exe, path],

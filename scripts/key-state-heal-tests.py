@@ -56,6 +56,13 @@ static NSMutableSet<NSNumber *> *gMLPhysicallyHeldKeys;
 static bool MLProbeKeyState(CGEventSourceStateID stateID, CGKeyCode key) {
     return [gMLPhysicallyHeldKeys containsObject:@(key)];
 }
+// The key the leak arrives as, and the click it stands for. The harness names both because AppKit
+// alone does not hand out either.
+enum { kVK_ANSI_C = 8, BUTTON_LEFT = 0x01 };
+// Counts what the stream UI was asked to spend a denied press on.
+static int gMLStrayCalls;
+static unsigned short gMLStrayLastKey;
+
 // The shipped switch is opt-in, and the scenarios are about the behaviour behind it. Asked through
 // one function precisely so this harness never writes into a real defaults domain.
 #define HIDKeyboardHoldEnabled MLProbeHoldEnabled
@@ -103,6 +110,9 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support, unsigned shor
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSDictionary *> *keyboardHeldUnconfirmedKeyDowns;
 @property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
+@property (nonatomic) uint64_t lastTypedOtherKeyDownAtMs;
+@property (nonatomic) uint64_t lastStrayClickAtMs;
+@property (nonatomic, copy) BOOL (^strayKeyPressHandler)(unsigned short physicalKeyCode, uint64_t ageMs);
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
 - (char)translateKeyModifierWithEvent:(NSEvent *)event;
@@ -124,7 +134,7 @@ IMPL_HEAD = r"""
         _keyboardForwardedKeyDownAtMs = [NSMutableDictionary dictionary];
         _keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
         // W is the gameplay key, Shift the chord. Codes are the Windows ones the host would see.
-        _mappings = @{ @13: @(0x57), @56: @(0xA0), @123: @(0x25) };
+        _mappings = @{ @13: @(0x57), @56: @(0xA0), @123: @(0x25), @8: @(0x43) };
     }
     return self;
 }
@@ -209,6 +219,66 @@ static void ScenarioDeniedOnceThenAdmitted(void) {
     }
 }
 
+// One or more denied presses of the leaked key, with or without a listener, optionally right after
+// another key was typed. What a scenario reports is how many times the stream UI was asked to spend
+// a press, and what reached the host: a click that never left the harness must not be claimed.
+static void ScenarioStray(NSString *name, BOOL installHandler, BOOL typedOtherFirst, int presses,
+                          uint64_t gapMs, BOOL heldAtPress, int wantCalls, NSString *wantHost) {
+    [gHostEvents removeAllObjects];
+    [gMLPhysicallyHeldKeys removeAllObjects];
+    gMLStrayCalls = 0;
+    gMLStrayLastKey = 0xFFFF;
+    gMLProbeNowMs = 1000;
+    MLKeyboardHealProbe *probe = [[MLKeyboardHealProbe alloc] init];
+    if (installHandler) {
+        probe.strayKeyPressHandler = ^BOOL(unsigned short key, uint64_t ageMs) {
+            (void)ageMs;
+            gMLStrayCalls++;
+            gMLStrayLastKey = key;
+            return YES;
+        };
+    }
+    if (typedOtherFirst) {
+        // A keystroke the keyboard really admits: it goes out on both edges and only leaves the
+        // keystroke activity behind, which is the thing the typing test reads.
+        [gMLPhysicallyHeldKeys addObject:@(13)];
+        MLHealEvent *other = [[MLHealEvent alloc] init];
+        other.type = NSEventTypeKeyDown;
+        other.keyCode = 13;
+        [probe keyDown:(NSEvent *)other];
+        MLHealEvent *up = [[MLHealEvent alloc] init];
+        up.type = NSEventTypeKeyUp;
+        up.keyCode = 13;
+        [probe keyUp:(NSEvent *)up];
+    }
+    for (int i = 0; i < presses; i++) {
+        [gMLPhysicallyHeldKeys removeAllObjects];
+        if (heldAtPress) {
+            [gMLPhysicallyHeldKeys addObject:@(8)];
+        }
+        MLHealEvent *down = [[MLHealEvent alloc] init];
+        down.type = NSEventTypeKeyDown;
+        down.keyCode = 8;
+        [probe keyDown:(NSEvent *)down];
+        [gMLPhysicallyHeldKeys removeAllObjects];
+        gMLProbeNowMs += gapMs;
+        [probe healUnpairedForwardedKeyDowns];
+    }
+
+    NSString *gotHost = HostSaw();
+    BOOL callsOk = (gMLStrayCalls == wantCalls) &&
+                   (wantCalls == 0 || gMLStrayLastKey == kVK_ANSI_C);
+    BOOL hostOk = [gotHost isEqualToString:wantHost];
+    if (!callsOk || !hostOk) {
+        gFailed++;
+        printf("FAIL %s\n     asked for %d click(s) (wanted %d, last key %hu), host saw [%s], "
+               "expected [%s]\n", name.UTF8String, gMLStrayCalls, wantCalls, gMLStrayLastKey,
+               gotHost.UTF8String, wantHost.UTF8String);
+    } else {
+        printf("ok   %s\n", name.UTF8String);
+    }
+}
+
 int main(void) {
     @autoreleasepool {
         gHostEvents = [NSMutableArray array];
@@ -240,6 +310,21 @@ int main(void) {
         // dropped one of these while the ghost filter had no region boundary.
         Scenario(@"a navigation key the keyboard denies is forwarded anyway",
                  123, NO, NO, 100, @"8025D");
+        // The other half of the ghost rule. A receiver that answers the left button as a keyboard
+        // usage sends exactly this shape, so a denied C may not simply be thrown away.
+        ScenarioStray(@"a denied C is spent on the click the device refused",
+                      YES, NO, 1, 300, NO, 1, @"");
+        // A C the keyboard admits is a keystroke: it must reach the host and must not click.
+        ScenarioStray(@"a C the keyboard admits is typed and never clicked",
+                      YES, NO, 1, 300, YES, 0, @"8043D 8043U");
+        // Typing is the one thing that denies a key in good faith, and typists do not press only C.
+        ScenarioStray(@"a denied C while the player is typing is not a click",
+                      YES, YES, 1, 300, NO, 0, @"8057D 8057U");
+        // With no listener the old answer is kept verbatim: neither edge of the press goes out.
+        ScenarioStray(@"a denied C nobody is listening for stays dropped",
+                      NO, NO, 1, 300, NO, 0, @"");
+        ScenarioStray(@"two denied Cs inside the click guard spend one click",
+                      YES, NO, 2, 100, NO, 1, @"");
         return gFailed == 0 ? 0 : 1;
     }
 }
@@ -279,6 +364,14 @@ GUARDS = {
         "        if (ageMs < HIDKeyStateHoldConfirmMs) {\n            continue;\n        }\n",
     "the region the key state is able to speak for":
         "    if (!HIDWireCodeIsKeyStateDetectable(wireCode)) {\n        return NO;\n    }\n",
+    "the offer a denied press makes before it is thrown away":
+        "            spent = self.strayKeyPressHandler(physical, ageMs);\n",
+    "the typing test that keeps a typed C off the click path":
+        "!typedRecently && ",
+    "the keystroke activity the typing test measures against":
+        "            self.lastTypedOtherKeyDownAtMs = (unsigned long long)LiGetMillis();\n",
+    "the guard that stops one denied burst becoming a click storm":
+        " && !clickedRecently",
 }
 # Which scenario each guard is the only thing protecting.
 GUARD_VICTIMS = {
@@ -288,6 +381,10 @@ GUARD_VICTIMS = {
     "the question a real press answers for itself": "a key the player is really holding is left alone",
     "the window a denied press waits out before it is dropped": "a press denied inside its window is kept, not dropped",
     "the region the key state is able to speak for": "a navigation key the keyboard denies is forwarded anyway",
+    "the offer a denied press makes before it is thrown away": "a denied C is spent on the click the device refused",
+    "the typing test that keeps a typed C off the click path": "a denied C while the player is typing is not a click",
+    "the keystroke activity the typing test measures against": "a denied C while the player is typing is not a click",
+    "the guard that stops one denied burst becoming a click storm": "two denied Cs inside the click guard spend one click",
 }
 
 
@@ -298,11 +395,15 @@ def constants(text):
              if line.startswith("static uint64_t const HIDKeyState")]
     if len(lines) != 3:
         raise SystemExit("the heal loop's waiting numbers are no longer where they were: %r" % lines)
+    stray = [line for line in text.splitlines()
+             if line.startswith("static uint64_t const HIDStrayClick")]
+    if len(stray) != 2:
+        raise SystemExit("the stray-click guard windows are no longer where they were: %r" % stray)
     hatch = [line for line in text.splitlines()
              if line.startswith("static NSString * const HIDKeyStateHoldEnabledDefault")]
     if len(hatch) != 1:
         raise SystemExit("the held-press switch is no longer where it was: %r" % hatch)
-    return "\n".join(lines + hatch) + "\n"
+    return "\n".join(lines + stray + hatch) + "\n"
 
 
 def detectable_helper(text):
@@ -318,8 +419,22 @@ def detectable_helper(text):
     return text[start:end + 3]
 
 
+def stray_candidate_rule(text):
+    """The shipped 'may a denied press stand for a click' rule, verbatim, so the harness cannot drift
+    into clicking on a key the shipping code would never have spent."""
+    signature = "static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {"
+    start = text.find(signature)
+    if start < 0:
+        raise SystemExit("the stray-click candidate rule is no longer where it was")
+    end = text.find("\n}\n", start)
+    if end < 0:
+        raise SystemExit("the stray-click candidate rule has no end")
+    return text[start:end + 3]
+
+
 def build(support_text):
-    parts = [PROLOGUE, constants(support_text), detectable_helper(support_text), IMPL_HEAD]
+    parts = [PROLOGUE, constants(support_text), detectable_helper(support_text),
+             stray_candidate_rule(support_text), IMPL_HEAD]
     parts += [method(support_text, s) for s in SIGNATURES]
     parts.append(TAIL)
     return "\n".join(parts) + DRIVER

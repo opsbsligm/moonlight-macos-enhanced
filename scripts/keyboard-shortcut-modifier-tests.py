@@ -31,6 +31,7 @@ import os, re, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import apple_toolchain
+import ml_probe_fixture
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -999,7 +1000,7 @@ check.failures = []
 
 def run_variant(directory, extracted, label):
     source_path = os.path.join(directory, "probe_%s.m" % label)
-    open(source_path, "w", encoding="utf-8").write(assemble(extracted))
+    open(source_path, "w", encoding="utf-8").write(ml_probe_fixture.apply(assemble(extracted)))
     binary = os.path.join(directory, "probe_%s" % label)
     cc, sdk = apple_toolchain.clang_and_sdk("keyboard shortcut modifier probe")
     cmd = [cc, "-fobjc-arc", "-fmodules", "-mmacosx-version-min=13.0", "-isysroot", sdk,

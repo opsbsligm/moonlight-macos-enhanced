@@ -1352,6 +1352,13 @@ highFreqMotor:(unsigned short)highFreqMotor {
         strongSelf.pendingHybridRemoteCursorSync = NO;
         [strongSelf reconcileHybridFreeMouseAnchorToCurrentPointer];
     };
+    self.hidSupport.strayKeyPressHandler = ^BOOL(unsigned short physicalKeyCode, uint64_t ageMs) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return NO;
+        }
+        return [strongSelf handleStrayKeyPressAsMouseClick:physicalKeyCode ageMs:ageMs];
+    };
     [self resetInputDiagnosticsState];
     [self refreshInputDiagnosticsPreference];
     

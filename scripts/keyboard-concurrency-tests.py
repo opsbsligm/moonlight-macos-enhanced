@@ -30,6 +30,7 @@ import os, re, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import apple_toolchain
+import ml_probe_fixture
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -204,7 +205,7 @@ def build(extracted):
 
 
 def run_source(path, source):
-    open(path, "w", encoding="utf-8").write(source)
+    open(path, "w", encoding="utf-8").write(ml_probe_fixture.apply(source))
 
 
 DRIVER = r"""
@@ -362,7 +363,7 @@ def toolchain():
 def compile_and_run(source, label):
     tmp = tempfile.mkdtemp(prefix="keyboard-concurrency-")
     path = os.path.join(tmp, "probe.m")
-    open(path, "w", encoding="utf-8").write(source)
+    open(path, "w", encoding="utf-8").write(ml_probe_fixture.apply(source))
     cc, sdk = toolchain()
     if cc is None or sdk is None:
         print("FAIL xcrun could not name a clang and SDK to build the %s probe" % label)

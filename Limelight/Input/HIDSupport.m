@@ -60,6 +60,14 @@ static uint64_t const HIDKeyStateHealIntervalMs = 25;
 // state to flip before it is dropped. One poll of the loop above would already answer it; three
 // are allowed so a genuinely slow state flip cannot cost a player a keystroke.
 static uint64_t const HIDKeyStateHoldConfirmMs = 60;
+// How far behind the stray press a real keystroke may reach to still count as "the player is
+// typing", and how far apart two translated clicks must be at minimum. Both exist for the same
+// reason: the translation spends a press that the HID layer denies, and the one shape that denies
+// it in good faith is a C typed faster than the confirm window. A player typing does not press only
+// C, so a nearby keystroke of any other typable key says "keyboard" and the press goes back to being
+// dropped rather than becoming a click in someone's game. docs/memory-ownership.md S36.
+static uint64_t const HIDStrayClickTypingWindowMs = 1500;
+static uint64_t const HIDStrayClickMinIntervalMs = 200;
 // The escape hatch, off by default: a player who wants this app to stop answering for a release it
 // never received sets input.disableKeyStateHeal.
 static NSString * const HIDKeyStateHealDisabledDefault = @"input.disableKeyStateHeal";
@@ -485,6 +493,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         self.inputDiagnosticsDetailedLogSequence = 0;
         self.inputDiagnosticsRemainingDetailedLogs = self.inputDiagnosticsEnabled ? 24 : 0;
         self.inputDiagnosticsRemainingScrollDetailedLogs = self.inputDiagnosticsEnabled ? 256 : 0;
+        self.inputDiagnosticsRemainingButtonEdgeLogs = self.inputDiagnosticsEnabled ? 512 : 0;
         self.scrollTraceSequence = 0;
         self.activeScrollTraceId = 0;
         self.activeScrollTraceStartedMs = 0;
@@ -566,6 +575,33 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     }
 
     return shouldLog;
+}
+
+// The button edge gets its own credit and may not stand in the shared queue behind the motion
+// lines. The 24-slot budget above is spent by relative/absolute motion the moment a stream starts,
+// so a button probe that reserves from it goes silent before the first click and then reports
+// "no button ever arrived" for a session that had hundreds of them. That is how the 2026-09-26
+// capture read mouse-button as zero lines while [clickdiag] recorded 32 right clicks in the same
+// window: the counter was empty, the mouse was not. The sequence number stays shared so a button
+// line still lines up with the motion lines around it. docs/memory-ownership.md S36.
+- (BOOL)reserveMouseButtonEdgeDiagnosticsLogSequence:(NSUInteger *)sequence {
+    if (!self.inputDiagnosticsEnabled) {
+        return NO;
+    }
+
+    @synchronized (self.inputDiagnosticsLock) {
+        if (self.inputDiagnosticsRemainingButtonEdgeLogs == 0) {
+            return NO;
+        }
+
+        self.inputDiagnosticsDetailedLogSequence += 1;
+        self.inputDiagnosticsRemainingButtonEdgeLogs -= 1;
+        if (sequence != NULL) {
+            *sequence = self.inputDiagnosticsDetailedLogSequence;
+        }
+    }
+
+    return YES;
 }
 
 - (void)syncScrollTraceDiagnosticsPreferenceToInputContext {
@@ -764,7 +800,7 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
     }
 
     NSUInteger sequence = 0;
-    if ([self reserveDetailedInputDiagnosticsLogSequence:&sequence]) {
+    if ([self reserveMouseButtonEdgeDiagnosticsLogSequence:&sequence]) {
         Log(LOG_D, @"[inputdiag] #%lu mouse-button action=%@ button=%d mask=0x%02X synthetic=%d ctx=%p",
             (unsigned long)sequence,
             action ?: @"unknown",
@@ -849,6 +885,13 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
     }
 }
 
+// The one key a denied press may be spent on. It is the key this app's own reports named -- a left
+// click arriving as kVK_ANSI_C -- so the hold queue grows for exactly that key and for no other:
+// every other key keeps the behaviour it shipped with, opt-in switch or not.
+static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
+    return physicalKeyCode == kVK_ANSI_C;
+}
+
 // A keyboard press whose key the HID layer says is not down cannot be a keystroke the player made:
 // the same key state that `-keyUp:` leaves behind is what answers this, and it is a state, not a
 // timing window or a glyph. Returns YES when the press was taken aside instead of forwarded.
@@ -858,7 +901,9 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
     if (self.keyboardHeldUnconfirmedKeyDowns == nil) {
         self.keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
     }
-    if (!HIDKeyboardHoldEnabled()) {
+    BOOL strayClickWanted = (self.strayKeyPressHandler != nil &&
+                             HIDKeyCodeIsStrayClickCandidate(physicalKeyCode));
+    if (!HIDKeyboardHoldEnabled() && !strayClickWanted) {
         return NO;  // opt-in: never lose a click because a device reported it as a key
     }
     // The state can only speak for the keys a layout types with; everything else is forwarded
@@ -918,12 +963,31 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
             continue;
         }
         [self.keyboardHeldUnconfirmedKeyDowns removeObjectForKey:physicalKeyCode];
+        // The press is not a keystroke, but on some devices it is not nothing either: a receiver
+        // that answers the left button with a keyboard usage sends exactly this shape -- a short
+        // press of a typable key that the HID layer denies, arriving while the mouse is captured.
+        // The stream UI gets to spend it on the click the device refused to send before it is
+        // thrown away. Whatever it decides, the paired release still has to be swallowed: a release
+        // for a key the host never saw go down reads as a key let go by itself.
+        BOOL spent = NO;
+        BOOL typedRecently = (self.lastTypedOtherKeyDownAtMs != 0 &&
+                              nowMs >= self.lastTypedOtherKeyDownAtMs &&
+                              (nowMs - self.lastTypedOtherKeyDownAtMs) < HIDStrayClickTypingWindowMs);
+        BOOL clickedRecently = (self.lastStrayClickAtMs != 0 &&
+                                nowMs >= self.lastStrayClickAtMs &&
+                                (nowMs - self.lastStrayClickAtMs) < HIDStrayClickMinIntervalMs);
+        if (self.strayKeyPressHandler != nil && !typedRecently && !clickedRecently) {
+            spent = self.strayKeyPressHandler(physical, ageMs);
+            if (spent) {
+                self.lastStrayClickAtMs = nowMs;
+            }
+        }
         if (self.keyboardSuppressedKeyDownKeyCodes == nil) {
             self.keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
         }
         [self.keyboardSuppressedKeyDownKeyCodes addObject:physicalKeyCode];
-        Log(LOG_D, @"[inputdiag] keyboard-wire dropped-ghost kVK=%hu age=%llums", physical,
-            (unsigned long long)ageMs);
+        Log(LOG_D, @"[inputdiag] keyboard-wire %@ kVK=%hu age=%llums",
+            spent ? @"stray-as-click" : @"dropped-ghost", physical, (unsigned long long)ageMs);
     }
 }
 
@@ -1448,6 +1512,12 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
         }
         short keyCode = 0x8000 | translated;
         char modifiers = [self translateKeyModifierWithEvent:event];
+        // Any other key the layout types with, arriving near a denied C, is the player using a
+        // keyboard. Recorded before the hold decision so the C of a keystroke sequence is judged
+        // against the keys around it and not against nothing.
+        if (HIDWireCodeIsKeyStateDetectable(keyCode) && !HIDKeyCodeIsStrayClickCandidate(event.keyCode)) {
+            self.lastTypedOtherKeyDownAtMs = (unsigned long long)LiGetMillis();
+        }
         PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
         if (!HIDValidateInputContext(inputCtx, "keyDown")) {
             return;
