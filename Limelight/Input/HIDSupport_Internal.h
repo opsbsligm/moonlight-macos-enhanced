@@ -116,7 +116,12 @@
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;
 /// The loop that asks. Strong, because ARC releases a dispatch source that only a local knows about,
 /// and a timer nobody holds is a timer that never fires.
-@property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
+@property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;/// Presses that reached this app while the HID key state insisted that nobody was holding the
+/// key. They are not put on the wire on arrival: the heal loop releases them the moment the state
+/// flips, and drops them - together with the release that will follow - if the state never flips.
+/// Keyed by the physical key code, holding the exact wire code and modifiers to send later.
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSDictionary *> *keyboardHeldUnconfirmedKeyDowns;
+
 
 /// Reentry guard for -releaseAllHeldKeys, matching the modifier release guard.
 @property (atomic) BOOL keyboardHeldKeyReleaseInProgress;

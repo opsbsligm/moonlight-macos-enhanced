@@ -36,6 +36,8 @@ SIGNATURES = [
     "- (void)keyUp:(NSEvent *)event",
     "- (short)translateKeyCodeWithEvent:(NSEvent *)event",
     "- (void)healUnpairedForwardedKeyDowns",
+    "- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode",
+    "- (void)settleHeldKeyboardPresses",
 ]
 
 PROLOGUE = r"""
@@ -94,6 +96,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support, unsigned shor
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSDictionary *> *keyboardHeldUnconfirmedKeyDowns;
 @property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event;
@@ -115,6 +118,7 @@ IMPL_HEAD = r"""
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
         _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
         _keyboardForwardedKeyDownAtMs = [NSMutableDictionary dictionary];
+        _keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
         // W is the gameplay key, Shift the chord. Codes are the Windows ones the host would see.
         _mappings = @{ @13: @(0x57), @56: @(0xA0) };
     }
@@ -134,11 +138,11 @@ static int gFailed;
 
 static NSString *HostSaw(void) { return [gHostEvents componentsJoinedByString:@" "]; }
 
-static NSString *Scenario(NSString *name, unsigned short keyCode, BOOL physicallyHeld,
-                          uint64_t advanceMs, NSString *want) {
+static NSString *Scenario(NSString *name, unsigned short keyCode, BOOL heldAtPress,
+                          BOOL heldAtHeal, uint64_t advanceMs, NSString *want) {
     [gHostEvents removeAllObjects];
     [gMLPhysicallyHeldKeys removeAllObjects];
-    if (physicallyHeld) {
+    if (heldAtPress) {
         [gMLPhysicallyHeldKeys addObject:@(keyCode)];
     }
     gMLProbeNowMs = 1000;
@@ -148,10 +152,17 @@ static NSString *Scenario(NSString *name, unsigned short keyCode, BOOL physicall
     down.type = NSEventTypeKeyDown;
     down.keyCode = keyCode;
     [probe keyDown:(NSEvent *)down];
+    // The state may answer one way at the press and another way by the time the loop runs: a key
+    // let go between the two is the orphan the heal exists for, and a key picked up between them
+    // is the race a press must not be dropped over.
+    [gMLPhysicallyHeldKeys removeAllObjects];
+    if (heldAtHeal) {
+        [gMLPhysicallyHeldKeys addObject:@(keyCode)];
+    }
     gMLProbeNowMs += advanceMs;
     [probe healUnpairedForwardedKeyDowns];
-    // No keyUp: is played on purpose: what a scenario measures is what the heal alone put on the
-    // wire. A release driven here would be indistinguishable from one the heal sent.
+    // No keyUp: is played on purpose: what a scenario measures is what the loop alone put on the
+    // wire. A release driven here would be indistinguishable from one the loop sent.
 
     NSString *got = HostSaw();
     BOOL ok = [got isEqualToString:want];
@@ -165,19 +176,59 @@ static NSString *Scenario(NSString *name, unsigned short keyCode, BOOL physicall
     return got;
 }
 
+static void ScenarioDeniedOnceThenAdmitted(void) {
+    [gHostEvents removeAllObjects];
+    [gMLPhysicallyHeldKeys removeAllObjects];
+    gMLProbeNowMs = 1000;
+    MLKeyboardHealProbe *probe = [[MLKeyboardHealProbe alloc] init];
+
+    MLHealEvent *down = [[MLHealEvent alloc] init];
+    down.type = NSEventTypeKeyDown;
+    down.keyCode = 13;
+    [probe keyDown:(NSEvent *)down];
+    // First pass: still denied, but inside the window, so the press must survive it.
+    gMLProbeNowMs += 30;
+    [probe healUnpairedForwardedKeyDowns];
+    // Second pass: the keyboard now admits the key, and the press it holds back is owed to the host.
+    [gMLPhysicallyHeldKeys addObject:@(13)];
+    gMLProbeNowMs += 40;
+    [probe healUnpairedForwardedKeyDowns];
+
+    NSString *want = @"8057D";
+    NSString *got = HostSaw();
+    if (![got isEqualToString:want]) {
+        gFailed++;
+        printf("FAIL a press denied inside its window is kept, not dropped\n     host saw [%s], "
+               "expected [%s]\n", got.UTF8String, want.UTF8String);
+    } else {
+        printf("ok   a press denied inside its window is kept, not dropped\n");
+    }
+}
+
 int main(void) {
     @autoreleasepool {
         gHostEvents = [NSMutableArray array];
         gMLPhysicallyHeldKeys = [NSMutableSet set];
 
+        // Held while the press arrives, let go before the loop runs: forwarded at once, and the
+        // missing release is the one the heal puts on the wire.
         Scenario(@"a press nobody is holding anymore comes back with its release",
-                 13, NO, 300, @"8057D 8057U");
+                 13, YES, NO, 300, @"8057D 8057U");
         Scenario(@"a key the player is really holding is left alone",
-                 13, YES, 300, @"8057D");
+                 13, YES, YES, 300, @"8057D");
         Scenario(@"inside the race allowance nothing is released",
-                 13, NO, 100, @"8057D");
+                 13, YES, NO, 100, @"8057D");
         Scenario(@"a modifier press is left to the modifier state machine",
-                 56, NO, 300, @"80A0D");
+                 56, NO, NO, 300, @"80A0D");
+        // The ghost: the keyboard denies the key at the press and still denies it at the loop, so
+        // the host must see neither edge. This is the run of keys the player complained about.
+        Scenario(@"a press the keyboard denies at both ends never reaches the host",
+                 13, NO, NO, 300, @"");
+        // The other half of the same rule: a press the keyboard denies once and then admits is late,
+        // never lost, and its release is still the heal's to send.
+        Scenario(@"a press the keyboard admits at the loop still reaches the host",
+                 13, NO, YES, 30, @"8057D");
+        ScenarioDeniedOnceThenAdmitted();
         return gFailed == 0 ? 0 : 1;
     }
 }
@@ -209,12 +260,23 @@ GUARDS = {
         "        if (ageMs < HIDKeyStateHealGraceMs) {\n            continue;\n        }\n",
     "the exclusion that leaves modifiers to their own state machine":
         "        if (HIDIsModifierKeyCode(physical)) {\n            continue;\n        }\n",
+    "the question a real press answers for itself":
+        "    if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physicalKeyCode)) {\n"
+        "        return NO;  // physically down: forward it now, this is an ordinary press\n"
+        "    }\n",
+    "the exclusion that leaves a modifier press to be forwarded at once":
+        "    if (HIDIsModifierKeyCode(physicalKeyCode)) {\n        return NO;\n    }\n",
+    "the window a denied press waits out before it is dropped":
+        "        if (ageMs < HIDKeyStateHoldConfirmMs) {\n            continue;\n        }\n",
 }
 # Which scenario each guard is the only thing protecting.
 GUARD_VICTIMS = {
     "asking the keyboard whether the key is still held": "a key the player is really holding is left alone",
     "the grace window that waits out the key-state race": "inside the race allowance nothing is released",
     "the exclusion that leaves modifiers to their own state machine": "a modifier press is left to the modifier state machine",
+    "the question a real press answers for itself": "a key the player is really holding is left alone",
+    "the exclusion that leaves a modifier press to be forwarded at once": "a modifier press is left to the modifier state machine",
+    "the window a denied press waits out before it is dropped": "a press denied inside its window is kept, not dropped",
 }
 
 
@@ -222,10 +284,14 @@ def constants(text):
     """The two numbers the heal waits by, lifted out of the shipping file so the harness measures the
     real grace window instead of one it invented."""
     lines = [line for line in text.splitlines()
-             if line.startswith("static uint64_t const HIDKeyStateHeal")]
-    if len(lines) != 2:
+             if line.startswith("static uint64_t const HIDKeyState")]
+    if len(lines) != 3:
         raise SystemExit("the heal loop's waiting numbers are no longer where they were: %r" % lines)
-    return "\n".join(lines) + "\n"
+    hatch = [line for line in text.splitlines()
+             if line.startswith("static NSString * const HIDKeyStateHoldDisabledDefault")]
+    if len(hatch) != 1:
+        raise SystemExit("the held-press escape hatch is no longer where it was: %r" % hatch)
+    return "\n".join(lines + hatch) + "\n"
 
 
 def build(support_text):
@@ -258,7 +324,7 @@ def main():
     if rc in (None, 1):
         print("FAIL the heal loop does not do what it claims")
         return 1
-    print("ok   the heal releases the orphan, leaves held keys, young presses and modifiers alone")
+    print("ok   the loop releases the orphan, holds nothing back from a real press, and keeps a denied press off the wire")
 
     failed = 0
     for guard, text in GUARDS.items():

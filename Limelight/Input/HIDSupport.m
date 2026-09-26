@@ -56,9 +56,16 @@ NSString *const HIDGamepadQuitNotification = @"HIDGamepadQuitNotification";
 // a thousand times wider than the key-state race it exists to wait out.
 static uint64_t const HIDKeyStateHealGraceMs = 120;
 static uint64_t const HIDKeyStateHealIntervalMs = 25;
+// How long a press held back as "the HID layer says nobody is holding this" may wait for that
+// state to flip before it is dropped. One poll of the loop above would already answer it; three
+// are allowed so a genuinely slow state flip cannot cost a player a keystroke.
+static uint64_t const HIDKeyStateHoldConfirmMs = 60;
 // The escape hatch, off by default: a player who wants this app to stop answering for a release it
 // never received sets input.disableKeyStateHeal.
 static NSString * const HIDKeyStateHealDisabledDefault = @"input.disableKeyStateHeal";
+// The second escape hatch, also off by default: with this set, every press that arrives is put on
+// the wire whatever the HID key state says, which is the behaviour before the ghost-press filter.
+static NSString * const HIDKeyStateHoldDisabledDefault = @"input.disableKeyStateHold";
 
 
 struct KeyMapping {
@@ -796,7 +803,81 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
 // it, which is why this cannot drop input the way the 2026-09-13 note warns about. Modifiers are
 // excluded: -releaseAllModifierKeys and flagsChanged: own chords, and healing a Command that is
 // genuinely held would break shortcuts.
+// A keyboard press whose key the HID layer says is not down cannot be a keystroke the player made:
+// the same key state that `-keyUp:` leaves behind is what answers this, and it is a state, not a
+// timing window or a glyph. Returns YES when the press was taken aside instead of forwarded.
+- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
+                                        wireCode:(short)wireCode
+                                       modifiers:(char)modifiers {
+    if (self.keyboardHeldUnconfirmedKeyDowns == nil) {
+        self.keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
+    }
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:HIDKeyStateHoldDisabledDefault]) {
+        return NO;
+    }
+    // Modifiers are the chord state machine's own business, as they are for the heal loop:
+    // holding a Command back would break a local shortcut on the way through.
+    if (HIDIsModifierKeyCode(physicalKeyCode)) {
+        return NO;
+    }
+    if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physicalKeyCode)) {
+        return NO;  // physically down: forward it now, this is an ordinary press
+    }
+    self.keyboardHeldUnconfirmedKeyDowns[@(physicalKeyCode)] =
+        @{@"wire": @(wireCode), @"mods": @(modifiers), @"at": @((unsigned long long)LiGetMillis())};
+    Log(LOG_D, @"[inputdiag] keyboard-wire held-unconfirmed kVK=%hu", physicalKeyCode);
+    return YES;
+}
+
+// What the loop does with the presses held back above: the state flipped, so the player is holding
+// it after all and the wire gets the press late rather than never; or it never flipped, so the press
+// was not a keystroke and both edges of it stay where they are - the paired release is suppressed
+// too, because a release for a press the host never saw reads as a key let go by itself.
+- (void)settleHeldKeyboardPresses {
+    if (self.keyboardHeldUnconfirmedKeyDowns.count == 0) {
+        return;
+    }
+    uint64_t nowMs = LiGetMillis();
+    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    if (!HIDValidateInputContext(inputCtx, "settleHeldKeyboardPresses")) {
+        return;
+    }
+    for (NSNumber *physicalKeyCode in self.keyboardHeldUnconfirmedKeyDowns.allKeys) {
+        NSDictionary *held = self.keyboardHeldUnconfirmedKeyDowns[physicalKeyCode];
+        if (held == nil) {
+            continue;
+        }
+        unsigned short physical = (unsigned short)physicalKeyCode.unsignedShortValue;
+        uint64_t since = [held[@"at"] unsignedLongLongValue];
+        uint64_t ageMs = nowMs >= since ? nowMs - since : 0;
+        if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physical)) {
+            short code = [held[@"wire"] shortValue];
+            char modifiers = [held[@"mods"] charValue];
+            [self.keyboardHeldUnconfirmedKeyDowns removeObjectForKey:physicalKeyCode];
+            self.keyboardForwardedKeyDownKeyCodes[@(physical)] = @(code);
+            self.keyboardForwardedKeyDownAtMs[@(physical)] = @(nowMs);
+            Log(LOG_D, @"[inputdiag] keyboard-wire released-held kVK=%hu code=0x%hx age=%llums",
+                physical, (unsigned short)code, (unsigned long long)ageMs);
+            HIDDispatchInput(self, inputCtx, ^{
+                LiSendKeyboardEventCtx(inputCtx, code, KEY_ACTION_DOWN, modifiers);
+            });
+            continue;
+        }
+        if (ageMs < HIDKeyStateHoldConfirmMs) {
+            continue;
+        }
+        [self.keyboardHeldUnconfirmedKeyDowns removeObjectForKey:physicalKeyCode];
+        if (self.keyboardSuppressedKeyDownKeyCodes == nil) {
+            self.keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
+        }
+        [self.keyboardSuppressedKeyDownKeyCodes addObject:physicalKeyCode];
+        Log(LOG_D, @"[inputdiag] keyboard-wire dropped-ghost kVK=%hu age=%llums", physical,
+            (unsigned long long)ageMs);
+    }
+}
+
 - (void)healUnpairedForwardedKeyDowns {
+    [self settleHeldKeyboardPresses];
     if (self.keyboardForwardedKeyDownKeyCodes.count == 0 || !self.shouldSendInputEvents) {
         return;  // teardown owns that path, and it already releases every held key
     }
@@ -1320,6 +1401,14 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
         if (!HIDValidateInputContext(inputCtx, "keyDown")) {
             return;
         }
+        // Hold the press if the HID key state says nobody is holding that key. A press whose key
+        // the HID layer reports held passes through here with no delay added at all, so no player
+        // pays for this; only the presses that cannot be a keystroke do. docs/memory-ownership.md S35.
+        if ([self holdKeyboardPressIfUnconfirmedForKeyCode:event.keyCode
+                                                  wireCode:keyCode
+                                                 modifiers:modifiers]) {
+            return;
+        }
         // Record the press under the physical key that produced it, holding the
         // exact encoding that is about to be dispatched, so capture can end
         // safely with this key still held down. Keying by the dispatched code
@@ -1502,6 +1591,7 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
     }
     self.keyboardTeardownAlreadyCalled = YES;
     [self stopKeyboardStateHealTimer];
+    [self.keyboardHeldUnconfirmedKeyDowns removeAllObjects];
     [self.keyboardSuppressedKeyDownKeyCodes removeAllObjects];
     Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: start (physicalMask=0x%lx remoteMask=0x%lx send=%d)",
         reason ?: "",

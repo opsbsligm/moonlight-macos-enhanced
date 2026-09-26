@@ -128,6 +128,11 @@ def modifier_defines():
 
 PROLOGUE = r"""
 #import <AppKit/AppKit.h>
+// A press is never held back inside this harness: it is about which edges reach the page and which
+// modifiers ride along, and the state question behind the hold-back has its own scenarios in
+// key-state-heal-tests.py. Answering it for real here would ask the machine running the probe
+// whether its own keyboard is being held, and it is not.
+#define CGEventSourceKeyState(stateID, key) true
 #import <Carbon/Carbon.h>
 // The per-key halves of the modifier snapshot, read by the shipping
 // record this harness drives.
@@ -220,6 +225,12 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 - (void)stopKeyboardStateHealTimer;
 - (void)healUnpairedForwardedKeyDowns;
 - (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event;
+// The held-back press is declared and answered here because this class is implemented by hand and
+// -Wincomplete-implementation is an error. Which press the key state is allowed to hold back is
+// pinned, with its own scenarios, by key-state-heal-tests.py.
+- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
+                                        wireCode:(short)wireCode
+                                       modifiers:(char)modifiers;
 - (void)releaseAllModifierKeys;
 - (void)releaseRemoteModifierKeysForUncapture;
 - (KMR_CommandPreference)commandKeyPreferenceForCurrentHost;
@@ -245,6 +256,9 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
     }
     return self;
 }
+- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
+                                        wireCode:(short)wireCode
+                                       modifiers:(char)modifiers { return NO; }
 """
 
 TEST_BODY = r"""

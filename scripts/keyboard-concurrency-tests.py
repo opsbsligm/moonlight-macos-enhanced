@@ -66,6 +66,11 @@ def method(text, signature):
 
 PROLOGUE = r"""
 #import <AppKit/AppKit.h>
+// A press is never held back inside this harness: it is about which edges reach the page and which
+// modifiers ride along, and the state question behind the hold-back has its own scenarios in
+// key-state-heal-tests.py. Answering it for real here would ask the machine running the probe
+// whether its own keyboard is being held, and it is not.
+#define CGEventSourceKeyState(stateID, key) true
 
 typedef struct MLInputStreamContext { int alive; } *PML_INPUT_STREAM_CONTEXT;
 enum { KEY_ACTION_UP = 0, KEY_ACTION_DOWN = 1 };
@@ -100,11 +105,19 @@ static BOOL HIDIsModifierKeyCode(unsigned short kc) { return kc == 54 || kc == 5
 // compiles HIDSupport.m sees the same class the shipped one is; the loop itself is pinned by
 // key-state-heal-tests.py, and a probe that never spins a runloop never starts it.
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSDictionary *> *keyboardHeldUnconfirmedKeyDowns;
 @property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event;
 - (short)translateKeyModifierWithEvent:(NSEvent *)event;
 - (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event;
+// The held-back press is answered here with "nothing is held back", because this harness is about
+// which edges reach the page and which release follows capture-off; the state question it stands in
+// for is pinned, with its own scenarios, by key-state-heal-tests.py. It is declared and answered
+// because this class is implemented by hand and -Wincomplete-implementation is an error.
+- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
+                                        wireCode:(short)wireCode
+                                       modifiers:(char)modifiers;
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
 // The heal loop is not declared here on purpose: this harness implements the class by hand and
@@ -131,6 +144,12 @@ EPILOGUE = r"""
 }
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event {}
 - (short)translateKeyModifierWithEvent:(NSEvent *)event { return 0; }
+// Held-back presses are answered "nothing is held back" here; key-state-heal-tests.py
+// is where that question has scenarios. Declared and answered because this class is
+// implemented by hand and -Wincomplete-implementation is an error.
+- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
+                                        wireCode:(short)wireCode
+                                       modifiers:(char)modifiers { return NO; }
 """
 
 # The shape that shipped before the held-key table: one slot for "the key we
@@ -149,6 +168,9 @@ LEGACY = r"""
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event {}
 - (short)translateKeyModifierWithEvent:(NSEvent *)event { return 0; }
 - (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event { /* the page kept no record */ }
+- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
+                                        wireCode:(short)wireCode
+                                       modifiers:(char)modifiers { return NO; }
 - (void)keyDown:(NSEvent *)event {
     short translated = [self translateKeyCodeWithEvent:event];
     if (translated == 0) return;
