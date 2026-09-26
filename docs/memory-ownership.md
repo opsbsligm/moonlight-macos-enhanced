@@ -2047,6 +2047,12 @@ b) 设备级过滤（应用内对指定复合设备的键盘接口 IOHIDInterfac
   就会出现 **bit 置 1 之后再无清零帧** —— macOS 只见按下、不见释放，本 app 只见 `keyDown:`、
   不见 `keyUp:`。kVK=8 对应 Keyboard/Keypad usage `0x06`，即位图里的第 6 个 bit；鼠标按钮 report 的
   第 6 个按钮位同样是 `0x20`。这个数值重合不需要任何 macOS 侧的 bug 就能给出「双击 → C」。
+* **第三方驱动嫌疑被 IORegistry 排除。** 这台机器上确实装过罗技 G HUB，它的
+  `com.logi.ghub.hidfilter`（Driver Extension）至今 `activated enabled`，乍看就是「谁吞掉了 keyUp」的最佳候选。
+  但 AJAZZ 与 HS USB Dongle 的每一个 `IOHIDInterface` 上的 `IOMatchedPersonality` 都指向
+  `com.apple.driverkit.AppleUserHIDDrivers` / `AppleUserHIDEventDriver`，没有任何第三方 dext 匹配到这些设备
+  （G HUB 主程序也没有在跑）。也就是说：按下与释放都是**苹果官方 user driver 在解析设备上报的那份位图**，
+  下一轮不要再往「第三方键盘过滤驱动」方向找。
 * **heal 是对的兜底位置**：它不猜来源、不看字符、不看时序，只把「物理上已经没有人按着、而我们从来没
   收到释放」的那次按下补上释放。现场每一次的持续都被压到约 300ms（age 上限 376ms），
   这既是它生效的证明，也说明它没有吞掉任何真按下。
