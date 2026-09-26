@@ -44,6 +44,17 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 @property(atomic) TemporaryHost *host;
 @property(nonatomic, assign) void *inputContext;
 @property(nonatomic, copy) HIDFreeMouseAbsoluteSyncHandler freeMouseAbsoluteSyncHandler;
+// What to do with a press that the HID key state refuses to confirm and whose confirm window has
+// expired. A 2.4G composite receiver can answer a left-button click as a keyboard usage instead of a
+// mouse button: in the 2026-09-26 capture an AJAZZ 2.4G produced 126 keyDowns for kVK_ANSI_C (each
+// lasting ~70 ms, none of them a repeat) while [clickdiag] recorded 32 right clicks and not one left
+// click in the same window. For that device the unconfirmed press is the click, so dropping it does
+// not remove a phantom -- it removes the only click the player has. The handler gets first refusal to
+// spend the press on something useful; returning NO keeps the drop-the-ghost behaviour unchanged.
+// It belongs to the stream UI because that is the only layer that knows the mouse is captured and
+// the cursor mode is not remote desktop. docs/memory-ownership.md S36.
+@property(nonatomic, copy, nullable) BOOL (^strayKeyPressHandler)(unsigned short physicalKeyCode,
+                                                                 uint64_t ageMs);
 
 - (instancetype)init:(TemporaryHost *)host;
 

@@ -761,6 +761,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)syncRemoteCursorToCurrentPointerClamped;
 - (void)syncRemoteCursorToViewPoint:(NSPoint)viewPoint clampToBounds:(BOOL)clampToBounds;
 - (void)reconcileHybridFreeMouseAnchorToCurrentPointer;
+- (BOOL)handleStrayKeyPressAsMouseClick:(unsigned short)physicalKeyCode ageMs:(uint64_t)ageMs;
 - (void)syncRemoteCursorToMouseEvent:(NSEvent *)event clampToBounds:(BOOL)clampToBounds;
 - (MLFreeMouseExitEdge)freeMouseExitEdgeForEvent:(NSEvent *)event;
 - (BOOL)shouldUncaptureFreeMouseForEdgeEvent:(NSEvent *)event;

@@ -2143,3 +2143,48 @@ b) 设备级过滤（应用内对指定复合设备的键盘接口 IOHIDInterfac
   仍待「输入监控」授权 + DEBUG 包；③ 若 `dropped-ghost` 频繁命中而玩家**同时**报告打字丢键，
   说明 HID 状态与事件派发在这台设备上不同步，那时要把确认窗口拉长或改成「只在 grab 期间启用」，
   不能靠调小窗口赌运气。
+
+## 36. 「mouse-button 全晚 0 条」是探针自己饿死的：按钮边的日志必须有独立配额；而被键盘否认的按下不该丢弃，它在那台设备上就是唯一的一次点击（2026-09-27）
+
+* **上一轮的结论是错的，错在仪器。** `6cc7a7d` 之后我拿 `[inputdiag] mouse-button` 全晚 0 条当作
+  「`-[HIDSupport mouseDown:withButton:]` 从未被调用」的证据。真相是这条日志**根本没有资格说话**：
+  `recordMouseButtonDiagnosticsAction:` 走 `reserveDetailedInputDiagnosticsLogSequence`，而那份配额只有
+  **24 条**，还要与相对/绝对位移行抢；串流一开始鼠标一动就把它吃光，之后每次按钮边都在空的配额上
+  静默返回。同一份日志里共享序号一路排到 `#95`、`[inputdiag] #[0-9]` 共 105 条（滚动另有 256 份自己的
+  配额），而 `mouse-button` 在**含 8 MB 轮转文件的全部历史**里一条都没有——一个从未产出过任何一行的
+  探针，既不能证明点击存在，也不能证明点击不存在。
+* **能用的是 `[clickdiag]`。** `logMouseClickDiagnosticsForPhase:` 每次按钮边无条件打一行
+  `phase=left-down/left-up/right-down/right-up`，不吃那份配额，因此它是这一段唯一可信的仪器。用它重建
+  22:28–22:34 那次串流：`right-down=32 / right-up=32`，而 **`left-down=0`**；同一窗口
+  `keyboard-wire view-down kVK=8` 与 `keyboard-wire down kVK=8` 各 126 条，`repeat=0`，
+  `dropped-ghost age≈68–70 ms`。两份独立计数互相咬合：那台 AJAZZ 2.4G 在那段时间里，左键**确实不是以
+  鼠标按钮到达这个 app 的**，而是以键盘 usage 0x06 到达；同一文件更早的 20:01 时段则有 53 条
+  `left-down`、0 条 kVK=8。两种形态互斥，说明切换发生在设备/系统侧，不在本 app 的派发里。
+* **于是症状被解释干净了**：`6cc7a7d` 把这类按下丢弃，等于删掉那台设备唯一的点击，玩家看到的就是
+  「按左键完全失效」；`dbba44e` 把 hold 改成默认关，只是把症状退回「双击出一串 C」。两次都不是派发
+  代码坏了，是同一个物理事件在两种处置之间来回——**按下葫芦浮起瓢的那只手是丢弃本身**。
+* **本轮的处置是翻译，不是丢弃。** 被 HID 否认、且过完确认窗口的按下，先问一次 UI 层
+  （`HIDSupport.strayKeyPressHandler`）能不能把它花掉：捕获态、非远程桌面、不在拆链中，且这把键是
+  `kVK_ANSI_C`——就发一对左键 down+up（点击本体走 `mouseDown:withButton:`，于是换按钮、
+  `pressedMouseButtonsMask`、诊断计数全部照旧）；UI 不要，才回到原来的丢弃。日志一边
+  `keyboard-wire stray-as-click`，另一边 `[clickdiag] phase=stray-c-left-click`，两条都在必落盘的路径上。
+* **防误伤三道，缺一不可**：① 键盘承认的 C（`CGEventSourceKeyState` 为真）正常上线，一次点击都不产生；
+  ② 其它可打字键在 1.5 s 内有过活动就判定「玩家在打字」，不翻译——打字的人不会只按 C；
+  ③ 两次翻译之间至少 200 ms，一整串幽灵按下不会变成点击风暴。
+* **仪器修好了**：`reserveMouseButtonEdgeDiagnosticsLogSequence` 给按钮边一份独立的 512 条预算，
+  序号仍与位移共享，所以下一次抓包时按钮行仍能和位移行对齐。**任何一条日志在被证明产出过之前，
+  不得当作否证证据**——这条是本节存在的理由。
+* **本轮验证**：`key-state-heal-tests.py` 场景 8→13、守卫 6→10，且十条守卫**逐条能红**（新增
+  「被否认的 C 换成设备欠下的那次点击」「键盘承认的 C 只打字不被点击」「打字期间的被否认 C 不算点击」
+  「没人监听时被否认的 C 仍按原样丢弃」「守卫窗口内两次幽灵按下只花一次点击」）。其余六份手写 harness
+  改由 `scripts/ml_probe_fixture.py` 在写盘前注入它们缺的那点状态：class extension 必须落在该类
+  `@interface` 的 `@end` 之后（同一文件里第二个 `@interface X : NSObject` 是 error），且已经
+  `#import <Carbon/...>` 的探针**不能**再补 `kVK_ANSI_C` 枚举，只 verbatim 抽了 `keys[]` 表的那份才需要。
+  全量本地闸见本轮提交说明；Release `** BUILD SUCCEEDED **`。
+* **仍未证（下一轮不要当已证）**：① 装了本轮包之后，玩家在串流里双击左键是否得到两次点击、
+  `stray-as-click` 条数是否与实际点击数一致，只有玩家能回报；② 这台设备为什么在「按钮形态」和
+  「键盘形态」之间切换（固件、模式键还是接收器重连），本轮没查；③ CoreHID 鼠标驱动在这台机器上
+  从未投递过位移（日志里既无 `CoreHID mouse active` 也无 `CoreHID mouse fallback`），
+  所以**给 CoreHID 订阅按钮元素这条路本轮没有做、也没有证据**，别在别处当已做过；④ 若
+  `stray-as-click` 与玩家报告的丢键同时出现，说明 HID 状态与事件派发在这台设备上不同步，
+  那时该拉长确认窗口或限定「只在 grab 期间启用」，不要调小窗口赌运气。

@@ -144,6 +144,12 @@
 @property (nonatomic) NSUInteger inputDiagnosticsDetailedLogSequence;
 @property (nonatomic) NSUInteger inputDiagnosticsRemainingDetailedLogs;
 @property (nonatomic) NSUInteger inputDiagnosticsRemainingScrollDetailedLogs;
+@property (nonatomic) NSUInteger inputDiagnosticsRemainingButtonEdgeLogs;
+// When the last keystroke of a key other than the stray-click candidate reached this app, and the
+// last press the stray-click path spent. Both guard the translation from turning a typed C into a
+// mouse click. docs/memory-ownership.md S36.
+@property (nonatomic) uint64_t lastTypedOtherKeyDownAtMs;
+@property (nonatomic) uint64_t lastStrayClickAtMs;
 @property (nonatomic) uint64_t scrollTraceSequence;
 @property (nonatomic) uint64_t activeScrollTraceId;
 @property (nonatomic) uint64_t activeScrollTraceStartedMs;

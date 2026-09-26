@@ -34,6 +34,7 @@ import os, re, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import apple_toolchain
+import ml_probe_fixture
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCE = os.path.join(ROOT, "Limelight", "Input", "HIDSupport.m")
@@ -474,7 +475,7 @@ def build(known_bad=None):
 
 
 def compile_and_run(path, source, label):
-    open(path, "w", encoding="utf-8").write(source)
+    open(path, "w", encoding="utf-8").write(ml_probe_fixture.apply(source))
     try:
         clang, sdk = apple_toolchain.clang_and_sdk(label)
     except Exception as error:  # noqa: BLE001 - the answer is the point

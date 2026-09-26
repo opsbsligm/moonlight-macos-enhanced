@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A press the keyboard denies is now spent on the click the device owed it, and the button-edge
+  probe got its own credit so it can never again starve into silence.** The capture that ended the
+  previous theory was read off the wrong instrument. `recordMouseButtonDiagnosticsAction:` reserved
+  from the same 24-line budget the relative and absolute motion lines draw on, and motion empties that
+  budget the moment a stream starts, so `mouse-button` had not printed a single line anywhere in the
+  log history - including the 8 MB file rotated out before it - and a probe that has never produced
+  one line cannot refute anything. `[clickdiag]` is the instrument that does answer, because
+  `logMouseClickDiagnosticsForPhase:` writes one line per button edge unconditionally: in the session
+  where the player reported that the left button had stopped working altogether it recorded 32 right
+  presses and 32 releases and **no left press at all**, while the same window carried 126 presses of
+  `kVK=8`, none of them a repeat, each denied by the HID layer about 70 ms later. Two independent
+  counters agreeing is the finding: on that receiver the left click did not reach this app as a mouse
+  button at all, it arrived as a keyboard usage - and the earlier session in the same file, 53 left
+  presses and no `kVK=8`, shows the same device in its other shape. That is why dropping the denied
+  press read as a broken left button, and why turning the drop off only brought the run of `C` back:
+  both attempts were discarding or forwarding the one event the click consisted of. The press is now
+  offered to the stream layer first - captured mouse, game cursor mode, no teardown in progress, and
+  this one key - and becomes a left button press and release sent through the ordinary button path,
+  so button swapping, the pressed-button mask and every existing count still apply. Three things keep
+  a typed `C` a keystroke: a key the HID layer admits is forwarded and never clicked, any other
+  typable key within 1.5 s says the player is typing, and two translated clicks are never closer than
+  200 ms. `key-state-heal-tests` grew to 13 scenarios and 10 guards, each guard verified red on its
+  own scenario, and the six other hand-written probes now receive the state their lifted methods
+  write through one shared fixture instead of six copies that could drift. Not claimed: whether the
+  player now gets two clicks out of a double-click is a player's observation, why that receiver
+  switches between its two shapes is uninvestigated, and giving the CoreHID driver a button
+  subscription is not done - that driver has never delivered movement on this machine, so there is no
+  evidence it can see the device at all. Section 36.
 - **A press the keyboard denies is now held back at the last moment instead of forwarded and
   corrected afterwards.** Two observations from the player ended the previous theory: on the desktop,
   with the same mouse and the same double-click, not one `C` appeared, and in a stream the same
@@ -729,6 +757,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **The button-edge diagnostic no longer shares its log credit with mouse motion, so a session can no
+  longer look as if it contained no clicks.** The 24 reserved lines behind
+  `reserveDetailedInputDiagnosticsLogSequence:` were drawn on by relative and absolute motion lines,
+  which a capturing stream spends before the first click; every button edge after that returned
+  without logging, and the missing lines were read as missing input - section 36 names the wrong
+  conclusion that produced. Button edges now reserve from their own 512-line budget and keep the
+  shared sequence number, so a button line still lines up against the motion lines around it. The
+  probe's output is unchanged apart from getting the chance to print.
 - **A holder is credited with a host only when the source really hands it one.** `pairedWithHost` is
   the reading that decides which holders are exempt from the change that turns `app.host` weak, and it
   had never been tested: `pairing_self_test()` feeds the judgement synthetic sites whose verdict the
