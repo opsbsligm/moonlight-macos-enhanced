@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A mouse event's undefined key field is now printed, and a press that never got its release is
+  finished by this app.** Section 32. Reading `-keyCode` on a mouse event was the bug; printing it is
+  the instrument that is left once the session observer goes blind during a fullscreen stream and the
+  device-level keyboard channel needs a grant a Release build cannot ask for. `HIDSupport` now logs
+  what the field carried at two layers -- the edge the stream view was handed (`where=view`) and the
+  edge about to become a mouse packet (`where=wire-down` / `wire-up`) -- beside the double-click
+  anchor, so "the driver left 8 in there" is either seen in a log line or refuted, instead of argued
+  from a 2026-09-13 comment. `key-code-read-site-audit.py` moved with it: a reader whose gate names the
+  mouse family may print the residue and is refused the moment its body names a keyboard action, and
+  the fourth self-test plant proves that refusal. The symptom itself is now bounded by an invariant
+  rather than a guess: every forwarded press records when it went out, and a press still unpaired
+  after 250 ms is asked of the HID layer whether anybody is holding that key -- physically held is left
+  alone however long it lasts, physically released means the release was lost between the driver and
+  `-keyUp:`, and this app sends the release `-keyUp:` never delivered, on the wire code it already
+  holds. It can only ever add a release, never suppress a press, which is what keeps the "no timing or
+  glyph heuristics" doctrine of `6292cb9` intact; modifiers stay with `-releaseAllModifierKeys`, and
+  `input.disableKeyStateHeal` is the escape hatch. Not claimed: no real capture has shown
+  `key-residue kVK=8` yet, so the driver's residue is still a historical finding, and the heal's effect
+  waits for the same capture that answers the report.
 - **Every key this app puts on the wire is now on the record, so a phantom-key report can be
   answered out of the player's own log file.** A player reported that a fast double-click of the
   left button during a stream sends `C` at the host, again and again. This repository answered

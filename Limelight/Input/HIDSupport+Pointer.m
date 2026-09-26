@@ -737,6 +737,9 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
 }
 
 - (void)mouseDown:(NSEvent *)event withButton:(int)button {
+    if (button == BUTTON_LEFT) {
+        [self logMouseKeyboardFieldResidueForEvent:event where:@"wire-down"];
+    }
     if (self.useGCMouse) {
         return;
     }
@@ -769,6 +772,9 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
 }
 
 - (void)mouseUp:(NSEvent *)event withButton:(int)button {
+    if (button == BUTTON_LEFT) {
+        [self logMouseKeyboardFieldResidueForEvent:event where:@"wire-up"];
+    }
     if (self.useGCMouse) {
         return;
     }

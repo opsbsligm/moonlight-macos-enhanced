@@ -158,6 +158,9 @@ static NSString *Ev(unsigned short vk, BOOL down, unsigned char modifiers) {
 static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action, char modifiers) {
     [gHostEvents addObject:Ev((unsigned short)keyCode, action == KEY_ACTION_DOWN, (unsigned char)modifiers)];
 }
+// The heal loop reads the clock, so the probe owns one (docs/memory-ownership.md S32).
+static uint64_t gMLProbeNowMs = 0;
+static uint64_t LiGetMillis(void) { return gMLProbeNowMs; }
 static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
     static struct MLInputStreamContext ctx = { 1 };
     return &ctx;
@@ -197,6 +200,12 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+// The heal loop's companion state (docs/memory-ownership.md S32): when each press above went out,
+// and the source that asks the HID layer whether anybody still holds it. Declared so a probe that
+// compiles HIDSupport.m sees the same class the shipped one is; the loop itself is pinned by
+// key-state-heal-tests.py, and a probe that never spins a runloop never starts it.
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;
+@property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
 - (void)flagsChanged:(NSEvent *)event;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event;
@@ -207,6 +216,9 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 - (char)translateKeyModifierWithEvent:(NSEvent *)event;
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
+- (void)startKeyboardStateHealTimerIfNeeded;
+- (void)stopKeyboardStateHealTimer;
+- (void)healUnpairedForwardedKeyDowns;
 - (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event;
 - (void)releaseAllModifierKeys;
 - (void)releaseRemoteModifierKeysForUncapture;
@@ -229,6 +241,7 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
         _mappings = @{ @48: @(0x0F), @13: @(0x57), @49: @(0x20), @117: @(0x2E) };
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
         _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
+        _keyboardForwardedKeyDownAtMs = [NSMutableDictionary dictionary];
     }
     return self;
 }

@@ -111,6 +111,12 @@
 /// of either one spends the record for the other, and the press the player is
 /// still holding is never released when capture ends behind it.
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+/// When each press above was put on the wire, so the heal loop can tell a key that is held from a
+/// release that never arrived. Paired with the dictionary above at all four of its sites.
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;
+/// The loop that asks. Strong, because ARC releases a dispatch source that only a local knows about,
+/// and a timer nobody holds is a timer that never fires.
+@property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
 
 /// Reentry guard for -releaseAllHeldKeys, matching the modifier release guard.
 @property (atomic) BOOL keyboardHeldKeyReleaseInProgress;

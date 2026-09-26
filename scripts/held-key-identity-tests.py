@@ -123,6 +123,10 @@ static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
 }
 static BOOL HIDValidateInputContext(PML_INPUT_STREAM_CONTEXT ctx, const char *op) { return ctx != NULL && ctx->alive; }
 static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^block)(void)) { block(); }
+// The heal loop reads the clock, so the probe owns one: an age the harness sets is how a press is
+// made "still inside the race allowance" or "old enough to ask the keyboard about".
+static uint64_t gMLProbeNowMs = 0;
+static uint64_t LiGetMillis(void) { return gMLProbeNowMs; }
 static unsigned short HIDRemappedKeyCodeForModifierKey(id support, unsigned short kc) { return 0; }
 static BOOL HIDIsModifierKeyCode(unsigned short kc) { return NO; }
 """
@@ -135,6 +139,11 @@ DECLARATIONS = r"""
 @property (nonatomic) BOOL shouldSendInputEvents;
 @property (nonatomic) BOOL keyboardHeldKeyReleaseInProgress;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
+// The heal loop's companion state (docs/memory-ownership.md S32): when each press went out, and the
+// source that asks the HID layer whether anybody still holds it. The loop is pinned by
+// key-state-heal-tests.py; this harness only has to compile against the class as it ships.
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;
+@property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
 RECORD_PROPERTY
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event;
@@ -142,6 +151,9 @@ RECORD_PROPERTY
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
 - (void)releaseAllHeldKeys;
+- (void)startKeyboardStateHealTimerIfNeeded;
+- (void)stopKeyboardStateHealTimer;
+- (void)healUnpairedForwardedKeyDowns;
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
 @end
 """
@@ -162,6 +174,7 @@ def epilogue(mapping_literal):
         _shouldSendInputEvents = YES;
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
         _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
+        _keyboardForwardedKeyDownAtMs = [NSMutableDictionary dictionary];
         _mappings = @{ """ + mapping_literal + r""" };
     }
     return self;

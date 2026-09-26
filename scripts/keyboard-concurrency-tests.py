@@ -78,6 +78,9 @@ static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, 
     [gHostEvents addObject:[NSString stringWithFormat:@"%04X%c",
                             (unsigned)(keyCode & 0xFFFF), action == KEY_ACTION_DOWN ? 'D' : 'U']];
 }
+// The heal loop reads the clock, so the probe owns one (docs/memory-ownership.md S32).
+static uint64_t gMLProbeNowMs = 0;
+static uint64_t LiGetMillis(void) { return gMLProbeNowMs; }
 static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
     static struct MLInputStreamContext ctx = { 1 };
     return &ctx;
@@ -92,12 +95,21 @@ static BOOL HIDIsModifierKeyCode(unsigned short kc) { return kc == 54 || kc == 5
 @property (nonatomic) BOOL keyboardHeldKeyReleaseInProgress;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
+// The heal loop's companion state (docs/memory-ownership.md S32): when each press above went out,
+// and the source that asks the HID layer whether anybody still holds it. Declared so a probe that
+// compiles HIDSupport.m sees the same class the shipped one is; the loop itself is pinned by
+// key-state-heal-tests.py, and a probe that never spins a runloop never starts it.
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;
+@property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
 @property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *mappings;
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event;
 - (short)translateKeyModifierWithEvent:(NSEvent *)event;
 - (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event;
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
+// The heal loop is not declared here on purpose: this harness implements the class by hand and
+// -Wincomplete-implementation is an error. Nothing it drives arms a timer -- the loop is armed with
+// the input channel in -setInputContext:, and pinned by key-state-heal-tests.py.
 - (void)releaseAllHeldKeys;
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
 @end
@@ -110,6 +122,7 @@ EPILOGUE = r"""
         _shouldSendInputEvents = YES;
         _keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
         _keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
+        _keyboardForwardedKeyDownAtMs = [NSMutableDictionary dictionary];
         // Only the two keys from the report: W and Space, mapped as the shipping
         // table maps them.
         _mappings = @{ @13: @(0x57), @49: @(0x20) };

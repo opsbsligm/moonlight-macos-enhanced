@@ -407,6 +407,15 @@ jobs:
         python3 scripts/input-wire-trace-tests.py --self-test
         python3 scripts/input-wire-trace-tests.py
 
+    - name: Verify the orphaned key press gets the release it never got
+      # A forwarded press whose release was lost is a key the host repeats for the rest of the
+      # session, which is the shape of the "double-click sends C" report. The heal asks the HID layer
+      # whether anybody still holds the key and releases only what the keyboard says is up: this
+      # drives the shipped loop and deletes its three guards one at a time, and every deletion has to
+      # turn its own scenario red.
+      run: |
+        python3 scripts/key-state-heal-tests.py
+
     - name: Verify the frame interpolation cadence answer is one answer
       # Whether a display can carry interpolation at a stream rate is one arithmetic fact, but the
       # renderer (which refuses to build the engine) and the settings page (which has to warn
