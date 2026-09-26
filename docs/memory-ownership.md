@@ -2021,3 +2021,40 @@ b) 设备级过滤（应用内对指定复合设备的键盘接口 IOHIDInterfac
   出现 `keyboard-wire healed` = 「按下未配对」真的发生且被本机修好；
   只出现 `key-residue kVK=8` 而无 healed = macOS 给了配对事件，C 另有来源；
   两者都不出现 = 该 Mac 的 AppKit 根本没收到残留，C 来自 Mac 之外（§31 的 KVM 型接收器嫌疑不变）。
+
+## 33. 现场否证了「残留读数」：这台机器上有一台设备以鼠标身份申报了键盘集合，C 可以完全由它自己产生（2026-09-26）
+
+§32 留下的三个分支，被一次真实串流（18:21–18:22，`~/Library/Logs/Moonlight/moonlight-debug.log`）
+一次判掉两个，并且把嫌疑从 macOS 驱动移到了一个可以点名、可以拔掉的物理设备上。
+
+* **「鼠标事件里留着 8」这条历史结论，在现场被否证。** 那次复现里 `mouse-button key-residue`
+  **一行都没有**，`mouse-button left-double` 也是 **0 行**——grab 之后 AppKit 的本地鼠标监视器根本没
+  递交左键边沿（指针走的是 CoreHID/GCMouse 那条路，§31 已经写明它不经过 `NSEvent`）。也就是说
+  「读本应未定义的 `keyCode`」这条解释在这台 Mac 上**连触发面都不存在**。
+* **C 是真的 `keyDown`，而且没有配对的 `keyUp`。** 同一时段 `keyboard-wire down` 共 50 行，其中
+  `kVK=8` **24 次全部 `repeat=0`**，`keyboard-wire up kVK=8` 只有 **6 次** → **18 次按下无释放**；
+  `keyboard-wire healed kVK=8` **14 次**（age 252–376ms，18:21:55→18:22:14 密集）。
+  `view-down` 与 `down` 同毫秒、`keyWindow=1` → 它是 AppKit responder chain 真递进来的按键，
+  不是伪造、不是残留被误读。主机侧看到的「连续发 C」= 一次未释放的按下 + 主机 auto-repeat。
+* **本机 HID 拓扑里存在一个天然的 C 生产者**（`scripts/hid-topology.py`，只读、零权限、Release 可跑，
+  证据来自 IORegistry 里每个设备的 `ReportDescriptor`）：一台 `AJAZZ 2.4G`（USB VID 0x363C
+  PID 0xED1C）**对外申报的是鼠标**（`PrimaryUsagePage=1 PrimaryUsage=2`），但它的 descriptor 里同时
+  声明了 **GenericDesktop usage 0x06 = Keyboard** 与 Consumer 两个 Application collection；它的键盘状态
+  不是常见的 6 槽 key array，而是 **ReportID=2 的位图（每键 1 bit，144 键）**。同一台机器上还有一台
+  `HS USB Dongle`（VID 0x0C45 PID 0xFEDC）带一个 **120 键位图**键盘接口。
+* **位图形态是这件事的要害**：位图的「释放」只能靠设备再发一帧把那个 bit 清零。设备若把鼠标帧
+  （这台是 ReportID=6：5 个按钮位 + 3 位常量 + Wheel + X/Y）与键盘帧合并发、或只在「有变化」时发帧，
+  就会出现 **bit 置 1 之后再无清零帧** —— macOS 只见按下、不见释放，本 app 只见 `keyDown:`、
+  不见 `keyUp:`。kVK=8 对应 Keyboard/Keypad usage `0x06`，即位图里的第 6 个 bit；鼠标按钮 report 的
+  第 6 个按钮位同样是 `0x20`。这个数值重合不需要任何 macOS 侧的 bug 就能给出「双击 → C」。
+* **heal 是对的兜底位置**：它不猜来源、不看字符、不看时序，只把「物理上已经没有人按着、而我们从来没
+  收到释放」的那次按下补上释放。现场每一次的持续都被压到约 300ms（age 上限 376ms），
+  这既是它生效的证明，也说明它没有吞掉任何真按下。
+* **本轮验证**：`python3 scripts/hid-topology.py --keys 8` 在本机打出上述结论（内置键盘/Touch Bar
+  申报为标准 key array，两台 2.4G 接收器各带一个位图键盘接口，其中 AJAZZ 以鼠标身份申报）；
+  Release 增量 `** BUILD SUCCEEDED **`（本轮未改 Objective-C，只增取证脚本与文档）。
+* **仍未证（下一轮不要当已证）**：① 那一帧究竟从**哪个 IOHIDInterface** 出来，仍需要「输入监控」授权 +
+  DEBUG 包的 `[prov]` 通道才能点名（现场实测该设备 `hidOpen=0xe00002e2` = TCC 拒、全屏期间
+  session tap `DISABLED`，所以 §31 的三条仪器边界一条都没被绕开）；② 拔掉那台接收器（或换一只鼠标）
+  之后 `kVK=8` 是否归零 —— 这是**唯一能把结论钉到设备**的现场实验；③ heal 之后主机上「连续 C」是否
+  变成「最多两个 c」，仍要玩家口头回报，日志只能证明本机补了释放。

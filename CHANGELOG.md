@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A phantom key can now be attributed to a device that is allowed to type while it pretends to be
+  a mouse.** A live capture answered the two questions section 32 left open and moved the suspect from
+  a macOS driver to something unpluggable: not one `mouse-button key-residue` line was written during
+  the double-click that produced `C`, so reading a field that should be undefined never had a trigger
+  surface here -- after a grab the pointer arrives over CoreHID and no `NSEvent` mouse edge reaches
+  the local monitor at all. What did arrive was a real `keyDown`: 24 forwarded presses of `kVK=8` all
+  with `repeat=0`, six releases, fourteen `keyboard-wire healed` at ages of 252-376 ms. Eighteen
+  presses went out with no release to pair them, which is guest auto-repeat wearing the player's
+  complaint. The machine then named a plausible producer on its own, and it is recorded by a read-only
+  recorder that needs no Input Monitoring grant, because IORegistry carries each device's Report
+  Descriptor: one 2.4 GHz receiver presents itself as a mouse yet declares a Keyboard application
+  collection beside its mouse collection, and carries its key state as a bitmap of one bit per key
+  rather than a key array. A bitmap releases only when the device sends a frame that clears the bit,
+  so a receiver that merges or suppresses frames leaves the bit set -- macOS sees a press and never a
+  release, this app sees `-keyDown:` and never `-keyUp:`, and `C` is usage 0x06, the sixth bit of that
+  bitmap, which is also the value of the sixth button bit of the mouse report sitting beside it. No
+  macOS bug is needed for a double-click to become `C` once one device owns both. The heal needs
+  neither the source nor an explanation: it releases what nobody is holding. Not claimed: the
+  IOHIDInterface that emitted the frame still needs the granted debug build, whether `kVK=8` goes to
+  zero once that receiver is unplugged is the one experiment that nails it to the hardware, and the
+  player has yet to say whether the host still repeats `C` or now stops at two. Section 33.
 - **A mouse event's undefined key field is now printed, and a press that never got its release is
   finished by this app.** Section 32. Reading `-keyCode` on a mouse event was the bug; printing it is
   the instrument that is left once the session observer goes blind during a fullscreen stream and the
