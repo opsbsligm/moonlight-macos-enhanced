@@ -81,3 +81,18 @@
   已推送 origin/integration/round74（用户 fork）。子模块 moonlight-common-c 的
   3 个输入队列遗留文件保持未提交（其 origin 为不可推的上游 skyhua0224）。
 - 阻塞：实机验收需解锁 Mac + 用户在场配合真实鼠标/多显示器。
+
+## 09-28 补充二：事件源实证与安装产物核验
+
+1. **锁定态事件源获得直接日志实证。** 9-27 19:34 旧版会话（pid=64920，
+   `captured=1 remote=0` 游戏锁定）存在连续的 `Edge sensor sample` 记录：
+   `native=(960,540)` 恒为 warp 中心，但事件持续到达且 `delta` 携带真实位移
+   （如 `delta=(-2,-11)`、`(3,-3)`）。证明 `CGAssociateMouseAndMouseCursorPosition(NO)`
+   之后 `mouseMoved` 仍派发到 VC —— 滑拽手势的锁事件假设不再依赖推断。
+   该旧版同时在锁定态用位移积分虚构 `point`（如 1030,212），正是被本轮设计
+   禁止、且历史上“误触/失效”抱怨的可疑来源；新版在锁定时明确不产 point。
+2. **安装产物核验：** `/Applications/MoonlightEnhanced.app` 主二进制 SHA-256 =
+   0dda4918…e0ea（与 install-result.json 一致）；内含
+   `edge-sensor-push`、`Edge sensor sample: locked=`、
+   `Edge controls opened by local click on collapsed tab` 特征串——
+   部署二进制确实携带滑拽与把手点击路径。
