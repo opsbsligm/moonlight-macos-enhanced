@@ -1119,6 +1119,42 @@ check(not repeated, "no physical code is mapped twice"
                            "only the last row for them"
       % ", ".join("0x%02X" % code for code in repeated))
 
+# An entry may only name a code the host recognises. A press sent as a reserved or unassigned virtual
+# key is dropped at the far end and reads, from this side, exactly like a key that arrived: the app
+# logged it and the host heard nothing. 0xFE nearly became a "fix" during the 2026-09 review, and the
+# page says it is VK_OEM_CLEAR - the check is what keeps both kinds of mistake out.
+unknown_host_codes = sorted({code for code in host_codes if code not in mac_keycodes.WINDOWS_VK_DEFINED})
+check(not unknown_host_codes,
+      "every mapped host code is a virtual key the Windows reference defines"
+      if not unknown_host_codes else
+      "the mapping table sends codes Windows does not define, which the host discards: %s"
+      % ", ".join("0x%02X" % code for code in unknown_host_codes))
+
+# Two Mac keys may share one PC code, but only where the pairing is on the record: an undeclared
+# duplicate means one physical key spends the other's code, and a declared pair nobody uses any more
+# means the note is keeping a mapping alive that no longer exists.
+shared = sorted({code for code in host_codes if host_codes.count(code) > 1})
+undeclared = [code for code in shared if code not in mac_keycodes.INTENDED_DUPLICATE_HOST_CODES]
+retired = [code for code in mac_keycodes.INTENDED_DUPLICATE_HOST_CODES if code not in shared]
+check(not undeclared and not retired,
+      "every shared host code is a declared pairing"
+      if not (undeclared or retired) else
+      "host codes shared without a reason on file: %s; declared pairings no longer used: %s"
+      % (", ".join("0x%02X" % code for code in undeclared) or "none",
+         ", ".join("0x%02X" % code for code in retired) or "none"))
+
+# The published table is the promise this app's README makes about its keyboard, so it is only worth
+# printing while it is still the table the app ships. The row count is compared against the source
+# rather than against a number copied into this script, which is the difference between an audit and
+# a caption.
+published = open(os.path.join(root, "docs/input-mapping-design.md"), encoding="utf-8").read()
+published_rows = len([line for line in published.splitlines() if line.startswith("| `kVK")])
+check(published_rows == len(mapping_rows or ()),
+      "the published mapping table has one row per entry in keys[]"
+      if published_rows == len(mapping_rows or ()) else
+      "docs/input-mapping-design.md publishes %d mapping rows, keys[] has %d"
+      % (published_rows, len(mapping_rows or ())))
+
 zero_rows = sorted({mac.strip() for (mac, _), code in zip(mapping_rows or (), host_codes)
                     if code == 0})
 check(not zero_rows, "no mapping entry forwards VK 0"
