@@ -96,3 +96,17 @@
    `edge-sensor-push`、`Edge sensor sample: locked=`、
    `Edge controls opened by local click on collapsed tab` 特征串——
    部署二进制确实携带滑拽与把手点击路径。
+
+## 09-28 补充三：CI 集成与既存失败修复（7c33e3f）
+
+- CI 盲点：本地套件 45 项里有 5 项测试（command-to-control、gamepad-menu-gesture、
+  pointer-entry-takeover、sas-preset、shortcut-menu-key）和 enhancement-report-tests
+  从未接入远程 CI，已接入；workflow-audit 25 条规则通过。
+- 既存失败（区分于本轮改动，属前几轮遗留、从未跑通过）：
+  enhancement-report-tests 三处自身缺陷——类方法方式调用实例 dispatcher（clang
+  现拒绝）、older-system 接线检查要求生产不可能使用的双重字面写法、no-upscale
+  红证明期待一条从未存在的 gap 文本。修复方式：驱动按生产方式实例化调用；接线
+  检查接受状态字面或 macOS 26 门变量任一为写者，并新增红证明（门答案改写字面量
+  的树仍被拒）；静态检查新增 dispatcher 措辞映射注入性验证——正是该证明命名的
+  那次坍塌。现在主检查与全部 6 条红证明通过。
+- 生产代码未因此改动：设置页增强报告的行为契约不变，只是门的形状修对了。
