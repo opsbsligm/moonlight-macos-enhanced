@@ -159,7 +159,10 @@ int main(void) {
     @autoreleasepool {
         for (NSUInteger index = 0; index < gWantCount; index++) {
             gChecked++;
-            NSString *key = [MLVideoDecoderUnderTest
+            // The shipped dispatcher is an instance method of the renderer, so the
+            // harness calls it the way the renderer does. A class-method call is a
+            // harness bug, not a production contract.
+            NSString *key = [[MLVideoDecoderUnderTest new]
                 runtimeDetailKeyForEnhancementReport:(MLVideoEnhancementReport)index];
             NSUInteger seen = 0;
             BOOL fresh = YES;
@@ -277,9 +280,24 @@ def gaps(renderer, rules, pane, en, zh):
             found.append("%s has no line of its own" % state)
         if '"%s"' % key not in en or '"%s"' % key not in zh:
             found.append("%s has no wording in both languages" % key)
-    if named and not {"MLVideoEnhancementReportNeedsNewerSystem",
-                      "hardwareScalerRefusedReport"} <= named | {
-                          m for m in re.findall(r"MLSetEnhancementAnswer\(\s*([A-Za-z_]+)", body)}:
+    # The prose collapse this file exists to refuse is two states quietly sharing one
+    # sentence, so the static pass checks the dispatcher's own wording map is injective
+    # -- not only that every case and every key survives somewhere.
+    answered = re.findall(r'case (MLVideoEnhancementReport\w+):\s*\n\s*return @"([^"]+)"', dispatcher)
+    if len(answered) >= 2:
+        seen = {}
+        for state, key in answered:
+            if key in seen and seen[key] != state:
+                found.append("two states share one sentence: %s answers both %s and %s"
+                             % (key, seen[key], state))
+            seen.setdefault(key, state)
+    answer_writers = named | {m for m in re.findall(r"MLSetEnhancementAnswer\(\s*([A-Za-z_]+)", body)}
+    # The older-system answer is written through the macOS 26 gate variable, never as a
+    # second literal, so a writer counts when it names either the state or the gate that
+    # produces it. The refusal below keeps the kill: a tree where every gate answer was
+    # rewritten to a literal answers nothing here.
+    if named and not ({"MLVideoEnhancementReportNeedsNewerSystem",
+                       "hardwareScalerRefusedReport"} & answer_writers):
         found.append("nothing in the resolver can answer the older-system state")
 
     if not re.search(r"!videoToolboxScalerAPIAvailable \? MLVideoEnhancementReportNeedsNewerSystem",
@@ -328,8 +346,8 @@ def red_proofs():
         nonlocal rc
         text = mutated_renderer
         for old, new in (source_mutations or []):
-            assert text.count(old) == 1, (name, old[:60])
-            text = text.replace(old, new, 1)
+            assert text.count(old) >= 1, (name, old[:60])
+            text = text.replace(old, new)
         hit = any(expected in gap for gap in gaps(text, rules, pane, en, zh))
         print("%-4s %s is refused" % ("ok" if hit else "FAIL", name))
         rc |= 0 if hit else 1
@@ -344,8 +362,12 @@ def red_proofs():
              "            @\"enhancement disabled\");\n"
              "        return MLActiveVideoEnhancementEngineNone;",
              "        return MLActiveVideoEnhancementEngineNone;")])
+    refuse("no writer left for the older-system state",
+           renderer, "nothing in the resolver can answer the older-system state",
+           [("MLSetEnhancementAnswer(hardwareScalerRefusedReport,",
+             "MLSetEnhancementAnswer(MLVideoEnhancementReportActive,")])
     refuse("the collapse the prose dispatcher made: no-upscale answering the off line",
-           renderer, "has no line of its own",
+           renderer, "two states share one sentence",
            [('case MLVideoEnhancementReportNoUpScaleNeeded:\n'
              '            return @"Video Enhancement Runtime Detail No Up Scale Needed";',
              'case MLVideoEnhancementReportNoUpScaleNeeded:\n'
