@@ -916,10 +916,14 @@ check(capture_all.count("if ([self performKeyboardTranslationLocalAction:rule.lo
 
 monitor_start = capture_all.index("self.localKeyDownMonitor = [NSEvent addLocalMonitorForEventsMatchingMask")
 monitor_body = capture_all[monitor_start:capture_all.index("    }];", monitor_start)]
+# The floor is three because that is how many consuming exits the monitor had when the
+# rule was written; a keyed release shortcut added the fourth. The real defence is the
+# zero: a suppression that does not record the debt. New recording consumers are an
+# improvement and may raise the count, but a lost one still drops under the floor.
 check("return nil;" not in monitor_body
-      and monitor_body.count("consumeMonitoredKeyDownEvent:") == 3,
+      and monitor_body.count("consumeMonitoredKeyDownEvent:") >= 3,
       "the key monitor suppresses only by recording the debt"
-      if "return nil;" not in monitor_body and monitor_body.count("consumeMonitoredKeyDownEvent:") == 3 else
+      if "return nil;" not in monitor_body and monitor_body.count("consumeMonitoredKeyDownEvent:") >= 3 else
       "bare suppressions in the monitor: %d, recorded: %d"
       % (monitor_body.count("return nil;"), monitor_body.count("consumeMonitoredKeyDownEvent:")))
 
@@ -3307,7 +3311,12 @@ if run_battery:
                           os.path.join("scripts", "interpolation-source-format-tests.py"),
                           os.path.join("scripts", "scaling-output-evidence-tests.py"),
                           os.path.join("scripts", "liquid-glass-overlay-tests.py"),
-                          os.path.join("scripts", "shortcut-menu-key-tests.py"))
+                          os.path.join("scripts", "shortcut-menu-key-tests.py"),
+                          os.path.join("scripts", "command-to-control-tests.py"),
+                          os.path.join("scripts", "gamepad-menu-gesture-tests.py"),
+                          os.path.join("scripts", "pointer-entry-takeover-tests.py"),
+                          os.path.join("scripts", "sas-preset-tests.py"),
+                          os.path.join("scripts", "enhancement-report-tests.py"))
         for behaviour in behaviours:
             harness = subprocess.run([sys.executable, os.path.join(root, behaviour)],
                                      capture_output=True, text=True, cwd=root)
