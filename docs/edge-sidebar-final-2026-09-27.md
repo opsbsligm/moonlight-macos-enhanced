@@ -110,3 +110,25 @@
   的树仍被拒）；静态检查新增 dispatcher 措辞映射注入性验证——正是该证明命名的
   那次坍塌。现在主检查与全部 6 条红证明通过。
 - 生产代码未因此改动：设置页增强报告的行为契约不变，只是门的形状修对了。
+
+## 09-28 补充四：CI 全绿闭环中的审计层真相（288e2d4）
+
+CI #288 的 constraints-audit 失败经干净 clone 复现收敛为恰好 2 项（其余历史
+FAIL 变体全部是**我 kill 中途 audit 留下的 planted-mutation 污染**——worktree
+与 clone 各中一处，已 git checkout -- 精准恢复）：
+
+1. monitor 消费记账规则魔数 == 3：前几轮 keyed-release shortcut 增加了第 4 个
+   记录型消费者，属规则未跟上的漂移；真实防线（bare suppression == 0）不变，
+   计数改为下限，丢失消费者仍会跌破。
+2. parity 规则要求 CI 门同时被本地 aggregate 调用：7c33e3f 接入 CI 的 5 个脚本
+   现已注册进 constraints-audit 的 behaviours aggregate。
+
+工作树级教训（写入门禁提交信息）：
+- constraints-audit 不在 input-regression-suite 的 45 项里——45/45 绿不等于
+  committed tree 过全审计；推送前必须在**推送树的干净 clone** 上单独跑。
+- audit 的 red proof 会临时改写真实文件；中途 kill 会污染被测量的树。必须让
+  它自己跑完。
+- 干净 clone + --no-battery 串行复跑：2 failures → 修复后 0 failures。
+- 全套（battery + mutations）由 CI #289 在推送树上执行，本地并行复跑中。
+
+侧边栏本体代码本轮零改动；以上全部是验证基础设施的债，不改变验收矩阵状态。
