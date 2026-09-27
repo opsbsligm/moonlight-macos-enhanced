@@ -757,7 +757,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
-- **The button-edge diagnostic no longer shares its log credit with mouse motion, so a session can no
+### Fixed
+- **A leaked keyboard press is now thrown away instead of turned into a click, and it is only held back
+  at all on a machine that has a device capable of leaking it.** The previous round read the left button
+  as arriving only as a keyboard usage and spent the denied press on the click it thought the device
+  owed. A device-layer listener answered differently: one left press reports a complete
+  `page=0x09 usage=0x01` down and up - the button reaches this app as a mouse button - and 80-220 ms
+  later the same HID node reports `page=0x07 usage=0x06 value=1`, a keyboard `C` that is never followed
+  by `value=0`. The receiver is a pointer device that also publishes the keyboard page, so turning that
+  second event into a click would have handed the host a click nobody made: the player's double-click
+  would have become three. Spending a denied press is therefore behind `input.convertStrayCtoLeftClick`,
+  off by default, and the default action is to drop both edges. The holding itself is now armed only
+  when some pointer on the machine publishes keyboard keys, answered by enumerating device elements -
+  no Input Monitoring, no prompt, no device opened - once per run, with the device names logged; a
+  machine whose every keystroke comes from something that is a keyboard keeps the behaviour it always
+  had, press forwarded the moment it arrives. The log line `[input] pointer devices publishing a
+  keyboard usage page:` is what makes that answer readable from a report. Verified: the scenario
+  harness went from thirteen scenarios and ten guards to fifteen and twelve, with each new guard
+  removal shown to turn its own scenario red, the six other hand-written probes and the key-code read
+  site audit pass unchanged, and the full local gate is back at 54 passed / 1 failed / 12 skipped with
+  the only failure still the untracked resolution-work script. Not verified: whether the player now
+  sees no `c` at all on either guest - that needs the new bundle run with the older instances fully
+  quit, because the process alive since last night is running last night's code; why the receiver
+  binds the left button to `C` and whether it can be unbound in the vendor's software; and whether the
+  other macro keys the same node leaks (a `1` was captured too) need the same treatment, which this
+  round deliberately did not extend beyond `C`.
+
+tton-edge diagnostic no longer shares its log credit with mouse motion, so a session can no
   longer look as if it contained no clicks.** The 24 reserved lines behind
   `reserveDetailedInputDiagnosticsLogSequence:` were drawn on by relative and absolute motion lines,
   which a capturing stream spends before the first click; every button edge after that returned

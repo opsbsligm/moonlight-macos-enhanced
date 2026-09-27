@@ -11,6 +11,7 @@
 #import "KeyboardMapResolver.h"
 
 #import <IOKit/hid/IOHIDElement.h>
+#import <IOKit/hid/IOHIDKeys.h>  // kIOHIDPrimaryUsagePageKey: what kind of device a node claims to be
 #import <ApplicationServices/ApplicationServices.h>  // CGEventSourceKeyState: what the keyboard is physically doing
 #import <IOKit/hidsystem/IOLLEvent.h>
 
@@ -79,6 +80,13 @@ static NSString * const HIDKeyStateHealDisabledDefault = @"input.disableKeyState
 // With this set, presses the key state denies are held back instead: the diagnostic and the
 // remediation for a device whose phantom keys are genuinely extra.
 static NSString * const HIDKeyStateHoldEnabledDefault = @"input.enableKeyStateHold";
+// What to do with a press the keyboard denies once its window closes. Spending it on a click is the
+// rarer request than it looked: the device-layer capture showed the same left press arriving whole as
+// `page=0x09 usage=0x01` (down and up) *and* followed 80-220 ms later by a `page=0x07 usage=0x06` that
+// never comes up, so turning that second event into a click would hand the host a double click the
+// player never made. Throwing the phantom away is the default; a receiver that answers the button with
+// a keyboard usage and nothing else is the case for `input.convertStrayCtoLeftClick`.
+static NSString * const HIDStrayClickConvertEnabledDefault = @"input.convertStrayCtoLeftClick";
 
 
 struct KeyMapping {
@@ -850,6 +858,83 @@ static BOOL HIDKeyboardHoldEnabled(void) {
     return [[NSUserDefaults standardUserDefaults] boolForKey:HIDKeyStateHoldEnabledDefault];
 }
 
+// Whether the player asked for a denied press to become a click. Off by default, and asked through one
+// function so the scenario harness can switch it without touching a defaults domain.
+static BOOL HIDStrayClickConvertEnabled(void) {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:HIDStrayClickConvertEnabledDefault];
+}
+
+// Whether anything on this machine is a pointer that also publishes the keyboard usage page. Measured
+// on the receiver that started this: `AJAZZ 2.4G` (vid 0x363C pid 0xED1C) is `primary=0x1:0x2` - a
+// mouse - and the element list of that same node carries page 0x07, which is how a left button ends up
+// speaking as a letter. Enumeration alone answers this, so nothing here asks the player for Input
+// Monitoring or opens a device: a machine where every keyboard key comes from something that is a
+// keyboard never has a press held back for this reason. Answered once per run and printed, because a
+// player reporting a phantom key should find the answer already sitting in their log.
+static BOOL HIDPointerDevicePublishesKeyboardKeys(void) {
+    static dispatch_once_t onceToken;
+    static BOOL publishes = NO;
+    dispatch_once(&onceToken, ^{
+        IOHIDManagerRef manager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+        if (manager == NULL) {
+            return;
+        }
+        IOHIDManagerSetDeviceMatching(manager, NULL);
+        CFSetRef devices = IOHIDManagerCopyDevices(manager);
+        NSMutableString *names = [NSMutableString string];
+        if (devices != NULL) {
+            CFIndex count = CFSetGetCount(devices);
+            const void **values = count > 0 ? calloc((size_t)count, sizeof(void *)) : NULL;
+            if (values != NULL) {
+                CFSetGetValues(devices, values);
+                for (CFIndex i = 0; i < count; i++) {
+                    IOHIDDeviceRef device = (IOHIDDeviceRef)values[i];
+                    int usagePage = 0, usage = 0;
+                    CFTypeRef property = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDPrimaryUsagePageKey));
+                    if (property != NULL && CFGetTypeID(property) == CFNumberGetTypeID()) {
+                        CFNumberGetValue((CFNumberRef)property, kCFNumberIntType, &usagePage);
+                    }
+                    property = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDPrimaryUsageKey));
+                    if (property != NULL && CFGetTypeID(property) == CFNumberGetTypeID()) {
+                        CFNumberGetValue((CFNumberRef)property, kCFNumberIntType, &usage);
+                    }
+                    // Generic desktop, mouse: the node the pointer driver owns.
+                    if (usagePage != 0x01 || usage != 0x02) {
+                        continue;
+                    }
+                    CFArrayRef elements = IOHIDDeviceCopyMatchingElements(device, NULL,
+                                                                         kIOHIDOptionsTypeNone);
+                    if (elements == NULL) {
+                        continue;
+                    }
+                    for (CFIndex e = 0; e < CFArrayGetCount(elements); e++) {
+                        IOHIDElementRef element = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, e);
+                        if (IOHIDElementGetUsagePage(element) == 0x07) {
+                            publishes = YES;
+                            CFTypeRef product = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
+                            if (product != NULL && CFGetTypeID(product) == CFStringGetTypeID()) {
+                                if (names.length > 0) {
+                                    [names appendString:@", "];
+                                }
+                                [names appendString:(NSString *)CFBridgingRelease(
+                                    CFStringCreateCopy(kCFAllocatorDefault, (CFStringRef)product))];
+                            }
+                            break;
+                        }
+                    }
+                    CFRelease(elements);
+                }
+            }
+            free(values);
+            CFRelease(devices);
+        }
+        CFRelease(manager);
+        Log(LOG_I, @"[input] pointer devices publishing a keyboard usage page: %@ (found=%d)",
+            names.length > 0 ? names : @"none", publishes ? 1 : 0);
+    });
+    return publishes;
+}
+
 // Which keys the HID key state can actually answer for. `CGEventSourceKeyState` reports the state of
 // the keys a keyboard layout types with - letters, digits, the numpad, the OEM punctuation, space,
 // return, tab, escape and backspace. It does NOT track the rest: the navigation cluster (arrows,
@@ -903,8 +988,15 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     }
     BOOL strayClickWanted = (self.strayKeyPressHandler != nil &&
                              HIDKeyCodeIsStrayClickCandidate(physicalKeyCode));
+    // Only a pointer that publishes keyboard keys can put a letter on the wire by itself. On a machine
+    // where every key arrives from something that is a keyboard, a denied C is a key like any other and
+    // the answer is the one every other key gets: forward it. scripts/key-state-heal-tests.py keeps
+    // this line, and its removal, tied to that scenario.
+    if (strayClickWanted && !HIDPointerDevicePublishesKeyboardKeys()) {
+        strayClickWanted = NO;
+    }
     if (!HIDKeyboardHoldEnabled() && !strayClickWanted) {
-        return NO;  // opt-in: never lose a click because a device reported it as a key
+        return NO;  // opt-in both ways: never hold a key this machine cannot be leaking
     }
     // The state can only speak for the keys a layout types with; everything else is forwarded
     // untouched, because "the state does not track this key" and "nobody is holding this key" read
@@ -963,12 +1055,12 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
             continue;
         }
         [self.keyboardHeldUnconfirmedKeyDowns removeObjectForKey:physicalKeyCode];
-        // The press is not a keystroke, but on some devices it is not nothing either: a receiver
-        // that answers the left button with a keyboard usage sends exactly this shape -- a short
-        // press of a typable key that the HID layer denies, arriving while the mouse is captured.
-        // The stream UI gets to spend it on the click the device refused to send before it is
-        // thrown away. Whatever it decides, the paired release still has to be swallowed: a release
-        // for a key the host never saw go down reads as a key let go by itself.
+        // The press is not a keystroke, and on the measured device it is not the click either: that
+        // receiver sends the button whole as a mouse button and the leaked key separately, so the
+        // default is to drop this one and let the real edge be the click. A receiver that answers the
+        // button only with a keyboard usage is the exception worth a switch, and the stream UI is
+        // asked only then. Whatever is decided, the paired release is still swallowed: a release for a
+        // key the host never saw go down reads as a key let go by itself.
         BOOL spent = NO;
         BOOL typedRecently = (self.lastTypedOtherKeyDownAtMs != 0 &&
                               nowMs >= self.lastTypedOtherKeyDownAtMs &&
@@ -976,7 +1068,8 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         BOOL clickedRecently = (self.lastStrayClickAtMs != 0 &&
                                 nowMs >= self.lastStrayClickAtMs &&
                                 (nowMs - self.lastStrayClickAtMs) < HIDStrayClickMinIntervalMs);
-        if (self.strayKeyPressHandler != nil && !typedRecently && !clickedRecently) {
+        if (self.strayKeyPressHandler != nil && HIDStrayClickConvertEnabled() &&
+            !typedRecently && !clickedRecently) {
             spent = self.strayKeyPressHandler(physical, ageMs);
             if (spent) {
                 self.lastStrayClickAtMs = nowMs;
