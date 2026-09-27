@@ -86,7 +86,6 @@ static NSString * const HIDKeyStateHoldEnabledDefault = @"input.enableKeyStateHo
 // never comes up, so turning that second event into a click would hand the host a double click the
 // player never made. Throwing the phantom away is the default; a receiver that answers the button with
 // a keyboard usage and nothing else is the case for `input.convertStrayCtoLeftClick`.
-static NSString * const HIDStrayClickConvertEnabledDefault = @"input.convertStrayCtoLeftClick";
 
 
 struct KeyMapping {
@@ -858,82 +857,6 @@ static BOOL HIDKeyboardHoldEnabled(void) {
     return [[NSUserDefaults standardUserDefaults] boolForKey:HIDKeyStateHoldEnabledDefault];
 }
 
-// Whether the player asked for a denied press to become a click. Off by default, and asked through one
-// function so the scenario harness can switch it without touching a defaults domain.
-static BOOL HIDStrayClickConvertEnabled(void) {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:HIDStrayClickConvertEnabledDefault];
-}
-
-// Whether anything on this machine is a pointer that also publishes the keyboard usage page. Measured
-// on the receiver that started this: `AJAZZ 2.4G` (vid 0x363C pid 0xED1C) is `primary=0x1:0x2` - a
-// mouse - and the element list of that same node carries page 0x07, which is how a left button ends up
-// speaking as a letter. Enumeration alone answers this, so nothing here asks the player for Input
-// Monitoring or opens a device: a machine where every keyboard key comes from something that is a
-// keyboard never has a press held back for this reason. Answered once per run and printed, because a
-// player reporting a phantom key should find the answer already sitting in their log.
-static BOOL HIDPointerDevicePublishesKeyboardKeys(void) {
-    static dispatch_once_t onceToken;
-    static BOOL publishes = NO;
-    dispatch_once(&onceToken, ^{
-        IOHIDManagerRef manager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
-        if (manager == NULL) {
-            return;
-        }
-        IOHIDManagerSetDeviceMatching(manager, NULL);
-        CFSetRef devices = IOHIDManagerCopyDevices(manager);
-        NSMutableString *names = [NSMutableString string];
-        if (devices != NULL) {
-            CFIndex count = CFSetGetCount(devices);
-            const void **values = count > 0 ? calloc((size_t)count, sizeof(void *)) : NULL;
-            if (values != NULL) {
-                CFSetGetValues(devices, values);
-                for (CFIndex i = 0; i < count; i++) {
-                    IOHIDDeviceRef device = (IOHIDDeviceRef)values[i];
-                    int usagePage = 0, usage = 0;
-                    CFTypeRef property = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDPrimaryUsagePageKey));
-                    if (property != NULL && CFGetTypeID(property) == CFNumberGetTypeID()) {
-                        CFNumberGetValue((CFNumberRef)property, kCFNumberIntType, &usagePage);
-                    }
-                    property = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDPrimaryUsageKey));
-                    if (property != NULL && CFGetTypeID(property) == CFNumberGetTypeID()) {
-                        CFNumberGetValue((CFNumberRef)property, kCFNumberIntType, &usage);
-                    }
-                    // Generic desktop, mouse: the node the pointer driver owns.
-                    if (usagePage != 0x01 || usage != 0x02) {
-                        continue;
-                    }
-                    CFArrayRef elements = IOHIDDeviceCopyMatchingElements(device, NULL,
-                                                                         kIOHIDOptionsTypeNone);
-                    if (elements == NULL) {
-                        continue;
-                    }
-                    for (CFIndex e = 0; e < CFArrayGetCount(elements); e++) {
-                        IOHIDElementRef element = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, e);
-                        if (IOHIDElementGetUsagePage(element) == 0x07) {
-                            publishes = YES;
-                            CFTypeRef product = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
-                            if (product != NULL && CFGetTypeID(product) == CFStringGetTypeID()) {
-                                if (names.length > 0) {
-                                    [names appendString:@", "];
-                                }
-                                [names appendString:(NSString *)CFBridgingRelease(
-                                    CFStringCreateCopy(kCFAllocatorDefault, (CFStringRef)product))];
-                            }
-                            break;
-                        }
-                    }
-                    CFRelease(elements);
-                }
-            }
-            free(values);
-            CFRelease(devices);
-        }
-        CFRelease(manager);
-        Log(LOG_I, @"[input] pointer devices publishing a keyboard usage page: %@ (found=%d)",
-            names.length > 0 ? names : @"none", publishes ? 1 : 0);
-    });
-    return publishes;
-}
 
 // Which keys the HID key state can actually answer for. `CGEventSourceKeyState` reports the state of
 // the keys a keyboard layout types with - letters, digits, the numpad, the OEM punctuation, space,
@@ -986,15 +909,7 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     if (self.keyboardHeldUnconfirmedKeyDowns == nil) {
         self.keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
     }
-    BOOL strayClickWanted = (self.strayKeyPressHandler != nil &&
-                             HIDKeyCodeIsStrayClickCandidate(physicalKeyCode));
-    // Only a pointer that publishes keyboard keys can put a letter on the wire by itself. On a machine
-    // where every key arrives from something that is a keyboard, a denied C is a key like any other and
-    // the answer is the one every other key gets: forward it. scripts/key-state-heal-tests.py keeps
-    // this line, and its removal, tied to that scenario.
-    if (strayClickWanted && !HIDPointerDevicePublishesKeyboardKeys()) {
-        strayClickWanted = NO;
-    }
+    BOOL strayClickWanted = (self.strayKeyPressHandler != nil && HIDKeyCodeIsStrayClickCandidate(physicalKeyCode));
     if (!HIDKeyboardHoldEnabled() && !strayClickWanted) {
         return NO;  // opt-in both ways: never hold a key this machine cannot be leaking
     }
@@ -1068,8 +983,7 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         BOOL clickedRecently = (self.lastStrayClickAtMs != 0 &&
                                 nowMs >= self.lastStrayClickAtMs &&
                                 (nowMs - self.lastStrayClickAtMs) < HIDStrayClickMinIntervalMs);
-        if (self.strayKeyPressHandler != nil && HIDStrayClickConvertEnabled() &&
-            !typedRecently && !clickedRecently) {
+        if (self.strayKeyPressHandler != nil && !typedRecently && !clickedRecently) {
             spent = self.strayKeyPressHandler(physical, ageMs);
             if (spent) {
                 self.lastStrayClickAtMs = nowMs;
