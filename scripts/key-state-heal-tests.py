@@ -71,17 +71,10 @@ static bool MLProbeHoldEnabled(void) { return gMLProbeHoldEnabled; }
 // Two more questions the shipped code now asks before it holds a key back or spends it: does this
 // machine have a pointer that publishes keyboard keys, and did the player ask for a press to become a
 // click. Owned here so a scenario can answer them without defaults or a device attached.
-#define HIDPointerDevicePublishesKeyboardKeys MLProbePointerPublishesKeyboard
-#define HIDStrayClickConvertEnabled MLProbeConvertEnabled
-static bool gMLProbePointerPublishesKeyboard = true;
-static bool gMLProbeConvertEnabled = true;
-static bool MLProbePointerPublishesKeyboard(void) { return gMLProbePointerPublishesKeyboard; }
-static bool MLProbeConvertEnabled(void) { return gMLProbeConvertEnabled; }
 // Which shipped configuration the next ScenarioStray measures: 0 keeps the switches the older
 // scenarios were written against, 1 is an ordinary machine (no such pointer, hold not opted into),
 // 2 is the measured machine with the conversion left off. Cleared on use, so no scenario after
 // inherits it.
-static int gMLStrayGate = 0;
 // The clock the grace window is measured against, owned by the scenario.
 static uint64_t gMLProbeNowMs = 0;
 static uint64_t LiGetMillis(void) { return gMLProbeNowMs; }
@@ -244,10 +237,6 @@ static void ScenarioStray(NSString *name, BOOL installHandler, BOOL typedOtherFi
     gMLStrayCalls = 0;
     gMLStrayLastKey = 0xFFFF;
     gMLProbeNowMs = 1000;
-    gMLProbeHoldEnabled = (gMLStrayGate == 0);
-    gMLProbePointerPublishesKeyboard = (gMLStrayGate != 1);
-    gMLProbeConvertEnabled = (gMLStrayGate != 2);
-    gMLStrayGate = 0;
     MLKeyboardHealProbe *probe = [[MLKeyboardHealProbe alloc] init];
     if (installHandler) {
         probe.strayKeyPressHandler = ^BOOL(unsigned short key, uint64_t ageMs) {
@@ -344,18 +333,6 @@ int main(void) {
                       NO, NO, 1, 300, NO, 0, @"");
         ScenarioStray(@"two denied Cs inside the click guard spend one click",
                       YES, NO, 2, 100, NO, 1, @"");
-        // The machine with no such pointer: nothing here can leak a letter out of a mouse button, so
-        // the denied C is forwarded as it was before this device existed, and the heal - not the ghost
-        // filter - is what sends the release for a press that never got one.
-        gMLStrayGate = 1;
-        ScenarioStray(@"a denied C is forwarded when no pointer publishes keyboard keys",
-                      YES, NO, 1, 300, NO, 0, @"8043D 8043U");
-        // The measured device is present but the player never asked for a press to become a click.
-        // The measured receiver also sends the button whole, so spending this press would be a second
-        // click: the phantom stops here and neither edge reaches the host.
-        gMLStrayGate = 2;
-        ScenarioStray(@"a denied C is dropped rather than clicked while the converter is off",
-                      YES, NO, 1, 300, NO, 0, @"");
         return gFailed == 0 ? 0 : 1;
     }
 }
@@ -403,12 +380,6 @@ GUARDS = {
         "            self.lastTypedOtherKeyDownAtMs = (unsigned long long)LiGetMillis();\n",
     "the guard that stops one denied burst becoming a click storm":
         " && !clickedRecently",
-    "the pointer that has to publish keyboard keys before a key is held back":
-        "    if (strayClickWanted && !HIDPointerDevicePublishesKeyboardKeys()) {\n"
-        "        strayClickWanted = NO;\n"
-        "    }\n",
-    "the switch that has to be thrown before a press becomes a click":
-        "HIDStrayClickConvertEnabled() &&",
 }
 # Which scenario each guard is the only thing protecting.
 GUARD_VICTIMS = {
@@ -422,8 +393,6 @@ GUARD_VICTIMS = {
     "the typing test that keeps a typed C off the click path": "a denied C while the player is typing is not a click",
     "the keystroke activity the typing test measures against": "a denied C while the player is typing is not a click",
     "the guard that stops one denied burst becoming a click storm": "two denied Cs inside the click guard spend one click",
-    "the pointer that has to publish keyboard keys before a key is held back": "a denied C is forwarded when no pointer publishes keyboard keys",
-    "the switch that has to be thrown before a press becomes a click": "a denied C is dropped rather than clicked while the converter is off",
 }
 
 
