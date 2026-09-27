@@ -353,6 +353,28 @@ jobs:
       # unconditional-release shape has to fail those scenarios.
       run: python3 scripts/keyboard-shortcut-modifier-tests.py
 
+    - name: Verify the shortcuts and gestures the local menus promise
+      # Five gates live in the local regression suite but never reached this file:
+      # Command-to-Control remapping, the gamepad's menu gesture, the pointer taking
+      # over on entry, the SAS preset, and the shortcut rows' own menu keys. They run
+      # plain python with no machine secrets, so the suite and CI cannot drift apart.
+      run: |
+        python3 scripts/command-to-control-tests.py
+        python3 scripts/gamepad-menu-gesture-tests.py
+        python3 scripts/pointer-entry-takeover-tests.py
+        python3 scripts/sas-preset-tests.py
+        python3 scripts/shortcut-menu-key-tests.py
+
+    - name: Verify the enhancement page answers each state with its own sentence
+      # The settings line used to be chosen by searching the reason text, and a player
+      # quietly given bilinear scaling read the same sentence as one who never enabled
+      # the feature. This compiles the shipped state dispatcher, proves the eight states
+      # answer eight distinct ways, and refuses a tree where two states share a line or
+      # the older-system refusal loses its writer.
+      run: |
+        python3 scripts/enhancement-report-tests.py --self-test
+        python3 scripts/enhancement-report-tests.py
+
     - name: Verify the stream's panels get real glass
       # Seven overlays drew the pre-glass HUD-window vibrancy, so the surfaces a player
       # looks at during a session were the part of the interface that never moved to the
