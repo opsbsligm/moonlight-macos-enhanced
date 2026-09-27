@@ -123,7 +123,7 @@ def wiring(hid, capture, logger):
     # swallows it, and the guard has to keep the early exit: an unmatched release is
     # exactly what reads as a key the player let go by themself.
     swallow = statements(up)
-    guard, said = (first(swallow, "if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:"),
+    guard, said = (first(swallow, "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {"),
                    first(swallow, TRACE + " up-swallowed"))
     check(None not in (guard, said) and guard < said <= guard + 6
           and "return;" in swallow[guard + 1:guard + 8],
@@ -192,10 +192,10 @@ def planted_defects():
     return [
         ("a trace line printed before the type gate that authorises the field",
          lambda h, c, l: (h.replace(
-             "    if (event == nil || event.type != NSEventTypeKeyDown) {\n        return;\n    }\n\n"
-             "    // Every keyboard edge", "    // Every keyboard edge", 1), c, l)),
+             "    if (event == nil || event.type != NSEventTypeKeyDown || !self.shouldSendInputEvents) {\n        return;\n    }",
+             "    if (event == nil || !self.shouldSendInputEvents) {\n        return;\n    }", 1), c, l)),
         ("a send stopped reporting itself",
-         lambda h, c, l: (h.replace(TRACE + " sent-down", "[inputdiag] dropped-down", 1), c, l)),
+         lambda h, c, l: (h.replace(TRACE + " sent-down", "[inputdiag] dropped-down"), c, l)),
         ("the trace became an always-on line",
          lambda h, c, l: (h.replace('Log(LOG_D, @"' + TRACE + " down",
                                     'Log(LOG_I, @"' + TRACE + " down", 1), c, l)),
@@ -203,10 +203,7 @@ def planted_defects():
          lambda h, c, l: (h, c, l.replace('@"keyboard-wire"', '@"keyboard-holes"', 1))),
         ("a dispatched code printed through %x of a short again",
          lambda h, c, l: (h.replace(
-             'Log(LOG_D, @"' + TRACE + ' sent-down code=0x%hx mods=0x%hhx",\n'
-             '                (unsigned short)keyCode, modifiers);',
-             'Log(LOG_D, @"' + TRACE + ' sent-down VK=0x%x mods=0x%hhx", keyCode, modifiers);',
-             1), c, l)),
+             'code=0x%hx mods=0x%hhx', 'VK=0x%x mods=0x%hhx', 1), c, l)),
         ("the stream view stopped recording ahead of the handoff",
          lambda h, c, l: (h, c.replace(TRACE + " view-down", TRACE + " dropped-down", 1), l)),
         ("the double-click anchor disappeared",

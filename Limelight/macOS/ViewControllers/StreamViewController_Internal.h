@@ -73,24 +73,42 @@ static NSString * const MLShortcutActionReconnectStream = @"reconnectStream";
 static NSString * const MLShortcutActionOpenControlCenter = @"openControlCenter";
 static NSString * const MLShortcutActionToggleBorderlessWindowed = @"toggleBorderlessWindowed";
 
-static CGFloat const MLEdgeMenuButtonWidth = 78.0;
-static CGFloat const MLEdgeMenuButtonHeight = 78.0;
-static CGFloat const MLEdgeMenuButtonInsetY = 88.0;
-static CGFloat const MLEdgeMenuButtonVisiblePeek = 30.0;
-static CGFloat const MLEdgeMenuInteractionOutwardPadding = 18.0;
-static CGFloat const MLEdgeMenuInteractionInwardPadding = 26.0;
-static CGFloat const MLEdgeMenuInteractionVerticalPadding = 28.0;
-static NSTimeInterval const MLEdgeMenuAutoCollapseDelay = 0.82;
+// Presentation is exclusive; pointer return intent is stored separately.
+typedef NS_ENUM(NSInteger, MLEdgeMenuPhase) {
+    MLEdgeMenuPhaseHidden,
+    MLEdgeMenuPhaseCollapsed,
+    MLEdgeMenuPhaseExpanded,
+    MLEdgeMenuPhaseMenu,
+    MLEdgeMenuPhaseDragging,
+};
 
-// The summon band is measured along the dock's edge and inward from it, so a player
-// who never crosses the free-mouse escape threshold can still reach the dock. The
-// dwell and the push budget are the two ways in; either one alone is what a stray
-// flick lacks (design record: docs/memory-ownership.md SS26).
-static CGFloat const MLEdgeSensorBandWidth = 24.0;
-static CGFloat const MLEdgeSensorEdgeDistance = 2.0;
-static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.15;
-static CGFloat const MLEdgeSensorPushBudget = 30.0;
-static CGFloat const MLEdgeSensorPushPerEventCap = 6.0;
+static CGFloat const MLEdgeMenuButtonWidth = 56.0;
+static CGFloat const MLEdgeMenuButtonHeight = 56.0;
+static CGFloat const MLEdgeMenuButtonInsetY = 88.0;
+static CGFloat const MLEdgeMenuButtonVisiblePeek = 8.0;
+static CGFloat const MLEdgeMenuInteractionOutwardPadding = 6.0;
+static CGFloat const MLEdgeMenuInteractionInwardPadding = 8.0;
+static CGFloat const MLEdgeMenuInteractionVerticalPadding = 8.0;
+static NSTimeInterval const MLEdgeMenuAutoCollapseDelay = 0.45;
+
+// Activation is a narrow local-pointer target at the dock, independent of the
+// expanded interaction region and of the host's resolution or mouse acceleration.
+// It only governs states where the local pointer is authoritative (free mouse or an
+// explicit release); a locked game pointer never reaches hover semantics at all.
+// 12pt is wide enough to stop on reliably after a release yet shallow enough that a
+// pointer parked anywhere but against the dock never qualifies.
+static CGFloat const MLEdgeSensorBandWidth = 12.0;
+static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.25;
+
+// A locked relative-mode pointer has no authoritative position, so its only sensor
+// entry is a deliberate local gesture: repeatedly slamming the device toward the
+// docked edge. Ordinary aiming is monotonic and never completes a counted stroke;
+// a stroke only counts after an unambiguous return of its own. The gesture makes no
+// claim about where the host cursor actually is.
+static CGFloat const MLEdgeSensorPushStrokePoints = 48.0;
+static CGFloat const MLEdgeSensorPushReturnPoints = 24.0;
+static NSUInteger const MLEdgeSensorPushStrokeCount = 3;
+static NSTimeInterval const MLEdgeSensorPushWindowMs = 1200.0;
 
 // Which moments the app takes the system's own global hotkeys away for. Always captures
 // covers a borderless window that is not fullscreen; never is the regression anchor.
@@ -412,7 +430,10 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic, copy) NSString *pendingDisconnectSource;
 @property (nonatomic) uint64_t lastOptionUncaptureAtMs;
 @property (nonatomic) NSUInteger pendingOptionUncaptureToken;
+@property (nonatomic) NSUInteger pendingModifierOnlyReleaseToken;
+@property (nonatomic) NSEventModifierFlags pendingModifierOnlyReleaseMask;
 @property (nonatomic) BOOL isMouseCaptured;
+@property (nonatomic) BOOL userReleasedInput;
 @property (nonatomic) BOOL isRemoteDesktopMode;
 @property (nonatomic) MLFreeMouseExitEdge pendingFreeMouseReentryEdge;
 @property (nonatomic) uint64_t pendingFreeMouseReentryAtMs;
@@ -432,19 +453,14 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic, strong) NSButton *menuTitlebarButton;
 @property (nonatomic, strong) MLEdgeMenuPanel *edgeMenuPanel;
 @property (nonatomic, strong) MLEdgeMenuHandleView *edgeMenuButton;
-@property (nonatomic, strong) NSPanGestureRecognizer *edgeMenuButtonPanGesture;
 @property (nonatomic) NSPoint edgeMenuButtonPanStartOrigin;
-@property (nonatomic) BOOL edgeMenuButtonSuppressNextClick;
 @property (nonatomic) MLFreeMouseExitEdge edgeMenuDockEdge;
 @property (nonatomic) CGFloat edgeMenuButtonEdgeRatio;
-@property (nonatomic, strong) NSTrackingArea *edgeMenuButtonTrackingArea;
 @property (nonatomic, strong) NSTimer *edgeMenuAutoCollapseTimer;
-@property (nonatomic) BOOL edgeMenuButtonExpanded;
 @property (nonatomic) BOOL edgeMenuPointerInside;
+@property (nonatomic) MLEdgeMenuPhase edgeMenuPhase;
+@property (nonatomic) NSUInteger edgeMenuLifecycleToken;
 @property (nonatomic) BOOL edgeMenuTemporaryReleaseActive;
-@property (nonatomic) BOOL edgeMenuDragging;
-@property (nonatomic) BOOL edgeMenuMenuVisible;
-@property (nonatomic) BOOL suppressNextRightMouseUp;
 
 @property (nonatomic, strong) NSMenu *streamMenu;
 
@@ -461,7 +477,20 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 // is what the regression anchor compares against.
 @property (nonatomic) BOOL edgeSensorSummonEnabled;
 @property (nonatomic, strong) NSTimer *edgeSensorDwellTimer;
-@property (nonatomic) CGFloat edgeSensorPushAccumulator;
+@property (nonatomic) double edgeSensorIgnoreMotionUntilMs;
+@property (nonatomic) BOOL edgeSensorMustLeaveHoverRegion;
+// Locked-mode slam gesture state. One accumulator family, reset by every ownership
+// transition, so no stale stroke can join a later gesture.
+@property (nonatomic) CGFloat edgePushStrokePoints;
+@property (nonatomic) CGFloat edgePushReturnPoints;
+@property (nonatomic) BOOL edgePushAwaitingReturn;
+@property (nonatomic) NSUInteger edgePushStrokeCount;
+@property (nonatomic) double edgePushWindowStartMs;
+@property (nonatomic) double edgePushLastMotionMs;
+// A left press that opened the collapsed tab was consumed locally; its release must
+// not reach the host either, or the game sees an unpaired button-up.
+@property (nonatomic) BOOL edgeMenuClickConsumedLocally;
+@property (nonatomic) double edgeSensorLastSampleLogMs;
 // The three-way capture mode read from settings, and whether the system's global hotkeys
 // are ours to suppress right now. The second is a claim about the outside world, so it is
 // only written after the call that changes it reported success.
@@ -623,12 +652,20 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (KeyboardTranslationRule *)keyboardTranslationRuleMatchingEvent:(NSEvent *)event;
 - (BOOL)performKeyboardTranslationLocalAction:(NSString *)action;
 - (BOOL)handleKeyboardTranslationRuleForEvent:(NSEvent *)event;
-- (BOOL)shouldDeferCommandModifierForShortcutHandlingWithEvent:(NSEvent *)event;
 // The edge summon band is read and armed in the capture category, and only its dock
 // call reaches the menu one, so these belong to the capture interface.
 - (BOOL)handleEdgeSensorSummonForEvent:(NSEvent *)event;
 - (void)refreshEdgeSensorSummonPreference;
 - (void)resetEdgeSensorSummonState;
+- (void)resetEdgeSensorPointerState;
+- (void)resetEdgePushGesture;
+- (BOOL)noteEdgeSensorPushMotionForEvent:(NSEvent *)event;
+- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer;
+- (NSPoint)edgeSensorPointForEvent:(NSEvent *)event;
+- (BOOL)edgeSensorPointIsInHoverRegion:(NSPoint)point edge:(MLFreeMouseExitEdge)edge;
+- (BOOL)hasPressedMouseButtonsForCaptureTransition;
+- (void)captureMousePreservingEdgeSensorPoint:(NSPoint)point;
+- (BOOL)edgeMenuOwnsPointer;
 - (void)beginEdgeSensorDwellTimerIfNeededForEdge:(MLFreeMouseExitEdge)edge;
 - (void)finishEdgeSensorSummonIfStillArmedForEdge:(MLFreeMouseExitEdge)edge;
 - (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason;
@@ -640,6 +677,13 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)refreshSystemKeyboardShortcutCapturePreference;
 @end
 @interface StreamViewController (MenuUI) <MLStreamScopedCallbackOwner>
+- (BOOL)edgeMenuButtonExpanded;
+- (void)transitionEdgeMenuToPhase:(MLEdgeMenuPhase)phase;
+- (BOOL)edgeMenuCanInteract;
+- (void)handleEdgeMenuHover;
+- (NSRect)edgeSensorActivationRectInBounds:(NSRect)bounds;
+- (BOOL)edgeMenuDragging;
+- (BOOL)edgeMenuMenuVisible;
 - (NSString *)mouseModeDisplayNameForMode:(NSString *)mode;
 - (NSString *)mouseModeHintForMode:(NSString *)mode;
 - (NSString *)shortcutDisplayStringForAction:(NSString *)action;
@@ -664,12 +708,9 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (NSString *)fullscreenControlBallDockSideDefaultsKey;
 - (NSString *)fullscreenControlBallVerticalRatioDefaultsKey;
 - (MLFreeMouseExitEdge)defaultEdgeMenuDockEdge;
-- (MLFreeMouseExitEdge)edgeMenuDockEdgeFromStoredValue:(NSString *)value;
-- (NSString *)storedValueForEdgeMenuDockEdge:(MLFreeMouseExitEdge)edge;
 - (BOOL)edgeMenuDockEdgeUsesVerticalAxis;
 - (CGFloat)resolvedEdgeMenuCoordinateInRect:(NSRect)rect;
 - (NSRect)edgeMenuFrameInRect:(NSRect)rect expanded:(BOOL)expanded;
-- (void)persistFullscreenControlBallPlacement;
 - (void)resetEdgeMenuPlacementForNewStreamSession;
 - (void)hideEdgeMenuForInactiveSpaceIfNeeded;
 - (void)attachEdgeMenuPanelToWindowIfNeeded;
@@ -712,7 +753,6 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)handleStreamMenuButtonPressed:(id)sender event:(NSEvent *)event;
 - (void)presentStreamMenuFromView:(NSView *)sourceView;
 - (void)presentStreamMenuFromView:(NSView *)sourceView event:(NSEvent *)event;
-- (void)presentStreamMenuAtEvent:(NSEvent *)event;
 - (void)rebuildStreamMenu;
 - (void)handleToggleFullscreenFromMenu:(id)sender;
 - (void)toggleLogOverlayFromMenu:(id)sender;
@@ -761,7 +801,6 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)syncRemoteCursorToCurrentPointerClamped;
 - (void)syncRemoteCursorToViewPoint:(NSPoint)viewPoint clampToBounds:(BOOL)clampToBounds;
 - (void)reconcileHybridFreeMouseAnchorToCurrentPointer;
-- (BOOL)handleStrayKeyPressAsMouseClick:(unsigned short)physicalKeyCode ageMs:(uint64_t)ageMs;
 - (void)syncRemoteCursorToMouseEvent:(NSEvent *)event clampToBounds:(BOOL)clampToBounds;
 - (MLFreeMouseExitEdge)freeMouseExitEdgeForEvent:(NSEvent *)event;
 - (BOOL)shouldUncaptureFreeMouseForEdgeEvent:(NSEvent *)event;
@@ -786,8 +825,13 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)mouseEntered:(NSEvent *)event;
 - (void)mouseExited:(NSEvent *)event;
 - (void)flagsChanged:(NSEvent *)event;
+- (void)handleModifierOnlyReleaseShortcut:(NSEvent *)event;
+- (NSEventModifierFlags)currentReleaseShortcutModifiers;
+- (void)releaseInputToLocalControlWithCode:(NSString *)code reason:(NSString *)reason;
+- (void)resumeInputForExplicitStreamClick:(NSEvent *)event;
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
+- (void)handleMouseMotionEvent:(NSEvent *)event;
 - (void)mouseDown:(NSEvent *)event;
 - (void)mouseUp:(NSEvent *)event;
 - (void)rightMouseDown:(NSEvent *)event;

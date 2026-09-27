@@ -135,7 +135,7 @@ def assemble(constant_text, helpers):
 
 def restore_the_clamp(helpers):
     """Clamp the notch count to one again, which is the shipped shape."""
-    anchor = "    NSInteger limit = SHRT_MAX / HIDScrollWheelDelta;\n"
+    anchor = "    if (clicks > limit)"
     broken = helpers.replace(
         anchor,
         "    if (clicks > 1) { clicks = 1; } else if (clicks < -1) { clicks = -1; }\n" + anchor,

@@ -63,6 +63,11 @@ RENDERER = os.path.join(ROOT, "Limelight", "Stream", "VideoDecoderRenderer.m")
 
 REQUEST_ENUM = "typedef NS_ENUM(NSInteger, MLRequestedVideoEnhancementMode)"
 ACTIVE_ENUM = "typedef NS_ENUM(NSInteger, MLActiveVideoEnhancementEngine)"
+REPORT_ENUM = "typedef NS_ENUM(NSInteger, MLVideoEnhancementReport)"
+# The resolver writes its engine, its reason and the state behind the page's sentence in one
+# macro, so that no branch can set two of the three. The macro is defined above the method,
+# so lifting the method alone would lift a call to something the probe never defined.
+ANSWER_MACRO = "#define MLSetEnhancementAnswer("
 # The first line of each signature is all that is searched for. The shipping source
 # wraps the rest of those parameter lists onto their own lines, and a constant that
 # spelled them out would be a claim about whitespace rather than about the method.
@@ -305,7 +310,8 @@ static void Check(NSInteger mode, BOOL hdr, int sizeIndex, BOOL lowLatencyCapabl
                                              targetWidth:kTargetWidth[sizeIndex]
                                             targetHeight:kTargetHeight[sizeIndex]
                                             scaleFactor:(omitScale ? NULL : &scale)
-                                                 reason:(omitReason ? NULL : &reason)];
+                                                 reason:(omitReason ? NULL : &reason)
+                                                 report:NULL];
     const float wantScale = kExpectedScale[sizeIndex];
     const BOOL vtLowLatency = lowLatencyCapable && kLowLatencyMenuOffers[sizeIndex];
     const BOOL vtQuality = qualityCapable && kQualityMenuOffers[sizeIndex];
@@ -437,6 +443,16 @@ def method(text, signature):
     return balanced(text, start, signature)
 
 
+def macro_block(text, marker):
+    start = text.find(marker)
+    if start < 0:
+        raise SystemExit("the shipping source no longer contains %r" % marker)
+    end = text.find("} while (0)", start)
+    if end < 0:
+        raise SystemExit("unterminated macro at %r" % marker)
+    return text[start:end + len("} while (0)")]
+
+
 def enum_block(text, marker):
     start = text.find(marker)
     if start < 0:
@@ -467,9 +483,11 @@ KNOWN_BAD = [
          "scaled, so a machine that offers one is told it offers nothing"),
     ("the-resolver-answers-without-saying-why",
      '    if (_requestedEnhancementMode == MLRequestedVideoEnhancementModeOff) {\n'
-     '        if (reasonOut != NULL) {\n            *reasonOut = @"enhancement disabled";',
+     '        MLSetEnhancementAnswer(MLVideoEnhancementReportDisabled,\n'
+     '            @"enhancement disabled");',
      '    if (_requestedEnhancementMode == MLRequestedVideoEnhancementModeOff) {\n'
-     '        if (reasonOut != NULL) {\n            *reasonOut = nil;',
+     '        MLSetEnhancementAnswer(MLVideoEnhancementReportDisabled,\n'
+     '            nil);',
      "a resolution leaves no reason, so the log cannot answer why the scaler did not engage"),
     ("a-window-that-is-not-the-streams-shape-is-told-it-needs-no-upscale",
      "    if (!needsUpScale && _requestedEnhancementMode != "
@@ -502,6 +520,8 @@ def build(source, known_bad=None):
     return (STUBS + "\n"
             + enum_block(source, REQUEST_ENUM) + "\n"
             + enum_block(source, ACTIVE_ENUM) + "\n"
+            + enum_block(source, REPORT_ENUM) + "\n"
+            + macro_block(source, ANSWER_MACRO) + "\n"
             + CLASS_HEAD + "\n"
             + method(source, SCALE_FACTOR) + "\n"
             + method(source, FLOAT_SUPPORTED) + "\n"

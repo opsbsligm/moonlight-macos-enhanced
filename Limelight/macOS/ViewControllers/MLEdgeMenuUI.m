@@ -9,10 +9,8 @@
     NSImageView *_iconView;
     NSPoint _mouseDownPointOnScreen;
     BOOL _dragStarted;
+    BOOL _pressActive;
     NSTrackingArea *_trackingArea;
-    CAGradientLayer *_backgroundGradientLayer;
-    CAShapeLayer *_curveLayerA;
-    CAShapeLayer *_curveLayerB;
     CALayer *_plateShadowLayer;
     CALayer *_plateLayer;
     CALayer *_plateInnerLayer;
@@ -24,21 +22,6 @@
         self.wantsLayer = YES;
         self.layer.masksToBounds = NO;
         self.layer.cornerRadius = 28.0;
-
-        _backgroundGradientLayer = [CAGradientLayer layer];
-        _backgroundGradientLayer.startPoint = CGPointMake(0.12, 0.08);
-        _backgroundGradientLayer.endPoint = CGPointMake(0.92, 0.98);
-        [self.layer addSublayer:_backgroundGradientLayer];
-
-        _curveLayerA = [CAShapeLayer layer];
-        _curveLayerA.fillColor = NSColor.clearColor.CGColor;
-        _curveLayerA.lineWidth = 2.0;
-        [self.layer addSublayer:_curveLayerA];
-
-        _curveLayerB = [CAShapeLayer layer];
-        _curveLayerB.fillColor = NSColor.clearColor.CGColor;
-        _curveLayerB.lineWidth = 1.6;
-        [self.layer addSublayer:_curveLayerB];
 
         _plateShadowLayer = [CALayer layer];
         [self.layer addSublayer:_plateShadowLayer];
@@ -74,21 +57,25 @@
 - (NSView *)hitTest:(NSPoint)point {
     CGFloat radius = MIN(self.bounds.size.width, self.bounds.size.height) * 0.33;
     NSBezierPath *hitPath = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:radius yRadius:radius];
-    return [hitPath containsPoint:point] ? self : nil;
+    NSPoint localPoint = [self convertPoint:point fromView:self.superview];
+    return !self.hidden && [hitPath containsPoint:localPoint] ? self : nil;
 }
 
 - (void)setActiveAppearance:(BOOL)activeAppearance {
+    if (_activeAppearance == activeAppearance) return;
     _activeAppearance = activeAppearance;
     [self updateVisualStyle];
 }
 
 - (void)setCompactAppearance:(BOOL)compactAppearance {
+    if (_compactAppearance == compactAppearance) return;
     _compactAppearance = compactAppearance;
     [self setNeedsLayout:YES];
     [self updateVisualStyle];
 }
 
 - (void)setDockEdge:(MLFreeMouseExitEdge)dockEdge {
+    if (_dockEdge == dockEdge) return;
     _dockEdge = dockEdge;
     [self setNeedsLayout:YES];
     [self updateVisualStyle];
@@ -102,23 +89,6 @@
     CGPathRef shadowPath = CGPathCreateWithRoundedRect(NSRectToCGRect(self.bounds), cornerRadius, cornerRadius, NULL);
     self.layer.shadowPath = shadowPath;
     CGPathRelease(shadowPath);
-    _backgroundGradientLayer.frame = self.bounds;
-
-    NSBezierPath *curvePathA = [NSBezierPath bezierPath];
-    [curvePathA appendBezierPathWithOvalInRect:NSInsetRect(self.bounds, -self.bounds.size.width * 0.42, -self.bounds.size.height * 0.18)];
-    CGPathRef curvePathARef = [self.class cgPathFromBezierPath:curvePathA];
-    _curveLayerA.path = curvePathARef;
-    CGPathRelease(curvePathARef);
-
-    NSBezierPath *curvePathB = [NSBezierPath bezierPath];
-    [curvePathB appendBezierPathWithOvalInRect:NSMakeRect(-self.bounds.size.width * 0.20,
-                                                          self.bounds.size.height * 0.10,
-                                                          self.bounds.size.width * 1.42,
-                                                          self.bounds.size.height * 1.12)];
-    CGPathRef curvePathBRef = [self.class cgPathFromBezierPath:curvePathB];
-    _curveLayerB.path = curvePathBRef;
-    CGPathRelease(curvePathBRef);
-
     CGFloat plateSize = MIN(self.bounds.size.width, self.bounds.size.height) * 0.58;
     NSRect plateFrame = NSMakeRect((NSWidth(self.bounds) - plateSize) / 2.0,
                                    (NSHeight(self.bounds) - plateSize) / 2.0,
@@ -131,6 +101,21 @@
     _plateInnerLayer.cornerRadius = MAX(8.0, _plateLayer.cornerRadius - 4.0);
 
     CGFloat iconSize = plateSize * 0.42;
+    if (self.compactAppearance) {
+        CGFloat peek = MLEdgeMenuButtonVisiblePeek;
+        switch (self.dockEdge) {
+            case MLFreeMouseExitEdgeLeft: plateFrame = NSMakeRect(NSWidth(self.bounds) - peek + 2, 8, peek - 4, NSHeight(self.bounds) - 16); break;
+            case MLFreeMouseExitEdgeRight: plateFrame = NSMakeRect(2, 8, peek - 4, NSHeight(self.bounds) - 16); break;
+            case MLFreeMouseExitEdgeTop: plateFrame = NSMakeRect(8, NSHeight(self.bounds) - peek + 2, NSWidth(self.bounds) - 16, peek - 4); break;
+            case MLFreeMouseExitEdgeBottom: plateFrame = NSMakeRect(8, 2, NSWidth(self.bounds) - 16, peek - 4); break;
+            default: break;
+        }
+        _plateShadowLayer.frame = plateFrame;
+        _plateLayer.frame = _plateShadowLayer.bounds;
+        _plateLayer.cornerRadius = MIN(NSWidth(plateFrame), NSHeight(plateFrame)) / 2;
+    }
+    _plateInnerLayer.hidden = self.compactAppearance;
+    _iconView.hidden = self.compactAppearance;
     _iconView.frame = NSMakeRect(NSMinX(plateFrame) + (plateSize - iconSize) / 2.0,
                                  NSMinY(plateFrame) + (plateSize - iconSize) / 2.0,
                                  iconSize,
@@ -144,7 +129,7 @@
         [self removeTrackingArea:_trackingArea];
     }
 
-    NSTrackingAreaOptions options = NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect;
+    NSTrackingAreaOptions options = NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect;
     _trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds options:options owner:self userInfo:nil];
     [self addTrackingArea:_trackingArea];
 }
@@ -166,12 +151,6 @@
 - (void)updateVisualStyle {
     BOOL active = self.activeAppearance;
 
-    _backgroundGradientLayer.colors = @[
-        (__bridge id)NSColor.clearColor.CGColor,
-        (__bridge id)NSColor.clearColor.CGColor
-    ];
-    _backgroundGradientLayer.cornerRadius = self.layer.cornerRadius;
-
     self.layer.borderWidth = 0.0;
     self.layer.borderColor = NSColor.clearColor.CGColor;
     self.layer.shadowColor = [NSColor colorWithRed:0.0 green:0.0 blue:0.0 alpha:0.44].CGColor;
@@ -179,8 +158,6 @@
     self.layer.shadowRadius = 0.0f;
     self.layer.shadowOffset = CGSizeZero;
 
-    _curveLayerA.strokeColor = NSColor.clearColor.CGColor;
-    _curveLayerB.strokeColor = NSColor.clearColor.CGColor;
 
     _plateShadowLayer.shadowColor = [NSColor colorWithWhite:0.0 alpha:0.26].CGColor;
     _plateShadowLayer.shadowOpacity = active ? 0.24f : 0.18f;
@@ -198,12 +175,22 @@
     _iconView.contentTintColor = [NSColor colorWithRed:0.12 green:0.15 blue:0.20 alpha:0.98];
 }
 
+- (void)setHidden:(BOOL)hidden {
+    if (hidden) {
+        _pressActive = NO;
+        _dragStarted = NO;
+    }
+    [super setHidden:hidden];
+}
+
 - (void)mouseDown:(NSEvent *)event {
+    _pressActive = YES;
     _mouseDownPointOnScreen = [NSEvent mouseLocation];
     _dragStarted = NO;
 }
 
 - (void)mouseDragged:(NSEvent *)event {
+    if (!_pressActive || self.hidden) return;
     NSPoint screenPoint = [NSEvent mouseLocation];
     NSPoint translation = NSMakePoint(screenPoint.x - _mouseDownPointOnScreen.x,
                                       screenPoint.y - _mouseDownPointOnScreen.y);
@@ -223,6 +210,8 @@
 }
 
 - (void)mouseUp:(NSEvent *)event {
+    if (!_pressActive || self.hidden) return;
+    _pressActive = NO;
     NSPoint screenPoint = [NSEvent mouseLocation];
     NSPoint translation = NSMakePoint(screenPoint.x - _mouseDownPointOnScreen.x,
                                       screenPoint.y - _mouseDownPointOnScreen.y);
@@ -230,9 +219,10 @@
         if (self.dragHandler) {
             self.dragHandler(NSGestureRecognizerStateEnded, translation);
         }
-    } else if (self.activationHandler) {
+    } else if (self.activationHandler && NSPointInRect([self convertPoint:event.locationInWindow fromView:nil], self.bounds)) {
         self.activationHandler(event);
     }
+    _dragStarted = NO;
 }
 
 - (void)mouseMoved:(NSEvent *)event {
@@ -242,36 +232,6 @@
     }
 }
 
-+ (CGPathRef)cgPathFromBezierPath:(NSBezierPath *)bezierPath CF_RETURNS_RETAINED {
-    NSInteger numElements = bezierPath.elementCount;
-    if (numElements == 0) {
-        return CGPathCreateMutable();
-    }
-
-    CGMutablePathRef path = CGPathCreateMutable();
-    NSPoint points[3];
-    for (NSInteger i = 0; i < numElements; i++) {
-        switch ([bezierPath elementAtIndex:i associatedPoints:points]) {
-            case NSBezierPathElementMoveTo:
-                CGPathMoveToPoint(path, NULL, points[0].x, points[0].y);
-                break;
-            case NSBezierPathElementLineTo:
-                CGPathAddLineToPoint(path, NULL, points[0].x, points[0].y);
-                break;
-            case NSBezierPathElementCubicCurveTo:
-                CGPathAddCurveToPoint(path, NULL, points[0].x, points[0].y, points[1].x, points[1].y, points[2].x, points[2].y);
-                break;
-            case NSBezierPathElementClosePath:
-                CGPathCloseSubpath(path);
-                break;
-            case NSBezierPathElementQuadraticCurveTo:
-                CGPathAddQuadCurveToPoint(path, NULL, points[0].x, points[0].y, points[1].x, points[1].y);
-                break;
-        }
-    }
-
-    return path;
-}
 
 @end
 

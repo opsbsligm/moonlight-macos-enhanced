@@ -386,10 +386,7 @@ def record_keyed_by_dispatched_code(text):
 
 CLEAR = """    [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];
 """
-TEARDOWN = """    // 0) Release keys the host still believes are pressed, before input is
-    //    switched off, so an action key held at disconnect cannot stay stuck.
-    [self releaseAllHeldKeys];
-"""
+TEARDOWN = "    [self releaseAllHeldKeys];\n"
 UNCAPTURE_CALL = """    [self.hidSupport releaseAllHeldKeys];
 """
 UNCAPTURE_OFF = """    self.hidSupport.shouldSendInputEvents = NO;
@@ -431,8 +428,8 @@ def drop_uncapture_release(text):
 def late_uncapture_release(text):
     once(text, UNCAPTURE_CALL, "capture release")
     once(text, UNCAPTURE_OFF, "input switch off")
-    rest = text.replace(UNCAPTURE_CALL, "", 1)
-    return rest.replace(UNCAPTURE_OFF, UNCAPTURE_OFF + UNCAPTURE_CALL, 1)
+    rest = text.replace(UNCAPTURE_OFF, "", 1)
+    return rest.replace(UNCAPTURE_CALL, UNCAPTURE_CALL + UNCAPTURE_OFF, 1)
 
 
 
@@ -1902,7 +1899,7 @@ MUTATIONS = [
     ("leak-records", HID, leak_records, "the held-key release keeps its records"),
     ("drop-teardown", HID, drop_teardown_release, "session teardown no longer releases held keys"),
     ("drop-uncapture", CAPTURE, drop_uncapture_release, "capture release forgets held keys entirely"),
-    ("late-uncapture", CAPTURE, late_uncapture_release, "held keys released after input is switched off"),
+    ("late-uncapture", CAPTURE, late_uncapture_release, "input admission remains open while owned keys are released"),
     ("bare-predicate", SHORTCUTS, bare_predicate, "the modifier floor is dropped to zero"),
     ("bare-menu-gate", MENU, bare_menu_gate, "the responder gate ignores the floor"),
     ("bare-rule-gate", CAPTURE, bare_rule_gate, "a bare translation rule eats a gameplay key"),

@@ -48,9 +48,10 @@ def check(files):
     problems = []
     combined = "\n".join(strip_comments(t) for t in files.values())
 
-    if ".glassEffect(" not in combined:
+    native_segments = "NSSegmentedControl" in combined and "control.segmentStyle = .rounded" in combined
+    if ".glassEffect(" not in combined and not native_segments:
         problems.append("no native .glassEffect anywhere in the glass surface")
-    if "GlassEffectContainer(" not in combined:
+    if ".glassEffect(" in combined and "GlassEffectContainer(" not in combined:
         problems.append("glass elements are not grouped in a GlassEffectContainer, "
                         "so they cannot merge, cull or morph together")
 
@@ -118,6 +119,12 @@ def mutate(text, old, new):
 def self_test():
     cases = []
     cases.append(("the compliant fixture", FIXTURE, False))
+
+    native = dict(FIXTURE)
+    native["LiquidGlassTabBar.swift"] = native["LiquidGlassTabBar.swift"].replace(
+        "GlassEffectContainer(spacing: 6) {\n          view.glassEffect(.regular.tint(accentCoolBlue), in: shape)\n        }",
+        "let control = NSSegmentedControl()\n        control.segmentStyle = .rounded")
+    cases.append(("system segmented control owns its glass", native, False))
 
     warm = dict(FIXTURE)
     warm["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],

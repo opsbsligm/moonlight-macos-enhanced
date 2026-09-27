@@ -190,12 +190,14 @@ struct StreamRiskSummarySection: View {
 
 struct ToggleCell: View {
   let title: String
+  let shortcut: StreamShortcut?
   let hintKey: String?
   @Binding var boolBinding: Bool
   @ObservedObject var languageManager = LanguageManager.shared
 
-  init(title: String, hintKey: String? = nil, boolBinding: Binding<Bool>) {
+  init(title: String, hintKey: String? = nil, shortcut: StreamShortcut? = nil, boolBinding: Binding<Bool>) {
     self.title = title
+    self.shortcut = shortcut
     self.hintKey = hintKey
     self._boolBinding = boolBinding
   }
@@ -204,6 +206,9 @@ struct ToggleCell: View {
     HStack {
       HStack(spacing: 6) {
         Text(languageManager.localize(title))
+        if let shortcut {
+          ShortcutTokenRowView(tokens: StreamShortcutProfile.displayTokens(for: shortcut))
+        }
         if let hintKey {
           InfoHintButton(hintKey: hintKey)
         }
@@ -452,18 +457,11 @@ struct ShortcutReferenceView: View {
   @ObservedObject var languageManager = LanguageManager.shared
   @SwiftUI.State private var editingItem: ShortcutReferenceItem?
 
-  private let items: [ShortcutReferenceItem] = [
-    ShortcutReferenceItem(action: StreamShortcutProfile.releaseMouseCaptureAction, actionKey: "Release mouse capture"),
-    ShortcutReferenceItem(action: StreamShortcutProfile.togglePerformanceOverlayAction, actionKey: "Toggle performance overlay"),
-    ShortcutReferenceItem(action: StreamShortcutProfile.toggleMouseModeAction, actionKey: "Toggle mouse mode"),
-    ShortcutReferenceItem(action: StreamShortcutProfile.toggleFullscreenControlBallAction, actionKey: "Toggle fullscreen control ball"),
-    ShortcutReferenceItem(action: StreamShortcutProfile.showDisconnectOptionsAction, actionKey: "Show Disconnect Options"),
-    ShortcutReferenceItem(action: StreamShortcutProfile.disconnectStreamAction, actionKey: "Disconnect from Stream"),
-    ShortcutReferenceItem(action: StreamShortcutProfile.closeAndQuitAppAction, actionKey: "Close and Quit App"),
-    ShortcutReferenceItem(action: StreamShortcutProfile.reconnectStreamAction, actionKey: "Reconnect Stream"),
-    ShortcutReferenceItem(action: StreamShortcutProfile.openControlCenterAction, actionKey: "Open control center"),
-    ShortcutReferenceItem(action: StreamShortcutProfile.toggleBorderlessWindowedAction, actionKey: "Toggle borderless / windowed (advanced)"),
-  ]
+  private var items: [ShortcutReferenceItem] {
+    StreamShortcutProfile.actionOrder().map {
+      ShortcutReferenceItem(action: $0, actionKey: KeyboardTranslationProfile.localActionTitleKey(for: $0))
+    }
+  }
 
   init(settingsModel: SettingsModel) {
     _settingsModel = ObservedObject(wrappedValue: settingsModel)
@@ -513,6 +511,12 @@ private struct ShortcutReferenceCard: View {
         Text(languageManager.localize(item.actionKey))
           .font(.callout.weight(.medium))
           .foregroundColor(.primary)
+          .multilineTextAlignment(.leading)
+          .frame(maxWidth: .infinity, alignment: .leading)
+
+        Text(languageManager.localize(item.action + " shortcut detail"))
+          .font(.footnote)
+          .foregroundColor(.secondary)
           .multilineTextAlignment(.leading)
           .frame(maxWidth: .infinity, alignment: .leading)
 

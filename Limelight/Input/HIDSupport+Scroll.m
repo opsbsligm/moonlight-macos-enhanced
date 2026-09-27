@@ -7,8 +7,6 @@
 //
 #import "HIDSupport_Internal.h"
 
-static uint64_t const HIDGCMouseScrollDuplicateSuppressMs = 45;
-
 static inline void HIDUpdateScrollRuntimeStatus(HIDSupport *support, HIDScrollClassification classification) {
     NSString *summaryKey = @"Scroll Runtime Path Wheel";
     NSString *detailKey = @"Scroll Runtime Detail Wheel";
@@ -45,6 +43,19 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
 }
 
 @implementation HIDSupport (Scroll)
+
+- (void)resetScrollInputState {
+    self.accumulatedHighResScrollDeltaX = 0;
+    self.accumulatedHighResScrollDeltaY = 0;
+    self.suppressAppKitScrollUntilMsY = 0;
+    @synchronized (self.inputDiagnosticsLock) {
+        self.activeScrollTraceId = 0;
+        self.activeScrollTraceStartedMs = 0;
+        self.activeScrollTraceLastEventMs = 0;
+        self.activeScrollTraceLockedToPrecise = NO;
+        self.activeScrollTraceSource = nil;
+    }
+}
 
 - (void)handleGCMouseScrollValueY:(float)value API_AVAILABLE(macos(11.0)) {
     if (!self.useGCMouse || !self.shouldSendInputEvents || !isfinite(value) || value == 0.0f) {
@@ -95,59 +106,25 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
                                     dispatchedY:0];
         return;
     }
-    uint64_t elapsedMs = self.gcMouseScrollLastEventMsY != 0 && nowMs >= self.gcMouseScrollLastEventMsY
-        ? (nowMs - self.gcMouseScrollLastEventMsY)
-        : UINT64_MAX;
-    BOOL sameDirection = (self.gcMouseScrollLastClickY > 0 && clicks > 0) ||
-                         (self.gcMouseScrollLastClickY < 0 && clicks < 0);
-
-    if (sameDirection && elapsedMs <= HIDGCMouseScrollDuplicateSuppressMs) {
-        self.suppressAppKitScrollUntilMsY = nowMs + HIDGCMouseAppKitSuppressMs;
-        [self recordScrollInputDiagnosticsMode:@"gc-wheel-suppressed"
-                                       traceId:traceId
-                                     rawDeltaX:0.0
-                                     rawDeltaY:mappedDeltaY
-                                  rawWheelDeltaX:0
-                                  rawWheelDeltaY:0
-                              normalizedDeltaX:0.0
-                              normalizedDeltaY:0.0
-                                    continuous:NO
-                              hasPreciseDeltas:YES
-                                   lineDeltaX:0
-                                   lineDeltaY:0
-                                  pointDeltaX:0
-                                  pointDeltaY:0
-                                fixedDeltaXRaw:0
-                                fixedDeltaYRaw:0
-                                         phase:NSEventPhaseNone
-                                 momentumPhase:NSEventPhaseNone
-                                    dispatchedX:0
-                                    dispatchedY:0];
-        return;
-    }
-
-    self.gcMouseScrollLastEventMsY = nowMs;
-    self.gcMouseScrollLastClickY = clicks;
+    // Every callback from this source is an input sample. Time proximity alone
+    // cannot distinguish a fast wheel from a duplicate. Suppress only its AppKit
+    // echo below, never a second GCMouse sample or horizontal AppKit input.
     self.suppressAppKitScrollUntilMsY = nowMs + HIDGCMouseAppKitSuppressMs;
     self.accumulatedHighResScrollDeltaY = 0.0;
-    self.accumulatedQuantizedWheelDeltaY = 0.0;
-    self.accumulatedQuantizedWheelLastEventMsY = 0;
     CGFloat wheelSpeed = HIDWheelScrollSpeedForHost(self.host);
 
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!HIDValidateInputContext(inputCtx, "gcMouseScroll")) {
         return;
     }
 
     short dispatchedAmount = HIDDiscreteScrollPacketUnits(clicks, wheelSpeed);
 
-    LiNoteScrollTraceLocalDispatchCtx(inputCtx,
-                                      traceId,
-                                      nowMs,
-                                      dispatchedAmount,
-                                      false,
-                                      false);
-    LiSendHighResScrollEventCtx(inputCtx, dispatchedAmount);
+    HIDDispatchInput(self, inputLease, ^{
+        LiNoteScrollTraceLocalDispatchCtx(inputCtx, traceId, nowMs, dispatchedAmount, false, false);
+        LiSendHighResScrollEventCtx(inputCtx, dispatchedAmount);
+    });
     [SettingsClass updateScrollInputRuntimeStatusFor:self.host.uuid
                                           summaryKey:@"Scroll Runtime Path GameController"
                                            detailKey:@"Scroll Runtime Detail GameController"];
@@ -174,6 +151,11 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
 }
 
 - (void)scrollWheel:(NSEvent *)event {
+    // Input outside capture must not accumulate into the next remote gesture.
+    if (!self.shouldSendInputEvents || event == nil || event.type != NSEventTypeScrollWheel ||
+        !isfinite(event.scrollingDeltaX) || !isfinite(event.scrollingDeltaY)) {
+        return;
+    }
     uint64_t traceId = [self prepareScrollTraceFromSource:@"appkit"
                                                 rawDeltaX:event.scrollingDeltaX
                                                 rawDeltaY:event.scrollingDeltaY
@@ -323,17 +305,13 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
     if (quantizedWheel) {
         self.accumulatedHighResScrollDeltaX = 0.0;
         self.accumulatedHighResScrollDeltaY = 0.0;
-        BOOL deduplicateQuantizedWheel = self.useGCMouse;
 
         if (horizontalDominant) {
             NSInteger discreteDeltaX = HIDScrollEventDiscreteDeltaForAxis(event,
                                                                           kCGScrollWheelEventRawDeltaAxis2,
                                                                           kCGScrollWheelEventDeltaAxis2,
                                                                           -deltaX);
-            short clicks = HIDDeduplicatedScrollClick(self,
-                                                            HIDNormalizedDiscreteScrollClick(discreteDeltaX),
-                                                            YES,
-                                                            deduplicateQuantizedWheel);
+            short clicks = HIDNormalizedDiscreteScrollClick(discreteDeltaX);
             dispatchedDeltaX = HIDDiscreteScrollPacketUnits(clicks, wheelScrollSpeed);
             normalizedDeltaX = (CGFloat)clicks * wheelScrollSpeed;
         } else {
@@ -341,19 +319,12 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
                                                                           kCGScrollWheelEventRawDeltaAxis1,
                                                                           kCGScrollWheelEventDeltaAxis1,
                                                                           deltaY);
-            short clicks = HIDDeduplicatedScrollClick(self,
-                                                            HIDNormalizedDiscreteScrollClick(discreteDeltaY),
-                                                            NO,
-                                                            deduplicateQuantizedWheel);
+            short clicks = HIDNormalizedDiscreteScrollClick(discreteDeltaY);
             dispatchedDeltaY = HIDDiscreteScrollPacketUnits(clicks, wheelScrollSpeed);
             normalizedDeltaY = (CGFloat)clicks * wheelScrollSpeed;
         }
 
     } else if (forceSyntheticNotched) {
-        self.accumulatedQuantizedWheelLastEventMsX = 0;
-        self.accumulatedQuantizedWheelLastEventMsY = 0;
-        self.accumulatedQuantizedWheelDeltaX = 0.0;
-        self.accumulatedQuantizedWheelDeltaY = 0.0;
         if (horizontalDominant) {
             CGFloat rewrittenDeltaX = -deltaX * rewrittenScrollSpeed;
             if (smartWheelTailFilter > 0.0 && fabs(rewrittenDeltaX) < smartWheelTailFilter) {
@@ -390,10 +361,6 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
             normalizedDeltaY = (CGFloat)clicks;
         }
     } else if (highResolutionPath) {
-        self.accumulatedQuantizedWheelDeltaX = 0.0;
-        self.accumulatedQuantizedWheelDeltaY = 0.0;
-        self.accumulatedQuantizedWheelLastEventMsX = 0;
-        self.accumulatedQuantizedWheelLastEventMsY = 0;
         CGFloat scrollSpeed = gestureScrollSpeed;
         if (syntheticRewritten) {
             scrollSpeed = rewrittenScrollSpeed;
@@ -432,10 +399,6 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
             normalizedDeltaY = (CGFloat)dispatchedDeltaY;
         }
     } else {
-        self.accumulatedQuantizedWheelDeltaX = 0.0;
-        self.accumulatedQuantizedWheelDeltaY = 0.0;
-        self.accumulatedQuantizedWheelLastEventMsX = 0;
-        self.accumulatedQuantizedWheelLastEventMsY = 0;
         self.accumulatedHighResScrollDeltaX = 0.0;
         self.accumulatedHighResScrollDeltaY = 0.0;
         if (horizontalDominant) {
@@ -458,26 +421,29 @@ static inline BOOL HIDPhysicalWheelModePrefersHighPrecision(HIDPhysicalWheelMode
     }
 
     if (self.shouldSendInputEvents) {
-        PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+        HIDInputLease inputLease = HIDAcquireInputContext(self);
+        PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
         if (!HIDValidateInputContext(inputCtx, "scrollWheel")) {
             return;
         }
         BOOL dispatchHorizontal = dispatchedDeltaX != 0;
         short dispatchAmount = dispatchHorizontal ? dispatchedDeltaX : dispatchedDeltaY;
         BOOL dispatchHighRes = highResolutionPath && !quantizedWheel;
-        if (dispatchAmount != 0) {
-            LiNoteScrollTraceLocalDispatchCtx(inputCtx,
-                                              traceId,
-                                              LiGetMillis(),
-                                              dispatchAmount,
-                                              dispatchHighRes,
-                                              dispatchHorizontal);
-        }
-        if (dispatchedDeltaX != 0) {
-            LiSendHighResHScrollEventCtx(inputCtx, dispatchedDeltaX);
-        } else if (dispatchedDeltaY != 0) {
-            LiSendHighResScrollEventCtx(inputCtx, dispatchedDeltaY);
-        }
+        HIDDispatchInput(self, inputLease, ^{
+            if (dispatchAmount != 0) {
+                LiNoteScrollTraceLocalDispatchCtx(inputCtx,
+                                                  traceId,
+                                                  LiGetMillis(),
+                                                  dispatchAmount,
+                                                  dispatchHighRes,
+                                                  dispatchHorizontal);
+            }
+            if (dispatchedDeltaX != 0) {
+                LiSendHighResHScrollEventCtx(inputCtx, dispatchedDeltaX);
+            } else if (dispatchedDeltaY != 0) {
+                LiSendHighResScrollEventCtx(inputCtx, dispatchedDeltaY);
+            }
+        });
     }
 
     [self recordScrollInputDiagnosticsMode:scrollMode

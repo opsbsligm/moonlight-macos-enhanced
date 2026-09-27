@@ -57,6 +57,7 @@ private final class DismissBox {
   private let settingsModel: SettingsModel
   private var savedTitle: String?
   private var savedToolbarVisible: Bool?
+  private var savedFullSizeContentView = false
   /// Who held the key focus before the page asked for it. The page borrows it the
   /// way it borrows the title and the toolbar, so it gives it back as well.
   private var savedFirstResponder: NSResponder?
@@ -139,6 +140,10 @@ private final class DismissBox {
     super.init()
     box.action = { [weak self] in self?.dismiss() }
 
+    // The containing window determines all four edges. Asking SwiftUI to
+    // compute min/ideal/max sizes for the entire settings form only duplicates
+    // layout work and feeds those measurements back into AppKit constraints.
+    hosting.sizingOptions = []
     hosting.view.translatesAutoresizingMaskIntoConstraints = false
     hosting.view.frame = content.bounds
     hosting.view.alphaValue = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0
@@ -150,15 +155,21 @@ private final class DismissBox {
   }
 
   private func show(in content: NSView) {
+    // The main browser uses a full-size content view. A hosting view placed in
+    // that region can take titlebar mouse hits after a native control gains
+    // focus. Settings has no titlebar content: reserve the native drag region.
+    savedFullSizeContentView = window.styleMask.contains(.fullSizeContentView)
+    window.styleMask.remove(.fullSizeContentView)
     if let parent = window.contentViewController {
       parent.addChild(hosting)
     }
     content.addSubview(hosting.view)
 
+    let layoutTop = (window.contentLayoutGuide as? NSLayoutGuide)?.topAnchor ?? content.topAnchor
     NSLayoutConstraint.activate([
       hosting.view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
       hosting.view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-      hosting.view.topAnchor.constraint(equalTo: content.topAnchor),
+      hosting.view.topAnchor.constraint(equalTo: layoutTop),
       hosting.view.bottomAnchor.constraint(equalTo: content.bottomAnchor)
     ])
 
@@ -231,6 +242,9 @@ private final class DismissBox {
 
     hosting.view.removeFromSuperview()
     hosting.removeFromParent()
+    if savedFullSizeContentView {
+      window.styleMask.insert(.fullSizeContentView)
+    }
 
     Self.active.removeValue(forKey: ObjectIdentifier(window))
   }

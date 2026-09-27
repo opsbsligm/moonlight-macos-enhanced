@@ -23,19 +23,12 @@ The verdict is per function, and it is earned alone:
     is precisely where an event with an undefined field can arrive. Four methods in this tree
     are named for AppKit's keyboard contract and all four now state it themselves.
 
-A gate that names the mouse family is a gate, and it is enough to PRINT what the undefined field
-carries: the residue probe in HIDSupport logs the value a driver left behind, which is the only way
-left to prove that claim during a fullscreen stream, where the session observer is blind and the
-device channel needs a grant a Release build cannot ask for. Printing is not deciding, so the rule
-is narrowed to the thing that actually caused the bug: a reader gated to the mouse, tablet or
-gesture family may print the residue and may not ACT on it. That is machine-checked -- such a
-function is refused the moment its body names a keyboard action, a mapping table, or a held-key
-record. So the verdict today is 14 readers, 14 gates, and no exemption list to keep honest.
+Mouse diagnostics obey the same rule as input dispatch: they must never read
+keyboard-only fields. A mouse-type gate does not make keyCode defined, and a log
+line cannot establish device provenance from undefined event data.
 
---self-test plants three mistakes: take the type gate out of -[HIDSupport keyDown:], whose
-name used to be able to hide behind -[CollectionView keyDown:]; take it out of
--event:matchesShortcut:, the helper a gated caller reaches; and hand -mouseDown: an event
-keyCode read of its own. All three have to come back red.
+--self-test removes a keyboard gate, removes a helper gate, adds an ungated mouse
+reader, and adds a read used only for mouse diagnostics. Every mutation must fail.
 """
 import os, re, sys
 
@@ -43,8 +36,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INTERNAL = os.path.join(ROOT, "Limelight", "macOS", "ViewControllers",
                         "StreamViewController_Internal.h")
 
-MIN_EVENT_READS = 20   # the tree measures 25 today; a rule that sees nothing is vacuous
-MIN_GATED = 14         # today every reader gates itself, and a floor is how that stays true
+MIN_EVENT_READS = 20   # retain a floor: an audit that sees no readers proves nothing
+MIN_GATED = 14         # mouse diagnostics are no longer counted as keyboard readers
 
 # Reads that matter: the keyCode field of something named like an NSEvent. A shortcut
 # record's own keyCode is a stored integer with no undefined state, so matching ".keyCode"
@@ -54,11 +47,6 @@ GATE = re.compile(r"MLIsKeyboardKeyEvent\s*\(|\btype\s*[!=]=\s*NSEventType|"
                   r"switch\s*\(\s*[A-Za-z_][\w.]*\btype\b")
 KEYBOARD_EVENT = re.compile(r"NSEventTypeKeyDown|NSEventTypeKeyUp|NSEventTypeFlagsChanged|"
                             r"MLIsKeyboardKeyEvent")
-NONKEYBOARD_EVENT = re.compile(r"NSEventType\w*Mouse\w*|NSEventType\w*"
-                               r"(?:Gesture|Pressure|ScrollWheel|Magnification|Swipe)\w*")
-# What turns a printed residue into the original bug: the value steering a keyboard action.
-KEYBOARD_ACTION = re.compile(r"LiSendKeyboard|KEY_ACTION_|keyAction|self\.mappings|"
-                             r"keyboardForwarded|keyboardSuppressed|translateKeyCode")
 DEFINITION = re.compile(r"^(?:[-+]\s*\([^)]*\)\s*[\w:()+\-]*|static\s+[A-Za-z_][\w \*]*?\b\w+\s*\()[^;]*\{")
 
 # Deliberately empty of exemptions. A method named keyDown: in a class that is not a
@@ -138,16 +126,12 @@ def analyse(sources):
     for path in sources:
         for selector, start, _end, hits, body in readers_of(path, text=sources[path]):
             reads += len(hits)
-            if GATE.search(body):
-                if (NONKEYBOARD_EVENT.search(body) and not KEYBOARD_EVENT.search(body)
-                        and KEYBOARD_ACTION.search(body)):
-                    findings.append("%s:%d  %s  (%d reads, gated to non-keyboard events but the "
-                                    "residue reaches a keyboard action)"
-                                    % (os.path.relpath(path, ROOT), start + 1, selector, len(hits)))
-                    continue
+            code = re.sub(r"//[^\n]*|/\*.*?\*/", "", body, flags=re.S)
+            if GATE.search(code) and KEYBOARD_EVENT.search(code):
                 gated += 1
             else:
-                findings.append("%s:%d  %s  (%d reads, no type gate in its own body)"
+                findings.append("%s:%d  %s  (%d reads, no keyboard-type gate in its own body; "
+                                "non-keyboard diagnostics are not exempt)"
                                 % (os.path.relpath(path, ROOT), start + 1, selector, len(hits)))
     return gated, entry, reads, findings
 
@@ -166,17 +150,17 @@ def main():
     gated, entry, reads, findings = analyse(sources)
     internal = open(INTERNAL, encoding="utf-8").read()
 
-    check(reads >= MIN_EVENT_READS,
+    valid = check(reads >= MIN_EVENT_READS,
           "the audit sees %d event keyCode reads in %d functions (floor %d)"
           % (reads, gated + entry + len(findings), MIN_EVENT_READS))
-    check(gated >= MIN_GATED, "%d of %d functions gate the read themselves (floor %d)"
+    valid &= check(gated >= MIN_GATED, "%d of %d functions gate the read themselves (floor %d)"
           % (gated, gated + len(findings), MIN_GATED))
-    check("ALL keyCode readers MUST gate on this FIRST" in internal
+    valid &= check("ALL keyCode readers MUST gate on this FIRST" in internal
           and "MLIsKeyboardKeyEvent" in internal,
           "the rule this enforces is still written beside the helper it names")
-    check(not findings, "every first-party reader gates its own keyCode read"
+    valid &= check(not findings, "every first-party reader gates its own keyCode read"
           if not findings else "ungated keyCode readers:\n  " + "\n  ".join(findings))
-    return 1 if findings else 0
+    return 0 if valid else 1
 
 
 def red_proofs(sources):
@@ -199,7 +183,7 @@ def red_proofs(sources):
 
     rc |= plant("HIDSupport.m",
                 "- (void)keyDown:(NSEvent *)event {\n"
-                "    if (event == nil || event.type != NSEventTypeKeyDown) {\n        return;\n    }",
+                "    if (event == nil || event.type != NSEventTypeKeyDown || !self.shouldSendInputEvents) {\n        return;\n    }",
                 "- (void)keyDown:(NSEvent *)event {\n"
                 "    if (event == nil) {\n        return;\n    }",
                 "keyDown:", "taking the gate out of -[HIDSupport keyDown:], with a same-named "
@@ -214,13 +198,12 @@ def red_proofs(sources):
                 "    if (event.keyCode == kVK_ANSI_C) { return; }",
                 "mouseDown:", "a mouse handler that reads the keyCode of its event")
     rc |= plant("HIDSupport.m",
-                "        (unsigned long)event.clickCount, (long)event.type);\n}",
-                "        (unsigned long)event.clickCount, (long)event.type);\n}"
-                "\nstatic void HIDPlantedResidueMisuse(HIDSupport *s, NSEvent *event) {\n"
+                "        (long)event.type, event.timestamp);\n}",
+                "        (long)event.type, event.timestamp);\n}"
+                "\nstatic void HIDPlantedMouseDiagnostic(NSEvent *event) {\n"
                 "    if (event.type != NSEventTypeLeftMouseDown) { return; }\n"
-                "    if (event.keyCode == kVK_ANSI_C) { s.keyboardForwarded = 1; "
-                "        LiSendKeyboardEventCtx(0, event.keyCode, KEY_ACTION_DOWN, 0); }\n}",
-                "keyboard action", "a residue probe that acts on what it printed")
+                "    NSLog(@\"diagnostic only: %hu\", event.keyCode);\n}",
+                "non-keyboard diagnostics", "a mouse diagnostic that only prints an undefined keyCode")
     return rc
 
 

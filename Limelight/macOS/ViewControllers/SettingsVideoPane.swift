@@ -198,6 +198,9 @@ struct VideoView: View {
             })
 
           SettingDescriptionRow(textKey: settingsModel.upscalingExplanationKey)
+          if !settingsModel.videoToolboxSuperResolutionIsAvailable {
+            SettingDescriptionRow(textKey: "Upscaling needs newer system hint", color: .orange)
+          }
           SettingDescriptionRow(textKey: "AI enhancement recommended hint")
           SettingDescriptionRow(textKey: "Scale vs Upscaling hint")
 
@@ -572,7 +575,8 @@ struct VideoView: View {
           Divider()
 
           ToggleCell(
-            title: "Performance Overlay (⌃⌥S)",
+            title: "Performance Overlay",
+            shortcut: settingsModel.shortcut(for: StreamShortcutProfile.togglePerformanceOverlayAction),
             boolBinding: $settingsModel.showPerformanceOverlay)
 
           Divider()

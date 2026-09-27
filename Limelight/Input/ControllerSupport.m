@@ -31,6 +31,7 @@
 #define DERIVED_MOUSE_X1     0x8
 #define DERIVED_MOUSE_X2     0x10
 
+#if TARGET_OS_IPHONE
 static const int kDerivedMouseButtonBits[5] = {
     DERIVED_MOUSE_LEFT, DERIVED_MOUSE_RIGHT, DERIVED_MOUSE_MIDDLE,
     DERIVED_MOUSE_X1, DERIVED_MOUSE_X2
@@ -38,6 +39,7 @@ static const int kDerivedMouseButtonBits[5] = {
 static const int kDerivedMouseButtonCodes[5] = {
     BUTTON_LEFT, BUTTON_RIGHT, BUTTON_MIDDLE, BUTTON_X1, BUTTON_X2
 };
+#endif
 
 static inline PML_INPUT_STREAM_CONTEXT ControllerInputContext(ControllerSupport *support) {
     PML_INPUT_STREAM_CONTEXT ctx = (PML_INPUT_STREAM_CONTEXT)support.inputContext;
@@ -499,19 +501,13 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
                     BOOL currentB = gamepad.buttonB.pressed;
                     BOOL lastA = (limeController.lastMouseModeButtonFlags & A_FLAG) != 0;
                     BOOL lastB = (limeController.lastMouseModeButtonFlags & B_FLAG) != 0;
-                    PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
-                    
                     if (currentA != lastA && pointerForwarded) {
-                        if (inputCtx) {
-                            LiSendMouseButtonEventCtx(inputCtx, currentA ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_LEFT);
-                        }
+                        [self sendMouseButton:BUTTON_LEFT pressed:currentA forController:limeController];
                         if (currentA) limeController.lastMouseModeButtonFlags |= A_FLAG;
                         else limeController.lastMouseModeButtonFlags &= ~A_FLAG;
                     }
                     if (currentB != lastB && pointerForwarded) {
-                        if (inputCtx) {
-                            LiSendMouseButtonEventCtx(inputCtx, currentB ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
-                        }
+                        [self sendMouseButton:BUTTON_RIGHT pressed:currentB forController:limeController];
                         if (currentB) limeController.lastMouseModeButtonFlags |= B_FLAG;
                         else limeController.lastMouseModeButtonFlags &= ~B_FLAG;
                     }
@@ -991,6 +987,7 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
         
         // Unset the GCController on this object (in case it is the OSC, which will persist)
         Controller* limeController = [self->_controllers objectForKey:[NSNumber numberWithInteger:controller.playerIndex]];
+        [self releaseMouseButtonsForController:limeController];
         
         // Stop haptics on this controller
         [self cleanupControllerHaptics:limeController];
@@ -1078,7 +1075,55 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
 // trackers land on no buttons down, which is what makes the gate above safe to
 // refuse with: a button the player goes on holding has to be pressed again
 // after recapture, and no packet from the hand-back can be owed either way.
+-(NSString *) mouseButtonSourceForController:(Controller *)controller {
+    return [NSString stringWithFormat:@"mfi-controller-%p", controller];
+}
+
+-(void) sendMouseButton:(int)button pressed:(BOOL)pressed forController:(Controller *)controller {
+    if (controller == nil || !_shouldSendInputEvents) {
+        return;
+    }
+#if !TARGET_OS_IPHONE
+    [self.mouseButtonSupport sendMouseButton:button
+                                    pressed:pressed
+                                     source:[self mouseButtonSourceForController:controller]];
+#else
+    PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
+    if (inputCtx != NULL) {
+        LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, button);
+    }
+#endif
+}
+
+-(void) releaseMouseButtonsForController:(Controller *)controller {
+    if (controller == nil) {
+        return;
+    }
+    int flags = controller.lastMouseModeButtonFlags;
+    controller.lastMouseModeButtonFlags = 0;
+#if !TARGET_OS_IPHONE
+    [self.mouseButtonSupport releaseMouseButtonsForSource:[self mouseButtonSourceForController:controller]];
+#else
+    PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
+    if (inputCtx != NULL) {
+        if (flags & A_FLAG) LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+        if (flags & B_FLAG) LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
+    }
+#endif
+    (void)flags;
+}
+
 -(void) releaseRemoteMouseButtonsForUncapture {
+    // The timer may not tick between uncapture and recapture. Return its
+    // fractional motion here along with its button ownership.
+    _accumulatedMouseX = 0;
+    _accumulatedMouseY = 0;
+#if !TARGET_OS_IPHONE
+    for (Controller *controller in [_controllers allValues]) {
+        [self releaseMouseButtonsForController:controller];
+    }
+    _derivedMouseButtonFlags = 0;
+#else
     int pressed = _derivedMouseButtonFlags;
     _derivedMouseButtonFlags = 0;
     for (Controller *controller in [_controllers allValues]) {
@@ -1100,10 +1145,12 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
                                       kDerivedMouseButtonCodes[i]);
         }
     }
+#endif
 }
 
 -(void) cleanup
 {
+    [self releaseRemoteMouseButtonsForUncapture];
     [[NSNotificationCenter defaultCenter] removeObserver:_controllerConnectObserver];
     [[NSNotificationCenter defaultCenter] removeObserver:_controllerDisconnectObserver];
 #if TARGET_OS_IPHONE
@@ -1183,6 +1230,9 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
                                                          MLGamepadMenuLongPressRequiredSeconds);
         controller.menuGesture = gesture;
         if (toggled) {
+            if (controller.isMouseMode) {
+                [self releaseMouseButtonsForController:controller];
+            }
             controller.isMouseMode = !controller.isMouseMode;
 
             // Notify delegate
@@ -1235,10 +1285,16 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
                 short truncY = (short)self->_accumulatedMouseY;
                 
                 if (truncX != 0 || truncY != 0) {
+#if !TARGET_OS_IPHONE
+                    // These deltas already include the controller deadzone and
+                    // speed. Use the session's input lease without scaling again.
+                    [self.mouseButtonSupport sendRelativeMouseMoveDeltaX:truncX deltaY:truncY];
+#else
                     PML_INPUT_STREAM_CONTEXT inputCtx = ControllerInputContext(self);
                     if (inputCtx) {
                         LiSendMouseMoveEventCtx(inputCtx, truncX, truncY);
                     }
+#endif
                     self->_accumulatedMouseX -= truncX;
                     self->_accumulatedMouseY -= truncY;
                 }

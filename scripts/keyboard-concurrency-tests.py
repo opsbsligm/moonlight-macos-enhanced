@@ -118,7 +118,8 @@ static BOOL HIDIsModifierKeyCode(unsigned short kc) { return kc == 54 || kc == 5
 // because this class is implemented by hand and -Wincomplete-implementation is an error.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers;
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp;
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
 // The heal loop is not declared here on purpose: this harness implements the class by hand and
@@ -150,7 +151,8 @@ EPILOGUE = r"""
 // implemented by hand and -Wincomplete-implementation is an error.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers { return NO; }
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp { return NO; }
 """
 
 # The shape that shipped before the held-key table: one slot for "the key we
@@ -171,7 +173,8 @@ LEGACY = r"""
 - (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event { /* the page kept no record */ }
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers { return NO; }
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp { return NO; }
 - (void)keyDown:(NSEvent *)event {
     short translated = [self translateKeyCodeWithEvent:event];
     if (translated == 0) return;

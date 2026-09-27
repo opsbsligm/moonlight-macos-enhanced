@@ -26,6 +26,7 @@
 #import <IOKit/hid/IOHIDElement.h>
 
 @import GameController;
+@class HIDKeyboardQuirkFilter;
 
 // Relative pointer motion is produced on the GameController mouse callback
 // queue and consumed by the CVDisplayLink output callback on another thread.
@@ -85,8 +86,9 @@
 @property (nonatomic) BOOL useGCMouse;
 @property (nonatomic) BOOL useCoreHIDMouse;
 @property (nonatomic, strong) CoreHIDMouseDriver *coreHIDMouseDriver;
-@property (nonatomic) BOOL coreHIDMouseDidDeliverMovement;
-@property (nonatomic) BOOL coreHIDMouseRuntimeFailed;
+@property (atomic) BOOL coreHIDMouseDidDeliverMovement;
+@property (atomic) BOOL coreHIDMouseRuntimeFailed;
+@property (nonatomic, strong) NSNumber *keyboardCapsLockState;
 @property (nonatomic) NSUInteger keyboardPhysicalModifierSourceMask;
 @property (nonatomic) NSUInteger keyboardRemoteModifierMask;
 @property (atomic) BOOL keyboardModifierReleaseInProgress;
@@ -104,23 +106,24 @@
 /// release would be dropped and the host would keep the key pressed for the
 /// rest of the session.
 ///
-/// The identity has to be the physical key, not the dispatched code, because
-/// the table gives two different Mac keys the same Windows code: Return and
-/// Keypad Enter both go out as 0x0D, Equals and Keypad Equals both as 0xBB.
-/// A set keyed by the dispatched code holds one entry for both, so letting go
-/// of either one spends the record for the other, and the press the player is
-/// still holding is never released when capture ends behind it.
+/// Physical keys own their saved wire code independently. A remote UP is sent
+/// only after the final owner releases it (Return and Keypad Enter share a VK).
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
 /// When each press above was put on the wire, so the heal loop can tell a key that is held from a
 /// release that never arrived. Paired with the dictionary above at all four of its sites.
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;
 /// The loop that asks. Strong, because ARC releases a dispatch source that only a local knows about,
 /// and a timer nobody holds is a timer that never fires.
-@property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;/// Presses that reached this app while the HID key state insisted that nobody was holding the
+@property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
+/// Presses that reached this app while the HID key state insisted that nobody was holding the
 /// key. They are not put on the wire on arrival: the heal loop releases them the moment the state
 /// flips, and drops them - together with the release that will follow - if the state never flips.
 /// Keyed by the physical key code, holding the exact wire code and modifiers to send later.
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSDictionary *> *keyboardHeldUnconfirmedKeyDowns;
+@property (nonatomic, strong) HIDKeyboardQuirkFilter *keyboardQuirkFilter;
+@property (atomic) uint64_t inputContextGeneration;
+@property (atomic) uint64_t inputCaptureGeneration;
+@property (nonatomic, strong) NSObject *inputContextLock;
 
 
 /// Reentry guard for -releaseAllHeldKeys, matching the modifier release guard.
@@ -145,11 +148,6 @@
 @property (nonatomic) NSUInteger inputDiagnosticsRemainingDetailedLogs;
 @property (nonatomic) NSUInteger inputDiagnosticsRemainingScrollDetailedLogs;
 @property (nonatomic) NSUInteger inputDiagnosticsRemainingButtonEdgeLogs;
-// When the last keystroke of a key other than the stray-click candidate reached this app, and the
-// last press the stray-click path spent. Both guard the translation from turning a typed C into a
-// mouse click. docs/memory-ownership.md S36.
-@property (nonatomic) uint64_t lastTypedOtherKeyDownAtMs;
-@property (nonatomic) uint64_t lastStrayClickAtMs;
 @property (nonatomic) uint64_t scrollTraceSequence;
 @property (nonatomic) uint64_t activeScrollTraceId;
 @property (nonatomic) uint64_t activeScrollTraceStartedMs;
@@ -178,16 +176,20 @@
 @property (nonatomic, copy) NSString *lastAbsolutePointerSource;
 @property (atomic) BOOL pendingCoalescedAbsolutePointerDispatch;
 @property (atomic) BOOL pendingCoalescedAbsolutePointerValid;
+@property (nonatomic) uint64_t pendingCoalescedAbsolutePointerCaptureGeneration;
 @property (nonatomic) short pendingCoalescedAbsolutePointerHostX;
 @property (nonatomic) short pendingCoalescedAbsolutePointerHostY;
 @property (nonatomic) short pendingCoalescedAbsolutePointerReferenceWidth;
 @property (nonatomic) short pendingCoalescedAbsolutePointerReferenceHeight;
 @property (nonatomic, copy) NSString *pendingCoalescedAbsolutePointerSource;
+@property (nonatomic, assign) void *pendingCoalescedAbsolutePointerContext;
+@property (nonatomic) uint64_t pendingCoalescedAbsolutePointerGeneration;
+// Guarded together with enqueue order by @synchronized(self).
 @property (nonatomic) uint32_t pressedMouseButtonsMask;
+@property (nonatomic) uint64_t mouseButtonOwnersGeneration;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSNumber *, NSNumber *> *> *mouseButtonOwners;
 @property (nonatomic) CGFloat accumulatedHighResScrollDeltaX;
 @property (nonatomic) CGFloat accumulatedHighResScrollDeltaY;
-@property (nonatomic) CGFloat accumulatedQuantizedWheelDeltaX;
-@property (nonatomic) CGFloat accumulatedQuantizedWheelDeltaY;
 // Motion that has been asked for but not yet worth a whole pixel, one pair per
 // producing thread. HIDDrainRelativeDelta keeps the debt; these pairs are where it
 // lives, and they are separate because the display-link consumer and the HID-queue
@@ -202,32 +204,22 @@
 // No nullability annotation here on purpose. This header carries none, and one
 // annotation is enough to switch on -Wnullability-completeness for every pointer in
 // the file: the CI analyzer reported 360 new findings from the single word nullable.
-@property (nonatomic, copy) NSString *lastReportedRelativeMotionSource;
+@property (atomic, copy) NSString *lastReportedRelativeMotionSource;
 // The emulated pointer keeps its own debt, separate from the mouse's: a stick held a
 // little off centre asks for one and eight tenths pixels a frame, and the residue is
 // what makes the cursor travel at the rate the settings promise instead of the two
 // pixels a frame that truncation reported.
 @property (nonatomic) CGFloat mouseEmulationResidualX;
 @property (nonatomic) CGFloat mouseEmulationResidualY;
-@property (nonatomic) uint64_t accumulatedQuantizedWheelLastEventMsX;
-@property (nonatomic) uint64_t accumulatedQuantizedWheelLastEventMsY;
-@property (nonatomic) NSInteger gcMouseScrollLastClickY;
-@property (nonatomic) uint64_t gcMouseScrollLastEventMsY;
 @property (atomic) uint64_t suppressAppKitScrollUntilMsY;
 
 - (void)sendControllerEvent;
-- (KeyboardCompatibilityMode)keyboardCompatibilityMode;
-- (BOOL)usesKeyboardCommandToControlCompatibility;
-- (BOOL)usesKeyboardLeftControlWinSwapCompatibility;
-- (BOOL)usesKeyboardShortcutTranslationCompatibility;
 /// What a physical Command key means on this host. The Windows key is the answer unless the
 /// player asked for Control, and every keyboard path asks: a host that sent Control for the
 /// keys a player types and Win for the shortcuts they bound would be a host with two
 /// keyboards. scripts/command-to-control-tests.py refuses a path that skips the question.
 - (KMR_CommandPreference)commandKeyPreferenceForCurrentHost;
-- (BOOL)usesKeyboardMoonlightClassicMapping;
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event;
-- (BOOL)shouldApplyKeyboardShortcutTranslationForEvent:(NSEvent *)event;
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event;
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event;
 - (char)translatedModifierFlagsForEvent:(NSEvent *)event;
@@ -292,6 +284,8 @@
 @end
 
 @interface HIDSupport (PointerInternal)
+- (void)resetPointerMotionForCaptureTransition;
+- (void)accumulateCapturedMouseMotionX:(CGFloat)deltaX deltaY:(CGFloat)deltaY;
 - (void)registerMouseCallbacks:(GCMouse *)mouse API_AVAILABLE(macos(11.0));
 - (void)unregisterMouseCallbacks:(GCMouse *)mouse API_AVAILABLE(macos(11.0));
 - (BOOL)initializeDisplayLink;
@@ -377,6 +371,17 @@ typedef struct {
     BOOL wheelLikeCandidate;
 } HIDScrollClassification;
 
+// Copy only validated report bytes into an aligned, zero-filled snapshot.
+// Short reports may omit unused sensors, but never the controls we consume.
+static inline BOOL HIDCopyReportPayload(void *destination, size_t size, size_t required,
+                                        const uint8_t *report, CFIndex length, size_t offset) {
+    if (destination == NULL || report == NULL || length < 0 || required > size ||
+        offset > (size_t)length || (size_t)length - offset < required) return NO;
+    memset(destination, 0, size);
+    memcpy(destination, report + offset, MIN(size, (size_t)length - offset));
+    return YES;
+}
+
 static inline UInt16 usbIdFromDevice(IOHIDDeviceRef device, NSString *key) {
     CFTypeRef value = IOHIDDeviceGetProperty(device, (__bridge CFStringRef)key);
     if (value == NULL) {
@@ -451,44 +456,49 @@ static inline BOOL isPS5(IOHIDDeviceRef device) {
     return vendorId == 0x054C && (productId == 0x0ce6);
 }
 
-static inline PML_INPUT_STREAM_CONTEXT HIDInputContext(HIDSupport *support) {
-    PML_INPUT_STREAM_CONTEXT ctx = (PML_INPUT_STREAM_CONTEXT)support.inputContext;
-    if (ctx != NULL && ctx->connectionContext != NULL) {
-        LiSetThreadConnectionContext(ctx->connectionContext);
+typedef struct {
+    PML_INPUT_STREAM_CONTEXT context;
+    uint64_t generation;
+} HIDInputLease;
+
+// Taking a lease never dereferences the connection. Its lifetime is only
+// guaranteed when inputQueue accepts the matching pointer and generation.
+static inline HIDInputLease HIDAcquireInputContext(HIDSupport *support) {
+    @synchronized (support.inputContextLock) {
+        return (HIDInputLease){ (PML_INPUT_STREAM_CONTEXT)support.inputContext,
+                                support.inputContextGeneration };
     }
-    return ctx;
 }
 
+// Producer-side presence check only. Initialization, TLS selection and all
+// connection memory access belong to the serialized consumer below.
 static inline bool HIDValidateInputContext(PML_INPUT_STREAM_CONTEXT ctx, const char *op) {
-    static CFAbsoluteTime lastLogTime = 0;
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    if (ctx == NULL) {
-        if (now - lastLogTime > 1.0) {
-            Log(LOG_W, @"Input dropped (%s): inputContext is NULL", op);
-            lastLogTime = now;
-        }
-        return false;
-    }
-    if (!LiInputContextIsInitialized(ctx)) {
-        if (now - lastLogTime > 1.0) {
-            Log(LOG_W, @"Input dropped (%s): inputContext not initialized (ctx=%p conn=%p)", op, ctx, LiInputContextGetConnectionCtx(ctx));
-            lastLogTime = now;
-        }
-        return false;
-    }
-    return true;
+    (void)op;
+    return ctx != NULL;
 }
 
-static inline void HIDDispatchInput(HIDSupport *support, PML_INPUT_STREAM_CONTEXT inputCtx, dispatch_block_t block) {
-    if (inputCtx == NULL) {
+extern const void *HIDInputQueueSpecificKey;
+
+static inline void HIDExecuteInputLeaseOnQueue(HIDSupport *support, HIDInputLease lease, dispatch_block_t block) {
+    // Call only on inputQueue: context replacement drains the same queue.
+    if (lease.context == NULL || support.inputContext != lease.context ||
+        support.inputContextGeneration != lease.generation || !LiInputContextIsInitialized(lease.context)) {
         return;
     }
-    PML_CONNECTION_CONTEXT connCtx = inputCtx->connectionContext;
+    PML_CONNECTION_CONTEXT connCtx = lease.context->connectionContext;
+    if (connCtx != NULL) {
+        LiSetThreadConnectionContext(connCtx);
+    }
+    block();
+}
+
+static inline void HIDDispatchInput(HIDSupport *support, HIDInputLease lease, dispatch_block_t block) {
+    if (lease.context == NULL) {
+        return;
+    }
     dispatch_async(support.inputQueue, ^{
-        if (connCtx != NULL) {
-            LiSetThreadConnectionContext(connCtx);
-        }
-        block();
+        // Check the lease before touching its pointer, including same-address reuse.
+        HIDExecuteInputLeaseOnQueue(support, lease, block);
     });
 }
 
@@ -548,26 +558,9 @@ static inline HIDRewrittenScrollModeOption HIDRewrittenScrollModeForHost(Tempora
     return (HIDRewrittenScrollModeOption)[SettingsClass rewrittenScrollModeFor:host.uuid];
 }
 
-static inline short HIDScaledRelativeDelta(CGFloat delta, CGFloat sensitivity) {
-    if (delta == 0.0) {
-        return 0;
-    }
-
-    CGFloat scaled = delta * sensitivity;
-    if (scaled > SHRT_MAX) {
-        scaled = SHRT_MAX;
-    } else if (scaled < SHRT_MIN) {
-        scaled = SHRT_MIN;
-    } else if (fabs(scaled) < 1.0) {
-        scaled = scaled > 0.0 ? 1.0 : -1.0;
-    }
-
-    return (short)lrint(scaled);
-}
-
 /** Send the whole pixels a relative move has earned, and remember the rest.
  *
- * HIDScaledRelativeDelta answers every frame on its own and promises at least one
+ * The retired per-frame scaler promised at least one
  * pixel whenever a frame's scaled move is non-zero but under one. At the low end of
  * the Pointer Sensitivity slider (0.25, which the settings UI offers and the
  * function above clamps to) that promise is a lie in the loud direction: a frame
@@ -625,10 +618,10 @@ static inline CGFloat HIDAbsoluteMouseReferencePrecisionScale(NSSize referenceSi
     }
 
     CGFloat maxSafeScale = floor((((CGFloat)SHRT_MAX) - 1.0) / maxDimension);
-    if (!isfinite(maxSafeScale) || maxSafeScale < 1.0) {
-        return 1.0;
+    if (maxSafeScale < 1.0) {
+        // Large virtual desktops still need positive signed 16-bit dimensions.
+        return (((CGFloat)SHRT_MAX) - 1.0) / maxDimension;
     }
-
     return MIN(8.0, maxSafeScale);
 }
 
@@ -639,11 +632,16 @@ static inline BOOL HIDAbsoluteMousePositionForViewPoint(NSPoint viewPoint,
                                                         short *hostY,
                                                         short *referenceWidth,
                                                         short *referenceHeight) {
+    if (!isfinite(referenceSize.width) || !isfinite(referenceSize.height) ||
+        referenceSize.width <= 0 || referenceSize.height <= 0 ||
+        !isfinite(viewPoint.x) || !isfinite(viewPoint.y)) {
+        return NO;
+    }
     CGFloat width = MAX(referenceSize.width, 1.0);
     CGFloat height = MAX(referenceSize.height, 1.0);
     CGFloat precisionScale = HIDAbsoluteMouseReferencePrecisionScale(referenceSize);
-    CGFloat scaledWidth = MAX(1.0, floor(width * precisionScale));
-    CGFloat scaledHeight = MAX(1.0, floor(height * precisionScale));
+    CGFloat scaledWidth = MAX(2.0, floor(width * precisionScale));
+    CGFloat scaledHeight = MAX(2.0, floor(height * precisionScale));
     CGFloat x = isfinite(viewPoint.x) ? viewPoint.x : 0.0;
     CGFloat y = isfinite(viewPoint.y) ? viewPoint.y : 0.0;
 
@@ -770,12 +768,6 @@ static inline uint32_t HIDMouseButtonBitForButton(int button) {
 }
 
 static short const HIDScrollWheelDelta = 120;
-// Tight window to catch only true macOS-generated duplicate events
-// (which arrive within a few milliseconds of each other).
-// The old 240/360ms values created a dead zone that dropped ~25% of
-// legitimate scroll events, causing stutter, latency, and missed scrolls.
-static uint64_t const HIDQuantizedWheelDuplicateSuppressMinMs = 25;
-static uint64_t const HIDQuantizedWheelDuplicateSuppressMaxMs = 50;
 // Duration to suppress AppKit scroll events after a GCMouse scroll dispatch.
 // AppKit echoes arrive within ~10ms; 80ms provides a safe margin.
 static uint64_t const HIDGCMouseAppKitSuppressMs = 80;
@@ -997,46 +989,6 @@ static inline NSString *HIDScrollDiagnosticModeForClassification(HIDScrollClassi
     }
 }
 
-static inline short HIDDeduplicatedScrollClick(HIDSupport *support,
-                                               short clicks,
-                                                     BOOL horizontalAxis,
-                                                     BOOL deduplicateBurst) {
-    if (clicks == 0) {
-        return 0;
-    }
-
-    if (!deduplicateBurst) {
-        return clicks;
-    }
-
-    uint64_t nowMs = LiGetMillis();
-    uint64_t lastEventMs = horizontalAxis ? support.accumulatedQuantizedWheelLastEventMsX
-                                          : support.accumulatedQuantizedWheelLastEventMsY;
-    CGFloat previousClicks = horizontalAxis ? support.accumulatedQuantizedWheelDeltaX
-                                            : support.accumulatedQuantizedWheelDeltaY;
-    BOOL sameDirection = (previousClicks > 0.0 && clicks > 0) ||
-                         (previousClicks < 0.0 && clicks < 0);
-    uint64_t elapsedMs = lastEventMs != 0 && nowMs >= lastEventMs ? (nowMs - lastEventMs) : UINT64_MAX;
-
-    // Suppress only true macOS-generated duplicates that arrive within
-    // a very tight window (< 25ms) in the same direction.  Anything
-    // further apart is a legitimate separate scroll action.
-    if (sameDirection && lastEventMs != 0 && elapsedMs < HIDQuantizedWheelDuplicateSuppressMinMs) {
-        return 0;
-    }
-
-    // Always update timestamp on dispatch so elapsed time is measured
-    // from the most recent dispatched event, not the first one.
-    if (horizontalAxis) {
-        support.accumulatedQuantizedWheelLastEventMsX = nowMs;
-        support.accumulatedQuantizedWheelDeltaX = (CGFloat)clicks;
-    } else {
-        support.accumulatedQuantizedWheelLastEventMsY = nowMs;
-        support.accumulatedQuantizedWheelDeltaY = (CGFloat)clicks;
-    }
-    return clicks;
-}
-
 static inline short HIDDispatchAccumulatedHighResScrollDelta(CGFloat *accumulatedDelta) {
     if (accumulatedDelta == NULL || !isfinite(*accumulatedDelta)) {
         if (accumulatedDelta != NULL) {
@@ -1081,11 +1033,11 @@ static inline short HIDNormalizedDiscreteScrollClick(CGFloat delta) {
         return 0;
     }
 
-    NSInteger clicks = (NSInteger)llround(delta);
+    CGFloat limit = SHRT_MAX / HIDScrollWheelDelta;
+    NSInteger clicks = (NSInteger)llround(MIN(MAX(delta, -limit), limit));
     if (clicks == 0) {
         clicks = delta > 0.0 ? 1 : -1;
     }
-    NSInteger limit = SHRT_MAX / HIDScrollWheelDelta;
     if (clicks > limit) {
         clicks = limit;
     } else if (clicks < -limit) {
@@ -1110,7 +1062,7 @@ static inline short HIDDiscreteScrollPacketUnits(short clicks, CGFloat speed) {
         speed = 1.0;
     }
 
-    CGFloat units = llround((CGFloat)clicks * (CGFloat)HIDScrollWheelDelta * speed);
+    CGFloat units = (CGFloat)clicks * (CGFloat)HIDScrollWheelDelta * speed;
     if (!isfinite(units)) {
         return clicks > 0 ? SHRT_MAX : SHRT_MIN;
     }
@@ -1119,6 +1071,7 @@ static inline short HIDDiscreteScrollPacketUnits(short clicks, CGFloat speed) {
     } else if (units < SHRT_MIN) {
         units = SHRT_MIN;
     }
+    units = round(units);
     if (units == 0.0) {
         units = clicks > 0 ? 1.0 : -1.0;
     }

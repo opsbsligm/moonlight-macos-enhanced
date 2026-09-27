@@ -62,7 +62,7 @@ def method_body(text, signature):
 def shipped_facts():
     """Three things this test refuses to guess at."""
     text = source_text()
-    flags = method_body(text, "- (void)flagsChanged:(NSEvent *)event")
+    flags = method_body(text, "- (void)handleModifierOnlyReleaseShortcut:(NSEvent *)event")
     key_down = method_body(text, "- (void)keyDown:(NSEvent *)event")
 
     schedule = re.search(r"releaseShortcut\.modifierOnly\s*&&\s*relevantMods\s*==\s*releaseShortcut\.modifierFlags",

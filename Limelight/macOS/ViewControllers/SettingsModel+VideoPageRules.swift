@@ -60,6 +60,15 @@ extension SettingsModel {
     videoRendererModeIsMetal ? "Upscaling detail" : "Upscaling Metal only detail"
   }
 
+  /// Whether the two VideoToolbox super-resolution options can run at all. Both are macOS 26 API --
+  /// the resolver asks them only inside `if (@available(macOS 26.0, *))` -- so on an older system the
+  /// honest answer is that the option on screen cannot be honoured however the player resizes the
+  /// window. The hint appears when it cannot, instead of being a paragraph nobody can act on.
+  var videoToolboxSuperResolutionIsAvailable: Bool {
+    ProcessInfo.processInfo.isOperatingSystemAtLeast(
+      OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0))
+  }
+
   /// The frame rate this display can actually interpolate at, and the refresh rate it was worked
   /// out from. While a stream runs the renderer's measured answer wins: it comes from the display
   /// link and it is the number the admission itself refused against. Before a stream there is

@@ -223,7 +223,7 @@ void KMR_LogActiveMapping(KMR_CommandPreference pref) {
             case KMR_Phys_RightCommand: kvk = kVK_RightCommand; break;
             default: break;
         }
-        unsigned short vk = KMR_RemoteVKForPhysicalKeyCode(kvk);
+        unsigned short vk = KMR_RemoteVKForPhysicalKeyCodeWithCommandPreference(kvk, pref);
 
         Log(LOG_I, @"[kbmap] %-8s  kVK=%03u(0x%02X)  → %s  (VK=0x%02X)",
             KMR_LabelForPhysical(phys),

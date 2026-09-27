@@ -460,7 +460,8 @@ static void AppendFileLogLineToPath(NSString *logPath, NSString *line, NSString 
 
         @try {
             [file seekToEndOfFile];
-            NSString *entry = [NSString stringWithFormat:@"[%@] %@\n", LoggerTimestampString(), line];
+            NSString *entry = [NSString stringWithFormat:@"[%@] [pid=%d] %@\n",
+                               LoggerTimestampString(), NSProcessInfo.processInfo.processIdentifier, line];
             NSData *data = [entry dataUsingEncoding:NSUTF8StringEncoding];
             [file writeData:data];
         } @catch (NSException *exception) {

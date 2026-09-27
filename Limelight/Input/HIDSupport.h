@@ -42,19 +42,8 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 @interface HIDSupport : NSObject
 @property(atomic) BOOL shouldSendInputEvents;
 @property(atomic) TemporaryHost *host;
-@property(nonatomic, assign) void *inputContext;
+@property(atomic, assign) void *inputContext;
 @property(nonatomic, copy) HIDFreeMouseAbsoluteSyncHandler freeMouseAbsoluteSyncHandler;
-// What to do with a press that the HID key state refuses to confirm and whose confirm window has
-// expired. A 2.4G composite receiver can answer a left-button click as a keyboard usage instead of a
-// mouse button: in the 2026-09-26 capture an AJAZZ 2.4G produced 126 keyDowns for kVK_ANSI_C (each
-// lasting ~70 ms, none of them a repeat) while [clickdiag] recorded 32 right clicks and not one left
-// click in the same window. For that device the unconfirmed press is the click, so dropping it does
-// not remove a phantom -- it removes the only click the player has. The handler gets first refusal to
-// spend the press on something useful; returning NO keeps the drop-the-ghost behaviour unchanged.
-// It belongs to the stream UI because that is the only layer that knows the mouse is captured and
-// the cursor mode is not remote desktop. docs/memory-ownership.md S36.
-@property(nonatomic, copy, nullable) BOOL (^strayKeyPressHandler)(unsigned short physicalKeyCode,
-                                                                 uint64_t ageMs);
 
 - (instancetype)init:(TemporaryHost *)host;
 
@@ -62,20 +51,21 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
 
-/// Sends UP for every key this session forwarded a DOWN for, then clears the
-/// record.
+/// Releases every remote key owned by this session and cancels deferred presses.
 ///
 /// Mouse capture and keyboard forwarding switch off together, and keyUp: stops
 /// forwarding while they are off. A key that is still physically held down when
 /// capture ends therefore never reaches the host as a release, which leaves the
 /// host holding it for the rest of the session: holding a movement key and
 /// releasing the mouse makes the remote character run forever. Call this from
-/// every path that turns input forwarding off, before it turns them off, while
+/// every path that turns input forwarding off, after closing admission but while
 /// the input context is still alive. Releasing a key that the host already
 /// released is harmless; the reverse is not.
 - (void)releaseAllHeldKeys;
 
 - (void)releaseAllModifierKeys;
+/// Reconcile missed modifier edges when the stream regains capture.
+- (void)refreshKeyboardModifiersForCapture;
 
 /// Hands the modifiers the host was told about back to it, without touching the
 /// physical tracker: for the moment input forwarding stops (mouse capture
@@ -102,7 +92,7 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 
 /// Called exactly once when the streaming session terminates (either via
 /// connectionTerminated, performCloseStreamWindow, or windowWillClose).
-/// Does ALL of the following atomically:
+/// Runs on the main thread; closes admission before returning ownership:
 ///   - Zeroes local physical + remote modifier masks
 ///   - Sends UP for all 8 modifier keys (Win/L/Ctrl/Alt/Shift × left/right)
 ///   - Releases all pressed mouse buttons (per PointerInput)
@@ -114,8 +104,6 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 - (void)sendSyntheticRemoteModifierTapForFlags:(NSEventModifierFlags)modifierFlags;
 - (void)sendSyntheticRemoteModifierTapForKeyCode:(unsigned short)keyCode
             preferShortcutTranslationCommandMapping:(BOOL)preferShortcutTranslationCommandMapping;
-- (void)beginDeferredShortcutTranslationCommandHoldForKeyCode:(unsigned short)keyCode;
-- (void)endDeferredShortcutTranslationCommandHoldForKeyCode:(unsigned short)keyCode;
 - (BOOL)getLastAbsolutePointerHostX:(short *)hostX
                               hostY:(short *)hostY
                      referenceWidth:(short *)referenceWidth
@@ -134,11 +122,15 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 @end
 
 @interface HIDSupport (PointerInput)
+/// Mouse sources share remote button ownership; each source releases only its own presses.
+- (void)sendMouseButton:(int)button pressed:(BOOL)pressed source:(NSString *)source;
+- (void)releaseMouseButtonsForSource:(NSString *)source;
+/// Sends already-quantized controller motion without applying pointer sensitivity again.
+- (void)sendRelativeMouseMoveDeltaX:(short)deltaX deltaY:(short)deltaY;
 - (BOOL)hasPressedMouseButtons;
 - (void)releaseAllPressedMouseButtons;
-// Prints what the undefined keyCode field of a mouse edge carries. Diagnosis only: the value it
-// logs is never compared to a key code and cannot reach the host. docs/memory-ownership.md S32.
-- (void)logMouseKeyboardFieldResidueForEvent:(NSEvent *)event where:(NSString *)where;
+// Logs only fields defined for a mouse edge; keyboard-only fields are never read.
+- (void)logMouseEventDiagnosticsForEvent:(NSEvent *)event where:(NSString *)where;
 - (void)mouseDown:(NSEvent *)event withButton:(int)button;
 - (void)mouseUp:(NSEvent *)event withButton:(int)button;
 - (void)mouseMoved:(NSEvent *)event;
@@ -170,6 +162,7 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 @end
 
 @interface HIDSupport (ScrollInput)
+- (void)resetScrollInputState;
 - (void)scrollWheel:(NSEvent *)event;
 @end
 
