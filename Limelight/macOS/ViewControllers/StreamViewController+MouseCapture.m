@@ -16,8 +16,9 @@
 // between a standalone Cmd tap and a Cmd+Key shortcut. We simply forward
 // the modifier state immediately, just like any other modifier (Ctrl, Alt).
 //
-// This completely eliminates the class of bugs where double-clicking the mouse
-// while resting on a Cmd key accidentally sent a Win key tap.
+// Event-type checks prevent reading keyboard fields from mouse events. They do
+// not establish where a genuine keyDown event originated; HIDSupport validates
+// unconfirmed C input separately before forwarding it.
 // ---------------------------------------------------------------------------
 
 static inline BOOL MLCGCursorIsVisibleCompat(void) {
@@ -713,12 +714,12 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
                                                reason:reason];
     [self uncaptureMouseWithCode:code reason:reason];
 
-    if ([self edgeMenuMatchesExitEdge:exitEdge] &&
-        [self edgeMenuShouldBeVisible] &&
-        [self edgeMenuReleaseExitEdgeForEvent:event point:semanticViewPoint] == exitEdge) {
-        [self activateEdgeMenuDockForExitEdge:exitEdge];
-    } else {
-        [self beginFreeMouseEdgeReentryForExitEdge:exitEdge];
+    [self beginFreeMouseEdgeReentryForExitEdge:exitEdge];
+    // Uncapture cancels old dwell timers. If the native pointer stopped on the
+    // local activation target, restart the dwell in its new ownership context.
+    if (self.edgeSensorSummonEnabled && [self edgeMenuCanInteract] &&
+        [self edgeSensorPointIsInHoverRegion:[self currentMouseLocationInViewCoordinates] edge:self.edgeMenuDockEdge]) {
+        [self beginEdgeSensorDwellTimerIfNeededForEdge:self.edgeMenuDockEdge];
     }
 }
 
@@ -741,68 +742,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     return NSPointInRect([self currentMouseLocationInViewCoordinates], self.view.bounds);
 }
 
-// Pure geometry for the summon band. Kept out of the object so the gate can drive
-// every branch, and so the shipped reader and the gate cannot drift apart.
-static CGFloat MLEdgeSensorNormalDistanceToEdge(NSPoint point, NSRect bounds, MLFreeMouseExitEdge edge) {
-    switch (edge) {
-        case MLFreeMouseExitEdgeLeft:
-            return point.x - NSMinX(bounds);
-        case MLFreeMouseExitEdgeRight:
-            return NSMaxX(bounds) - point.x;
-        case MLFreeMouseExitEdgeBottom:
-            return point.y - NSMinY(bounds);
-        case MLFreeMouseExitEdgeTop:
-            return NSMaxY(bounds) - point.y;
-        case MLFreeMouseExitEdgeNone:
-        default:
-            return CGFLOAT_MAX;
-    }
-}
-
-// The outward sign convention is the one edgeMenuReleaseExitEdgeForEvent: already uses,
-// so a push that the old path would have honoured counts here too, and one it would not
-// still counts as nothing. It reads the two deltas rather than the event so the shipped
-// function is what a test drives.
-static CGFloat MLEdgeSensorOutwardDeltaForDeltas(CGFloat deltaX,
-                                                 CGFloat deltaY,
-                                                 MLFreeMouseExitEdge edge) {
-    CGFloat delta = 0.0;
-    switch (edge) {
-        case MLFreeMouseExitEdgeLeft:
-            delta = -deltaX;
-            break;
-        case MLFreeMouseExitEdgeRight:
-            delta = deltaX;
-            break;
-        case MLFreeMouseExitEdgeTop:
-            delta = deltaY;
-            break;
-        case MLFreeMouseExitEdgeBottom:
-            delta = -deltaY;
-            break;
-        case MLFreeMouseExitEdgeNone:
-        default:
-            return 0.0;
-    }
-    return delta > 0.0 ? delta : 0.0;
-}
-
-// One event is worth at most perEventCap points of intent. A single flick can carry a
-// hundred points, and letting one of them spend the budget would put the dock away
-// every time a player looks around.
-static BOOL MLEdgeSensorPushAccumulate(CGFloat accumulator,
-                                       CGFloat outwardDelta,
-                                       CGFloat perEventCap,
-                                       CGFloat budget,
-                                       CGFloat *outAccumulator) {
-    CGFloat clamped = outwardDelta > perEventCap ? perEventCap : (outwardDelta > 0.0 ? outwardDelta : 0.0);
-    CGFloat next = accumulator + clamped;
-    if (outAccumulator != NULL) {
-        *outAccumulator = next;
-    }
-    return next >= budget;
-}
-
 - (void)refreshEdgeSensorSummonPreference {
     NSDictionary *prefs = [SettingsClass getSettingsFor:self.app.host.uuid];
     id value = prefs ? prefs[@"edgeSensorSummon"] : nil;
@@ -817,141 +756,181 @@ static BOOL MLEdgeSensorPushAccumulate(CGFloat accumulator,
 - (void)resetEdgeSensorSummonState {
     [self.edgeSensorDwellTimer invalidate];
     self.edgeSensorDwellTimer = nil;
-    self.edgeSensorPushAccumulator = 0.0;
+}
+
+- (void)resetEdgeSensorPointerState {
+    [self resetEdgeSensorSummonState];
+    [self resetEdgePushGesture];
+    self.edgeSensorMustLeaveHoverRegion = NO;
+    // Capture/mode changes warp the system pointer. Do not treat that warp as intent.
+    self.edgeSensorIgnoreMotionUntilMs = [self nowMs] + 120.0;
+}
+
+- (void)resetEdgePushGesture {
+    self.edgePushStrokePoints = 0;
+    self.edgePushReturnPoints = 0;
+    self.edgePushAwaitingReturn = NO;
+    self.edgePushStrokeCount = 0;
+    self.edgePushWindowStartMs = 0;
+    self.edgePushLastMotionMs = 0;
+}
+
+// Locked relative mode trusts motion, never position. A stroke toward the docked
+// edge counts only once an unambiguous return has followed it, so monotonic aiming,
+// held buttons and stalled windows cannot accumulate silently. This is a deliberate
+// local gesture; it never claims to know where the host cursor is.
+- (BOOL)noteEdgeSensorPushMotionForEvent:(NSEvent *)event {
+    if ([self hasPressedMouseButtonsForCaptureTransition]) {
+        [self resetEdgePushGesture];
+        return NO;
+    }
+    double now = [self nowMs];
+    if (self.edgePushLastMotionMs != 0 && now - self.edgePushLastMotionMs > MLEdgeSensorPushWindowMs) {
+        [self resetEdgePushGesture];
+    }
+    self.edgePushLastMotionMs = now;
+
+    CGFloat delta = 0;
+    switch (self.edgeMenuDockEdge) {
+        case MLFreeMouseExitEdgeLeft:   delta = -event.deltaX; break;
+        case MLFreeMouseExitEdgeRight:  delta = event.deltaX; break;
+        case MLFreeMouseExitEdgeTop:    delta = event.deltaY; break;
+        case MLFreeMouseExitEdgeBottom: delta = -event.deltaY; break;
+        default: [self resetEdgePushGesture]; return NO;
+    }
+    if (!isfinite(delta) || delta == 0) return NO;
+
+    if (delta > 0) {
+        if (self.edgePushAwaitingReturn) {
+            // A stroke is only over once the device came back inside. Continuous
+            // outward motion, however large, is one stroke and never a gesture.
+            if (self.edgePushReturnPoints < MLEdgeSensorPushReturnPoints) return NO;
+            self.edgePushAwaitingReturn = NO;
+            self.edgePushReturnPoints = 0;
+        }
+        if (self.edgePushStrokeCount == 0 && self.edgePushStrokePoints == 0) {
+            self.edgePushWindowStartMs = now;
+        }
+        self.edgePushStrokePoints += delta;
+        if (self.edgePushStrokePoints >= MLEdgeSensorPushStrokePoints) {
+            self.edgePushStrokeCount += 1;
+            self.edgePushStrokePoints = 0;
+            self.edgePushAwaitingReturn = YES;
+            if (self.edgePushStrokeCount >= MLEdgeSensorPushStrokeCount) {
+                BOOL completed = now - self.edgePushWindowStartMs <= MLEdgeSensorPushWindowMs;
+                [self resetEdgePushGesture];
+                return completed;
+            }
+        }
+    } else if (self.edgePushAwaitingReturn) {
+        self.edgePushReturnPoints += -delta;
+    } else {
+        // Symmetric play jitter nets to nothing; only a real stroke stays net outward.
+        self.edgePushStrokePoints = MAX(0.0, self.edgePushStrokePoints + delta);
+    }
+    return NO;
+}
+
+- (NSPoint)edgeSensorPointForEvent:(__unused NSEvent *)event {
+    // Never infer a remote game cursor from accumulated raw motion. The native
+    // local pointer is authoritative only when free or explicitly released.
+    return [self currentMouseLocationInViewCoordinates];
+}
+
+- (void)captureMousePreservingEdgeSensorPoint:(NSPoint)point {
+    [self captureMouse];
+    self.edgeSensorMustLeaveHoverRegion = [self edgeSensorPointIsInHoverRegion:point edge:self.edgeMenuDockEdge];
 }
 
 - (void)beginEdgeSensorDwellTimerIfNeededForEdge:(MLFreeMouseExitEdge)edge {
-    if (self.edgeSensorDwellTimer.isValid) {
-        return;
-    }
-
+    if (self.edgeSensorDwellTimer.isValid) return;
+    NSUInteger token = self.edgeMenuLifecycleToken;
+    NSRect bounds = self.view.bounds;
     __weak typeof(self) weakSelf = self;
-    self.edgeSensorDwellTimer = [NSTimer scheduledTimerWithTimeInterval:MLEdgeSensorDwellSeconds
-                                                               repeats:NO
-                                                                 block:^(__unused NSTimer *timer) {
+    self.edgeSensorDwellTimer = [NSTimer timerWithTimeInterval:MLEdgeSensorDwellSeconds repeats:NO block:^(NSTimer *timer) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf) {
-            return;
-        }
+        if (!strongSelf || timer != strongSelf.edgeSensorDwellTimer) return;
         strongSelf.edgeSensorDwellTimer = nil;
+        if (token != strongSelf.edgeMenuLifecycleToken || !NSEqualRects(bounds, strongSelf.view.bounds)) return;
         [strongSelf finishEdgeSensorSummonIfStillArmedForEdge:edge];
     }];
+    [[NSRunLoop mainRunLoop] addTimer:self.edgeSensorDwellTimer forMode:NSRunLoopCommonModes];
+}
+
+- (BOOL)edgeSensorPointIsInHoverRegion:(NSPoint)point edge:(MLFreeMouseExitEdge)edge {
+    NSRect bounds = self.view.bounds;
+    if (edge != self.edgeMenuDockEdge || edge == MLFreeMouseExitEdgeNone ||
+        NSIsEmptyRect(bounds) || !isfinite(point.x) || !isfinite(point.y)) return NO;
+    NSRect region = [self edgeSensorActivationRectInBounds:bounds];
+    return !NSIsEmptyRect(region) && point.x >= NSMinX(region) && point.x <= NSMaxX(region) &&
+           point.y >= NSMinY(region) && point.y <= NSMaxY(region);
 }
 
 - (void)finishEdgeSensorSummonIfStillArmedForEdge:(MLFreeMouseExitEdge)edge {
-    if (!self.edgeSensorSummonEnabled ||
-        !self.isMouseCaptured ||
-        self.edgeMenuTemporaryReleaseActive ||
-        self.edgeMenuDragging ||
-        self.edgeMenuMenuVisible ||
-        ![self edgeMenuShouldBeVisible] ||
-        self.edgeMenuDockEdge != edge ||
-        [self hasPressedMouseButtonsForCaptureTransition]) {
-        return;
-    }
-    if (self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) {
-        return;
-    }
-
-    NSRect bounds = self.view.bounds;
-    if (NSIsEmptyRect(bounds)) {
-        return;
-    }
-    // The dwell has to still be true when it expires. A pointer that pushed in and came
-    // back on its own is a flick, and the band has to read it as one.
-    if (MLEdgeSensorNormalDistanceToEdge([self currentMouseLocationInViewCoordinates], bounds, edge) >
-        MLEdgeSensorEdgeDistance) {
-        return;
-    }
-
+    if (!self.edgeSensorSummonEnabled || ![self edgeMenuCanInteract] ||
+        (self.isMouseCaptured && !self.isRemoteDesktopMode) || self.edgeMenuButtonExpanded ||
+        ![self edgeMenuShouldBeVisible] || self.edgeMenuDockEdge != edge ||
+        self.edgeSensorMustLeaveHoverRegion || [self hasPressedMouseButtonsForCaptureTransition] ||
+        self.edgeSensorIgnoreMotionUntilMs > [self nowMs] ||
+        self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) return;
+    if (![self edgeSensorPointIsInHoverRegion:[self edgeSensorPointForEvent:nil] edge:edge]) return;
     [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];
 }
 
 - (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason {
+    if (![self edgeMenuCanInteract] || ![self edgeMenuShouldBeVisible] ||
+        self.edgeMenuButtonExpanded || [self hasPressedMouseButtonsForCaptureTransition]) return;
     [self resetEdgeSensorSummonState];
-    Log(LOG_I, @"[diag] Edge sensor summon: reason=%@ edge=%ld band=%.0fpt edge=%.0fpt dwell=%.0fms push=%.0fpt cap=%.0fpt",
-        reason ?: @"unknown",
-        (long)edge,
-        MLEdgeSensorBandWidth,
-        MLEdgeSensorEdgeDistance,
-        MLEdgeSensorDwellSeconds * 1000.0,
-        MLEdgeSensorPushBudget,
-        MLEdgeSensorPushPerEventCap);
-    [self uncaptureMouseWithCode:@"MUC109" reason:reason];
+    BOOL wasCaptured = self.isMouseCaptured;
+    if (wasCaptured) [self uncaptureMouseWithCode:@"MUC109" reason:reason];
+    if (self.isMouseCaptured) return;
     [self activateEdgeMenuDockForExitEdge:edge];
+    self.edgeMenuTemporaryReleaseActive = wasCaptured && !self.userReleasedInput;
+    Log(LOG_I, @"[diag] Edge controls opened: reason=%@ edge=%ld capturedBefore=%d band=%.0fpt dwell=%.0fms",
+        reason, (long)edge, wasCaptured, MLEdgeSensorBandWidth, MLEdgeSensorDwellSeconds * 1000.0);
 }
 
 - (BOOL)handleEdgeSensorSummonForEvent:(NSEvent *)event {
-    if (!self.edgeSensorSummonEnabled || event == nil) {
+    if (!event || !self.edgeSensorSummonEnabled || ![self edgeMenuCanInteract] ||
+        ![self edgeMenuShouldBeVisible] || self.edgeMenuButtonExpanded ||
+        [self hasPressedMouseButtonsForCaptureTransition] ||
+        self.edgeSensorIgnoreMotionUntilMs > [self nowMs] ||
+        self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) {
+        [self resetEdgeSensorSummonState];
+        [self resetEdgePushGesture];
         return NO;
     }
-    if (!self.isMouseCaptured ||
-        self.edgeMenuTemporaryReleaseActive ||
-        self.edgeMenuDragging ||
-        self.edgeMenuMenuVisible) {
+    BOOL lockedGameMotion = self.isMouseCaptured && !self.isRemoteDesktopMode;
+    double sampleNow = [self nowMs];
+    if (sampleNow - self.edgeSensorLastSampleLogMs >= 1000.0) {
+        self.edgeSensorLastSampleLogMs = sampleNow;
+        NSPoint samplePoint = lockedGameMotion ? NSMakePoint(NAN, NAN) : [self edgeSensorPointForEvent:event];
+        Log(LOG_D, @"[diag] Edge sensor sample: locked=%d captured=%d push=%lu/%.0f hover=%d valid=%d point=(%.1f,%.1f)",
+            lockedGameMotion, self.isMouseCaptured, (unsigned long)self.edgePushStrokeCount,
+            self.edgePushStrokePoints, !lockedGameMotion,
+            (int)(isfinite(samplePoint.x) && isfinite(samplePoint.y)), samplePoint.x, samplePoint.y);
+    }
+    if (lockedGameMotion) {
+        // No authoritative cursor exists while locked: hover is impossible by design and
+        // the slam gesture is the sensor entry. The configured release and control-center
+        // shortcuts stay available beside it.
+        [self resetEdgeSensorSummonState];
+        if ([self noteEdgeSensorPushMotionForEvent:event]) {
+            [self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"edge-sensor-push"];
+        }
+        return NO;
+    }
+    [self resetEdgePushGesture];
+    NSPoint point = [self edgeSensorPointForEvent:event];
+    BOOL inside = [self edgeSensorPointIsInHoverRegion:point edge:self.edgeMenuDockEdge];
+    if (self.edgeSensorMustLeaveHoverRegion) {
+        // A completed gesture must leave the activation zone before a new dwell.
+        if (!inside) self.edgeSensorMustLeaveHoverRegion = NO;
         [self resetEdgeSensorSummonState];
         return NO;
     }
-    if (![self edgeMenuShouldBeVisible]) {
-        [self resetEdgeSensorSummonState];
-        return NO;
-    }
-
-    MLFreeMouseExitEdge edge = self.edgeMenuDockEdge;
-    if (edge == MLFreeMouseExitEdgeNone) {
-        [self resetEdgeSensorSummonState];
-        return NO;
-    }
-    // The free-mouse release path is the older and stricter way out, so it keeps
-    // priority: whenever it already wants to release, the band stays out of the way and
-    // the shipped behaviour is byte for byte what it was.
-    if ([self freeMouseExitEdgeForEvent:event] != MLFreeMouseExitEdgeNone) {
-        [self resetEdgeSensorSummonState];
-        return NO;
-    }
-    if ([self hasPressedMouseButtonsForCaptureTransition]) {
-        [self resetEdgeSensorSummonState];
-        return NO;
-    }
-    if (self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) {
-        return NO;
-    }
-
-    NSRect bounds = self.view.bounds;
-    if (NSIsEmptyRect(bounds)) {
-        return NO;
-    }
-
-    NSPoint point = [self shouldUseCoreHIDTightFreeMouseHandoff]
-        ? [self currentMouseLocationInViewCoordinates]
-        : [self boundaryInteractionViewPointForMouseEvent:event];
-    CGFloat normalDistance = MLEdgeSensorNormalDistanceToEdge(point, bounds, edge);
-    if (normalDistance > MLEdgeSensorBandWidth) {
-        [self resetEdgeSensorSummonState];
-        return NO;
-    }
-    if (normalDistance > MLEdgeSensorEdgeDistance) {
-        // In the band but not against the edge: neither the dwell nor the push budget
-        // starts, which is what keeps a pass through the band from arming anything.
-        [self resetEdgeSensorSummonState];
-        return NO;
-    }
-
-    [self beginEdgeSensorDwellTimerIfNeededForEdge:edge];
-
-    CGFloat nextAccumulator = 0.0;
-    BOOL pushTriggered = MLEdgeSensorPushAccumulate(self.edgeSensorPushAccumulator,
-                                                    MLEdgeSensorOutwardDeltaForDeltas(event.deltaX,
-                                                                                      event.deltaY,
-                                                                                      edge),
-                                                    MLEdgeSensorPushPerEventCap,
-                                                    MLEdgeSensorPushBudget,
-                                                    &nextAccumulator);
-    self.edgeSensorPushAccumulator = nextAccumulator;
-    if (pushTriggered) {
-        [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-push"];
-        return YES;
-    }
+    if (inside) [self beginEdgeSensorDwellTimerIfNeededForEdge:self.edgeMenuDockEdge];
+    else [self resetEdgeSensorSummonState];
     return NO;
 }
 
@@ -1029,6 +1008,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     if (self.systemKeyboardShortcutCapture == MLSystemKeyboardShortcutCaptureNever) {
         return NO;
     }
+    if (self.userReleasedInput) return NO;
     if (self.view.window == nil) {
         return NO;
     }
@@ -1409,6 +1389,13 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         return;
     }
 
+    // Once another application owns focus we may never receive its mouse-up.
+    // Local drag handoff may defer; loss of application ownership may not.
+    if (!NSApp.isActive || self.view.window == nil) {
+        [self uncaptureMouseWithCode:code reason:reason];
+        return;
+    }
+
     if ([self hasPressedMouseButtonsForCaptureTransition]) {
         self.pendingMouseUncaptureAfterButtonsReleased = YES;
         self.pendingMouseUncaptureDiagnosticCode = code.length > 0 ? code : @"MUC000";
@@ -1714,43 +1701,6 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     self.pendingHybridRemoteCursorSync = NO;
 }
 
-// Where a press that the HID key state denied gets spent. A 2.4G composite receiver can answer the
-// left button as a keyboard usage: in the 2026-09-26 capture an AJAZZ 2.4G sent 126 short presses of
-// kVK_ANSI_C, none of them a repeat, while [clickdiag] recorded 32 right clicks and no left click in
-// the same window. The build that dropped those presses as phantoms left the player with no left
-// button at all, so on a device that reports the click this way the press is the click. While the
-// mouse is captured in a game cursor mode it becomes one. Every other case -- the free mouse, remote
-// desktop mode, a teardown in progress, or a key this device is not known to leak -- keeps the old
-// answer of dropping it, because a click nobody asked for is as wrong as a click that never arrives.
-// docs/memory-ownership.md S36.
-- (BOOL)handleStrayKeyPressAsMouseClick:(unsigned short)physicalKeyCode ageMs:(uint64_t)ageMs {
-    if (physicalKeyCode != kVK_ANSI_C ||
-        !self.isMouseCaptured ||
-        self.isRemoteDesktopMode ||
-        self.stopStreamInProgress ||
-        self.reconnectInProgress) {
-        return NO;
-    }
-
-    Log(LOG_D, @"[clickdiag] phase=stray-c-left-click kVK=%hu ageMs=%llu captured=%d remoteMode=%d",
-        physicalKeyCode, (unsigned long long)ageMs,
-        self.isMouseCaptured ? 1 : 0, self.isRemoteDesktopMode ? 1 : 0);
-
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf || !strongSelf.isMouseCaptured || strongSelf.isRemoteDesktopMode) {
-            return;
-        }
-        // Both edges together: the device gave one short press, and a short press of a mouse button
-        // is a click. Sending only the down would hand the host a left button stuck until the next
-        // uncapture, which is the failure this whole path exists to avoid.
-        [strongSelf.hidSupport mouseDown:nil withButton:BUTTON_LEFT];
-        [strongSelf.hidSupport mouseUp:nil withButton:BUTTON_LEFT];
-    });
-    return YES;
-}
-
 - (BOOL)consumePendingHybridRemoteCursorSyncForEvent:(NSEvent *)event reason:(NSString *)reason {
     if (!self.pendingHybridRemoteCursorSync ||
         !self.isRemoteDesktopMode ||
@@ -1772,37 +1722,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     return YES;
 }
 
-- (MLFreeMouseExitEdge)edgeMenuReleaseExitEdgeForEvent:(NSEvent *)event point:(NSPoint)point {
-    if (![self edgeMenuShouldBeVisible] ||
-        self.edgeMenuButton == nil ||
-        self.edgeMenuButton.hidden ||
-        event == nil) {
-        return MLFreeMouseExitEdgeNone;
-    }
 
-    if ([self shouldUseCoreHIDTightFreeMouseHandoff]) {
-        point = [self boundaryInteractionViewPointForMouseEvent:event];
-    }
-
-    NSRect triggerRect = [self edgeMenuInteractionRectInBounds:self.view.bounds];
-    if (!NSPointInRect(point, triggerRect)) {
-        return MLFreeMouseExitEdgeNone;
-    }
-
-    switch (self.edgeMenuDockEdge) {
-        case MLFreeMouseExitEdgeLeft:
-            return event.deltaX < 0.0 ? MLFreeMouseExitEdgeLeft : MLFreeMouseExitEdgeNone;
-        case MLFreeMouseExitEdgeRight:
-            return event.deltaX > 0.0 ? MLFreeMouseExitEdgeRight : MLFreeMouseExitEdgeNone;
-        case MLFreeMouseExitEdgeTop:
-            return event.deltaY > 0.0 ? MLFreeMouseExitEdgeTop : MLFreeMouseExitEdgeNone;
-        case MLFreeMouseExitEdgeBottom:
-            return event.deltaY < 0.0 ? MLFreeMouseExitEdgeBottom : MLFreeMouseExitEdgeNone;
-        case MLFreeMouseExitEdgeNone:
-        default:
-            return MLFreeMouseExitEdgeNone;
-    }
-}
 
 - (MLFreeMouseExitEdge)freeMouseExitEdgeForOutsideViewPoint:(NSPoint)point {
     NSRect bounds = self.view.bounds;
@@ -1859,10 +1779,6 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         ? currentPoint
         : [self boundaryInteractionViewPointForMouseEvent:event];
     CGFloat threshold = tightHandoff ? MLCoreHIDFreeMouseExitThreshold : 2.0;
-    MLFreeMouseExitEdge edgeMenuExitEdge = [self edgeMenuReleaseExitEdgeForEvent:event point:point];
-    if (edgeMenuExitEdge != MLFreeMouseExitEdgeNone) {
-        return edgeMenuExitEdge;
-    }
 
     MLFreeMouseExitEdge currentPointerExitEdge = [self freeMouseExitEdgeForOutsideViewPoint:currentPoint];
     if (currentPointerExitEdge != MLFreeMouseExitEdgeNone) {
@@ -2034,8 +1950,9 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 }
 
 - (BOOL)captureFreeMouseIfNeededForEvent:(NSEvent *)event {
-    if (self.edgeMenuTemporaryReleaseActive) {
-        [self updateEdgeMenuPointerInsideForPoint:[self boundaryInteractionViewPointForMouseEvent:event]];
+    if (self.userReleasedInput) return NO;
+    if (self.edgeMenuButtonExpanded || self.edgeMenuTemporaryReleaseActive) {
+        [self updateEdgeMenuPointerInsideForPoint:[self currentMouseLocationInViewCoordinates]];
         if (self.edgeMenuPointerInside || self.edgeMenuDragging || self.edgeMenuMenuVisible) {
             return NO;
         }
@@ -2074,7 +1991,14 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     return ctx != NULL && LiInputContextIsInitialized(ctx);
 }
 
+- (BOOL)edgeMenuOwnsPointer {
+    return self.edgeMenuTemporaryReleaseActive || self.edgeMenuButtonExpanded;
+}
+
 - (BOOL)canCaptureMouseNow {
+    if (self.userReleasedInput || [self edgeMenuOwnsPointer]) {
+        return NO;
+    }
     NSWindow *window = self.view.window;
     if (!window || !window.isKeyWindow) {
         return NO;
@@ -2092,6 +2016,10 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 }
 
 - (NSString *)mouseCaptureBlockerReason {
+    if (self.userReleasedInput) return @"user-released-input";
+    if ([self edgeMenuOwnsPointer]) {
+        return @"edge-menu-active";
+    }
     NSWindow *window = self.view.window;
     if (!window) {
         return @"window-nil";
@@ -2153,10 +2081,9 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         return;
     }
 
-    BOOL shouldAccept = self.isMouseCaptured ||
-                        self.edgeMenuTemporaryReleaseActive ||
-                        self.edgeMenuDragging ||
-                        self.edgeMenuMenuVisible ||
+    BOOL shouldAccept = self.userReleasedInput || self.isMouseCaptured ||
+                        [self edgeMenuOwnsPointer] ||
+                        (self.edgeSensorSummonEnabled && [self edgeMenuCanInteract] && [self edgeMenuShouldBeVisible]) ||
                         (self.pendingMouseExitedRecapture && self.isRemoteDesktopMode);
     window.acceptsMouseMovedEvents = shouldAccept;
 
@@ -2186,7 +2113,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         return;
     }
 
-    if (self.edgeMenuTemporaryReleaseActive && self.isRemoteDesktopMode) {
+    if (self.userReleasedInput || [self edgeMenuOwnsPointer]) {
         return;
     }
 
@@ -2262,6 +2189,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 }
 
 - (void)applyMouseModeNamed:(NSString *)newMode showNotification:(BOOL)showNotification {
+    [self resetEdgeSensorPointerState];
     NSString *currentMode = [SettingsClass mouseModeFor:self.app.host.uuid];
     BOOL newRemoteDesktopMode = [newMode isEqualToString:@"remote"];
     BOOL storedModeMatches = (currentMode == nil && newMode == nil) || [currentMode isEqualToString:newMode];
@@ -2305,7 +2233,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
                 CGFloat screenHeight = screen.frame.size.height;
                 if (screenHeight > 0) {
                     CGPoint cursorPoint = CGPointMake(CGRectGetMidX(rectInScreen),
-                                                      screenHeight - CGRectGetMidY(rectInScreen));
+                                                      NSMaxY(NSScreen.screens.firstObject.frame) - CGRectGetMidY(rectInScreen));
                     CGWarpMouseCursorPosition(cursorPoint);
                 }
             }
@@ -2347,7 +2275,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     }
 
     __weak typeof(self) weakSelf = self;
-    self.localKeyDownMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent * _Nullable(NSEvent * _Nonnull event) {
+    self.localKeyDownMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskKeyDown | NSEventMaskFlagsChanged) handler:^NSEvent * _Nullable(NSEvent * _Nonnull event) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
             return event;
@@ -2358,16 +2286,34 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
             return event;
         }
 
+        // Observe the escape hatch before a panel/menu/responder can take it.
+        BOOL belongsToStream = event.window == window || event.window == strongSelf.edgeMenuPanel ||
+                               event.window.parentWindow == window ||
+                               (event.window == nil && (NSApp.keyWindow == window || NSApp.keyWindow == strongSelf.edgeMenuPanel));
+        if (belongsToStream && event.type == NSEventTypeFlagsChanged) {
+            [strongSelf handleModifierOnlyReleaseShortcut:event];
+            return event;
+        }
+        if (belongsToStream && event.type == NSEventTypeKeyDown) {
+            strongSelf.pendingOptionUncaptureToken += 1;
+        }
+
         // Only intercept events intended for our stream window (or events without an attached window).
         if (event.window && event.window != window) {
             return event;
         }
 
-        // This monitor is registered for NSEventMaskKeyDown, so only real
-        // keyboard events reach it. The guard keeps that contract explicit:
+        // Modifier events were handled above; keyCode must only be read for
+        // keyboard key events. The guard keeps that contract explicit:
         // keyCode is undefined on non-keyboard events and must never be read.
         if (!MLIsKeyboardKeyEvent(event)) {
             return event;
+        }
+
+        StreamShortcut *releaseShortcut = [strongSelf streamShortcutForAction:MLShortcutActionReleaseMouseCapture];
+        if ([strongSelf event:event matchesShortcut:releaseShortcut]) {
+            [strongSelf releaseInputToLocalControlWithCode:@"MUC103" reason:@"keyed-release-shortcut"];
+            return [strongSelf consumeMonitoredKeyDownEvent:event];
         }
 
         if ([strongSelf handleKeyboardTranslationRuleForEvent:event]) {
@@ -2443,7 +2389,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         if (event.buttonNumber == 0) {
             // The same field read one layer earlier, so a driver that rewrites the event on the way
             // in is visible as a difference between the two lines instead of a guess.
-            [strongSelf.hidSupport logMouseKeyboardFieldResidueForEvent:event where:@"view"];
+            [strongSelf.hidSupport logMouseEventDiagnosticsForEvent:event where:@"view"];
         }
         NSPoint viewPoint = [strongSelf viewPointForMouseEvent:event];
         if (event.buttonNumber == 0 && event.clickCount >= 2) {
@@ -2559,13 +2505,9 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 }
 
 - (void)mouseEntered:(NSEvent *)event {
+    if (self.userReleasedInput) return;
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
-    if (event.trackingArea == self.edgeMenuButtonTrackingArea) {
-        self.edgeMenuPointerInside = YES;
-        [self cancelEdgeMenuAutoCollapse];
-        [self setEdgeMenuButtonExpanded:YES animated:YES];
-        return;
-    }
+
 
     self.isMouseInsideView = YES;
     self.globalInactivePointerInsideStreamView = YES;
@@ -2604,13 +2546,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 
 - (void)mouseExited:(NSEvent *)event {
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
-    if (event.trackingArea == self.edgeMenuButtonTrackingArea) {
-        [self updateEdgeMenuPointerInsideForPoint:[self currentMouseLocationInViewCoordinates]];
-        if (!self.edgeMenuPointerInside) {
-            [self scheduleEdgeMenuAutoCollapse];
-        }
-        return;
-    }
+
 
     self.isMouseInsideView = NO;
     self.globalInactivePointerInsideStreamView = NO;
@@ -2672,6 +2608,22 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     // double-click-sends-Win bug.
     [self.hidSupport flagsChanged:event];
 
+    if (self.localKeyDownMonitor == nil) {
+        [self handleModifierOnlyReleaseShortcut:event];
+    }
+}
+
+- (NSEventModifierFlags)currentReleaseShortcutModifiers {
+    return MLRelevantShortcutModifiers([NSEvent modifierFlags]);
+}
+
+- (void)handleModifierOnlyReleaseShortcut:(NSEvent *)event {
+    if (self.stopStreamInProgress || self.reconnectInProgress ||
+        self.userReleasedInput || (!self.isMouseCaptured && ![self edgeMenuOwnsPointer])) {
+        self.pendingModifierOnlyReleaseMask = 0;
+        self.pendingOptionUncaptureToken += 1;
+        return;
+    }
     NSEventModifierFlags relevantModifiers = MLRelevantShortcutModifiers(event.modifierFlags);
 
     StreamShortcut *releaseShortcut = [self streamShortcutForAction:MLShortcutActionReleaseMouseCapture];
@@ -2679,25 +2631,60 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 
     if (releaseShortcut.modifierOnly && relevantMods == releaseShortcut.modifierFlags) {
         NSUInteger token = ++self.pendingOptionUncaptureToken;
+        self.pendingModifierOnlyReleaseToken = token;
+        self.pendingModifierOnlyReleaseMask = releaseShortcut.modifierFlags;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (token != self.pendingOptionUncaptureToken) {
                 return;
             }
 
-            NSEventModifierFlags currentMods = MLRelevantShortcutModifiers([NSEvent modifierFlags]);
+            NSEventModifierFlags currentMods = [self currentReleaseShortcutModifiers];
             if (currentMods != releaseShortcut.modifierFlags) {
                 return;
             }
 
-            self.lastOptionUncaptureAtMs = [self nowMs];
-            [self.hidSupport releaseAllModifierKeys];
-            [self suppressConnectionWarningsForSeconds:2.0 reason:@"shortcut-uncapture"];
-            [self uncaptureMouseWithCode:@"MUC103" reason:@"modifier-only-release-shortcut"];
+            [self releaseInputToLocalControlWithCode:@"MUC103" reason:@"modifier-only-release-shortcut"];
         });
         return;
     }
 
+    // A short chord tap releases on key-up as well. A letter or extra modifier
+    // invalidates the pending token, so Shift+Option+letter remains a shortcut.
+    BOOL completedTap = self.pendingModifierOnlyReleaseMask != 0 &&
+        self.pendingModifierOnlyReleaseToken == self.pendingOptionUncaptureToken &&
+        (relevantMods & ~self.pendingModifierOnlyReleaseMask) == 0;
+    self.pendingModifierOnlyReleaseMask = 0;
     self.pendingOptionUncaptureToken += 1;
+    if (completedTap) {
+        [self releaseInputToLocalControlWithCode:@"MUC103" reason:@"modifier-only-release-tap"];
+    }
+}
+
+// User intent outlives incidental hover, focus, mode, and timer callbacks.
+// An explicit mouse-button press into the stream returns ownership to the host.
+- (void)releaseInputToLocalControlWithCode:(NSString *)code reason:(NSString *)reason {
+    self.userReleasedInput = YES;
+    self.pendingModifierOnlyReleaseMask = 0;
+    self.pendingOptionUncaptureToken += 1;
+    self.pendingMouseCaptureRetryToken += 1;
+    self.lastOptionUncaptureAtMs = [self nowMs];
+    [self uncaptureMouseWithCode:code reason:reason];
+    [self updateSystemHotkeySuppression];
+    [self refreshMouseMovedAcceptanceState];
+    [self updateControlCenterEntrypointHints];
+    Log(LOG_I, @"[diag] Input explicitly released; waiting for a click in the stream");
+}
+
+- (void)resumeInputForExplicitStreamClick:(NSEvent *)event {
+    if (self.edgeMenuMenuVisible || self.edgeMenuDragging) return;
+    if (!self.userReleasedInput || !NSPointInRect([self currentMouseLocationInViewCoordinates], self.view.bounds)) return;
+    if ([self isPointInsideEdgeMenuInteractionRect:[self currentMouseLocationInViewCoordinates]]) return;
+    [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:NO];
+    self.userReleasedInput = NO;
+    if ([self canCaptureMouseNow]) [self captureMouse];
+    if (!self.isMouseCaptured) self.userReleasedInput = YES;
+    [self updateSystemHotkeySuppression];
+    Log(LOG_I, @"[diag] Input resume by explicit click: captured=%d", self.isMouseCaptured);
 }
 
 - (void)keyDown:(NSEvent *)event {
@@ -2717,6 +2704,16 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     if (event.type == NSEventTypeKeyDown) {
         Log(LOG_D, @"[inputdiag] keyboard-wire view-down kVK=%hu repeat=%d keyWindow=%d",
             event.keyCode, event.isARepeat ? 1 : 0, self.view.window.isKeyWindow ? 1 : 0);
+        if (event.keyCode == kVK_ANSI_C) {
+            // Record provenance at the responder entry, before any remapping or
+            // filtering. No other character content is collected here.
+            CGEventRef cgEvent = event.CGEvent;
+            Log(LOG_D, @"[inputdiag] keyboard-wire C-source eventTime=%.6f cgType=%u sourcePid=%lld hidDown=%d sessionDown=%d",
+                event.timestamp, cgEvent ? (unsigned int)CGEventGetType(cgEvent) : 0,
+                cgEvent ? (long long)CGEventGetIntegerValueField(cgEvent, kCGEventSourceUnixProcessID) : -1LL,
+                CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVK_ANSI_C),
+                CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, kVK_ANSI_C));
+        }
     }
 
     // The settings page is a child of this content region, so a key the page does
@@ -2742,40 +2739,71 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 
 
 - (void)mouseDown:(NSEvent *)event {
-    // Ensure the stream window is the Key Window before processing the click.
-    // This is critical for fixing the "first click lost" issue:
-    // when the app is launched in the background, the first click is often
-    // consumed by the OS for window activation. By ensuring key window status
-    // inside the mouseDown handler, we guarantee that clicks are dispatched
-    // to the application correctly.
+    // StreamViewMac accepts the activation click. Capture must enable forwarding
+    // before that same press is dispatched, otherwise the first click only arms
+    // input and the host cannot see a press until the user clicks again.
     [self ensureStreamWindowKeyIfPossible];
+    if ([self expandEdgeMenuForLocalClickAtCurrentPointer]) {
+        return;
+    }
+    [self resumeInputForExplicitStreamClick:event];
 
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"left-down"];
     [self logMouseClickDiagnosticsForPhase:@"left-down" event:event];
     [self captureFreeMouseIfNeededForEvent:event];
-    [self dispatchMouseButton:BUTTON_LEFT pressed:YES event:event];
     if (!self.isRemoteDesktopMode) {
         [self captureMouse];
     }
+    [self dispatchMouseButton:BUTTON_LEFT pressed:YES event:event];
 }
 
 - (void)mouseUp:(NSEvent *)event {
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"left-up"];
     [self logMouseClickDiagnosticsForPhase:@"left-up" event:event];
+    if (self.edgeMenuClickConsumedLocally) {
+        // The matching press was the control tab, not a game click: neither edge goes out.
+        self.edgeMenuClickConsumedLocally = NO;
+        [self completeDeferredMouseUncaptureIfNeeded];
+        return;
+    }
     [self dispatchMouseButton:BUTTON_LEFT pressed:NO event:event];
     [self completeDeferredMouseUncaptureIfNeeded];
 }
 
+// The collapsed tab is the visible affordance. When the local pointer is authoritative,
+// a click on it must open the controls instead of resuming capture or leaking a press
+// the host would read as a game click at an unexplained position.
+- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer {
+    if (self.isMouseCaptured || self.edgeMenuPhase != MLEdgeMenuPhaseCollapsed ||
+        ![self edgeMenuCanInteract] || ![self edgeMenuShouldBeVisible]) {
+        return NO;
+    }
+    // The production hit-rect helper is expanded-only by design; the tab geometry
+    // helper still describes the collapsed dock and is the one the user can see.
+    NSPoint point = [self currentMouseLocationInViewCoordinates];
+    if (!NSPointInRect(point, [self edgeMenuInteractionRectInBounds:self.view.bounds])) {
+        return NO;
+    }
+    [self activateEdgeMenuDockForExitEdge:self.edgeMenuDockEdge];
+    self.edgeMenuClickConsumedLocally = self.edgeMenuButtonExpanded;
+    Log(LOG_I, @"[diag] Edge controls opened by local click on collapsed tab: expanded=%d",
+        self.edgeMenuButtonExpanded);
+    return self.edgeMenuClickConsumedLocally;
+}
+
 - (void)rightMouseDown:(NSEvent *)event {
+    [self ensureStreamWindowKeyIfPossible];
+    [self resumeInputForExplicitStreamClick:event];
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"right-down"];
     [self logMouseClickDiagnosticsForPhase:@"right-down" event:event];
-    if (!self.isMouseCaptured) {
-        self.suppressNextRightMouseUp = YES;
-        [self presentStreamMenuAtEvent:event];
-        return;
+    // Capture loss also occurs during edge-control handoff. It is not a
+    // request for the local menu: resume before forwarding the same press.
+    [self captureFreeMouseIfNeededForEvent:event];
+    if (!self.isRemoteDesktopMode) {
+        [self captureMouse];
     }
 
     int button = (event.buttonNumber == 0) ? BUTTON_LEFT : BUTTON_RIGHT;
@@ -2786,10 +2814,6 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reassertHiddenLocalCursorIfNeededWithReason:@"right-up"];
     [self logMouseClickDiagnosticsForPhase:@"right-up" event:event];
-    if (self.suppressNextRightMouseUp) {
-        self.suppressNextRightMouseUp = NO;
-        return;
-    }
 
     int button = (event.buttonNumber == 0) ? BUTTON_LEFT : BUTTON_RIGHT;
     [self dispatchMouseButton:button pressed:NO event:event];
@@ -2804,7 +2828,12 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     if (button == 0) {
         return;
     }
+    [self ensureStreamWindowKeyIfPossible];
+    [self resumeInputForExplicitStreamClick:event];
     [self captureFreeMouseIfNeededForEvent:event];
+    if (!self.isRemoteDesktopMode) {
+        [self captureMouse];
+    }
     [self dispatchMouseButton:button pressed:YES event:event];
 }
 
@@ -2820,7 +2849,32 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     [self completeDeferredMouseUncaptureIfNeeded];
 }
 
-- (void)mouseMoved:(NSEvent *)event {
+- (void)handleMouseMotionEvent:(NSEvent *)event {
+    NSString *syncReason, *exitCode, *exitReason;
+    switch (event.type) {
+        case NSEventTypeMouseMoved:
+            syncReason = @"mouse-moved-hybrid-sync";
+            exitCode = @"MUC104";
+            exitReason = @"free-mouse-edge-mouse-moved";
+            break;
+        case NSEventTypeLeftMouseDragged:
+            syncReason = @"mouse-dragged-hybrid-sync";
+            exitCode = @"MUC105";
+            exitReason = @"free-mouse-edge-mouse-dragged";
+            break;
+        case NSEventTypeRightMouseDragged:
+            syncReason = @"right-dragged-hybrid-sync";
+            exitCode = @"MUC106";
+            exitReason = @"free-mouse-edge-right-dragged";
+            break;
+        case NSEventTypeOtherMouseDragged:
+            syncReason = @"other-dragged-hybrid-sync";
+            exitCode = @"MUC107";
+            exitReason = @"free-mouse-edge-other-dragged";
+            break;
+        default:
+            return;
+    }
     [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
     [self reconcileHybridFreeMouseAnchorToCurrentPointer];
     if ([self handleEdgeMenuTemporaryReleaseForEvent:event]) {
@@ -2838,119 +2892,35 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         return;
     }
 
-    if ([self consumePendingHybridRemoteCursorSyncForEvent:event reason:@"mouse-moved-hybrid-sync"]) {
+    if ([self consumePendingHybridRemoteCursorSyncForEvent:event reason:syncReason]) {
         return;
     }
 
     MLFreeMouseExitEdge exitEdge = [self freeMouseExitEdgeForEvent:event];
     if ([self shouldUncaptureFreeMouseForComputedExitEdge:exitEdge]) {
-        Log(LOG_I, @"[diag] Free mouse uncaptured from fullscreen edge");
         [self uncaptureFreeMouseForExitEdge:exitEdge
                                       event:event
-                                       code:@"MUC104"
-                                     reason:@"free-mouse-edge-mouse-moved"];
+                                       code:exitCode
+                                     reason:exitReason];
         return;
     }
     [self.hidSupport mouseMoved:event];
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    [self handleMouseMotionEvent:event];
 }
 
 - (void)mouseDragged:(NSEvent *)event {
-    [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
-    [self reconcileHybridFreeMouseAnchorToCurrentPointer];
-    if ([self handleEdgeMenuTemporaryReleaseForEvent:event]) {
-        return;
-    }
-    if ([self handleEdgeSensorSummonForEvent:event]) {
-        return;
-    }
-
-    if ([self attemptPendingMouseExitedRecaptureIfNeededForEvent:event]) {
-        return;
-    }
-
-    if ([self recaptureFreeMouseAfterEdgeUncaptureIfNeededForEvent:event]) {
-        return;
-    }
-
-    if ([self consumePendingHybridRemoteCursorSyncForEvent:event reason:@"mouse-dragged-hybrid-sync"]) {
-        return;
-    }
-
-    MLFreeMouseExitEdge exitEdge = [self freeMouseExitEdgeForEvent:event];
-    if ([self shouldUncaptureFreeMouseForComputedExitEdge:exitEdge]) {
-        [self uncaptureFreeMouseForExitEdge:exitEdge
-                                      event:event
-                                       code:@"MUC105"
-                                     reason:@"free-mouse-edge-mouse-dragged"];
-        return;
-    }
-    [self.hidSupport mouseMoved:event];
+    [self handleMouseMotionEvent:event];
 }
 
 - (void)rightMouseDragged:(NSEvent *)event {
-    [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
-    [self reconcileHybridFreeMouseAnchorToCurrentPointer];
-    if ([self handleEdgeMenuTemporaryReleaseForEvent:event]) {
-        return;
-    }
-    if ([self handleEdgeSensorSummonForEvent:event]) {
-        return;
-    }
-
-    if ([self attemptPendingMouseExitedRecaptureIfNeededForEvent:event]) {
-        return;
-    }
-
-    if ([self recaptureFreeMouseAfterEdgeUncaptureIfNeededForEvent:event]) {
-        return;
-    }
-
-    if ([self consumePendingHybridRemoteCursorSyncForEvent:event reason:@"right-dragged-hybrid-sync"]) {
-        return;
-    }
-
-    MLFreeMouseExitEdge exitEdge = [self freeMouseExitEdgeForEvent:event];
-    if ([self shouldUncaptureFreeMouseForComputedExitEdge:exitEdge]) {
-        [self uncaptureFreeMouseForExitEdge:exitEdge
-                                      event:event
-                                       code:@"MUC106"
-                                     reason:@"free-mouse-edge-right-dragged"];
-        return;
-    }
-    [self.hidSupport mouseMoved:event];
+    [self handleMouseMotionEvent:event];
 }
 
 - (void)otherMouseDragged:(NSEvent *)event {
-    [self updateCoreHIDFreeMouseTruthPointFromEvent:event];
-    [self reconcileHybridFreeMouseAnchorToCurrentPointer];
-    if ([self handleEdgeMenuTemporaryReleaseForEvent:event]) {
-        return;
-    }
-    if ([self handleEdgeSensorSummonForEvent:event]) {
-        return;
-    }
-
-    if ([self attemptPendingMouseExitedRecaptureIfNeededForEvent:event]) {
-        return;
-    }
-
-    if ([self recaptureFreeMouseAfterEdgeUncaptureIfNeededForEvent:event]) {
-        return;
-    }
-
-    if ([self consumePendingHybridRemoteCursorSyncForEvent:event reason:@"other-dragged-hybrid-sync"]) {
-        return;
-    }
-
-    MLFreeMouseExitEdge exitEdge = [self freeMouseExitEdgeForEvent:event];
-    if ([self shouldUncaptureFreeMouseForComputedExitEdge:exitEdge]) {
-        [self uncaptureFreeMouseForExitEdge:exitEdge
-                                      event:event
-                                       code:@"MUC107"
-                                     reason:@"free-mouse-edge-other-dragged"];
-        return;
-    }
-    [self.hidSupport mouseMoved:event];
+    [self handleMouseMotionEvent:event];
 }
 
 - (void)scrollWheel:(NSEvent *)event {
@@ -3029,57 +2999,6 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     }
 
     return nil;
-}
-
-- (BOOL)shouldDeferCommandModifierForShortcutHandlingWithEvent:(NSEvent *)event {
-    // Entry gate: this reads keyCode, and that field is undefined for the mouse, tablet and
-    // gesture events this category also handles. Some drivers leave a value there that
-    // collides with kVK_ANSI_C, which is the whole "double-click sends C" story: the reader
-    // sees a key nobody pressed, and a press with no release is all an auto-repeat needs.
-    // scripts/key-code-read-site-audit.py fails the tree if this line disappears.
-    if (event == nil || !MLIsKeyboardKeyEvent(event) || self.app.host.uuid.length == 0) {
-        return NO;
-    }
-
-    BOOL isCommandKeyEvent = (event.keyCode == kVK_Command || event.keyCode == kVK_RightCommand);
-    NSEventModifierFlags relevantModifiers = MLRelevantShortcutModifiers(event.modifierFlags);
-    if (!isCommandKeyEvent || relevantModifiers != NSEventModifierFlagCommand) {
-        return NO;
-    }
-
-    NSArray<KeyboardTranslationRule *> *rules = [SettingsClass keyboardTranslationRulesFor:self.app.host.uuid];
-    for (KeyboardTranslationRule *rule in rules) {
-        StreamShortcut *trigger = rule.trigger;
-        if (trigger != nil &&
-            !trigger.modifierOnly &&
-            trigger.hasKeyCode &&
-            (trigger.modifierFlags & NSEventModifierFlagCommand) != 0) {
-            return YES;
-        }
-    }
-
-    NSArray<NSString *> *actions = @[
-        MLShortcutActionShowDisconnectOptions,
-        MLShortcutActionDisconnectStream,
-        MLShortcutActionCloseAndQuitApp,
-        MLShortcutActionReconnectStream,
-        MLShortcutActionOpenControlCenter,
-        MLShortcutActionTogglePerformanceOverlay,
-        MLShortcutActionToggleMouseMode,
-        MLShortcutActionToggleFullscreenControlBall,
-        MLShortcutActionToggleBorderlessWindowed
-    ];
-    for (NSString *action in actions) {
-        StreamShortcut *shortcut = [self streamShortcutForAction:action];
-        if (shortcut != nil &&
-            !shortcut.modifierOnly &&
-            shortcut.hasKeyCode &&
-            (shortcut.modifierFlags & NSEventModifierFlagCommand) != 0) {
-            return YES;
-        }
-    }
-
-    return NO;
 }
 
 - (BOOL)performKeyboardTranslationLocalAction:(NSString *)action {
@@ -3166,7 +3085,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
             strongSelf.pendingOptionUncaptureToken += 1;
             strongSelf.lastOptionUncaptureAtMs = [strongSelf nowMs];
             [strongSelf suppressConnectionWarningsForSeconds:2.0 reason:@"keyboard-translation-release"];
-            [strongSelf uncaptureMouseWithCode:@"MUC104" reason:@"keyboard-translation-release-shortcut"];
+            [strongSelf releaseInputToLocalControlWithCode:@"MUC104" reason:@"keyboard-translation-release-shortcut"];
             return;
         }
 
@@ -3282,20 +3201,9 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 }
 
 - (BOOL)onKeyboardEquivalent:(NSEvent *)event {
-    // -----------------------------------------------------------------------
-    // SINGLE ENTRY GATE (2026-08-02 architectural fix)
-    //
-    // This is the ONE place where we decide: "is this event a keyboard
-    // event?" Every downstream path (shortcut matching, translation rules,
-    // hardcoded keyCode comparisons, HID keyDown/keyUp forwarding) relies
-    // on this gate. Mouse / tablet / gesture events have UNDEFINED -keyCode
-    // semantics; some device drivers return garbage that collides with
-    // kVK_ANSI_C (== 8) during double-click, causing "double-click sends C".
-    //
-    // Previous fix scattered event.type checks across 3+ functions but
-    // missed hardcoded comparisons and shouldDeferCommandModifier. This
-    // single gate closes ALL holes permanently.
-    // -----------------------------------------------------------------------
+    // Validate the event type before shortcut matching reads keyboard fields.
+    // This is not a provenance check: an actual keyDown can still be an
+    // unpaired/injected event, which the forwarding path handles separately.
     if (!MLIsKeyboardKeyEvent(event)) {
         // Non-keyboard event: SWALLOW (return YES) to prevent it from
         // falling through to keyDown: which would send garbage to remote.
@@ -3499,11 +3407,12 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         });
         return;
     }
-    if (self.isMouseCaptured) {
+    if (self.isMouseCaptured || self.userReleasedInput || [self edgeMenuOwnsPointer]) {
         return;
     }
 
     [self refreshEdgeSensorSummonPreference];
+    [self resetEdgeSensorPointerState];
     [self refreshSystemKeyboardShortcutCapturePreference];
     [self updateSystemHotkeySuppression];
 
@@ -3582,7 +3491,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
             if (screenHeight <= 0) {
                 return;
             }
-            CGPoint cursorPoint = CGPointMake(CGRectGetMidX(rectInScreen), screenHeight - CGRectGetMidY(rectInScreen));
+            CGPoint cursorPoint = CGPointMake(CGRectGetMidX(rectInScreen), NSMaxY(NSScreen.screens.firstObject.frame) - CGRectGetMidY(rectInScreen));
             CGWarpMouseCursorPosition(cursorPoint);
             [self.hidSupport suppressRelativeMouseMotionForMilliseconds:120];
         }
@@ -3595,6 +3504,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     // Always enable input when capture is active to avoid accidental lockout
     self.hidSupport.shouldSendInputEvents = YES;
     self.controllerSupport.shouldSendInputEvents = YES;
+    [self.hidSupport refreshKeyboardModifiersForCapture];
 
     self.pendingFreeMouseReentryEdge = MLFreeMouseExitEdgeNone;
     self.pendingFreeMouseReentryAtMs = 0;
@@ -3625,41 +3535,35 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         });
         return;
     }
-    if (!self.isMouseCaptured && self.cursorHiddenCounter == 0 && !self.hidSupport.shouldSendInputEvents) {
+    [self resetEdgeSensorPointerState];
+    if (!self.isMouseCaptured && self.cursorHiddenCounter == 0 && self.cgCursorHiddenCounter == 0 && !self.hidSupport.shouldSendInputEvents) {
         [self logMouseUncaptureStage:@"skip-already-released" code:code reason:reason];
         return;
     }
 
-    if (!self.view.window) {
-        [self logMouseUncaptureStage:@"skip-window-nil" code:code reason:reason];
-        return;
-    }
+    // Closing the window is also an input teardown. Do not require a window
+    // to return held keys/buttons or restore the cursor's global hide balance.
+    self.hidSupport.shouldSendInputEvents = NO;
+    self.controllerSupport.shouldSendInputEvents = NO;
 
-    NSDictionary* prefs = [SettingsClass getSettingsFor:self.app.host.uuid];
-    BOOL showLocalCursor = prefs ? [prefs[@"showLocalCursor"] boolValue] : NO;
     self.streamView.prefersHiddenLocalCursor = NO;
     [self.streamView refreshPreferredLocalCursor];
 
-    // Keyboard first: input forwarding is about to switch off, and keyUp: stops
-    // forwarding once it has, so a movement key held while the mouse is released
-    // would never reach the host as a release.
+    // New input is closed; owned releases still use the attached input context.
     [self.hidSupport releaseAllHeldKeys];
     // The same reason, one tracker over: flagsChanged: stops reaching the sync
     // the moment input is off, so a modifier the host was told about has to be
     // returned here or it stays down over every pointer click that follows.
     [self.hidSupport releaseRemoteModifierKeysForUncapture];
     [self.hidSupport releaseAllPressedMouseButtons];
-    // One tracker over again, on the controller side this time. A mouse-mode
-    // gamepad press and a GCMouse click are this session's mouse buttons too,
-    // and neither the key table nor the HID button table knows they exist, so
-    // the button a player was holding when the pointer went back would have
-    // stayed down on the host with nothing left able to lift it.
+    // Reset the controller's local edge tracker after the shared button ledger.
     [self.controllerSupport releaseRemoteMouseButtonsForUncapture];
+    [self.hidSupport resetScrollInputState];
     self.pendingMouseUncaptureAfterButtonsReleased = NO;
     self.pendingMouseUncaptureRecheckScheduled = NO;
     self.hasCoreHIDFreeMouseLastTruthPoint = NO;
 
-    if (!showLocalCursor) {
+    {
         CGAssociateMouseAndMouseCursorPosition(YES);
         while (self.cgCursorHiddenCounter > 0) {
             CGDisplayShowCursor([self cursorDisplayIDForCurrentWindow]);
@@ -3674,9 +3578,6 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     [self enableMenuItems:YES];
     
     [self allowDisplaySleep];
-    
-    self.hidSupport.shouldSendInputEvents = NO;
-    self.controllerSupport.shouldSendInputEvents = NO;
     self.pendingFreeMouseReentryEdge = MLFreeMouseExitEdgeNone;
     self.pendingFreeMouseReentryAtMs = 0;
     self.pendingMouseExitedRecapture = NO;

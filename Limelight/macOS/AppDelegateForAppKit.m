@@ -2050,6 +2050,8 @@ static void TriggerLocalNetworkPermissionPromptWithDiscoveryProbe(void) {
     }
 }
 
+void MLStartInputProvenanceDiagnostics(void); // [prov]
+
 @implementation AppDelegateForAppKit
 
 static const void *MoonlightOriginalMenuItemTitleKey = &MoonlightOriginalMenuItemTitleKey;
@@ -2105,6 +2107,15 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
     // The second half of the render probe: readable claims about the page, which
     // need an app that has finished launching. Inert unless the first half armed it.
     MLFinishRenderProbeIfArmed();
+#endif
+#ifdef DEBUG
+    // [prov] Input-provenance diagnostics (docs/memory-ownership.md §31): when
+    // `defaults write std.skyhua.MoonlightMac2 MLOutputSourceDiagnostics -bool YES`
+    // is set, mirror every key/mouse event through two independent channels and
+    // log which hardware device reports keyboard usage. Inert otherwise.
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"MLOutputSourceDiagnostics"]) {
+        MLStartInputProvenanceDiagnostics();
+    }
 #endif
     [self createMainWindow];
     self.controllerNavigation = [[ControllerNavigation alloc] init];
@@ -2717,3 +2728,140 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 }
 
 @end
+
+
+// ==== [prov] input-provenance diagnostics (docs/memory-ownership.md §31) ====
+// Two independent listeners answering one question: when the user double-clicks
+// the mouse and "C" appears, WHICH hardware interface reported the keyboard
+// usage. Channel A (IOHIDManager) sees reports at the device level, tagged with
+// the product name; channel B (CGEventTap) sees the session-level stream, with a
+// probe of the private source-device field. Needs Input Monitoring permission:
+// first launch prompts; until granted, both channels stay silent (the STARTED
+// line lets the reader tell "no permission" from "no events").
+#import <IOKit/hid/IOHIDManager.h>
+#import "Logger.h"
+#include <ApplicationServices/ApplicationServices.h>
+
+static void MLProvHidValueCallback(void* context, IOReturn result, void* sender, IOHIDValueRef value) {
+    IOHIDDeviceRef device = (IOHIDDeviceRef)sender;
+    IOHIDElementRef element = IOHIDValueGetElement(value);
+    if (IOHIDElementGetUsagePage(element) != kHIDPage_KeyboardOrKeypad) {
+        return;
+    }
+    CFTypeRef product = IOHIDDeviceGetProperty(device, CFSTR("Product"));
+    const char* name = "unknown";
+    if (product && CFGetTypeID(product) == CFStringGetTypeID()) {
+        name = [(__bridge NSString*)product UTF8String];
+    }
+    // usage page 7 = keyboard/keyboard: only report press/release of key usages,
+    // skipping modifier bytes (usage 0xE0-0xE7) so the log stays readable.
+    NSInteger usage = IOHIDElementGetUsage(element);
+    if (usage >= 0xE0 && usage <= 0xE7) {
+        return;
+    }
+    Log(LOG_I, @"[prov] KEYPID device=%s usage=0x%02lx value=%ld",
+        name, (long)usage, (long)IOHIDValueGetIntegerValue(value));
+}
+
+static CFMachPortRef gMLProvTapPort = NULL;
+
+static CGEventRef MLProvTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void* refcon) {
+    // §28 zero-tolerance applies to this file too: the fields are read INSIDE a
+    // switch (type) that first proves what kind of event this is.
+    long long srcDev = CGEventGetIntegerValueField(event, (CGEventField)11); // private source-device probe (§31)
+    // The tap callback MUST return within a tight budget: doing anything else (even
+    // formatting a log line) gets the tap disabled by the system -- observed live on
+    // 2026-09-26 (heartbeat showed tap=DISABLED after inline Log calls). So: capture
+    // numbers only, hand off to a queue, return immediately.
+    switch (type) {
+        case kCGEventKeyDown:
+        case kCGEventKeyUp:
+        case kCGEventFlagsChanged: {
+            long long kc = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                Log(LOG_I, @"[prov] TAP type=%u kc=%lld srcDevID=%lld", (unsigned)type, kc, srcDev);
+            });
+            break;
+        }
+        case kCGEventLeftMouseDown:
+        case kCGEventLeftMouseUp:
+        case kCGEventRightMouseDown:
+        case kCGEventRightMouseUp: {
+            long long btn = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                Log(LOG_I, @"[prov] TAP mouse type=%u btn=%lld srcDevID=%lld", (unsigned)type, btn, srcDev);
+            });
+            break;
+        }
+        default:
+            break;
+    }
+    return event;
+}
+
+void MLStartInputProvenanceDiagnostics(void) {
+    static IOHIDManagerRef manager = NULL;
+    static dispatch_once_t provOnce;
+    dispatch_once(&provOnce, ^{
+        // Channel A: device-level keyboard usage. Match keyboards (usage page 1, usage 6).
+        CFMutableDictionaryRef match = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+                                                                &kCFTypeDictionaryKeyCallBacks,
+                                                                &kCFTypeDictionaryValueCallBacks);
+        CFNumberRef pageNum = (__bridge CFNumberRef)@(kHIDPage_GenericDesktop);
+        CFNumberRef usageNum = (__bridge CFNumberRef)@(kHIDUsage_GD_Keyboard);
+        CFDictionarySetValue(match, CFSTR(kIOHIDDeviceUsagePageKey), pageNum);
+        CFDictionarySetValue(match, CFSTR(kIOHIDDeviceUsageKey), usageNum);
+        manager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+        IOHIDManagerSetDeviceMatching(manager, match);
+        CFRelease(match);
+        IOHIDManagerRegisterInputValueCallback(manager, MLProvHidValueCallback, NULL);
+        IOReturn openRc = IOHIDManagerOpen(manager, kIOHIDOptionsTypeNone);
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), kCFRunLoopCommonModes);
+
+        // Channel B: session-level tap, listen-only.
+        CGEventMask mask = (1 << kCGEventKeyDown) | (1 << kCGEventKeyUp) | (1 << kCGEventFlagsChanged)
+            | (1 << kCGEventLeftMouseDown) | (1 << kCGEventLeftMouseUp)
+            | (1 << kCGEventRightMouseDown) | (1 << kCGEventRightMouseUp);
+        CFMachPortRef tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
+                                             kCGEventTapOptionListenOnly, mask,
+                                             MLProvTapCallback, NULL);
+        if (tap) {
+            gMLProvTapPort = tap;
+            CFRetain(tap);
+            CFRunLoopSourceRef source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0);
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
+            CGEventTapEnable(tap, true);
+            CFRelease(source);
+        }
+        Log(LOG_I, @"[prov] STARTED hidOpen=0x%x tap=%@", (unsigned)openRc, tap ? @"live" : @"NULL (grant Input Monitoring to this app)");
+
+        // Heartbeat: without it, a silent or disabled tap is indistinguishable from
+        // "user did nothing". One line every 5s while the switch is on.
+        static NSUInteger hbCount = 0;
+        static dispatch_source_t hb; // ARC would release a local GCD source at scope exit and kill the timer
+        hb = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(hb, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC * 5, NSEC_PER_SEC);
+        dispatch_source_set_event_handler(hb, ^{
+            ++hbCount;
+            if (hbCount % 12 == 0) { // one line per minute: proof of life, not noise
+                Log(LOG_I, @"[prov] heartbeat #%lu tap=%@", (unsigned long)hbCount,
+                    (tap && CGEventTapIsEnabled(tap)) ? @"enabled" : @"DISABLED");
+            }
+            // Re-arm while disabled: a disabled tap never calls back, so the
+            // disable event itself is not a reliable re-arm trigger. Log the
+            // transition once, not every tick -- the 12:17-12:20 flood showed
+            // the tap flaps on every input event during a fullscreen stream,
+            // and per-rearm lines drown the log.
+            static BOOL wasDisabled = NO;
+            if (tap && !CGEventTapIsEnabled(tap)) {
+                CGEventTapEnable(tap, true);
+                if (!wasDisabled) { Log(LOG_I, @"[prov] tap disabled (flapping during stream?)"); wasDisabled = YES; }
+            } else if (tap && wasDisabled) {
+                Log(LOG_I, @"[prov] tap enabled again");
+                wasDisabled = NO;
+            }
+        });
+        dispatch_resume(hb);
+    });
+}
+// ==== [/prov] ====

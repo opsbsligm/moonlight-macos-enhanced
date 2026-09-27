@@ -267,7 +267,7 @@
 "Cancel" = "Cancel";
 "Add" = "Add";
 "Wake" = "Wake";
-"Close and Quit App" = "Close and Quit App";
+"Close and Quit App" = "Disconnect and Quit Remote App";
 "Quit App" = "Quit App";
 "Disconnect from Stream" = "Disconnect from Stream";
 "Pointer & Scroll Tuning" = "Pointer & Scroll Tuning";
@@ -639,6 +639,10 @@
 "Active Frame Interpolation" = "Active Frame Interpolation";
 "Video Enhancement Runtime Detail Idle" = "This area will show the actual enhancement engine once a stream is running.";
 "Video Enhancement Runtime Detail Off" = "No enhancement engine is currently active for this stream.";
+"Video Enhancement Runtime Detail No Up Scale Needed" = "The window is no larger than the streamed picture, so there is nothing to rebuild and the enhancer stays out of the way. Make the window larger than the stream to see it work.";
+"Video Enhancement Runtime Detail Disabled For Hdr" = "HDR streams skip enhancers to keep the HDR output path unchanged. The picture is still scaled when the window needs it, just without rebuilding detail.";
+"Video Enhancement Runtime Detail Needs Newer System" = "VideoToolbox super resolution is macOS 26 API, so this Mac cannot run it on the current system. Moonlight scales the picture another way instead; updating macOS is the only change that would enable it.";
+"Video Enhancement Runtime Detail Needs Stream Shape" = "VideoToolbox's scalers only take a whole-number scale, so they cannot fit this window's shape. Moonlight uses MetalFX, which can, or basic scaling where MetalFX is unavailable.";
 "Video Enhancement Runtime Detail Active" = "Shows the actual enhancement engine currently in use.";
 "Video Enhancement Runtime Detail Warmup" = "VideoToolbox super resolution is warming up. Moonlight is temporarily using a fallback scaler.";
 "Video Enhancement Runtime Detail Fallback" = "The requested enhancement engine is not active right now. Moonlight is using a fallback scaler.";
@@ -681,7 +685,8 @@
 "Client Display HDR Profile" = "Client Display HDR Profile";
 "Client Display HDR Profile detail" = "Set this to Manual to enable the local display luminance controls used by Metal Renderer.";
 "HDR Manual Luminance detail" = "These luminance values feed Metal Renderer’s local HDR profile and its SDR tone-mapping fallback.";
-"Upscaling detail" = "Applies when Metal Renderer needs to scale the image. The effect is easiest to notice when the stream is rendered below the presentation size.";
+"Upscaling detail" = "Upscaling rebuilds the decoded stream itself into a larger picture -- it does not enlarge the interface. It runs only on the Metal renderer, and only while the window is larger than the stream; when the two sizes match there is nothing to rebuild. Every frame is invented one more time, which costs a little latency and power.";
+"Upscaling needs newer system hint" = "VideoToolbox super resolution needs macOS 26 or newer. On an older system Moonlight uses MetalFX or basic scaling instead, and the runtime line below names the path that is running.";
 "Upscaling Metal only detail" = "Available only in Metal Renderer.";
 "Optical Output Scale" = "Optical Output Scale";
 "Optical Output Scale detail" = "Adjusts the working HDR intensity before Metal Renderer performs EDR presentation or SDR tone mapping.";
@@ -816,7 +821,7 @@
 "Window Mode" = "Window Mode";
 "Fullscreen Mode" = "Fullscreen Mode";
 "Borderless Window" = "Borderless Window";
-"Fullscreen Control Ball" = "Fullscreen Control Ball";
+"Fullscreen Control Ball" = "Fullscreen Edge Controls";
 "Monitor" = "Monitor";
 "Follow Monitor" = "Follow Display";
 "Follow Host Native" = "Follow Host Native";
@@ -1112,11 +1117,11 @@
 "Show Local Cursor" = "Show Local Cursor";
 "Edge Sensor Summon" = "Edge Sensor Summon";
 "Capture System Keyboard Shortcuts" = "Capture System Keyboard Shortcuts";
-"Capture System Keyboard Shortcuts detail" = "While the stream owns the screen, F1-F12 and the system's own shortcuts -- Mission Control, Launchpad, Spotlight and input switching -- go to the host instead of this Mac. Follow Fullscreen captures only in fullscreen or borderless; Always Capture also captures a windowed stream; Never Capture leaves every one of them here. The keys come back the moment this app is not frontmost, the stream window closes, or the stream ends.";
+"Capture System Keyboard Shortcuts detail" = "Control capture of system shortcuts such as F1-F12, Mission Control, and Spotlight. Follow Fullscreen captures system shortcuts in fullscreen or borderless streams; Always also captures in windowed streams; Never leaves them local. Explicitly releasing input, switching apps, or ending the stream returns them to macOS. Clicking to resume input reapplies this preference. Availability depends on macOS handling of each key.";
 "Follow Fullscreen" = "Follow Fullscreen";
 "Always Capture" = "Always Capture";
 "Never Capture" = "Never Capture";
-"Edge Sensor Summon detail" = "A 24 pt band runs along the edge the stream dock sits on. Holding the pointer within 2 pt of that edge for 150 ms, or pushing inward by 30 pt in total (at most 6 pt per event), opens the dock and folds it away again after 0.82 s. A fast sweep past the edge does not trigger it. With this off, only the pointer-escape route to the dock remains.";
+"Edge Sensor Summon detail" = "Hover for 250ms within 4pt of the edge, only along the 56pt handle span. Controls collapse 450ms after leaving the expanded area. Detection uses the local pointer and window points, independent of stream resolution. Locked game mode does not estimate the remote cursor: use your configured release-input or open-control-center shortcut. Explicit release requires a click in the stream to resume; moving onto another display never captures the pointer back.";
 "Mouse and Cursor" = "Mouse & Cursor";
 "Locked Mouse" = "Locked Mouse";
 "Control Center" = "Control Center";
@@ -1168,33 +1173,32 @@
 "Multi-channel device detected. Use Default for true 5.1/7.1/7.1.4 playback, or Audio Enhancement for headphone/stereo virtualization." = "Multi-channel device detected. Use Default for true 5.1/7.1/7.1.4 playback, or Audio Enhancement for headphone/stereo virtualization.";
 "V-Sync" = "V-Sync";
 "Performance Overlay" = "Performance Overlay";
-"Performance Overlay (⌃⌥S)" = "Performance Overlay (⌃⌥S)";
 "Show Connection Warnings" = "Show Connection Warnings";
 "Unlock max bitrate (1000 Mbps)" = "Unlock max bitrate (1000 Mbps)";
 "Gamepad Mouse Emulation" = "Gamepad Mouse Emulation";
 "Capture system keyboard shortcuts" = "Capture system keyboard shortcuts";
 "Shortcut Reference" = "Stream Shortcuts";
-"Stream shortcut note" = "These are your stream shortcuts. You can change the disconnect dialog, direct disconnect, quit, and more here.";
+"Stream shortcut note" = "These are the configured shortcuts for the selected settings profile. Stream hints and menus use the same bindings. ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ Command. Restore Default resets an action to its built-in binding.";
 "Change Shortcut" = "Change Shortcut";
 "Press shortcut to record" = "Press the shortcut you want to use now.";
-"Shortcut capture note" = "Press Esc to cancel. Most actions use two modifiers. Disconnect options and quit can also use one.";
+"Shortcut capture note" = "Press Esc to cancel. Release mouse requires at least two modifiers and no regular key. Other actions require modifiers plus a key: one or more for disconnect options and quitting the remote app, two or more for other actions.";
 "Restore Default Shortcut" = "Restore Default";
 "Shortcut requires two modifiers" = "Use at least two modifier keys for custom stream shortcuts.";
 "Shortcut must include regular key" = "This action requires modifiers plus a regular key.";
 "Shortcut modifiers only required" = "Release mouse capture only supports modifier-only shortcuts.";
-"Shortcut key unsupported" = "Only letter and number keys are supported here.";
+"Shortcut key unsupported" = "Supported keys include letters, numbers, common punctuation, Space, Tab, Return, Delete, Esc, navigation keys, arrows, and F1–F20. This key is not supported.";
 "Shortcut already in use" = "That shortcut is already assigned elsewhere.";
 "Shortcut reserved by system" = "That shortcut is reserved by macOS or a built-in Moonlight action.";
 "Shortcut reserved by gameplay keys" = "Shift is a game action key (sprint, aim), so Moonlight would take Shift plus a movement key away from the game while you play. Add Control, Option or Command.";
 "Release mouse capture" = "Release mouse capture";
-"Toggle performance overlay" = "Toggle performance overlay";
-"Toggle mouse mode" = "Toggle mouse mode";
-"Toggle fullscreen control ball" = "Toggle fullscreen control ball";
+"Toggle performance overlay" = "Show / Hide Performance Overlay";
+"Toggle mouse mode" = "Switch Free / Locked Mouse";
+"Toggle fullscreen control ball" = "Show / Hide Fullscreen Edge Controls";
 "Open control center" = "Open control center";
-"Open control center (fullscreen / borderless only)" = "Open control center (fullscreen / borderless only)";
+"Open control center (fullscreen / borderless only)" = "Open Control Center";
 "Toggle borderless / windowed (advanced)" = "Toggle borderless / windowed (advanced)";
 "Open Control Center: %@" = "Open Control Center: %@";
-"Release mouse: %@" = "Release mouse: %@";
+"Release mouse: %@" = "Release mouse: %@ (click stream to resume)";
 "Optimize mouse for remote desktop" = "Optimize mouse for remote desktop";
 "Absolute Mouse Mode hint" = "Best used in Remote Desktop mode. Game mode and some mouse drivers fall back to relative movement to avoid pointer lockups.";
 "Pointer Speed" = "Pointer Speed";
@@ -1284,3 +1288,25 @@
 "No devices on the bus detail" = "The bus was read and nothing answered, or it could not be read at all. The status above says which of the two it was, because those are different answers.";
 "Devices panel privacy detail" = "Devices are listed by identifier, interface class, and a short digest of the serial number. A product name and a serial number never appear on this page or in the log.";
 "Use this device" = "Use this device";
+
+"Click stream to resume input" = "Click the stream to resume input";
+
+"releaseMouseCapture shortcut detail" = "Stop forwarding input and release the pointer until you click the stream. Tap and release the chord, or hold it for about 150ms. The mouse mode stays unchanged.";
+
+"togglePerformanceOverlay shortcut detail" = "Show or hide frame rate, latency, and other stream statistics.";
+
+"toggleMouseMode shortcut detail" = "Switch between free mouse (desktop) and locked mouse (game). Explicitly released input still requires a click in the stream to resume.";
+
+"toggleFullscreenControlBall shortcut detail" = "Show or hide the edge control entry point in fullscreen. This does not open Control Center or release the mouse.";
+
+"showDisconnectOptions shortcut detail" = "Open a dialog to disconnect, disconnect and quit the remote app, or cancel.";
+
+"disconnectStream shortcut detail" = "Disconnect the current stream without requesting the remote app to quit.";
+
+"closeAndQuitApp shortcut detail" = "Disconnect and ask the host to quit the current remote app. This does not quit Moonlight on your Mac.";
+
+"reconnectStream shortcut detail" = "Stop the current connection and reconnect to the same remote app.";
+
+"openControlCenter shortcut detail" = "Open the stream control menu in windowed, fullscreen, or borderless mode.";
+
+"toggleBorderlessWindowed shortcut detail" = "Switch from borderless to a normal window; switch other modes to borderless.";

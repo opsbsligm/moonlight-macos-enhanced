@@ -301,6 +301,28 @@ typedef NS_ENUM(NSInteger, MLActiveVideoEnhancementEngine) {
     MLActiveVideoEnhancementEngineVTQualitySuperResolution = 5,
 };
 
+// What the enhancement resolver decided, as a state rather than as a sentence. The line the
+// settings page shows used to be chosen by searching the reason text for "fell back", "fallback"
+// or "temporarily using", with the question "is the engine none" asked before any of that -- so a
+// player who had asked for a hardware scaler and gotten none read the same line as a player who
+// never enabled the feature, and rewording a reason silently moved a sentence. This is the shape
+// the interpolation report already replaced, for the same reason: words drift, codes do not.
+//
+// Eight, because eight things a player can act on are true here. Two of them exist nowhere in the
+// prose that was routed before: the window is not bigger than the stream (nothing to invent, and
+// no amount of enabling will change that), and VideoToolbox's scalers are macOS 26 API, which a
+// player on an older system will never satisfy however they resize the window.
+typedef NS_ENUM(NSInteger, MLVideoEnhancementReport) {
+    MLVideoEnhancementReportActive = 0,
+    MLVideoEnhancementReportFellBack,
+    MLVideoEnhancementReportNeedsNewerSystem,
+    MLVideoEnhancementReportNeedsStreamShape,
+    MLVideoEnhancementReportWarmup,
+    MLVideoEnhancementReportNoUpScaleNeeded,
+    MLVideoEnhancementReportDisabledForHdr,
+    MLVideoEnhancementReportDisabled,
+};
+
 typedef NS_ENUM(NSInteger, MLRequestedVideoFrameInterpolationMode) {
     MLRequestedVideoFrameInterpolationModeOff = 0,
     MLRequestedVideoFrameInterpolationModeVTLowLatency = 1,
@@ -1644,7 +1666,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
                                                  targetWidth:prewarmContent.width
                                                 targetHeight:prewarmContent.height
                                                  scaleFactor:&prewarmScaleFactor
-                                                      reason:&prewarmReason];
+                                                      reason:&prewarmReason
+                                                      report:NULL];
             if (prewarmEngine == MLActiveVideoEnhancementEngineVTLowLatencySuperResolution ||
                 prewarmEngine == MLActiveVideoEnhancementEngineVTQualitySuperResolution) {
                 [self requestEnhancementWarmupForEngine:prewarmEngine
@@ -2386,10 +2409,13 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 
 - (void)logActiveEnhancementEngine:(MLActiveVideoEnhancementEngine)engine
                             reason:(NSString *)reason
+                            report:(MLVideoEnhancementReport)report
 {
+    // The summary and the detail are read as one row, so both are published from the same decision:
+    // a line naming a hardware engine above a sentence saying nothing is enabled is exactly what a
+    // player would read as a bug in the other half.
     [self publishVideoEnhancementRuntimeStatusSummary:MLVideoEnhancementEngineName(engine)
-                                               detail:[self runtimeDetailKeyForEnhancementEngine:engine
-                                                                                       reason:reason]];
+                                               detail:[self runtimeDetailKeyForEnhancementReport:report]];
 
     if (_lastLoggedEnhancementEngine == engine) {
         return;
@@ -2528,22 +2554,34 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
                                               refreshHz:0.0];
 }
 
-- (NSString *)runtimeDetailKeyForEnhancementEngine:(MLActiveVideoEnhancementEngine)engine
-                                            reason:(NSString *)reason
+- (NSString *)runtimeDetailKeyForEnhancementReport:(MLVideoEnhancementReport)report
 {
-    NSString *normalizedReason = reason.lowercaseString ?: @"";
-    if ([normalizedReason containsString:@"warmup in progress"]) {
-        return @"Video Enhancement Runtime Detail Warmup";
+    // One line per state, chosen by the state. The prose this replaces asked whether the engine was
+    // none before it asked whether anything had fallen back, and it searched the reason for "fell
+    // back", "fallback" and "temporarily using" -- so the player who asked for a hardware scaler and
+    // was quietly given bilinear scaling read the same sentence as the player who never enabled
+    // upscaling, and any rewording in the resolver moved a sentence on this page without anyone
+    // touching this file. Coverage is what makes the eight lines worth having, and the gate that
+    // counts them lifts the resolver's own reasons out of the source to do it.
+    switch (report) {
+        case MLVideoEnhancementReportActive:
+            return @"Video Enhancement Runtime Detail Active";
+        case MLVideoEnhancementReportFellBack:
+            return @"Video Enhancement Runtime Detail Fallback";
+        case MLVideoEnhancementReportNeedsNewerSystem:
+            return @"Video Enhancement Runtime Detail Needs Newer System";
+        case MLVideoEnhancementReportNeedsStreamShape:
+            return @"Video Enhancement Runtime Detail Needs Stream Shape";
+        case MLVideoEnhancementReportWarmup:
+            return @"Video Enhancement Runtime Detail Warmup";
+        case MLVideoEnhancementReportNoUpScaleNeeded:
+            return @"Video Enhancement Runtime Detail No Up Scale Needed";
+        case MLVideoEnhancementReportDisabledForHdr:
+            return @"Video Enhancement Runtime Detail Disabled For Hdr";
+        case MLVideoEnhancementReportDisabled:
+            return @"Video Enhancement Runtime Detail Off";
     }
-    if (engine == MLActiveVideoEnhancementEngineNone) {
-        return @"Video Enhancement Runtime Detail Off";
-    }
-    if ([normalizedReason containsString:@"fell back"] ||
-        [normalizedReason containsString:@"fallback"] ||
-        [normalizedReason containsString:@"temporarily using"]) {
-        return @"Video Enhancement Runtime Detail Fallback";
-    }
-    return @"Video Enhancement Runtime Detail Active";
+    return @"Video Enhancement Runtime Detail Off";
 }
 
 - (NSString *)runtimeDetailKeyForFrameInterpolationReport:(MLVideoFrameInterpolationReport)report
@@ -3530,12 +3568,26 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     return targetWidth > sourceWidth && targetHeight > sourceHeight;
 }
 
+// The answer the page needs travels with the answer the renderer needs: one decision written
+// once, so the sentence and the engine cannot come from different worlds. Both out-parameters may
+// be declined, as the reason always could.
+#define MLSetEnhancementAnswer(reportValue, reasonValue)        \
+    do {                                                        \
+        if (reportOut != NULL) {                              \
+            *reportOut = (reportValue);                       \
+        }                                                     \
+        if (reasonOut != NULL) {                              \
+            *reasonOut = (reasonValue);                       \
+        }                                                     \
+    } while (0)
+
 - (MLActiveVideoEnhancementEngine)resolveEnhancementEngineForSourceWidth:(NSUInteger)sourceWidth
                                                              sourceHeight:(NSUInteger)sourceHeight
                                                               targetWidth:(NSUInteger)targetWidth
                                                              targetHeight:(NSUInteger)targetHeight
                                                               scaleFactor:(float *)scaleFactorOut
                                                                    reason:(NSString **)reasonOut
+                                                                  report:(MLVideoEnhancementReport *)reportOut
 {
     float requestedScaleFactor = [self requestedScaleFactorForSourceWidth:sourceWidth
                                                               sourceHeight:sourceHeight
@@ -3546,9 +3598,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     if (_requestedEnhancementMode == MLRequestedVideoEnhancementModeOff) {
-        if (reasonOut != NULL) {
-            *reasonOut = @"enhancement disabled";
-        }
+        MLSetEnhancementAnswer(MLVideoEnhancementReportDisabled,
+            @"enhancement disabled");
         return MLActiveVideoEnhancementEngineNone;
     }
 
@@ -3558,19 +3609,17 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                                         targetHeight:targetHeight];
 
     if (_enableHdr) {
-        if (reasonOut != NULL) {
-            *reasonOut = needsUpScale
+        MLSetEnhancementAnswer(MLVideoEnhancementReportDisabledForHdr,
+            needsUpScale
                 ? @"HDR stream uses direct Metal scaling to preserve HDR output"
-                : @"HDR stream bypasses post-processing to preserve HDR output";
-        }
+                : @"HDR stream bypasses post-processing to preserve HDR output");
         return needsUpScale ? MLActiveVideoEnhancementEngineBasicScaling
                             : MLActiveVideoEnhancementEngineNone;
     }
 
     if (!needsUpScale && _requestedEnhancementMode != MLRequestedVideoEnhancementModeBasicScaling) {
-        if (reasonOut != NULL) {
-            *reasonOut = @"target size does not require upscale";
-        }
+        MLSetEnhancementAnswer(MLVideoEnhancementReportNoUpScaleNeeded,
+            @"target size does not require upscale");
         return MLActiveVideoEnhancementEngineNone;
     }
 
@@ -3579,9 +3628,16 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     // and when the two disagree the log has to say which of them the window caused.
     const BOOL uniformScaleAvailable = requestedScaleFactor > 1.0f;
 
+    // Whether the answer "not available" means the operating system, rather than the hardware or
+    // the window. Nothing above this line can tell those apart, and a player on macOS 15 who is
+    // told the scaler "is unavailable" will resize the window forever: the scalers are macOS 26
+    // API, so that answer is a sentence about the system, and it is the only one they can act on.
+    BOOL videoToolboxScalerAPIAvailable = NO;
+
     BOOL vtLowLatencySupported = NO;
     BOOL vtQualitySupported = NO;
     if (@available(macOS 26.0, *)) {
+        videoToolboxScalerAPIAvailable = YES;
         vtLowLatencySupported = VTLowLatencySuperResolutionScalerConfiguration.isSupported &&
             [self floatScaleFactor:requestedScaleFactor
                  isSupportedByValues:[VTLowLatencySuperResolutionScalerConfiguration supportedScaleFactorsForFrameWidth:(NSInteger)sourceWidth
@@ -3593,106 +3649,106 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
     BOOL metalFXSupported = MLMetalFXIsSupported(_device);
 
+    // One refusal, three different things a player could be told to change: the system, the
+    // window's shape, or nothing at all (this size or scale factor is simply not on the scaler's
+    // list, and the fallback is what the requested mode asked for when the hardware declines).
+    const MLVideoEnhancementReport hardwareScalerRefusedReport =
+        !videoToolboxScalerAPIAvailable ? MLVideoEnhancementReportNeedsNewerSystem
+        : (uniformScaleAvailable ? MLVideoEnhancementReportFellBack
+                                 : MLVideoEnhancementReportNeedsStreamShape);
+
     switch (_requestedEnhancementMode) {
         case MLRequestedVideoEnhancementModeAuto:
             if (vtLowLatencySupported) {
-                if (reasonOut != NULL) {
-                    *reasonOut = @"Auto selected VT low-latency super resolution";
-                }
+                MLSetEnhancementAnswer(MLVideoEnhancementReportActive,
+                    @"Auto selected VT low-latency super resolution");
                 return MLActiveVideoEnhancementEngineVTLowLatencySuperResolution;
             }
             if (metalFXSupported) {
-                if (reasonOut != NULL) {
-                    *reasonOut = uniformScaleAvailable
+                MLSetEnhancementAnswer(MLVideoEnhancementReportActive,
+                    uniformScaleAvailable
                         ? @"Auto selected MetalFX"
-                        : @"Auto selected MetalFX for a window that is not the stream's shape";
-                }
+                        : @"Auto selected MetalFX for a window that is not the stream's shape");
                 return MLActiveVideoEnhancementEngineMetalFXQuality;
             }
-            if (reasonOut != NULL) {
-                *reasonOut = @"Auto fell back to basic scaling";
-            }
+            MLSetEnhancementAnswer(MLVideoEnhancementReportFellBack,
+                @"Auto fell back to basic scaling");
             return MLActiveVideoEnhancementEngineBasicScaling;
         case MLRequestedVideoEnhancementModeVTLowLatencySuperResolution:
             if (vtLowLatencySupported) {
-                if (reasonOut != NULL) {
-                    *reasonOut = @"VT low-latency super resolution requested";
-                }
+                MLSetEnhancementAnswer(MLVideoEnhancementReportActive,
+                    @"VT low-latency super resolution requested");
                 return MLActiveVideoEnhancementEngineVTLowLatencySuperResolution;
             }
             if (metalFXSupported) {
-                if (reasonOut != NULL) {
-                    *reasonOut = uniformScaleAvailable
-                        ? @"VT low-latency super resolution unavailable; fell back to MetalFX"
-                        : @"VT low-latency super resolution needs the stream's own shape; MetalFX scales this window";
-                }
+                MLSetEnhancementAnswer(hardwareScalerRefusedReport,
+                    !videoToolboxScalerAPIAvailable
+                        ? @"VT low-latency super resolution needs macOS 26; fell back to MetalFX"
+                        : (uniformScaleAvailable
+                            ? @"VT low-latency super resolution unavailable; fell back to MetalFX"
+                            : @"VT low-latency super resolution needs the stream's own shape; MetalFX scales this window"));
                 return MLActiveVideoEnhancementEngineMetalFXQuality;
             }
-            if (reasonOut != NULL) {
-                *reasonOut = @"VT low-latency super resolution unavailable; fell back to basic scaling";
-            }
+            MLSetEnhancementAnswer(hardwareScalerRefusedReport,
+                videoToolboxScalerAPIAvailable
+                    ? @"VT low-latency super resolution unavailable; fell back to basic scaling"
+                    : @"VT low-latency super resolution needs macOS 26; fell back to basic scaling");
             return MLActiveVideoEnhancementEngineBasicScaling;
         case MLRequestedVideoEnhancementModeVTQualitySuperResolution:
             if (vtQualitySupported) {
-                if (reasonOut != NULL) {
-                    *reasonOut = @"VT quality super resolution requested";
-                }
+                MLSetEnhancementAnswer(MLVideoEnhancementReportActive,
+                    @"VT quality super resolution requested");
                 return MLActiveVideoEnhancementEngineVTQualitySuperResolution;
             }
             if (vtLowLatencySupported) {
-                if (reasonOut != NULL) {
-                    *reasonOut = @"VT quality super resolution unavailable; fell back to VT low-latency super resolution";
-                }
+                MLSetEnhancementAnswer(MLVideoEnhancementReportFellBack,
+                    @"VT quality super resolution unavailable; fell back to VT low-latency super resolution");
                 return MLActiveVideoEnhancementEngineVTLowLatencySuperResolution;
             }
             if (metalFXSupported) {
-                if (reasonOut != NULL) {
-                    *reasonOut = uniformScaleAvailable
-                        ? @"VT quality super resolution unavailable; fell back to MetalFX"
-                        : @"VT quality super resolution needs the stream's own shape; MetalFX scales this window";
-                }
+                MLSetEnhancementAnswer(hardwareScalerRefusedReport,
+                    !videoToolboxScalerAPIAvailable
+                        ? @"VT quality super resolution needs macOS 26; fell back to MetalFX"
+                        : (uniformScaleAvailable
+                            ? @"VT quality super resolution unavailable; fell back to MetalFX"
+                            : @"VT quality super resolution needs the stream's own shape; MetalFX scales this window"));
                 return MLActiveVideoEnhancementEngineMetalFXQuality;
             }
-            if (reasonOut != NULL) {
-                *reasonOut = @"VT quality super resolution unavailable; fell back to basic scaling";
-            }
+            MLSetEnhancementAnswer(hardwareScalerRefusedReport,
+                videoToolboxScalerAPIAvailable
+                    ? @"VT quality super resolution unavailable; fell back to basic scaling"
+                    : @"VT quality super resolution needs macOS 26; fell back to basic scaling");
             return MLActiveVideoEnhancementEngineBasicScaling;
         case MLRequestedVideoEnhancementModeMetalFXQuality:
             if (metalFXSupported) {
-                if (reasonOut != NULL) {
-                    *reasonOut = uniformScaleAvailable
+                MLSetEnhancementAnswer(MLVideoEnhancementReportActive,
+                    uniformScaleAvailable
                         ? @"MetalFX quality requested"
-                        : @"MetalFX quality requested for a window that is not the stream's shape";
-                }
+                        : @"MetalFX quality requested for a window that is not the stream's shape");
                 return MLActiveVideoEnhancementEngineMetalFXQuality;
             }
-            if (reasonOut != NULL) {
-                *reasonOut = @"MetalFX quality unavailable; fell back to basic scaling";
-            }
+            MLSetEnhancementAnswer(MLVideoEnhancementReportFellBack,
+                @"MetalFX quality unavailable; fell back to basic scaling");
             return MLActiveVideoEnhancementEngineBasicScaling;
         case MLRequestedVideoEnhancementModeMetalFXPerformance:
             if (metalFXSupported) {
-                if (reasonOut != NULL) {
-                    *reasonOut = uniformScaleAvailable
+                MLSetEnhancementAnswer(MLVideoEnhancementReportActive,
+                    uniformScaleAvailable
                         ? @"MetalFX performance requested"
-                        : @"MetalFX performance requested for a window that is not the stream's shape";
-                }
+                        : @"MetalFX performance requested for a window that is not the stream's shape");
                 return MLActiveVideoEnhancementEngineMetalFXPerformance;
             }
-            if (reasonOut != NULL) {
-                *reasonOut = @"MetalFX performance unavailable; fell back to basic scaling";
-            }
+            MLSetEnhancementAnswer(MLVideoEnhancementReportFellBack,
+                @"MetalFX performance unavailable; fell back to basic scaling");
             return MLActiveVideoEnhancementEngineBasicScaling;
         case MLRequestedVideoEnhancementModeBasicScaling:
-            if (reasonOut != NULL) {
-                *reasonOut = @"basic scaling requested";
-            }
+            MLSetEnhancementAnswer(MLVideoEnhancementReportActive,
+                @"basic scaling requested");
             return MLActiveVideoEnhancementEngineBasicScaling;
         case MLRequestedVideoEnhancementModeOff:
         default:
-            if (reasonOut != NULL) {
-                *reasonOut = @"enhancement disabled";
-            }
+            MLSetEnhancementAnswer(MLVideoEnhancementReportDisabled,
+                @"enhancement disabled");
             return MLActiveVideoEnhancementEngineNone;
     }
 }
@@ -4868,15 +4924,19 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     const NSUInteger targetHeight = contentRect.height;
     float resolvedScaleFactor = 1.0f;
     NSString *enhancementReason = nil;
+    MLVideoEnhancementReport enhancementReport = MLVideoEnhancementReportActive;
     MLActiveVideoEnhancementEngine resolvedEngine =
         [self resolveEnhancementEngineForSourceWidth:sourceWidth
                                         sourceHeight:sourceHeight
                                          targetWidth:targetWidth
                                         targetHeight:targetHeight
                                          scaleFactor:&resolvedScaleFactor
-                                              reason:&enhancementReason];
+                                              reason:&enhancementReason
+                                              report:&enhancementReport];
     _activeEnhancementEngine = resolvedEngine;
-    [self logActiveEnhancementEngine:_activeEnhancementEngine reason:enhancementReason];
+    [self logActiveEnhancementEngine:_activeEnhancementEngine
+                              reason:enhancementReason
+                              report:enhancementReport];
 
     BOOL enhancementWarmupPending = NO;
     CVImageBufferRef processedFrame = [self copyFrameUsingFrameProcessorIfNeeded:presentationFrame
@@ -4897,7 +4957,10 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             ? (_activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXQuality
                 ? @"VT enhancement warmup in progress; temporarily using MetalFX"
                 : @"VT enhancement warmup in progress; temporarily using basic scaling")
-            : @"VT enhancement unavailable at runtime; fell back"];
+            : @"VT enhancement unavailable at runtime; fell back"
+                                  report:enhancementWarmupPending
+            ? MLVideoEnhancementReportWarmup
+            : MLVideoEnhancementReportFellBack];
     }
 
     CVImageBufferRef workingFrame = processedFrame != NULL ? processedFrame : presentationFrame;
@@ -5079,7 +5142,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             if (!usedMetalFX) {
                 _activeEnhancementEngine = MLActiveVideoEnhancementEngineBasicScaling;
                 [self logActiveEnhancementEngine:_activeEnhancementEngine
-                                          reason:@"MetalFX unavailable at runtime; fell back to basic scaling"];
+                                          reason:@"MetalFX unavailable at runtime; fell back to basic scaling"
+                                          report:MLVideoEnhancementReportFellBack];
             }
         }
 

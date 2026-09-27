@@ -246,6 +246,41 @@ jobs:
       # still notices the race.
       run: python3 scripts/input-concurrency-tests.py
 
+    - name: Verify mouse button ownership and release ordering
+      run: |
+        python3 scripts/mouse-button-state-tests.py
+        python3 scripts/mouse-button-state-tests.py --self-test
+
+    - name: Verify the activation click reaches the host on its first press
+      run: python3 scripts/mouse-first-click-tests.py
+
+    - name: Verify CoreHID timer cancellation and session isolation
+      run: |
+        python3 scripts/corehid-lifecycle-tests.py
+        python3 scripts/corehid-lifecycle-tests.py --self-test
+
+    - name: Verify input context detachment and queued event isolation
+      run: |
+        python3 scripts/input-context-lifecycle-tests.py
+        python3 scripts/input-context-lifecycle-tests.py --self-test
+
+    - name: Verify keyboard and mouse edges survive input queue congestion
+      run: python3 scripts/input-edge-queue-tests.py
+
+    - name: Verify gamepad mouse ownership on mode exit and disconnect
+      run: python3 scripts/controller-mouse-ownership-tests.py
+
+    - name: Verify device-specific C filtering preserves real keyboard input
+      run: python3 scripts/keyboard-source-quirk-tests.py
+
+    - name: Verify delayed input binding cannot revive a stopped connection
+      run: python3 scripts/input-bind-retry-tests.py
+
+    - name: Verify lock keys, capture closure, coordinates and raw report bounds
+      run: |
+        python3 scripts/input-boundary-tests.py
+        python3 scripts/input-boundary-tests.py --self-test
+
     - name: Verify two keys held at once
       # Pressing W and Space together -- walk and jump -- is the report this
       # gate exists for. A held-key table with the right words in it can still

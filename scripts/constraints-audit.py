@@ -501,7 +501,8 @@ for table_name, table_path in (("en", "Limelight/macOS/en.lproj/Localizable.stri
 
 hid_text = open(os.path.join(root, "Limelight/Input/HIDSupport.m"), encoding="utf-8").read()
 failure_body = method_body(hid_text, "- (void)coreHIDMouseDriver:(CoreHIDMouseDriver *)driver\n         didFailWithReason:")
-check("AppKit" not in failure_body and "CoreHID Stopped" in failure_body,
+failure_code = re.sub(r"//[^\n]*|/\*.*?\*/", "", failure_body, flags=re.S)
+check("AppKit" not in failure_code and "CoreHID Stopped" in failure_code,
       "a CoreHID failure reports what it observed and leaves the sender line uncredited")
 dispatcher_body = method_body(hid_text, "- (void)dispatchRelativeMouseDeltaX:(CGFloat)deltaX")
 check("noteMotionSource" in dispatcher_body and "LiSendMouseMoveEventCtx" in dispatcher_body
@@ -965,8 +966,8 @@ hid_up = method_body(hid_all, "- (void)keyUp:(NSEvent *)event")
 hid_down = method_body(hid_all, "- (void)keyDown:(NSEvent *)event")
 problem = guard_exits(
     hid_up,
-    "if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:",
-    "removeObject:",
+    "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {",
+    "return;",
     "LiSendKeyboardEventCtx")
 check(problem is None, "a release whose press was consumed never reaches the host"
       if problem is None else "the release path is not effective: " + problem)
@@ -1007,29 +1008,33 @@ hid_capture_off = method_body(capture_all,
 hid_init = method_body(hid_all, "- (instancetype)init:(TemporaryHost *)host")
 
 for problem, message in [
-    (ordered_once(hid_down, "self.keyboardForwardedKeyDownKeyCodes[@(event.keyCode)] = @(keyCode)",
+    (ordered_once(hid_down, "self.keyboardForwardedKeyDownKeyCodes[physical] = @(keyCode)",
                   "LiSendKeyboardEventCtx", "recording the press"),
      "a press the host is told about is recorded before it is sent"),
-    (ordered_once(hid_up, "[self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(event.keyCode)]",
+    (ordered_once(hid_up, "[self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:physical]",
                   "LiSendKeyboardEventCtx", "spending the held-key record"),
      "a forwarded release spends the held-key record for that physical key"),
     (ordered_once(hid_release, "[self.keyboardForwardedKeyDownKeyCodes removeAllObjects]",
                   "LiSendKeyboardEventCtx", "dropping the records"),
      "the held-key release drops its records before sending the releases"),
-    (ordered_once(hid_capture_off, "[self.hidSupport releaseAllHeldKeys];",
-                  "self.hidSupport.shouldSendInputEvents = NO;", "releasing held keys"),
-     "capture release lets go of held keys before input forwarding is off"),
+    (ordered_once(hid_capture_off, "self.hidSupport.shouldSendInputEvents = NO;",
+                  "[self.hidSupport releaseAllHeldKeys];", "closing input admission"),
+     "capture release closes admission before releasing owned keys"),
     # The same argument covers the modifier tracker. flagsChanged: stops reaching
     # the sync once input is off, so a modifier the host was told about and the
     # player later lets go of stays down on the host until the next keyboard
     # event -- every pointer click in between carries a modifier nobody holds.
     (ordered_once(hid_capture_off,
-                  "[self.hidSupport releaseRemoteModifierKeysForUncapture];",
-                  "self.hidSupport.shouldSendInputEvents = NO;", "returning modifiers"),
-     "capture release returns the modifiers the host was told about before "
-     "input forwarding is off"),
+                  "self.hidSupport.shouldSendInputEvents = NO;",
+                  "[self.hidSupport releaseRemoteModifierKeysForUncapture];", "closing input admission"),
+     "capture release closes admission before returning owned modifiers"),
 ]:
     check(problem is None, message if problem is None else "%s is not effective: %s" % (message, problem))
+
+for signature in ("- (void)releaseAllHeldKeys", "- (void)releaseAllModifierKeys"):
+    release_code = re.sub(r"//[^\n]*|/\*.*?\*/", "", method_body(hid_all, signature), flags=re.S)
+    check("shouldSendInputEvents" not in release_code,
+          signature + " can return ownership after admission closes")
 
 check(guard_exits(hid_release, "if (self.keyboardHeldKeyReleaseInProgress)",
                     "self.keyboardHeldKeyReleaseInProgress = YES",
@@ -1161,8 +1166,10 @@ check(not zero_rows, "no mapping entry forwards VK 0"
       if not zero_rows else "%s map to 0, which is the same defect as a missing row"
       % ", ".join(zero_rows))
 
-for edge, body in (("keyDown:", hid_down), ("keyUp:", hid_up)):
-    problem = guard_exits(body, "if (translated == 0) {", "return;", "LiSendKeyboardEventCtx")
+for edge, body, guard in (
+        ("keyDown:", hid_down, "if (translated == 0) {"),
+        ("keyUp:", hid_up, "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {")):
+    problem = guard_exits(body, guard, "return;", "LiSendKeyboardEventCtx")
     check(problem is None, "%s refuses an unmapped key instead of forwarding VK 0" % edge
           if problem is None else "%s does not refuse an unmapped key: %s" % (edge, problem))
 
@@ -3271,6 +3278,15 @@ if run_battery:
         print("skip behavioural harnesses: %s" % toolchain_missing)
     else:
         behaviours = (os.path.join("scripts", "input-concurrency-tests.py"),
+                          os.path.join("scripts", "mouse-button-state-tests.py"),
+                          os.path.join("scripts", "mouse-first-click-tests.py"),
+                          os.path.join("scripts", "corehid-lifecycle-tests.py"),
+                          os.path.join("scripts", "input-context-lifecycle-tests.py"),
+                          os.path.join("scripts", "input-edge-queue-tests.py"),
+                          os.path.join("scripts", "controller-mouse-ownership-tests.py"),
+                          os.path.join("scripts", "keyboard-source-quirk-tests.py"),
+                          os.path.join("scripts", "input-bind-retry-tests.py"),
+                          os.path.join("scripts", "input-boundary-tests.py"),
                           os.path.join("scripts", "keyboard-concurrency-tests.py"),
                           os.path.join("scripts", "held-key-identity-tests.py"),
                           os.path.join("scripts", "key-state-heal-tests.py"),
@@ -3476,9 +3492,13 @@ release_problems = []
 if "translateKeyModifierWithEvent" not in key_up_body:
     release_problems.append("-keyUp: no longer answers with the modifier byte its press "
                             "used, so a release is sent for a key the host never saw")
-if "keyboardSuppressedKeyDownKeyCodes containsObject" not in key_up_body:
-    release_problems.append("-keyUp: no longer consults the record of presses consumed "
-                            "locally, so a client shortcut releases a gameplay key")
+if guard_exits(key_up_body,
+               "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {",
+               "return;", "LiSendKeyboardEventCtx") is not None:
+    release_problems.append("-keyUp: no longer requires ownership of a forwarded or deferred "
+                            "press, so a client shortcut releases a gameplay key")
+if "short keyCode = savedCode != nil ? savedCode.shortValue : [pending[@\"wire\"] shortValue];" not in key_up_body:
+    release_problems.append("-keyUp: does not replay the wire code saved by its original press")
 check(not release_problems,
       "a released key carries the modifier its press carried, and never answers a press "
       "the client kept to itself"

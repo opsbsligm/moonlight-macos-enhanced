@@ -82,6 +82,7 @@
 				Input/HapticContext.m,
 				Input/HIDSupport.m,
 				Input/KeyboardMapResolver.m,
+				Input/HIDKeyboardQuirkFilter.m,
 				"Input/HIDSupport+Pointer.m",
 				Input/InputDiagnosticsLedger.m,
 				"Input/HIDSupport+Rumble.m",

@@ -2478,6 +2478,12 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
 }
 
 - (void)attemptReconnectWithReason:(NSString *)reason {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self attemptReconnectWithReason:reason];
+        });
+        return;
+    }
     if (!self.shouldAttemptReconnect) {
         return;
     }
@@ -2510,6 +2516,15 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         self.activeStreamGeneration += 1;
         reconnectGeneration = self.activeStreamGeneration;
     }
+
+    // Retire accepted input while the old connection is still alive. Teardown
+    // of its queues must not race delayed HID producers during reconnect.
+    [self.hidSupport tearDownKeyboardStateForSessionEnd:"reconnect"];
+    [self.controllerSupport releaseRemoteMouseButtonsForUncapture];
+    self.hidSupport.shouldSendInputEvents = NO;
+    self.controllerSupport.shouldSendInputEvents = NO;
+    self.hidSupport.inputContext = NULL;
+    self.controllerSupport.inputContext = NULL;
 
     Log(LOG_I, @"[diag] Reconnect requested: reason=%@", reason ?: @"unknown");
     self.reconnectAttemptCount += 1;

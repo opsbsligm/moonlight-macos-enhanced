@@ -9,28 +9,15 @@
 #import "InputDiagnosticsLedger.h"
 #import "GamepadMenuGesture.h"
 #import "KeyboardMapResolver.h"
+#import "HIDKeyboardQuirkFilter.h"
 
 #import <IOKit/hid/IOHIDElement.h>
 #import <IOKit/hid/IOHIDKeys.h>  // kIOHIDPrimaryUsagePageKey: what kind of device a node claims to be
 #import <ApplicationServices/ApplicationServices.h>  // CGEventSourceKeyState: what the keyboard is physically doing
 #import <IOKit/hidsystem/IOLLEvent.h>
 
-// ---------------------------------------------------------------------------
-// CI/CD Pipeline Refactor (2026-08-02): KeyboardMapResolver bridge
-//
-// The 4 DUPLICATED switch/case blocks that previously defined modifier-key
-// mappings have been REMOVED and all callers now route through KMR_*()
-// in KeyboardMapResolver.{h,m}.
-// This guarantees that, for any keyboard state, "what L⌘ maps to"
-// has exactly ONE answer across the entire application.
-//
-// SIMPLIFIED MODE: We now use the Industry Standard Streaming Mapping.
-// There are no more "compatibility modes" - the mapping is fixed and final:
-// macOS Command -> Windows Win
-// macOS Control -> Windows Control
-// macOS Option -> Windows Alt
-// macOS Shift -> Windows Shift
-// ---------------------------------------------------------------------------
+// Physical modifier mappings and the per-host Command preference are resolved
+// by KeyboardMapResolver. Ordinary key ownership remains in this session.
 
 // CVDisplayLink is deprecated in macOS 15.0 but remains the recommended API
 // for low-latency game input polling. The new NSView.displayLink API is not
@@ -41,51 +28,21 @@
 
 NSString *const HIDMouseModeToggledNotification = @"HIDMouseModeToggledNotification";
 NSString *const HIDGamepadQuitNotification = @"HIDGamepadQuitNotification";
+const void *HIDInputQueueSpecificKey = &HIDInputQueueSpecificKey;
 
 
-// How long a forwarded press may sit without its release before the physical key state is asked
-// about it, and how often that question is asked. The grace is a race allowance -- AppKit can hand
-// over keyDown: before the HID key state flips -- and it only ever delays a RELEASE. Nothing in this
-// loop can drop a press, so no gameplay key is ever lost to it. docs/memory-ownership.md S32.
-//
-// The grace is sized against the host, not against this app. The whole point of the release is to
-// reach the guest before its keyboard auto-repeat starts, and the fastest first-repeat delay a
-// Windows guest is configured with is about 250 ms. Measured ages in a real capture were 252-376 ms
-// with the previous 250 ms grace plus a 100 ms poll, which means the release arrived after the guest
-// had already begun repeating: the heal was firing and the player still saw a run of key presses.
-// A 120 ms grace polled every 25 ms puts the release in front of that first repeat while still being
-// a thousand times wider than the key-state race it exists to wait out.
+// Check missing releases after a short state-race allowance. This recovery is
+// limited to the allowlist below and can be disabled independently of attribution.
 static uint64_t const HIDKeyStateHealGraceMs = 120;
 static uint64_t const HIDKeyStateHealIntervalMs = 25;
-// How long a press held back as "the HID layer says nobody is holding this" may wait for that
-// state to flip before it is dropped. One poll of the loop above would already answer it; three
-// are allowed so a genuinely slow state flip cannot cost a player a keystroke.
+// Allow AppKit and IOHID callbacks to arrive in either order before attribution.
 static uint64_t const HIDKeyStateHoldConfirmMs = 60;
-// How far behind the stray press a real keystroke may reach to still count as "the player is
-// typing", and how far apart two translated clicks must be at minimum. Both exist for the same
-// reason: the translation spends a press that the HID layer denies, and the one shape that denies
-// it in good faith is a C typed faster than the confirm window. A player typing does not press only
-// C, so a nearby keystroke of any other typable key says "keyboard" and the press goes back to being
-// dropped rather than becoming a click in someone's game. docs/memory-ownership.md S36.
-static uint64_t const HIDStrayClickTypingWindowMs = 1500;
-static uint64_t const HIDStrayClickMinIntervalMs = 200;
-// The escape hatch, off by default: a player who wants this app to stop answering for a release it
-// never received sets input.disableKeyStateHeal.
+// General state-based quarantine is opt-in. The observed unpaired C defect also
+// occurs without an external pointer or Input Monitoring access, so C has its
+// own default confirmation path below. A real release confirms a rapid tap.
+// No key is converted into a mouse click.
 static NSString * const HIDKeyStateHealDisabledDefault = @"input.disableKeyStateHeal";
-// The hold is opt-IN, and that direction is not laziness but the finding of a capture. On one
-// receiver the left button reaches this app only as a keyboard press that the key state denies -
-// the button bit is parsed into the device's keyboard collection - so holding that press back
-// removes the only click the host ever received. Until the captured-mouse button path reads the
-// device's button elements directly, the default has to be the behaviour that never loses a click.
-// With this set, presses the key state denies are held back instead: the diagnostic and the
-// remediation for a device whose phantom keys are genuinely extra.
 static NSString * const HIDKeyStateHoldEnabledDefault = @"input.enableKeyStateHold";
-// What to do with a press the keyboard denies once its window closes. Spending it on a click is the
-// rarer request than it looked: the device-layer capture showed the same left press arriving whole as
-// `page=0x09 usage=0x01` (down and up) *and* followed 80-220 ms later by a `page=0x07 usage=0x06` that
-// never comes up, so turning that second event into a click would hand the host a double click the
-// player never made. Throwing the phantom away is the default; a receiver that answers the button with
-// a keyboard usage and nothing else is the case for `input.convertStrayCtoLeftClick`.
 
 
 struct KeyMapping {
@@ -321,27 +278,9 @@ static BOOL HIDEventCarriesDeviceModifierState(NSEventModifierFlags flags) {
 
 static HIDKeyboardPhysicalModifierMask HIDEffectivePhysicalModifierMaskForEvent(HIDKeyboardPhysicalModifierMask physicalMask,
                                                                                 NSEvent *event) {
-    // -----------------------------------------------------------------------
-    // CRITICAL FIX (2026-08-02): DO NOT infer physical modifier state from
-    // event.modifierFlags for mouse events.
-    //
-    // This was the ROOT CAUSE of the "double-click sends Win key" bug:
-    // When the user pressed-and-held the Mac Command (⌘) key and then
-    // clicked the mouse button, mouse event.modifierFlags naturally
-    // included NSEventModifierFlagCommand. The previous code used those
-    // bits to FORCE-INJECT the "LeftCommand pressed" state into
-    // physicalMask, which then caused syncKeyboardModifierStateForEvent()
-    // to emit a VK_LWIN (0x5B) down event to the remote PC. The same
-    // applied for any modifier held during a mouse click (Ctrl→LCtrl,
-    // Option→LAlt, Shift→LShift).
-    //
-    // Under the STREAMING STANDARD (Parsec/UU Remote):
-    // * Physical modifier key down/up is tracked ONLY from kVK_* key
-    //   events received by flagsChanged:/keyDown:/keyUp:.
-    // * Mouse events are NOT permitted to mutate the modifier state.
-    // * The physicalMask is therefore returned AS-IS, regardless of
-    //   what event.modifierFlags says.
-    // -----------------------------------------------------------------------
+    // flagsChanged and capture reconciliation own the physical side state.
+    // Generic event flags cannot reliably distinguish left from right, and
+    // mouse events must never be used as keyboard evidence.
     (void)event;
     return physicalMask;
 }
@@ -431,7 +370,9 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         return;
     }
 
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(support);
+    HIDInputLease inputLease = HIDAcquireInputContext(support);
+
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!HIDValidateInputContext(inputCtx, op)) {
         return;
     }
@@ -457,7 +398,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
     // The legacy flag byte still describes the whole combination the host is being
     // asked about; which keys this sequence is allowed to touch is the owned mask.
     char translatedModifiers = HIDRemoteModifierFlagsToGenericFlags(remoteModifierMask);
-    HIDDispatchInput(support, inputCtx, ^{
+    HIDDispatchInput(support, inputLease, ^{
         for (NSUInteger i = 0; i < sizeof(remoteOrder) / sizeof(remoteOrder[0]); i++) {
             HIDKeyboardRemoteModifierMask mask = remoteOrder[i];
             if ((owned & mask) == 0) {
@@ -477,15 +418,76 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 @end
 
 @implementation HIDSupport
+@synthesize inputContext = _inputContext;
+@synthesize shouldSendInputEvents = _shouldSendInputEvents;
+
+// Button ownership and capture closure share this lock. Once NO is published,
+// a concurrent hardware producer cannot insert another press behind cleanup.
+- (BOOL)shouldSendInputEvents {
+    @synchronized (self) { return _shouldSendInputEvents; }
+}
+
+- (void)setShouldSendInputEvents:(BOOL)enabled {
+    @synchronized (self) {
+        BOOL next = enabled && !self.keyboardTeardownAlreadyCalled;
+        if (_shouldSendInputEvents != next) {
+            self.inputCaptureGeneration += 1;
+            [self resetPointerMotionForCaptureTransition];
+        }
+        _shouldSendInputEvents = next;
+    }
+}
+
+- (void *)inputContext {
+    @synchronized (self.inputContextLock) {
+        return _inputContext;
+    }
+}
 
 - (void)setInputContext:(void *)inputContext {
-    _inputContext = inputContext;
+    // Serialize detachment with sends. Queued blocks also carry this generation,
+    // so address reuse cannot turn an old packet into input for a new session.
+    __block BOOL changed = NO;
+    void (^replaceContext)(void) = ^{
+        @synchronized (self.inputContextLock) {
+            if (self->_inputContext == inputContext) {
+                return;
+            }
+            self->_inputContext = inputContext;
+            self.inputContextGeneration += 1;
+            changed = YES;
+        }
+    };
+    if (self.inputQueue != NULL && dispatch_get_specific(HIDInputQueueSpecificKey) != (__bridge void *)self) {
+        dispatch_sync(self.inputQueue, replaceContext);
+    } else {
+        replaceContext();
+    }
+    if (!changed) {
+        return;
+    }
     [self syncScrollTraceDiagnosticsPreferenceToInputContext];
     // The heal loop belongs to the input channel, not to a key press: arming it here means the first
     // press of a session is already covered, and a harness that drives -keyDown: directly (the
     // pairing and identity probes) never starts a timer it has no runloop for. The loop itself is
     // pinned by key-state-heal-tests.py.
-    [self startKeyboardStateHealTimerIfNeeded];
+    void (^updateKeyboardMonitoring)(void) = ^{
+        if (self.inputContext != inputContext) {
+            return;
+        }
+        if (inputContext != NULL) {
+            [self.keyboardQuirkFilter start];
+            [self startKeyboardStateHealTimerIfNeeded];
+        } else {
+            [self.keyboardQuirkFilter stop];
+            [self stopKeyboardStateHealTimer];
+        }
+    };
+    if ([NSThread isMainThread]) {
+        updateKeyboardMonitoring();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), updateKeyboardMonitoring);
+    }
 }
 
 - (void)refreshInputDiagnosticsPreference {
@@ -612,8 +614,12 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 }
 
 - (void)syncScrollTraceDiagnosticsPreferenceToInputContext {
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-    LiSetScrollTraceDiagnosticsEnabledCtx(inputCtx, self.inputDiagnosticsEnabled ? true : false);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+    BOOL enabled = self.inputDiagnosticsEnabled;
+    HIDDispatchInput(self, inputLease, ^{
+        LiSetScrollTraceDiagnosticsEnabledCtx(inputCtx, enabled);
+    });
 }
 
 - (uint64_t)prepareScrollTraceFromSource:(NSString *)source
@@ -623,9 +629,8 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
                            momentumPhase:(NSEventPhase)momentumPhase
                         hasPreciseDeltas:(BOOL)hasPreciseDeltas {
     [self syncScrollTraceDiagnosticsPreferenceToInputContext];
-    if (!self.inputDiagnosticsEnabled) {
-        return 0;
-    }
+    // Gesture classification must not change when diagnostic logging is off.
+    // Trace state belongs to the input path; only wire instrumentation is optional.
 
     uint64_t nowMs = LiGetMillis();
     __block BOOL startsNewTrace = NO;
@@ -658,9 +663,12 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         traceId = self.activeScrollTraceId;
     }
 
-    if (startsNewTrace) {
-        PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-        LiStartScrollTraceCtx(inputCtx, traceId, nowMs);
+    if (startsNewTrace && self.inputDiagnosticsEnabled) {
+        HIDInputLease inputLease = HIDAcquireInputContext(self);
+        PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+        HIDDispatchInput(self, inputLease, ^{
+            LiStartScrollTraceCtx(inputCtx, traceId, nowMs);
+        });
         Log(LOG_D, @"[inputdiag] scroll-trace start trace=%llu source=%@ raw=(%.3f,%.3f) phase=%lu momentum=%lu precise=%d",
             (unsigned long long)traceId,
             source ?: @"unknown",
@@ -818,16 +826,9 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
     }
 }
 
-// The residue probe, and the only place in this app that reads -keyCode on a mouse edge on purpose.
-// The gate states what this function holds: a mouse edge, never a key event. The value is undefined
-// for that kind of event, and that is the point -- the report claims a driver leaves 8 (kVK_ANSI_C)
-// in the field, and printing the field is the only instrument left that works during a fullscreen
-// stream: the session observer goes blind there and the device-level keyboard channel needs a grant
-// a Release build cannot ask for. The value is never compared to a key code, never stored, and never
-// reaches the wire -- scripts/key-code-read-site-audit.py refuses a reader that gates to the mouse
-// family and still names a keyboard action. "mouse-button" in the tag is what keeps the line out of
-// Logger.m's high-frequency discard rule. docs/memory-ownership.md S32.
-- (void)logMouseKeyboardFieldResidueForEvent:(NSEvent *)event where:(NSString *)where {
+// Mouse diagnostics use fields defined for mouse events. Undefined keyboard fields
+// are not evidence of a physical key, even when they are only printed in a log.
+- (void)logMouseEventDiagnosticsForEvent:(NSEvent *)event where:(NSString *)where {
     if (event == nil ||
         (event.type != NSEventTypeLeftMouseDown && event.type != NSEventTypeLeftMouseUp &&
          event.type != NSEventTypeRightMouseDown && event.type != NSEventTypeRightMouseUp &&
@@ -837,36 +838,25 @@ static inline void HIDIncrementInputDiagnosticsBucket(NSMutableDictionary<NSStri
     if (!self.inputDiagnosticsEnabled) {
         return;
     }
-    Log(LOG_D, @"[inputdiag] mouse-button key-residue where=%@ kVK=%hu subtype=0x%hx clicks=%lu type=%ld",
-        where ?: @"unknown", event.keyCode, (unsigned short)event.subtype,
-        (unsigned long)event.clickCount, (long)event.type);
+    Log(LOG_D, @"[inputdiag] mouse-button event where=%@ button=%ld clicks=%lu type=%ld timestamp=%.6f",
+        where ?: @"unknown", (long)event.buttonNumber, (unsigned long)event.clickCount,
+        (long)event.type, event.timestamp);
 }
 
-// A press this app forwarded, and the keyboard says nobody is holding that key: the release was lost
-// somewhere between the driver and -keyUp:, and the host is auto-repeating the key for the rest of
-// the session. That is the whole "double-click sends C over and over" symptom, whatever put the press
-// in here. Asking the HID layer is not a timing guess and not a glyph heuristic -- it is the physical
-// state of the same key, read after the fact, and the only action it takes is the one -keyUp: would
-// have taken. A key the player really holds answers true and is left alone for as long as they hold
-// it, which is why this cannot drop input the way the 2026-09-13 note warns about. Modifiers are
-// excluded: -releaseAllModifierKeys and flagsChanged: own chords, and healing a Command that is
-// genuinely held would break shortcuts.
-// Whether the held-back press behaviour is switched on for this user. One function so the scenario
-// harness can switch it without writing into anybody's defaults domain.
+// Global key state cannot identify a device. Keep the optional state heuristic
+// separate from the narrowly scoped device-attribution policy.
 static BOOL HIDKeyboardHoldEnabled(void) {
     return [[NSUserDefaults standardUserDefaults] boolForKey:HIDKeyStateHoldEnabledDefault];
 }
 
+static BOOL HIDKeyboardHealEnabled(void) {
+    return ![[NSUserDefaults standardUserDefaults] boolForKey:HIDKeyStateHealDisabledDefault];
+}
 
-// Which keys the HID key state can actually answer for. `CGEventSourceKeyState` reports the state of
-// the keys a keyboard layout types with - letters, digits, the numpad, the OEM punctuation, space,
-// return, tab, escape and backspace. It does NOT track the rest: the navigation cluster (arrows,
-// Home/End/PageUp/PageDown/ForwardDelete), the function row, media keys like VolumeUp, and the Apple
-// special keys. Observed in a real capture: those keys show up as a press whose state reads "not
-// held", which is exactly the shape the ghost filter is meant to catch - so without this boundary
-// the filter would silently eat the left arrow (kVK=123 was dropped once in the same capture that
-// proved the phantom C) along with every F-key and media key. A key outside the detectable region is
-// therefore never held back: forwarding it is the only safe answer, whatever the state says.
+
+// Conservative state-query allowlist. Navigation/function/media keys produced
+// false negatives in the device capture, so neither quarantine nor orphan healing
+// may infer their release from this global query. Their event pairs remain primary.
 static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
     short vk = (short)(wireCode & 0xFF);
     if (vk >= 0x41 && vk <= 0x5A) {  // A-Z
@@ -893,114 +883,93 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
     }
 }
 
-// The one key a denied press may be spent on. It is the key this app's own reports named -- a left
-// click arriving as kVK_ANSI_C -- so the hold queue grows for exactly that key and for no other:
-// every other key keeps the behaviour it shipped with, opt-in switch or not.
-static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
-    return physicalKeyCode == kVK_ANSI_C;
-}
-
-// A keyboard press whose key the HID layer says is not down cannot be a keystroke the player made:
-// the same key state that `-keyUp:` leaves behind is what answers this, and it is a state, not a
-// timing window or a glyph. Returns YES when the press was taken aside instead of forwarded.
+// Confirm unpaired C independently of a particular device or listen permission.
+// Other keys retain the opted-in state check / device attribution policy.
+// A known pointer-generated key is discarded, never translated into a second click.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers {
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp {
+    NSNumber *physical = @(physicalKeyCode);
+    BOOL knownPointer = [self.keyboardQuirkFilter isKnownPointerKeyCode:physicalKeyCode timestamp:timestamp];
+    BOOL quirk = [self.keyboardQuirkFilter shouldDeferKeyCode:physicalKeyCode timestamp:timestamp];
+    BOOL unpairedC = physicalKeyCode == kVK_ANSI_C && !quirk;
+    if ((!HIDKeyboardHoldEnabled() && !quirk && !unpairedC) || !HIDWireCodeIsKeyStateDetectable(wireCode)) {
+        return NO;
+    }
+    if (!knownPointer && CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physicalKeyCode)) {
+        return NO;
+    }
     if (self.keyboardHeldUnconfirmedKeyDowns == nil) {
         self.keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
     }
-    BOOL strayClickWanted = (self.strayKeyPressHandler != nil && HIDKeyCodeIsStrayClickCandidate(physicalKeyCode));
-    if (!HIDKeyboardHoldEnabled() && !strayClickWanted) {
-        return NO;  // opt-in both ways: never hold a key this machine cannot be leaking
-    }
-    // The state can only speak for the keys a layout types with; everything else is forwarded
-    // untouched, because "the state does not track this key" and "nobody is holding this key" read
-    // identically and only one of them is a phantom. This one rule also covers the modifiers: every
-    // Windows code the table gives a modifier (0x5B-0x5D, 0xA0-0xA5) is outside the region, so a
-    // held-back Command - which would break a local shortcut mid-keystroke - cannot be constructed.
-    // The heal loop still excludes modifiers on its own, because it works from presses that were
-    // forwarded before this boundary existed.
-    if (!HIDWireCodeIsKeyStateDetectable(wireCode)) {
-        return NO;
-    }
-    if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physicalKeyCode)) {
-        return NO;  // physically down: forward it now, this is an ordinary press
-    }
-    self.keyboardHeldUnconfirmedKeyDowns[@(physicalKeyCode)] =
-        @{@"wire": @(wireCode), @"mods": @(modifiers), @"at": @((unsigned long long)LiGetMillis())};
-    Log(LOG_D, @"[inputdiag] keyboard-wire held-unconfirmed kVK=%hu", physicalKeyCode);
+    self.keyboardHeldUnconfirmedKeyDowns[physical] =
+        @{@"wire": @(wireCode), @"mods": @(modifiers), @"at": @((unsigned long long)LiGetMillis()),
+          @"timestamp": @(timestamp), @"quirk": @(quirk)};
+    Log(LOG_D, @"[inputdiag] keyboard-wire held-unconfirmed kVK=%hu source-check=%d unpaired-c=%d", physicalKeyCode, quirk, unpairedC);
     return YES;
 }
 
-// What the loop does with the presses held back above: the state flipped, so the player is holding
-// it after all and the wire gets the press late rather than never; or it never flipped, so the press
-// was not a keystroke and both edges of it stay where they are - the paired release is suppressed
-// too, because a release for a press the host never saw reads as a key let go by itself.
+// A matched device report can reject a pending press. Missing source evidence is
+// fail-open; the optional state heuristic is the only path allowed to expire closed.
 - (void)settleHeldKeyboardPresses {
+    if (!self.shouldSendInputEvents) {
+        [self.keyboardHeldUnconfirmedKeyDowns removeAllObjects];
+        return;
+    }
     if (self.keyboardHeldUnconfirmedKeyDowns.count == 0) {
         return;
     }
     uint64_t nowMs = LiGetMillis();
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!HIDValidateInputContext(inputCtx, "settleHeldKeyboardPresses")) {
         return;
     }
     for (NSNumber *physicalKeyCode in self.keyboardHeldUnconfirmedKeyDowns.allKeys) {
         NSDictionary *held = self.keyboardHeldUnconfirmedKeyDowns[physicalKeyCode];
-        if (held == nil) {
-            continue;
-        }
-        unsigned short physical = (unsigned short)physicalKeyCode.unsignedShortValue;
+        unsigned short physical = physicalKeyCode.unsignedShortValue;
         uint64_t since = [held[@"at"] unsignedLongLongValue];
         uint64_t ageMs = nowMs >= since ? nowMs - since : 0;
-        if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physical)) {
-            short code = [held[@"wire"] shortValue];
-            char modifiers = [held[@"mods"] charValue];
-            [self.keyboardHeldUnconfirmedKeyDowns removeObjectForKey:physicalKeyCode];
-            self.keyboardForwardedKeyDownKeyCodes[@(physical)] = @(code);
-            self.keyboardForwardedKeyDownAtMs[@(physical)] = @(nowMs);
-            Log(LOG_D, @"[inputdiag] keyboard-wire released-held kVK=%hu code=0x%hx age=%llums",
-                physical, (unsigned short)code, (unsigned long long)ageMs);
-            HIDDispatchInput(self, inputCtx, ^{
-                LiSendKeyboardEventCtx(inputCtx, code, KEY_ACTION_DOWN, modifiers);
-            });
-            continue;
-        }
-        if (ageMs < HIDKeyStateHoldConfirmMs) {
+        BOOL quirk = [held[@"quirk"] boolValue];
+        BOOL pointerKey = quirk && [self.keyboardQuirkFilter isKnownPointerKeyCode:physical
+                                                       timestamp:[held[@"timestamp"] doubleValue]];
+        BOOL confirmed = CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physical);
+        if (ageMs < HIDKeyStateHoldConfirmMs && (pointerKey || !confirmed)) {
             continue;
         }
         [self.keyboardHeldUnconfirmedKeyDowns removeObjectForKey:physicalKeyCode];
-        // The press is not a keystroke, and on the measured device it is not the click either: that
-        // receiver sends the button whole as a mouse button and the leaked key separately, so the
-        // default is to drop this one and let the real edge be the click. A receiver that answers the
-        // button only with a keyboard usage is the exception worth a switch, and the stream UI is
-        // asked only then. Whatever is decided, the paired release is still swallowed: a release for a
-        // key the host never saw go down reads as a key let go by itself.
-        BOOL spent = NO;
-        BOOL typedRecently = (self.lastTypedOtherKeyDownAtMs != 0 &&
-                              nowMs >= self.lastTypedOtherKeyDownAtMs &&
-                              (nowMs - self.lastTypedOtherKeyDownAtMs) < HIDStrayClickTypingWindowMs);
-        BOOL clickedRecently = (self.lastStrayClickAtMs != 0 &&
-                                nowMs >= self.lastStrayClickAtMs &&
-                                (nowMs - self.lastStrayClickAtMs) < HIDStrayClickMinIntervalMs);
-        if (self.strayKeyPressHandler != nil && !typedRecently && !clickedRecently) {
-            spent = self.strayKeyPressHandler(physical, ageMs);
-            if (spent) {
-                self.lastStrayClickAtMs = nowMs;
+        // Device attribution fails open. The separately opted-in state heuristic keeps
+        // its previous expiry policy, but never converts a keyboard edge into a click.
+        if (pointerKey || (!quirk && !confirmed)) {
+            if (self.keyboardSuppressedKeyDownKeyCodes == nil) {
+                self.keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
             }
+            [self.keyboardSuppressedKeyDownKeyCodes addObject:physicalKeyCode];
+            Log(LOG_D, @"[inputdiag] keyboard-wire dropped-unconfirmed kVK=%hu pointer=%d", physical, pointerKey);
+            continue;
         }
-        if (self.keyboardSuppressedKeyDownKeyCodes == nil) {
-            self.keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
+        short code = [held[@"wire"] shortValue];
+        char modifiers = [held[@"mods"] charValue];
+        BOOL alreadyOwned = [self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(code)];
+        self.keyboardForwardedKeyDownKeyCodes[physicalKeyCode] = @(code);
+        self.keyboardForwardedKeyDownAtMs[physicalKeyCode] = @(nowMs);
+        if (!alreadyOwned) {
+            HIDDispatchInput(self, inputLease, ^{
+                Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx", (unsigned short)code, modifiers);
+                LiSendKeyboardEventCtx(inputCtx, code, KEY_ACTION_DOWN, modifiers);
+            });
         }
-        [self.keyboardSuppressedKeyDownKeyCodes addObject:physicalKeyCode];
-        Log(LOG_D, @"[inputdiag] keyboard-wire %@ kVK=%hu age=%llums",
-            spent ? @"stray-as-click" : @"dropped-ghost", physical, (unsigned long long)ageMs);
     }
 }
 
 - (void)healUnpairedForwardedKeyDowns {
+    if (!self.shouldSendInputEvents) {
+        [self.keyboardHeldUnconfirmedKeyDowns removeAllObjects];
+        return;
+    }
     [self settleHeldKeyboardPresses];
-    if (self.keyboardForwardedKeyDownKeyCodes.count == 0 || !self.shouldSendInputEvents) {
+    if (!HIDKeyboardHealEnabled() || self.keyboardForwardedKeyDownKeyCodes.count == 0) {
         return;  // teardown owns that path, and it already releases every held key
     }
     uint64_t nowMs = LiGetMillis();
@@ -1018,6 +987,9 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         if (HIDIsModifierKeyCode(physical)) {
             continue;
         }
+        if (!HIDWireCodeIsKeyStateDetectable([self.keyboardForwardedKeyDownKeyCodes[physicalKeyCode] shortValue])) {
+            continue;
+        }
         if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physical)) {
             continue;  // physically down: this press is held, not orphaned
         }
@@ -1026,7 +998,8 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     if (orphaned.count == 0) {
         return;
     }
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!HIDValidateInputContext(inputCtx, "healUnpairedForwardedKeyDowns")) {
         return;
     }
@@ -1040,19 +1013,19 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:physicalKeyCode];
         [self.keyboardForwardedKeyDownAtMs removeObjectForKey:physicalKeyCode];
         short code = wireCode.shortValue;
+        if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:wireCode]) {
+            continue;
+        }
         Log(LOG_D, @"[inputdiag] keyboard-wire healed kVK=%hu code=0x%hx age=%llums",
             (unsigned short)physicalKeyCode.unsignedShortValue, (unsigned short)code,
             (unsigned long long)ageMs);
-        HIDDispatchInput(self, inputCtx, ^{
+        HIDDispatchInput(self, inputLease, ^{
             LiSendKeyboardEventCtx(inputCtx, code, KEY_ACTION_UP, 0);
         });
     }
 }
 
 - (void)startKeyboardStateHealTimerIfNeeded {
-    if ([[NSUserDefaults standardUserDefaults] boolForKey:HIDKeyStateHealDisabledDefault]) {
-        return;
-    }
     @synchronized (self) {
         if (self.keyboardStateHealTimer != nil) {
             return;
@@ -1062,7 +1035,7 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         if (timer == NULL) {
             return;
         }
-        dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC * 2),
+        dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_MSEC * HIDKeyStateHealIntervalMs),
                                   NSEC_PER_MSEC * HIDKeyStateHealIntervalMs, NSEC_PER_MSEC * 5);
         __weak typeof(self) weakSelf = self;
         dispatch_source_set_event_handler(timer, ^{
@@ -1109,7 +1082,7 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     }
 
     uint64_t nowMs = LiGetMillis();
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    uint64_t traceStartMs = 0;
 
     NSUInteger sequence = 0;
     BOOL shouldLog = NO;
@@ -1120,10 +1093,10 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
             sequence = self.inputDiagnosticsDetailedLogSequence;
             shouldLog = YES;
         }
+        traceStartMs = self.activeScrollTraceStartedMs;
     }
 
     if (shouldLog) {
-        uint64_t traceStartMs = LiGetScrollTraceStartMsCtx(inputCtx);
         uint64_t traceAgeMs = traceStartMs != 0 && nowMs >= traceStartMs ? nowMs - traceStartMs : 0;
         Log(LOG_D, @"[inputdiag] #%lu scroll trace=%llu ageMs=%llu mode=%@ raw=(%.3f,%.3f) rawWheel=(%ld,%ld) normalized=(%.3f,%.3f) dispatched=(%d,%d) continuous=%d precise=%d line=(%ld,%ld) point=(%ld,%ld) fixedRaw=(%ld,%ld) phase=%lu momentum=%lu ctx=%p",
             (unsigned long)sequence,
@@ -1156,7 +1129,9 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     self = [super init];
     if (self) {
         self.host = host;
+        self.inputContextLock = [[NSObject alloc] init];
         self.inputQueue = dispatch_queue_create("com.moonlight.input", DISPATCH_QUEUE_SERIAL);
+        dispatch_queue_set_specific(self.inputQueue, HIDInputQueueSpecificKey, (__bridge void *)self, NULL);
         self.freeMouseVirtualCursorLock = [[NSObject alloc] init];
         self.mouseDeltaAccumulator = [[HIDMouseDeltaAccumulator alloc] init];
         self.freeMouseVirtualCursorGainX = 1.0;
@@ -1168,11 +1143,12 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         // bug this table exists to prevent, just quieter.
         self.keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
         self.keyboardForwardedKeyDownAtMs = [NSMutableDictionary dictionary];
+        self.keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
+        self.keyboardQuirkFilter = [[HIDKeyboardQuirkFilter alloc] init];
+        self.keyboardCapsLockState = @(([NSEvent modifierFlags] & NSEventModifierFlagCapsLock) != 0);
         [self resetInputDiagnostics];
 
-        // SIMPLIFIED: Print the active keyboard mapping matrix once at init.
-        // In the new "Streaming Standard" mode, the mapping is fixed (Cmd->Win, etc.)
-        // and does not depend on any compatibility flags.
+        // Report the actual per-host mapping used by physical and synthetic keys.
         KMR_LogActiveMapping([self commandKeyPreferenceForCurrentHost]);
         Log(LOG_I, @"[kbmap] HIDSupport init: Mode = Streaming Standard (Cmd->%@, Ctrl->Ctrl, Option->Alt)",
             [self commandKeyPreferenceForCurrentHost] == KMR_CommandPreferenceControl ? @"Ctrl" : @"Win");
@@ -1193,11 +1169,12 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
             [self registerMouseCallbacks:mouse];
         }
         
+        __weak typeof(self) weakSelf = self;
         self.mouseConnectObserver = [[NSNotificationCenter defaultCenter] addObserverForName:GCMouseDidConnectNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
-            [self registerMouseCallbacks:note.object];
+            [weakSelf registerMouseCallbacks:note.object];
         }];
         self.mouseDisconnectObserver = [[NSNotificationCenter defaultCenter] addObserverForName:GCMouseDidDisconnectNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
-            [self unregisterMouseCallbacks:note.object];
+            [weakSelf unregisterMouseCallbacks:note.object];
         }];
         
         NSMutableDictionary *d = [NSMutableDictionary dictionary];
@@ -1214,6 +1191,9 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
 }
 
 - (void)dealloc {
+    [self stopKeyboardStateHealTimer];
+    if (_mouseConnectObserver != nil) [[NSNotificationCenter defaultCenter] removeObserver:_mouseConnectObserver];
+    if (_mouseDisconnectObserver != nil) [[NSNotificationCenter defaultCenter] removeObserver:_mouseDisconnectObserver];
     [self tearDownCoreHIDMouseDriver];
     // The display link is the same shape of object as the manager below: a CoreFoundation
     // reference that an assign property does not own, and a C callback whose context is
@@ -1271,38 +1251,16 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
             return;
         }
 
-        PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+        HIDInputLease inputLease = HIDAcquireInputContext(self);
+
+        PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
         if (!inputCtx) {
             return;
         }
-        HIDDispatchInput(self, inputCtx, ^{
+        HIDDispatchInput(self, inputLease, ^{
             LiSendMultiControllerEventCtx(inputCtx, playerIndex, 1, lastButtonFlags, lastLeftTrigger, lastRightTrigger, lastLeftStickX, lastLeftStickY, lastRightStickX, lastRightStickY);
         });
     }
-}
-
-- (KeyboardCompatibilityMode)keyboardCompatibilityMode {
-    return (KeyboardCompatibilityMode)[SettingsClass keyboardCompatibilityModeFor:self.host.uuid];
-}
-
-- (BOOL)usesKeyboardCommandToControlCompatibility {
-    // SIMPLIFIED: Always return NO. Legacy compatibility mode disabled.
-    return NO;
-}
-
-- (BOOL)usesKeyboardLeftControlWinSwapCompatibility {
-    // SIMPLIFIED: Always return NO. Legacy compatibility mode disabled.
-    return NO;
-}
-
-- (BOOL)usesKeyboardShortcutTranslationCompatibility {
-    // SIMPLIFIED: Always return NO. Legacy compatibility mode disabled.
-    return NO;
-}
-
-- (BOOL)usesKeyboardMoonlightClassicMapping {
-    // SIMPLIFIED: Always return NO. Legacy compatibility mode disabled.
-    return NO;
 }
 
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event {
@@ -1337,26 +1295,6 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     } else {
         self.keyboardPhysicalModifierSourceMask &= ~mask;
     }
-}
-
-- (BOOL)shouldApplyKeyboardShortcutTranslationForEvent:(NSEvent *)event {
-    if (![self usesKeyboardShortcutTranslationCompatibility] || event == nil) {
-        return NO;
-    }
-
-    if ((event.modifierFlags & NSEventModifierFlagCommand) == 0) {
-        return NO;
-    }
-
-    if (event.type != NSEventTypeKeyDown && event.type != NSEventTypeKeyUp) {
-        return NO;
-    }
-
-    if (HIDIsModifierKeyCode(event.keyCode)) {
-        return NO;
-    }
-
-    return YES;
 }
 
 - (NSUInteger)desiredRemoteKeyboardModifierMaskForEvent:(NSEvent *)event {
@@ -1405,7 +1343,8 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     }
 
     char modifiers = HIDRemoteModifierFlagsToGenericFlags(desired);
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!inputCtx) {
         self.keyboardRemoteModifierMask = desired;
         return;
@@ -1423,7 +1362,7 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     };
 
     self.keyboardRemoteModifierMask = desired;
-    HIDDispatchInput(self, inputCtx, ^{
+    HIDDispatchInput(self, inputLease, ^{
         for (NSUInteger i = 0; i < sizeof(remoteOrder) / sizeof(remoteOrder[0]); i++) {
             HIDKeyboardRemoteModifierMask mask = remoteOrder[i];
             if ((changed & mask) == 0) {
@@ -1439,6 +1378,28 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
             LiSendKeyboardEventCtx(inputCtx, keyCode, action, modifiers);
         }
     });
+}
+
+- (void)refreshKeyboardModifiersForCapture {
+    if (!self.shouldSendInputEvents) return;
+    // Caps Lock can toggle while another application owns focus, with no event
+    // delivered here. Refresh the baseline without replaying that local toggle.
+    self.keyboardCapsLockState = @(([NSEvent modifierFlags] & NSEventModifierFlagCapsLock) != 0);
+    // The responder does not see releases while another application owns focus.
+    // Reconcile once at capture, preserving left/right identity without reading
+    // keyboard-only fields from the mouse event that activated the window.
+    static const unsigned short keys[] = {
+        kVK_Shift, kVK_RightShift, kVK_Control, kVK_RightControl,
+        kVK_Option, kVK_RightOption, kVK_Command, kVK_RightCommand
+    };
+    NSUInteger physical = 0;
+    for (NSUInteger i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, keys[i])) {
+            physical |= HIDPhysicalModifierMaskForKeyCode(keys[i]);
+        }
+    }
+    self.keyboardPhysicalModifierSourceMask = physical;
+    [self syncKeyboardModifierStateForEvent:nil];
 }
 
 - (void)flagsChanged:(NSEvent *)event {
@@ -1463,6 +1424,25 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     // left behind the door nets to zero. -releaseAllModifierKeys zeroes the
     // physical and remote records together, so no path inherits a modifier
     // that was only ever recorded locally.
+    // Caps Lock is delivered as flagsChanged, never as an ordinary key pair.
+    // Remember the local toggle even while uncaptured; duplicate state reports
+    // must not toggle the host twice.
+    if (event.keyCode == kVK_CapsLock) {
+        NSNumber *state = @((event.modifierFlags & NSEventModifierFlagCapsLock) != 0);
+        BOOL changed = ![self.keyboardCapsLockState isEqual:state];
+        self.keyboardCapsLockState = state;
+        if (changed && self.shouldSendInputEvents) {
+            [self syncKeyboardModifierStateForEvent:event];
+            HIDInputLease lease = HIDAcquireInputContext(self);
+            char lockModifiers = [self translateKeyModifierWithEvent:event];
+            HIDDispatchInput(self, lease, ^{
+                LiSendKeyboardEventCtx(lease.context, (short)0x8014, KEY_ACTION_DOWN, lockModifiers);
+                LiSendKeyboardEventCtx(lease.context, (short)0x8014, KEY_ACTION_UP, lockModifiers);
+            });
+        }
+        return;
+    }
+
     [self updateKeyboardPhysicalModifierStateFromEvent:event];
 
     if (!self.shouldSendInputEvents) {
@@ -1476,129 +1456,107 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     if (event == nil || event.type != NSEventTypeKeyDown) {
         return;
     }
+    NSNumber *physical = @(event.keyCode);
+    // A local consumer may take an auto-repeat, but it cannot take ownership of
+    // the original press or suppress the release owed for that press.
+    if (self.keyboardForwardedKeyDownKeyCodes[physical] != nil ||
+        self.keyboardHeldUnconfirmedKeyDowns[physical] != nil) {
+        return;
+    }
     if (self.keyboardSuppressedKeyDownKeyCodes == nil) {
         self.keyboardSuppressedKeyDownKeyCodes = [NSMutableSet set];
     }
-    [self.keyboardSuppressedKeyDownKeyCodes addObject:@(event.keyCode)];
+    [self.keyboardSuppressedKeyDownKeyCodes addObject:physical];
 }
 
 - (void)keyDown:(NSEvent *)event {
-    if (event == nil || event.type != NSEventTypeKeyDown) {
+    if (event == nil || event.type != NSEventTypeKeyDown || !self.shouldSendInputEvents) {
         return;
     }
-
-    // Every keyboard edge the host is about to hear starts here, so this is where the
-    // record of it begins. With input diagnostics on, the log answers a phantom-key
-    // report from the player's own machine: a line here means the key really reached
-    // this app from macOS, and no line means whatever arrived did not come from here.
-    // LOG_D keeps the answer off the log until somebody asks for it.
-    Log(LOG_D, @"[inputdiag] keyboard-wire down kVK=%hu repeat=%d send=%d window=%@",
-        event.keyCode, event.isARepeat ? 1 : 0, self.shouldSendInputEvents ? 1 : 0,
-        event.window ? NSStringFromClass(event.window.class) : @"nil");
-
-    // Real keyboard events only. keyCode is undefined on mouse, tablet and
-    // gesture events, and some drivers leave garbage there that collides with
-    // kVK_ANSI_C - reading it is what caused "double-click sends C". The type
-    // gate below is the complete fix; no timing or glyph heuristics are needed
-    // (and every previous attempt at those dropped genuine gameplay input).
-    if (self.shouldSendInputEvents) {
-        // This press is going through, so any record of an earlier suppressed
-        // press of the same key is stale: keeping it would swallow this release
-        // and leave the key held down on the host forever.
-        [self.keyboardSuppressedKeyDownKeyCodes removeObject:@(event.keyCode)];
-        [self syncKeyboardModifierStateForEvent:event];
-        short translated = [self translateKeyCodeWithEvent:event];
-        if (translated == 0) {
-            // Zero is not a virtual key, it is the table saying it has no entry for
-            // this hardware: the ISO section key, the JIS keys, and any code a new
-            // keyboard adds. Sending zero hands the host a key that does not exist;
-            // ignoring the key is the honest answer, and ignoring it on both edges
-            // is what keeps the press and the release paired.
-            Log(LOG_D, @"[input] Ignoring unmapped key: keyCode=%hu", event.keyCode);
-            return;
-        }
-        short keyCode = 0x8000 | translated;
-        char modifiers = [self translateKeyModifierWithEvent:event];
-        // Any other key the layout types with, arriving near a denied C, is the player using a
-        // keyboard. Recorded before the hold decision so the C of a keystroke sequence is judged
-        // against the keys around it and not against nothing.
-        if (HIDWireCodeIsKeyStateDetectable(keyCode) && !HIDKeyCodeIsStrayClickCandidate(event.keyCode)) {
-            self.lastTypedOtherKeyDownAtMs = (unsigned long long)LiGetMillis();
-        }
-        PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-        if (!HIDValidateInputContext(inputCtx, "keyDown")) {
-            return;
-        }
-        // Hold the press if the HID key state says nobody is holding that key. A press whose key
-        // the HID layer reports held passes through here with no delay added at all, so no player
-        // pays for this; only the presses that cannot be a keystroke do. docs/memory-ownership.md S35.
-        if ([self holdKeyboardPressIfUnconfirmedForKeyCode:event.keyCode
-                                                  wireCode:keyCode
-                                                 modifiers:modifiers]) {
-            return;
-        }
-        // Record the press under the physical key that produced it, holding the
-        // exact encoding that is about to be dispatched, so capture can end
-        // safely with this key still held down. Keying by the dispatched code
-        // would make Return and Keypad Enter share one slot and let the release
-        // of one spend the record of the other.
-        self.keyboardForwardedKeyDownKeyCodes[@(event.keyCode)] = @(keyCode);
-        self.keyboardForwardedKeyDownAtMs[@(event.keyCode)] = @((unsigned long long)LiGetMillis());
-        HIDDispatchInput(self, inputCtx, ^{
-            // Printed as the unsigned code it is: this short is 0x8000 | translation, so
-            // %x of the short itself would report 0xffff8043 for a plain C and read like
-            // a corrupt value to whoever is looking at the log.
-            Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx",
-                (unsigned short)keyCode, modifiers);
-            LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
-        });
+    NSNumber *physical = @(event.keyCode);
+    NSNumber *savedCode = self.keyboardForwardedKeyDownKeyCodes[physical];
+    Log(LOG_D, @"[inputdiag] keyboard-wire down kVK=%hu repeat=%d", event.keyCode, event.isARepeat);
+    if (savedCode != nil && !event.isARepeat) {
+        return; // A second delivery of the same physical edge is not a new press.
     }
+    if (self.keyboardHeldUnconfirmedKeyDowns[physical] != nil) {
+        return; // Repeats cannot restart the confirmation deadline.
+    }
+    if (event.isARepeat && savedCode == nil) {
+        return; // Capture ended or a local consumer owns this press.
+    }
+    [self.keyboardSuppressedKeyDownKeyCodes removeObject:physical];
+    [self syncKeyboardModifierStateForEvent:event];
+    short translated = savedCode != nil ? savedCode.shortValue : [self translateKeyCodeWithEvent:event];
+    if (translated == 0) {
+        return;
+    }
+    short keyCode = (short)(0x8000 | translated);
+    char modifiers = [self translateKeyModifierWithEvent:event];
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+    if (!HIDValidateInputContext(inputCtx, "keyDown")) {
+        return;
+    }
+    if (savedCode == nil && [self holdKeyboardPressIfUnconfirmedForKeyCode:event.keyCode
+                                                                wireCode:keyCode
+                                                               modifiers:modifiers
+                                                               timestamp:event.timestamp]) {
+        return;
+    }
+    BOOL alreadyOwned = [self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(keyCode)];
+    self.keyboardForwardedKeyDownKeyCodes[physical] = @(keyCode);
+    if (savedCode == nil) {
+        self.keyboardForwardedKeyDownAtMs[physical] = @((unsigned long long)LiGetMillis());
+    }
+    if (alreadyOwned && !event.isARepeat) {
+        return; // Another physical key owns this VK (for example keypad Enter).
+    }
+    HIDDispatchInput(self, inputLease, ^{
+        Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx", (unsigned short)keyCode, modifiers);
+        LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
+    });
 }
 
 - (void)keyUp:(NSEvent *)event {
     if (event == nil || event.type != NSEventTypeKeyUp) {
         return;
     }
-
-    Log(LOG_D, @"[inputdiag] keyboard-wire up kVK=%hu send=%d",
-        event.keyCode, self.shouldSendInputEvents ? 1 : 0);
-    if (self.shouldSendInputEvents) {
-        NSNumber *physicalKeyCode = @(event.keyCode);
-        if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {
-            // The host never saw this key go down, so it must not see it come up
-            // either: an unmatched release reads as the key being let go by
-            // itself, which is what made local shortcuts look like gameplay keys
-            // releasing mid-action.
-            [self.keyboardSuppressedKeyDownKeyCodes removeObject:physicalKeyCode];
-            Log(LOG_D, @"[inputdiag] keyboard-wire up-swallowed kVK=%hu", event.keyCode);
-            return;
-        }
-
-        [self syncKeyboardModifierStateForEvent:event];
-        short translated = [self translateKeyCodeWithEvent:event];
-        if (translated == 0) {
-            // The press was ignored for the same reason, so the release must be
-            // ignored too rather than reaching the host on its own.
-            return;
-        }
-        short keyCode = 0x8000 | translated;
-        char modifiers = [self translateKeyModifierWithEvent:event];
-        // This release is going through, so the held-key record for this
-        // physical key is spent - and only this one. Two Mac keys can share a
-        // dispatched code, so spending by that code would forget a key the
-        // player is still holding.
-        [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(event.keyCode)];
-        [self.keyboardForwardedKeyDownAtMs removeObjectForKey:@(event.keyCode)];
-        PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-        if (!HIDValidateInputContext(inputCtx, "keyUp")) {
-            return;
-        }
-        HIDDispatchInput(self, inputCtx, ^{
-            Log(LOG_D, @"[inputdiag] keyboard-wire sent-up code=0x%hx mods=0x%hhx",
-                (unsigned short)keyCode, modifiers);
-            LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_UP, modifiers);
-        });
+    Log(LOG_D, @"[inputdiag] keyboard-wire up kVK=%hu send=%d", event.keyCode, self.shouldSendInputEvents);
+    NSNumber *physical = @(event.keyCode);
+    NSDictionary *pending = self.keyboardHeldUnconfirmedKeyDowns[physical];
+    NSNumber *savedCode = self.keyboardForwardedKeyDownKeyCodes[physical];
+    [self.keyboardHeldUnconfirmedKeyDowns removeObjectForKey:physical];
+    [self.keyboardSuppressedKeyDownKeyCodes removeObject:physical];
+    [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:physical];
+    [self.keyboardForwardedKeyDownAtMs removeObjectForKey:physical];
+    if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {
+        Log(LOG_D, @"[inputdiag] keyboard-wire up-swallowed kVK=%hu", event.keyCode);
+        // No matching forwarded press: no orphan UP reaches the host.
+        return;
     }
+    [self syncKeyboardModifierStateForEvent:event];
+    short keyCode = savedCode != nil ? savedCode.shortValue : [pending[@"wire"] shortValue];
+    if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(keyCode)]) {
+        return; // The remaining owner still holds this remote key.
+    }
+    char modifiers = [self translateKeyModifierWithEvent:event];
+    char pressModifiers = pending != nil ? [pending[@"mods"] charValue] : modifiers;
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+    if (!HIDValidateInputContext(inputCtx, "keyUp")) {
+        return;
+    }
+    HIDDispatchInput(self, inputLease, ^{
+        // A real release confirms a quick tap before the state poll could see it.
+        // Keep both edges in one queue item so teardown cannot split the pair.
+        if (pending != nil && savedCode == nil) {
+            Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx", (unsigned short)keyCode, pressModifiers);
+            LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, pressModifiers);
+        }
+        Log(LOG_D, @"[inputdiag] keyboard-wire sent-up code=0x%hx mods=0x%hhx", (unsigned short)keyCode, modifiers);
+        LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_UP, modifiers);
+    });
 }
 
 - (void)releaseAllModifierKeys {
@@ -1618,12 +1576,14 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     self.keyboardPhysicalModifierSourceMask = 0;
     self.keyboardRemoteModifierMask = 0;
 
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!inputCtx) {
         self.keyboardModifierReleaseInProgress = NO;
         return;
     }
-    HIDDispatchInput(self, inputCtx, ^{
+    HIDDispatchInput(self, inputLease, ^{
         LiSendKeyboardEventCtx(inputCtx, 0x5B, KEY_ACTION_UP, 0);
         LiSendKeyboardEventCtx(inputCtx, 0x5C, KEY_ACTION_UP, 0);
         LiSendKeyboardEventCtx(inputCtx, 0xA0, KEY_ACTION_UP, 0);
@@ -1673,32 +1633,21 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         return;
     }
     self.keyboardHeldKeyReleaseInProgress = YES;
-
-    // Take the records out first: a stray keyUp: racing on the main queue must
-    // not find a record it can pair with a release we are already sending.
-    // Every physical press gets its own release, even when two of them were
-    // dispatched as the same code; a repeated release is inert on the host, a
-    // missing one is a key that stays down for the rest of the session.
-    NSArray<NSNumber *> *held = self.keyboardForwardedKeyDownKeyCodes.allValues;
+    [self.keyboardHeldUnconfirmedKeyDowns removeAllObjects];
+    NSArray<NSNumber *> *held = [NSSet setWithArray:self.keyboardForwardedKeyDownKeyCodes.allValues ?: @[]].allObjects;
     [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];
     [self.keyboardForwardedKeyDownAtMs removeAllObjects];
-    if (held.count == 0) {
-        self.keyboardHeldKeyReleaseInProgress = NO;
-        return;
-    }
-
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-    if (!HIDValidateInputContext(inputCtx, "releaseAllHeldKeys")) {
-        self.keyboardHeldKeyReleaseInProgress = NO;
-        return;
-    }
-    HIDDispatchInput(self, inputCtx, ^{
-        for (NSNumber *keyCode in held) {
-            LiSendKeyboardEventCtx(inputCtx, keyCode.shortValue, KEY_ACTION_UP, 0);
+    if (held.count > 0) {
+        HIDInputLease inputLease = HIDAcquireInputContext(self);
+        PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+        if (HIDValidateInputContext(inputCtx, "releaseAllHeldKeys")) {
+            HIDDispatchInput(self, inputLease, ^{
+                for (NSNumber *keyCode in held) {
+                    LiSendKeyboardEventCtx(inputCtx, keyCode.shortValue, KEY_ACTION_UP, 0);
+                }
+            });
         }
-    });
-    Log(LOG_I, @"[input] Released %lu held key(s) as input forwarding turned off", (unsigned long)held.count);
-
+    }
     self.keyboardHeldKeyReleaseInProgress = NO;
 }
 
@@ -1718,7 +1667,9 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         return;
     }
     self.keyboardTeardownAlreadyCalled = YES;
+    self.shouldSendInputEvents = NO;
     [self stopKeyboardStateHealTimer];
+    [self.keyboardQuirkFilter stop];
     [self.keyboardHeldUnconfirmedKeyDowns removeAllObjects];
     [self.keyboardSuppressedKeyDownKeyCodes removeAllObjects];
     Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: start (physicalMask=0x%lx remoteMask=0x%lx send=%d)",
@@ -1727,8 +1678,8 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         (unsigned long)self.keyboardRemoteModifierMask,
         self.shouldSendInputEvents ? 1 : 0);
 
-    // 0) Release keys the host still believes are pressed, before input is
-    //    switched off, so an action key held at disconnect cannot stay stuck.
+    // Return owned keys while the context is attached, even though admission
+    // is already closed. Cleanup does not depend on ordinary event forwarding.
     [self releaseAllHeldKeys];
 
     // 1) Release remote modifier state FIRST, while inputContext may still
@@ -1736,26 +1687,10 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
     //    never ends a session with a stuck Win/Ctrl/Alt/Shift key.
     [self releaseAllModifierKeys];
 
-    // 2) Release pressed mouse buttons before we drop input events.
-    //    Pointer:releaseAllPressedMouseButtons is reentry-safe.
+    // Return shared button ownership after keyboard state.
     [self releaseAllPressedMouseButtons];
 
-    // 3) Disable further input event processing so any events still
-    //    in flight on the main queue become a no-op instead of trying
-    //    to talk to a dead Limelight context.
-    self.shouldSendInputEvents = NO;
-
     Log(LOG_I, @"[teardown] tearDownKeyboardStateForSessionEnd[%s]: done", reason ?: "");
-}
-
-- (void)beginDeferredShortcutTranslationCommandHoldForKeyCode:(unsigned short)keyCode {
-    // Legacy deferred-Command logic removed entirely. No-op.
-    (void)keyCode;
-}
-
-- (void)endDeferredShortcutTranslationCommandHoldForKeyCode:(unsigned short)keyCode {
-    // Legacy deferred-Command logic removed entirely. No-op.
-    (void)keyCode;
 }
 
 - (void)sendSyntheticRemoteModifierTapForFlags:(NSEventModifierFlags)modifierFlags {
@@ -1798,12 +1733,18 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
 
     char translatedModifiers = HIDRemoteModifierFlagsToGenericFlags(remoteModifierMask);
     short translatedKeyCode = (short)(0x8000 | [mappedKey shortValue]);
+    // A synthetic tap cannot release a key that a physical press still owns.
+    if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(translatedKeyCode)]) {
+        return;
+    }
 
     // Only the modifiers this rule is adding belong to it. A modifier the player holds
     // is already down on the host, and letting it go here would strand the tracker.
     NSUInteger owned = HIDSyntheticOwnedModifierMask(self, remoteModifierMask);
 
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!HIDValidateInputContext(inputCtx, "sendSyntheticRemoteShortcut")) {
         return;
     }
@@ -1819,7 +1760,7 @@ static BOOL HIDKeyCodeIsStrayClickCandidate(unsigned short physicalKeyCode) {
         HIDKeyboardRemoteModifierMaskRightMeta,
     };
 
-    HIDDispatchInput(self, inputCtx, ^{
+    HIDDispatchInput(self, inputLease, ^{
         for (NSUInteger i = 0; i < sizeof(remoteOrder) / sizeof(remoteOrder[0]); i++) {
             HIDKeyboardRemoteModifierMask mask = remoteOrder[i];
             if ((owned & mask) == 0) {
@@ -2083,7 +2024,9 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
         return;
     }
 
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!HIDValidateInputContext(inputCtx, "dispatchRelativeMouseDelta")) {
         [self resetRelativeMotionResidualForHIDQueueConsumer];
         return;
@@ -2098,6 +2041,9 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     BOOL suppressed = HIDShouldSuppressRelativeMouse(self);
     if (suppressed) {
         [self resetRelativeMotionResidualForHIDQueueConsumer];
+        [self recordRelativeInputDiagnosticsFrom:sourceTag rawDeltaX:deltaX rawDeltaY:deltaY
+                                      sentDeltaX:0 sentDeltaY:0 suppressed:YES];
+        return;
     }
     CGFloat sensitivity = HIDPointerSensitivityForHost(self.host);
     CGFloat residualX = self.relativeDeltaResidualX;
@@ -2116,7 +2062,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
         return;
     }
 
-    HIDDispatchInput(self, inputCtx, ^{
+    HIDDispatchInput(self, inputLease, ^{
         LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
     });
     if ([sourceTag isEqualToString:@"mouseMoved"]) {
@@ -2142,7 +2088,17 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
 - (void)coreHIDMouseDriver:(CoreHIDMouseDriver *)driver
              didReceiveDeltaX:(double)deltaX
                        deltaY:(double)deltaY {
-    (void)driver;
+    // CoreHID clients and timers run concurrently. AppKit owns the session's
+    // pointer state; re-check driver identity after the queue handoff.
+    if (![NSThread isMainThread]) {
+        uint64_t captureGeneration = self.inputCaptureGeneration;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (captureGeneration != self.inputCaptureGeneration) return;
+            [self coreHIDMouseDriver:driver didReceiveDeltaX:deltaX deltaY:deltaY];
+        });
+        return;
+    }
+    if (driver != self.coreHIDMouseDriver) return;
     if (!self.useCoreHIDMouse) {
         return;
     }
@@ -2200,7 +2156,13 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
 - (void)coreHIDMouseDriver:(CoreHIDMouseDriver *)driver
          didFailWithReason:(NSString *)reason
                 messageKey:(NSString *)messageKey {
-    (void)driver;
+    // CoreHID clients and timers run concurrently. AppKit owns the session's
+    // pointer state; re-check driver identity after the queue handoff.
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self coreHIDMouseDriver:driver didFailWithReason:reason messageKey:messageKey]; });
+        return;
+    }
+    if (driver != self.coreHIDMouseDriver) return;
     NSString *safeReason = reason.length > 0 ? reason : @"unknown";
     NSString *safeMessage = messageKey.length > 0 ? messageKey : @"CoreHID Mouse input failed.";
     NSInteger configuredStrategy = [SettingsClass mouseDriverFor:self.host.uuid];
@@ -2265,6 +2227,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
 }
 
 void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef value) {
+    if (context == NULL || result != kIOReturnSuccess || value == NULL) return;
     IOHIDElementRef elem = IOHIDValueGetElement(value);
     uint32_t usagePage = IOHIDElementGetUsagePage(elem);
     uint32_t usage = IOHIDElementGetUsage(elem);
@@ -2272,7 +2235,8 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
     
     HIDSupport *self = (__bridge HIDSupport *)context;
     
-    IOHIDDeviceRef device = (IOHIDDeviceRef)sender;
+    IOHIDDeviceRef device = IOHIDElementGetDevice(elem);
+    if (device == NULL) return;
 
     // KingKong claims the Microsoft vendor id, so the vendor-specific check
     // has to win over the generic Xbox layout check regardless of how either
@@ -2530,6 +2494,8 @@ void myHIDReportCallback (
                           uint32_t                reportID,
                           uint8_t *               report,
                           CFIndex                 reportLength) {
+    if (context == NULL || sender == NULL || result != kIOReturnSuccess ||
+        type != kIOHIDReportTypeInput || report == NULL || reportLength < 1) return;
     HIDSupport *self = (__bridge HIDSupport *)context;
     
     IOHIDDeviceRef device = (IOHIDDeviceRef)sender;
@@ -2538,10 +2504,12 @@ void myHIDReportCallback (
     };
     
     if (isPS4(device)) {
-        PS4StatePacket_t *state = (PS4StatePacket_t *)report;
+        PS4StatePacket_t snapshot;
+        PS4StatePacket_t *state = &snapshot;
+        size_t offset;
         switch (report[0]) {
             case k_EPS4ReportIdUsbState:
-                state = (PS4StatePacket_t *)(report + 1);
+                offset = 1;
                 break;
             case k_EPS4ReportIdBluetoothState1:
             case k_EPS4ReportIdBluetoothState2:
@@ -2553,16 +2521,17 @@ void myHIDReportCallback (
             case k_EPS4ReportIdBluetoothState8:
             case k_EPS4ReportIdBluetoothState9:
                 // Bluetooth state packets have two additional bytes at the beginning, the first notes if HID is present.
-                if (report[1] & 0x80) {
-                    state = (PS4StatePacket_t *)(report + 3);
-                }
+                if (reportLength < 2 || !(report[1] & 0x80)) return;
+                offset = 3;
                 break;
             default:
-                NSLog(@"Unknown PS4 packet: 0x%hhu", report[0]);
-                break;
+                return;
         }
                 
         
+        if (!HIDCopyReportPayload(state, sizeof(*state),
+                                  offsetof(PS4StatePacket_t, ucTriggerRight) + 1,
+                                  report, reportLength, offset)) return;
         UInt8 abxy = state->rgucButtonsHatAndCounter[0] >> 4;
         [self updateButtonFlags:X_FLAG state:(abxy & 0x01) != 0];
         [self updateButtonFlags:A_FLAG state:(abxy & 0x02) != 0];
@@ -2607,21 +2576,25 @@ void myHIDReportCallback (
             }
         }
     } else if (isPS5(device)) {
-        PS5StatePacket_t *state = (PS5StatePacket_t *)report;
+        PS5StatePacket_t snapshot;
+        PS5StatePacket_t *state = &snapshot;
+        size_t offset;
         switch (report[0]) {
             case k_EPS5ReportIdState:
-                state = (PS5StatePacket_t *)(report + 1);
+                offset = 1;
                 self.isPS5Bluetooth = reportLength == 10;
                 break;
             case k_EPS5ReportIdBluetoothState:
-                state = (PS5StatePacket_t *)(report + 2);
+                offset = 2;
                 self.isPS5Bluetooth = YES;
                 break;
             default:
-                NSLog(@"Unknown PS5 packet: 0x%hhu", report[0]);
-                break;
+                return;
         }
         
+        if (!HIDCopyReportPayload(state, sizeof(*state),
+                                  offsetof(PS5StatePacket_t, rgucButtonsAndHat) + 3,
+                                  report, reportLength, offset)) return;
         UInt8 abxy = state->rgucButtonsAndHat[0] >> 4;
         [self updateButtonFlags:X_FLAG state:(abxy & 0x01) != 0];
         [self updateButtonFlags:A_FLAG state:(abxy & 0x02) != 0];
@@ -2673,7 +2646,11 @@ void myHIDReportCallback (
                 dispatch_semaphore_signal(self.hidReadSemaphore);
             }
             if (report[0] == k_eSwitchInputReportIDs_SubcommandReply) {
-                SwitchSubcommandInputPacket_t *reply = (SwitchSubcommandInputPacket_t *)&report[1];
+                SwitchSubcommandInputPacket_t snapshot;
+                SwitchSubcommandInputPacket_t *reply = &snapshot;
+                if (!HIDCopyReportPayload(reply, sizeof(*reply),
+                                          offsetof(SwitchSubcommandInputPacket_t, ucSubcommandID) + 1,
+                                          report, reportLength, 1)) return;
                 if (reply->ucSubcommandID == k_eSwitchSubcommandIDs_EnableVibration && (reply->ucSubcommandAck & 0x80)) {
                     self.vibrationEnableResponded = YES;
                     self.waitingForVibrationEnable = NO;
@@ -2682,7 +2659,10 @@ void myHIDReportCallback (
             }
         } else {
             if (report[0] == k_eSwitchInputReportIDs_SimpleControllerState) {
-                SwitchSimpleStatePacket_t *packet = (SwitchSimpleStatePacket_t *)&report[1];
+                SwitchSimpleStatePacket_t snapshot;
+                SwitchSimpleStatePacket_t *packet = &snapshot;
+                if (!HIDCopyReportPayload(packet, sizeof(*packet), sizeof(*packet),
+                                          report, reportLength, 1)) return;
                 
                 SInt16 axis;
                 
@@ -2733,7 +2713,10 @@ void myHIDReportCallback (
                     }
                 }
             } else if (report[0] == k_eSwitchInputReportIDs_FullControllerState) {
-                SwitchStatePacket_t *packet = (SwitchStatePacket_t *)&report[1];
+                SwitchStatePacket_t snapshot;
+                SwitchStatePacket_t *packet = &snapshot;
+                if (!HIDCopyReportPayload(packet, sizeof(*packet), sizeof(packet->controllerState),
+                                          report, reportLength, 1)) return;
                 
                 SInt16 axis;
                 
@@ -2807,6 +2790,7 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
                                 IOHIDDeviceRef          device) {
     HIDSupport *self = (__bridge HIDSupport *)context;
 
+    [self releaseMouseButtonsForSource:@"hid-controller"];
     if (self.controllerDriver == 0) {
         self.controller.lastButtonFlags = 0;
         self.controller.lastLeftTrigger = 0;
@@ -2842,6 +2826,9 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         self.controller.menuGesture = gesture;
         if (toggled) {
             self.controller.isMouseMode = !self.controller.isMouseMode;
+            if (!self.controller.isMouseMode) {
+                [self releaseMouseButtonsForSource:@"hid-controller"];
+            }
 
             // Notify UI
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -2856,41 +2843,12 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         }
     }
 
-    // Mouse Click Logic
+    // Physical mice and controller emulation share the remote ownership ledger.
     if (self.controller.isMouseMode) {
-        if (flag == A_FLAG) {
-            // Left Click
-            if (set) {
-                 PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-                 if (!inputCtx) {
-                     return;
-                 }
-                HIDDispatchInput(self, inputCtx, ^{ LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_PRESS, BUTTON_LEFT); });
-            } else {
-                 PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-                 if (!inputCtx) {
-                     return;
-                 }
-                 HIDDispatchInput(self, inputCtx, ^{ LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_RELEASE, BUTTON_LEFT); });
-            }
-            return; // Don't set flag
-        }
-        if (flag == B_FLAG) {
-            // Right Click
-            if (set) {
-                 PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-                 if (!inputCtx) {
-                     return;
-                 }
-                 HIDDispatchInput(self, inputCtx, ^{ LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_PRESS, BUTTON_RIGHT); });
-            } else {
-                 PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-                 if (!inputCtx) {
-                     return;
-                 }
-                 HIDDispatchInput(self, inputCtx, ^{ LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_RELEASE, BUTTON_RIGHT); });
-            }
-            return; // Don't set flag
+        if (flag == A_FLAG || flag == B_FLAG) {
+            [self sendMouseButton:flag == A_FLAG ? BUTTON_LEFT : BUTTON_RIGHT
+                         pressed:set source:@"hid-controller"];
+            return;
         }
     }
 
@@ -2964,6 +2922,7 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 }
 
 - (void)tearDownHidManagerOnMainThread {
+    [self releaseMouseButtonsForSource:@"hid-controller"];
     [self tearDownCoreHIDMouseDriver];
 
     [[NSNotificationCenter defaultCenter] removeObserver:self.mouseConnectObserver];

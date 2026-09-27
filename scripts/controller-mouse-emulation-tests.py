@@ -325,7 +325,9 @@ def stick_timer_facts(text):
     the probe below is built from that answer rather than from a separate guess.
     """
     timer = method_body(text, "-(void) mouseTimerCallback:(NSTimer*)timer {")
-    send = timer.find("LiSendMouseMoveEventCtx")
+    # macOS sends already-quantized deltas through HIDSupport's lease queue;
+    # iOS keeps the existing direct transport. Inspect the macOS operation.
+    send = timer.find("sendRelativeMouseMoveDeltaX:")
     accumulate = timer.find("_accumulatedMouseX +=")
     gate = re.search(r"_shouldSendInputEvents", timer)
     return {
@@ -348,18 +350,22 @@ def click_path_facts(controller, uncapture):
     point returns a button the host was told about while it still can.
     """
     gate = re.search(r"BOOL pointerForwarded = self->_shouldSendInputEvents;", controller)
-    sends = [m.start() for m in re.finditer(r"LiSendMouseButtonEventCtx\(inputCtx, current", controller)]
+    sends = [m.start() for m in re.finditer(
+        r"\[self sendMouseButton:BUTTON_(?:LEFT|RIGHT) pressed:current[AB] forController:limeController\]", controller)]
+    sender = method_body(controller, "-(void) sendMouseButton:(int)button pressed:(BOOL)pressed forController:(Controller *)controller")
     edges = len(re.findall(r"if \(current[AB] != last[AB] && pointerForwarded\) \{", controller))
+    uncapture = method_body(uncapture, "- (void)uncaptureMouseWithCode:")
+    cleanup = method_body(controller, "-(void) releaseRemoteMouseButtonsForUncapture")
     release = uncapture.find("releaseRemoteMouseButtonsForUncapture")
     switch = uncapture.find("self.controllerSupport.shouldSendInputEvents = NO;")
     return {
-        "CLICKS_ARE_GATED": bool(gate) and len(sends) == 2 and
+        "CLICKS_ARE_GATED": bool(gate) and len(sends) == 2 and "!_shouldSendInputEvents" in sender and
                             all(gate.start() < p for p in sends),
         "CLICK_GATE_COVERS_THE_EDGE": edges == 2,
-        # Finding the call is not enough: after the flag goes down, the release
-        # it performs can no longer reach the host it is trying to please.
+        # Close admission first. Cleanup sends owned releases independently of
+        # that gate, while the context is still attached.
         "HANDBACK_RETURNS_PRESSED_BUTTONS": release >= 0 and switch >= 0 and
-                                            release < switch,
+                                            switch < release and "_shouldSendInputEvents" not in cleanup,
     }
 
 
@@ -406,12 +412,10 @@ def source_checks():
     # file-wide search would pass while the stick path truncated again.
     marker = "// Mouse Emulation Movement"
     if marker in pointer:
-        block = pointer[pointer.index(marker):]
-        # The block ends where the function does. The early return inside it is
-        # indented deeper, so matching the function-level one is what keeps the
-        # window from closing before the code under check begins.
-        end = block.find("\n    return kCVReturnSuccess;")
-        block = block if end < 0 else block[:end]
+        # Match balanced braces, not indentation: the consumer also owns the
+        # capture lock, and a return inside that lock is still this function.
+        block = method_body(pointer[pointer.index(marker):],
+                            "if (me.controller.isMouseMode && me.shouldSendInputEvents)")
         if "HIDDrainRelativeDelta" not in block:
             problems.append("the stick path answers each frame on its own instead of "
                             "draining the travel it cannot ship")
@@ -462,7 +466,7 @@ def source_checks():
     # that stays registered when the pointer is handed back to the Mac and is
     # only torn down with the session. Handing the pointer back also stops the
     # one thing that could still lift a button on the host, so the uncapture has
-    # to do that itself, and do it before the flag goes down.
+    # to do that itself after closing the admission gate.
     clicks = click_path_facts(controller, open(UNCAPTURE_SOURCE, encoding="utf-8").read())
     if not clicks["CLICKS_ARE_GATED"]:
         problems.append("the mouse-mode click path moves the host cursor without "

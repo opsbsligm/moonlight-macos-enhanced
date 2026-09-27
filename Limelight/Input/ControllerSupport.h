@@ -10,6 +10,7 @@
 #import "StreamConfiguration.h"
 
 @class OnScreenControls;
+@class HIDSupport;
 
 @protocol InputPresenceDelegate <NSObject>
 
@@ -29,6 +30,10 @@
 @property(nonatomic) BOOL shouldSendInputEvents;
 @property(nonatomic) BOOL gamepadMouseModeEnabled;
 @property(nonatomic, assign) void *inputContext;
+#if !TARGET_OS_IPHONE
+/// Shares physical and controller mouse-button ownership for this stream.
+@property(nonatomic, weak) HIDSupport *mouseButtonSupport;
+#endif
 
 - (id)initWithConfig:(StreamConfiguration *)streamConfig
     presenceDelegate:(id<InputPresenceDelegate>)delegate;

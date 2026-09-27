@@ -509,8 +509,8 @@ int main(void) {
 CONSUME_SIGNATURE = "- (BOOL)consumeKeyDownEvent:(NSEvent *)event"
 
 # Each shape is a way this chain could plausibly be written, that leaves the file
-# compiling and the ordinary unbound key behaving, and breaks only across the two
-# events. Anchors name the file they belong to so a move inside that file fails loudly.
+# compiling and breaks pairing across the two events. The release path now requires
+# positive ownership; merely removing a suppression marker is no longer a defect. Anchors name the file they belong to so a move inside that file fails loudly.
 KNOWNS_BAD = [
     ("subset-match", "capture",
      "if (event.keyCode == trigger.keyCode && relevantModifiers == trigger.modifierFlags) {",
@@ -524,15 +524,14 @@ KNOWNS_BAD = [
      "if (NO) {",
      "a shortcut the guard turned down still takes the key, which is the bare binding "
      "that deletes a movement key from the host"),
-    ("consume-without-debt", "consume",
-     "[self.hidSupport noteKeyboardKeyDownSuppressedForEvent:event];",
-     "/* the client took the key, and nothing records that it did */",
-     "a consumed press records no debt, so its release is forwarded as an orphan"),
-    ("stale-record", "hid",
-     "[self.keyboardSuppressedKeyDownKeyCodes removeObject:@(event.keyCode)];",
-     "/* the record from an earlier press of this key is kept */",
-     "a press that reaches the host leaves an old suppression record behind, and the "
-     "release of that press is swallowed with it"),
+    ("orphan-release", "hid",
+     "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {",
+     "if (!self.shouldSendInputEvents) {",
+     "a release is forwarded without ownership of any press"),
+    ("lost-ownership", "hid",
+     "self.keyboardForwardedKeyDownKeyCodes[physical] = @(keyCode);",
+     "/* forwarded press lost its ownership record */",
+     "a forwarded press is not recorded, so its real release is mistaken for an orphan"),
 ]
 
 def plant(text, name, label):

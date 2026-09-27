@@ -36,7 +36,7 @@ struct LiquidGlassSettingsView: View {
   // that what the page shows is what its own rules say. Keeping it outside also
   // stops a settings model being rebuilt, with its Video Toolbox probe and its
   // preference reads, every time SwiftUI recreates the view value.
-  @ObservedObject var settingsModel: SettingsModel
+  let settingsModel: SettingsModel
   @ObservedObject var languageManager = LanguageManager.shared
 
   @AppStorage("selected-settings-pane") private var selectedPane: Pane = .stream
@@ -109,26 +109,28 @@ struct LiquidGlassSettingsView: View {
         }
         .environmentObject(settingsModel)
       }
-      .padding(.horizontal, 20)
-      .padding(.top, 8)
+      .frame(maxWidth: 920)
+      .padding(.horizontal, 24)
+      .padding(.top, 20)
       .padding(.bottom, 20)
-      .frame(maxWidth: .infinity, alignment: .leading)
+      .frame(maxWidth: .infinity)
     }
     .scrollContentBackground(.hidden)
     .safeAreaInset(edge: .top, spacing: 0) {
-      VStack(spacing: 8) {
+      SettingsNavigationLayout {
         if onClose != nil {
-          headerBar
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
+          headerBar.frame(width: 76, alignment: .leading)
+        } else {
+          Color.clear.frame(width: 0, height: 0)
         }
-        // TabBar 自带独立 trackContainer 基底，无需依赖外部透明背景。
-        LiquidGlassTabBar(selection: selectionBinding, items: tabs)
-          .padding(.horizontal, 20)
-          .padding(.top, onClose == nil ? 14 : 0)
-          .padding(.bottom, 10)
+        LiquidGlassTabBar(selection: selectionBinding, items: tabs).fixedSize()
       }
+      .padding(.horizontal, 24)
+      .padding(.vertical, 14)
+      .background(opaqueBase)
+      .overlay(alignment: .bottom) { Divider() }
     }
+
     // Fully opaque base colour, not a material. This page covers the main
     // window content rather than a desktop, so anything translucent here
     // would show the host list underneath it. The glass pill samples this
@@ -171,7 +173,7 @@ struct LiquidGlassSettingsView: View {
             .font(.system(size: TabBarConfig.fontSize, weight: .medium))
         }
         .foregroundStyle(TabBarConfig.accentCoolBlue)
-        .frame(height: TabBarConfig.tabBarHeight)
+        .frame(height: 28)
         .padding(.horizontal, 10)
         .contentShape(Rectangle())
       }
@@ -179,11 +181,51 @@ struct LiquidGlassSettingsView: View {
       .keyboardShortcut(.cancelAction)
       .accessibilityLabel(languageManager.localize("Back"))
 
-      Spacer(minLength: 0)
     }
   }
 
   private var effectivePane: Pane {
     selectedPane == .legacy ? .app : selectedPane
+  }
+}
+
+// One native segmented control survives both wide and narrow layouts. Measure
+// the two small header views, never instantiate a second control just to test fit.
+private struct SettingsNavigationLayout: Layout {
+  struct Cache {
+    var back: CGSize
+    var navigation: CGSize
+  }
+
+  func makeCache(subviews: Subviews) -> Cache {
+    Cache(back: subviews[0].sizeThatFits(.unspecified),
+          navigation: subviews[1].sizeThatFits(.unspecified))
+  }
+
+  func updateCache(_ cache: inout Cache, subviews: Subviews) {
+    cache = makeCache(subviews: subviews)
+  }
+
+  private func fits(_ width: CGFloat, _ cache: Cache) -> Bool {
+    cache.navigation.width + (cache.back.width > 0 ? 2 * (cache.back.width + 16) : 0) <= width
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+    let width = proposal.width ?? cache.navigation.width + 2 * (cache.back.width + 16)
+    let height = fits(width, cache)
+      ? max(cache.back.height, cache.navigation.height)
+      : cache.back.height + 12 + cache.navigation.height
+    return CGSize(width: width, height: height)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                     subviews: Subviews, cache: inout Cache) {
+    let singleRow = fits(bounds.width, cache)
+    subviews[0].place(at: CGPoint(x: bounds.minX,
+                                 y: singleRow ? bounds.midY : bounds.minY + cache.back.height / 2),
+                      anchor: .leading, proposal: ProposedViewSize(cache.back))
+    subviews[1].place(at: CGPoint(x: bounds.midX,
+                                 y: singleRow ? bounds.midY : bounds.maxY - cache.navigation.height / 2),
+                      anchor: .center, proposal: ProposedViewSize(cache.navigation))
   }
 }

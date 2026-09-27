@@ -23,14 +23,14 @@
 @property(nonatomic) unsigned char lastRightTrigger;
 @property(nonatomic) short lastLeftStickX;
 @property(nonatomic) short lastLeftStickY;
-@property(nonatomic) short lastRightStickX;
-@property(nonatomic) short lastRightStickY;
+@property(atomic) short lastRightStickX;
+@property(atomic) short lastRightStickY;
 
 @property(nonatomic) HapticContext *_Nullable lowFreqMotor;
 @property(nonatomic) HapticContext *_Nullable highFreqMotor;
 
 // Gamepad Mouse Emulation State
-@property(nonatomic) BOOL isMouseMode;
+@property(atomic) BOOL isMouseMode;
 @property(nonatomic) int lastMouseModeButtonFlags;
 // How long the current Menu press has been held, in the shape MLGamepadMenuGestureToggles
 // reads. It replaces a stored NSDate: the gesture now needs "no press" to be a value the

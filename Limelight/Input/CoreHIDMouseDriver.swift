@@ -48,6 +48,8 @@ final class CoreHIDMouseDriver: NSObject {
   private var hasPostedFailure = false
   private var lastMovementEventTimestamp: TimeInterval = 0
   private var flushTask: Task<Void, Never>?
+  private var stateGeneration: UInt64 = 0
+  private var flushToken: UInt64 = 0
 
   var secondsSinceLastMovementEvent: TimeInterval {
     stateLock.lock()
@@ -88,14 +90,19 @@ final class CoreHIDMouseDriver: NSObject {
       permissionManager.requestAuthorizationIfNeeded(interactive: false)
     }
 
+    stateLock.lock()
+    let generation = stateGeneration
     managerTask = Task { [weak self] in
       guard let self else { return }
-      await self.monitorManager()
+      await self.monitorManager(generation: generation)
     }
+    stateLock.unlock()
   }
 
   func stop() {
     stateLock.lock()
+    stateGeneration &+= 1
+    flushToken &+= 1
     managerTask?.cancel()
     managerTask = nil
     flushTask?.cancel()
@@ -113,7 +120,7 @@ final class CoreHIDMouseDriver: NSObject {
   }
 
   @available(macOS 15.0, *)
-  private func monitorManager() async {
+  private func monitorManager(generation: UInt64) async {
     let manager = HIDDeviceManager()
     let criteria = HIDDeviceManager.DeviceMatchingCriteria(primaryUsage: .genericDesktop(.mouse))
 
@@ -146,7 +153,7 @@ final class CoreHIDMouseDriver: NSObject {
 
           clientTasks[deviceReference] = Task { [weak self] in
             guard let self else { return }
-            await self.monitorClient(client)
+            await self.monitorClient(client, generation: generation)
           }
 
         case .deviceRemoved(let deviceReference):
@@ -161,14 +168,15 @@ final class CoreHIDMouseDriver: NSObject {
       if !Task.isCancelled {
         postFailureIfNeeded(
           reason: Failure.managerErrorReason,
-          messageKey: Failure.runtimeErrorMessageKey
+          messageKey: Failure.runtimeErrorMessageKey,
+          generation: generation
         )
       }
     }
   }
 
   @available(macOS 15.0, *)
-  private func monitorClient(_ client: HIDDeviceClient) async {
+  private func monitorClient(_ client: HIDDeviceClient, generation: UInt64) async {
     let allElements = await client.elements
     let movementElements = allElements.filter { element in
       isMovementUsage(element.usage)
@@ -207,7 +215,7 @@ final class CoreHIDMouseDriver: NSObject {
           }
 
           if deltaX != 0 || deltaY != 0 {
-            reportDelta(deltaX: deltaX, deltaY: deltaY)
+            reportDelta(deltaX: deltaX, deltaY: deltaY, generation: generation)
           }
 
         case .deviceRemoved:
@@ -224,7 +232,8 @@ final class CoreHIDMouseDriver: NSObject {
       if !Task.isCancelled {
         postFailureIfNeeded(
           reason: Failure.clientErrorReason,
-          messageKey: Failure.runtimeErrorMessageKey
+          messageKey: Failure.runtimeErrorMessageKey,
+          generation: generation
         )
       }
     }
@@ -264,94 +273,88 @@ final class CoreHIDMouseDriver: NSObject {
     return false
   }
 
-  private func reportDelta(deltaX: Double, deltaY: Double) {
-    delegate?.coreHIDMouseDriver?(self, didObserveRawDeltaX: deltaX, deltaY: deltaY)
-
+  private func reportDelta(deltaX: Double, deltaY: Double, generation: UInt64) {
+    guard deltaX.isFinite, deltaY.isFinite else { return }
     let maxRate = Self.normalizedMaximumReportRate(maximumReportRate)
-    if maxRate == ReportRate.unlimited {
-      markMovementEventDelivered()
-      delegate?.coreHIDMouseDriver(self, didReceiveDeltaX: deltaX, deltaY: deltaY)
-      return
-    }
-
     var deltaToDispatch: (x: Double, y: Double)?
-    var flushDelaySeconds: TimeInterval?
 
     stateLock.lock()
+    guard generation == stateGeneration else {
+      stateLock.unlock()
+      return
+    }
     pendingDeltaX += deltaX
     pendingDeltaY += deltaY
-
     let now = ProcessInfo.processInfo.systemUptime
-    let minimumInterval = 1.0 / Double(maxRate)
-    let elapsed =
-      lastDispatchTimestamp == 0
-      ? TimeInterval.greatestFiniteMagnitude
-      : (now - lastDispatchTimestamp)
-
+    let minimumInterval = maxRate == ReportRate.unlimited ? 0 : 1.0 / Double(maxRate)
+    let elapsed = lastDispatchTimestamp == 0 ? TimeInterval.greatestFiniteMagnitude : now - lastDispatchTimestamp
     if elapsed >= minimumInterval {
       deltaToDispatch = (pendingDeltaX, pendingDeltaY)
       pendingDeltaX = 0
       pendingDeltaY = 0
       lastDispatchTimestamp = now
+      lastMovementEventTimestamp = now
+      flushToken &+= 1
       flushTask?.cancel()
       flushTask = nil
     } else if flushTask == nil {
-      flushDelaySeconds = max(0, minimumInterval - elapsed)
+      // Publish the task while holding the same lock that its callback takes.
+      // Otherwise a short timer can finish before flushTask is assigned and
+      // leave a completed task blocking every future flush.
+      schedulePendingFlushLocked(after: max(0, minimumInterval - elapsed), generation: generation)
     }
     stateLock.unlock()
 
-    if let deltaToDispatch {
-      markMovementEventDelivered()
+    delegate?.coreHIDMouseDriver?(self, didObserveRawDeltaX: deltaX, deltaY: deltaY)
+    if let deltaToDispatch, isCurrentGeneration(generation) {
       delegate?.coreHIDMouseDriver(self, didReceiveDeltaX: deltaToDispatch.x, deltaY: deltaToDispatch.y)
-    }
-
-    if let flushDelaySeconds {
-      schedulePendingFlush(after: flushDelaySeconds)
     }
   }
 
-  private func schedulePendingFlush(after delaySeconds: TimeInterval) {
-    let clampedDelay = max(0, delaySeconds)
-    let delayNanoseconds = UInt64(clampedDelay * 1_000_000_000.0)
-    let task = Task { [weak self] in
-      if delayNanoseconds > 0 {
-        try? await Task.sleep(nanoseconds: delayNanoseconds)
+  // Called with stateLock held.
+  private func schedulePendingFlushLocked(after delaySeconds: TimeInterval, generation: UInt64) {
+    flushToken &+= 1
+    let token = flushToken
+    let delayNanoseconds = UInt64(max(0, delaySeconds) * 1_000_000_000.0)
+    flushTask = Task { [weak self] in
+      do {
+        try await Task.sleep(nanoseconds: delayNanoseconds)
+      } catch {
+        return
       }
-      self?.flushPendingDeltaIfNeeded()
+      guard !Task.isCancelled else { return }
+      self?.flushPendingDeltaIfNeeded(generation: generation, token: token)
     }
+  }
 
+  private func flushPendingDeltaIfNeeded(generation: UInt64, token: UInt64) {
+    var deltaToDispatch: (x: Double, y: Double)?
     stateLock.lock()
-    if flushTask == nil {
-      flushTask = task
+    // A cancelled callback may already have awakened. It cannot clear a newer
+    // task or drain deltas from a later start() generation.
+    guard generation == stateGeneration, token == flushToken else {
       stateLock.unlock()
       return
     }
-    stateLock.unlock()
-    task.cancel()
-  }
-
-  private func flushPendingDeltaIfNeeded() {
-    var deltaToDispatch: (x: Double, y: Double)?
-    stateLock.lock()
     flushTask = nil
     if pendingDeltaX != 0 || pendingDeltaY != 0 {
       deltaToDispatch = (pendingDeltaX, pendingDeltaY)
       pendingDeltaX = 0
       pendingDeltaY = 0
       lastDispatchTimestamp = ProcessInfo.processInfo.systemUptime
+      lastMovementEventTimestamp = lastDispatchTimestamp
     }
     stateLock.unlock()
 
-    if let deltaToDispatch {
-      markMovementEventDelivered()
+    if let deltaToDispatch, isCurrentGeneration(generation) {
       delegate?.coreHIDMouseDriver(self, didReceiveDeltaX: deltaToDispatch.x, deltaY: deltaToDispatch.y)
     }
   }
 
-  private func markMovementEventDelivered() {
+  private func isCurrentGeneration(_ generation: UInt64) -> Bool {
     stateLock.lock()
-    lastMovementEventTimestamp = ProcessInfo.processInfo.systemUptime
-    stateLock.unlock()
+    defer { stateLock.unlock() }
+    return generation == stateGeneration
   }
 
   private static func normalizedMaximumReportRate(_ value: Int) -> Int {
@@ -362,17 +365,18 @@ final class CoreHIDMouseDriver: NSObject {
     return max(1, clamped)
   }
 
-  private func postFailureIfNeeded(reason: String, messageKey: String) {
+  private func postFailureIfNeeded(reason: String, messageKey: String, generation: UInt64? = nil) {
     stateLock.lock()
-    if hasPostedFailure {
+    if hasPostedFailure || (generation != nil && generation != stateGeneration) {
       stateLock.unlock()
       return
     }
     hasPostedFailure = true
+    let failureGeneration = stateGeneration
     stateLock.unlock()
 
     DispatchQueue.main.async { [weak self] in
-      guard let self else { return }
+      guard let self, self.isCurrentGeneration(failureGeneration) else { return }
       self.delegate?.coreHIDMouseDriver(self, didFailWithReason: reason, messageKey: messageKey)
     }
   }

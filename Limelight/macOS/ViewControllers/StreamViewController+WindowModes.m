@@ -605,15 +605,13 @@
     }
     [self.edgeMenuAutoCollapseTimer invalidate];
     self.edgeMenuAutoCollapseTimer = nil;
-    self.edgeMenuButtonTrackingArea = nil;
     [self.edgeMenuPanel orderOut:nil];
     [self.edgeMenuButton removeFromSuperview];
     [self.edgeMenuPanel close];
     self.edgeMenuButton = nil;
     self.edgeMenuPanel = nil;
     self.edgeMenuTemporaryReleaseActive = NO;
-    self.edgeMenuDragging = NO;
-    self.edgeMenuMenuVisible = NO;
+    [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
     self.edgeMenuPointerInside = NO;
 }
 

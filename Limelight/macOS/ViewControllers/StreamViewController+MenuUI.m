@@ -39,7 +39,8 @@
 
 - (void)updateControlCenterEntrypointHints {
     NSString *openHint = [self openControlCenterHintText];
-    NSString *releaseHint = (!self.isRemoteDesktopMode && self.isMouseCaptured) ? [self releaseMouseHintText] : @"";
+    NSString *releaseHint = self.userReleasedInput ? MLString(@"Click stream to resume input", nil)
+        : ((!self.isRemoteDesktopMode && self.isMouseCaptured) ? [self releaseMouseHintText] : @"");
     NSString *tooltip = releaseHint.length > 0
         ? [@[openHint, releaseHint] componentsJoinedByString:@"\n"]
         : openHint;
@@ -63,38 +64,14 @@
 }
 
 - (void)presentControlCenterFromShortcut {
-    // This entry hands the keyboard back a few lines below, the same shape the
-    // option-release and window-close paths use, but the hand-back sits inside the
-    // capture guard, and a key can already be on its way to the host while that
-    // guard is still closed: `shouldSendInputEvents` turns on as soon as the input
-    // context is bound, which happens before any mouse capture. So the state
-    // "forwarding, not captured" is reachable, and reaching it leaves this panel
-    // opening without a return. Whether that state can actually strand a held key
-    // is an open question rather than a cleared one. Probes against a bare command
-    // line AppKit harness disagreed with themselves across revisions -- with a sheet
-    // attached, one run delivered a synthetic key up to the parent window's focused
-    // view and a later run measuring the same shape did not, and the harness is
-    // never the active application, so no key window exists to reason about. Nothing
-    // here claims what a sheet does with a release. What it does is make the shape
-    // visible in the log, because a player report of a key that stayed down after
-    // opening this panel would need exactly these two numbers to be believed.
-    Log(LOG_D, @"[diag] control-center shortcut: captured=%d forwarding=%d",
-        self.isMouseCaptured ? 1 : 0,
-        self.hidSupport.shouldSendInputEvents ? 1 : 0);
-    if (!self.isMouseCaptured && self.hidSupport.shouldSendInputEvents) {
-        Log(LOG_W, @"[diag] control-center shortcut opens a panel while input forwarding "
-                   @"is on without a capture to return: no held-key release on this path");
-    }
-    if (self.isMouseCaptured) {
-        self.pendingOptionUncaptureToken += 1;
-        self.lastOptionUncaptureAtMs = [self nowMs];
-        [self.hidSupport releaseAllModifierKeys];
-        [self suppressConnectionWarningsForSeconds:2.0 reason:@"shortcut-uncapture"];
-        [self uncaptureMouseWithCode:@"MUC201" reason:@"control-center-shortcut"];
-    }
-
+    // Pointer ownership is acquired by the same menu transaction as a click.
+    // Releasing here used to lose the "captured before open" return intent.
+    NSUInteger token = self.edgeMenuLifecycleToken;
+    __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self presentStreamMenuFromView:[self preferredControlCenterSourceView]];
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || token != strongSelf.edgeMenuLifecycleToken || ![strongSelf edgeMenuCanInteract]) return;
+        [strongSelf presentStreamMenuFromView:[strongSelf preferredControlCenterSourceView]];
     });
 }
 
@@ -123,6 +100,12 @@
 
     item.keyEquivalent = [StreamShortcutProfile menuKeyEquivalentFor:shortcut];
     item.keyEquivalentModifierMask = [StreamShortcutProfile menuModifierMaskFor:shortcut];
+    // Named keys (arrows, F-keys, etc.) are handled by the stream responder.
+    // Still show the configured binding when AppKit has no key equivalent.
+    if (item.keyEquivalent.length == 0) {
+        NSString *hint = [[StreamShortcutProfile displayTokensFor:shortcut] componentsJoinedByString:@""];
+        if (hint.length > 0) item.title = [NSString stringWithFormat:@"%@ (%@)", item.title, hint];
+    }
 }
 
 - (void)updateConfiguredShortcutMenus {
@@ -330,36 +313,72 @@
     return MLFreeMouseExitEdgeRight;
 }
 
-- (MLFreeMouseExitEdge)edgeMenuDockEdgeFromStoredValue:(NSString *)value {
-    if ([value isEqualToString:@"left"]) {
-        return MLFreeMouseExitEdgeLeft;
-    }
-    if ([value isEqualToString:@"top"]) {
-        return MLFreeMouseExitEdgeTop;
-    }
-    if ([value isEqualToString:@"bottom"]) {
-        return MLFreeMouseExitEdgeBottom;
-    }
-    if ([value isEqualToString:@"right"]) {
-        return MLFreeMouseExitEdgeRight;
-    }
-    return [self defaultEdgeMenuDockEdge];
+
+
+
+
+- (BOOL)edgeMenuButtonExpanded {
+    return self.edgeMenuPhase == MLEdgeMenuPhaseExpanded ||
+           self.edgeMenuPhase == MLEdgeMenuPhaseMenu ||
+           self.edgeMenuPhase == MLEdgeMenuPhaseDragging;
 }
 
-- (NSString *)storedValueForEdgeMenuDockEdge:(MLFreeMouseExitEdge)edge {
-    switch (edge) {
-        case MLFreeMouseExitEdgeLeft:
-            return @"left";
-        case MLFreeMouseExitEdgeTop:
-            return @"top";
-        case MLFreeMouseExitEdgeBottom:
-            return @"bottom";
-        case MLFreeMouseExitEdgeRight:
-            return @"right";
-        case MLFreeMouseExitEdgeNone:
-        default:
-            return @"right";
+- (BOOL)edgeMenuDragging { return self.edgeMenuPhase == MLEdgeMenuPhaseDragging; }
+- (BOOL)edgeMenuMenuVisible { return self.edgeMenuPhase == MLEdgeMenuPhaseMenu; }
+
+- (BOOL)edgeMenuCanInteract {
+    NSWindow *window = self.view.window;
+    return window && window.isKeyWindow && window.isVisible && !window.isMiniaturized && [NSApp isActive] &&
+           !self.stopStreamInProgress && !self.reconnectInProgress &&
+           !self.spaceTransitionInProgress && !self.fullscreenTransitionInProgress &&
+           [self isWindowInCurrentSpace];
+}
+
+- (void)transitionEdgeMenuToPhase:(MLEdgeMenuPhase)phase {
+    // Hidden is also a lifecycle barrier. Repeated teardown must invalidate
+    // work queued while the controls were already hidden (e.g. a shortcut).
+    if (self.edgeMenuPhase == phase && phase != MLEdgeMenuPhaseHidden) return;
+    BOOL wasMenu = self.edgeMenuMenuVisible;
+    self.edgeMenuPhase = phase;
+    self.edgeMenuLifecycleToken += 1;
+    [self resetEdgeSensorSummonState];
+    [self cancelEdgeMenuAutoCollapse];
+    // Collapsed geometry is only a hint; it must not steal game clicks in a
+    // transparent 56pt panel or use native enter events to bypass the sensor.
+    self.edgeMenuPanel.ignoresMouseEvents = phase == MLEdgeMenuPhaseCollapsed || phase == MLEdgeMenuPhaseHidden;
+    if (phase == MLEdgeMenuPhaseHidden) {
+        self.edgeMenuTemporaryReleaseActive = NO;
+        self.edgeMenuPointerInside = NO;
+        self.edgeMenuButton.hidden = YES;
+        [self.edgeMenuPanel orderOut:nil];
+        if (wasMenu) [self.streamMenu cancelTracking];
     }
+}
+
+- (NSRect)edgeSensorActivationRectInBounds:(NSRect)bounds {
+    NSRect handle = [self expandedFrameForEdgeMenuButtonInBounds:bounds];
+    NSRect region = handle;
+    switch (self.edgeMenuDockEdge) {
+        case MLFreeMouseExitEdgeLeft: region.size.width = MLEdgeSensorBandWidth; break;
+        case MLFreeMouseExitEdgeRight:
+            region.origin.x = NSMaxX(bounds) - MLEdgeSensorBandWidth;
+            region.size.width = MLEdgeSensorBandWidth; break;
+        case MLFreeMouseExitEdgeTop:
+            region.origin.y = NSMaxY(bounds) - MLEdgeSensorBandWidth;
+            region.size.height = MLEdgeSensorBandWidth; break;
+        case MLFreeMouseExitEdgeBottom: region.size.height = MLEdgeSensorBandWidth; break;
+        default: return NSZeroRect;
+    }
+    return NSIntersectionRect(region, bounds);
+}
+
+- (void)handleEdgeMenuHover {
+    if (![self edgeMenuCanInteract] || !self.edgeMenuButtonExpanded) return;
+    [self updateEdgeMenuPointerInsideForPoint:[self currentMouseLocationInViewCoordinates]];
+    if (self.edgeMenuDragging || self.edgeMenuMenuVisible) return;
+    if (self.edgeMenuPointerInside) [self cancelEdgeMenuAutoCollapse];
+    else [self scheduleEdgeMenuAutoCollapse];
+    [self updateEdgeMenuButtonAppearance];
 }
 
 - (BOOL)edgeMenuDockEdgeUsesVerticalAxis {
@@ -367,7 +386,10 @@
 }
 
 - (CGFloat)resolvedEdgeMenuCoordinateInRect:(NSRect)rect {
-    CGFloat inset = MLEdgeMenuButtonInsetY;
+    // Keep the handle inside small views as well as large/portrait displays.
+    CGFloat axisLength = [self edgeMenuDockEdgeUsesVerticalAxis] ? rect.size.height : rect.size.width;
+    CGFloat handleLength = [self edgeMenuDockEdgeUsesVerticalAxis] ? MLEdgeMenuButtonHeight : MLEdgeMenuButtonWidth;
+    CGFloat inset = MIN(MLEdgeMenuButtonInsetY, MAX(0.0, (axisLength - handleLength) * 0.5));
     if ([self edgeMenuDockEdgeUsesVerticalAxis]) {
         CGFloat minValue = NSMinY(rect) + inset;
         CGFloat maxValue = MAX(minValue, NSMaxY(rect) - MLEdgeMenuButtonHeight - inset);
@@ -409,19 +431,16 @@
     }
 }
 
-- (void)persistFullscreenControlBallPlacement {
-    // Intentionally keep placement session-scoped only.
-}
+
 
 - (void)resetEdgeMenuPlacementForNewStreamSession {
+    [self resetEdgeSensorPointerState];
     self.edgeMenuDockEdge = [self defaultEdgeMenuDockEdge];
     self.edgeMenuButtonEdgeRatio = 0.5;
     self.globalInactivePointerInsideStreamView = NO;
-    self.edgeMenuButtonExpanded = NO;
+    [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
     self.edgeMenuPointerInside = NO;
     self.edgeMenuTemporaryReleaseActive = NO;
-    self.edgeMenuDragging = NO;
-    self.edgeMenuMenuVisible = NO;
     [self cancelEdgeMenuAutoCollapse];
     self.edgeMenuButton.hidden = YES;
     if (self.edgeMenuPanel.parentWindow) {
@@ -430,19 +449,17 @@
     [self.edgeMenuPanel orderOut:nil];
     [self updateEdgeMenuButtonAppearance];
     [self refreshMouseMovedAcceptanceState];
+    // Fullscreen may have completed before connectionStarted resets the dock.
+    // Reconcile visibility even when startup mode application is skipped.
+    [self requestStreamMenuEntrypointsVisibilityUpdate];
+    [self scheduleDeferredStreamMenuEntrypointsVisibilityRetries];
 }
 
 - (void)hideEdgeMenuForInactiveSpaceIfNeeded {
-    if (!self.edgeMenuPanel) {
-        return;
-    }
-
     self.globalInactivePointerInsideStreamView = NO;
     self.edgeMenuPointerInside = NO;
     self.edgeMenuTemporaryReleaseActive = NO;
-    self.edgeMenuDragging = NO;
-    self.edgeMenuMenuVisible = NO;
-    self.edgeMenuButtonExpanded = NO;
+    [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
     [self cancelEdgeMenuAutoCollapse];
     self.edgeMenuButton.hidden = YES;
     if (self.edgeMenuPanel.parentWindow) {
@@ -479,10 +496,8 @@
         return NSZeroRect;
     }
 
-    if ([self isWindowFullscreen] || [self isWindowBorderlessMode]) {
-        return self.view.window.frame;
-    }
-
+    // Drawing and hit testing must share the view bounds, including fullscreen
+    // content insets. Window frame, backing pixels and host resolution may differ.
     NSRect rectInWindow = [self.view convertRect:self.view.bounds toView:nil];
     return [self.view.window convertRectToScreen:rectInWindow];
 }
@@ -548,7 +563,7 @@
 }
 
 - (BOOL)isPointInsideEdgeMenuInteractionRect:(NSPoint)point {
-    if (!self.edgeMenuButton || self.edgeMenuButton.hidden) {
+    if (!self.edgeMenuButtonExpanded || !self.edgeMenuButton || self.edgeMenuButton.hidden) {
         return NO;
     }
 
@@ -571,6 +586,9 @@
 }
 
 - (BOOL)edgeMenuShouldBeVisible {
+    if (!self.view.window.isVisible || self.view.window.isMiniaturized || ![NSApp isActive] || ![self isWindowInCurrentSpace] ||
+        self.stopStreamInProgress || self.reconnectInProgress || self.fullscreenTransitionInProgress ||
+        self.spaceTransitionInProgress) return NO;
     if (![self isWindowFullscreen] && ![self isWindowBorderlessMode]) {
         return NO;
     }
@@ -587,15 +605,17 @@
     [self.edgeMenuButton updateTrackingAreas];
 }
 
-- (void)setEdgeMenuButtonExpanded:(BOOL)expanded animated:(BOOL)animated {
+- (void)setEdgeMenuButtonExpanded:(BOOL)expanded animated:(__unused BOOL)animated {
     if (!self.edgeMenuButton || !self.edgeMenuPanel) {
         return;
     }
 
-    self.edgeMenuButtonExpanded = expanded;
+    if (self.edgeMenuMenuVisible || self.edgeMenuDragging) return;
+    [self transitionEdgeMenuToPhase:expanded ? MLEdgeMenuPhaseExpanded : MLEdgeMenuPhaseCollapsed];
     [self cancelEdgeMenuAutoCollapse];
 
     if (![self edgeMenuShouldBeVisible]) {
+        [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
         self.edgeMenuButton.hidden = YES;
         return;
     }
@@ -617,34 +637,30 @@
         return;
     }
 
-    if (animated) {
-        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
-            context.duration = 0.22;
-            context.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-            [[self.edgeMenuPanel animator] setFrame:targetFrame display:YES];
-        } completionHandler:^{
-            if (self.edgeMenuPanel) {
-                [self.edgeMenuPanel setFrame:targetFrame display:YES];
-            }
-        }];
-    } else {
-        [self.edgeMenuPanel setFrame:targetFrame display:YES];
-    }
+    // Frame animation queues tracking events and completion writes for older
+    // states. Apply one final frame synchronously so hit testing and visibility
+    // always describe the same expanded/collapsed state.
+    if (!NSEqualRects(self.edgeMenuPanel.frame, targetFrame)) [self.edgeMenuPanel setFrame:targetFrame display:YES];
 }
 
 - (void)deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:(BOOL)shouldRecapture {
-    // The band starts from nothing every time the dock goes away: a summon that is
-    // folded up has to be paid for again with a fresh dwell or a fresh push.
+    // Closing requires leaving the activation region before a fresh dwell.
     [self resetEdgeSensorSummonState];
 
     BOOL wasTemporary = self.edgeMenuTemporaryReleaseActive;
+    if (self.edgeMenuMenuVisible) {
+        [self.streamMenu cancelTracking];
+        [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseExpanded];
+    }
+    NSPoint returnPoint = [self currentMouseLocationInViewCoordinates];
     self.edgeMenuTemporaryReleaseActive = NO;
     self.edgeMenuPointerInside = NO;
-    self.edgeMenuMenuVisible = NO;
 
     [self setEdgeMenuButtonExpanded:NO animated:YES];
 
-    if (wasTemporary && shouldRecapture && [self canCaptureMouseNow]) {
+    self.edgeSensorMustLeaveHoverRegion = YES;
+    if (wasTemporary && shouldRecapture && NSPointInRect(returnPoint, self.view.bounds) &&
+        ![self hasPressedMouseButtonsForCaptureTransition] && [self canCaptureMouseNow]) {
         if ([self.hidSupport shouldUseCoreHIDFreeMouseAbsoluteSyncForCurrentConfiguration] &&
             self.isRemoteDesktopMode &&
             self.view.window != nil) {
@@ -656,36 +672,43 @@
             [self prepareCoreHIDVirtualCursorForSystemPointerSyncIfNeeded];
             [self syncRemoteCursorToViewPoint:reseedPoint clampToBounds:YES];
         }
-        [self captureMouse];
+        [self captureMousePreservingEdgeSensorPoint:returnPoint];
     } else {
         [self refreshMouseMovedAcceptanceState];
     }
 }
 
 - (void)scheduleEdgeMenuAutoCollapse {
-    [self cancelEdgeMenuAutoCollapse];
-
+    if (self.edgeMenuAutoCollapseTimer.isValid || !self.edgeMenuButtonExpanded ||
+        self.edgeMenuDragging || self.edgeMenuMenuVisible) return;
+    NSUInteger token = self.edgeMenuLifecycleToken;
     __weak typeof(self) weakSelf = self;
-    self.edgeMenuAutoCollapseTimer = [NSTimer scheduledTimerWithTimeInterval:MLEdgeMenuAutoCollapseDelay
-                                                                     repeats:NO
-                                                                       block:^(__unused NSTimer *timer) {
+    self.edgeMenuAutoCollapseTimer = [NSTimer timerWithTimeInterval:MLEdgeMenuAutoCollapseDelay repeats:NO block:^(NSTimer *timer) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf || strongSelf.edgeMenuPointerInside || strongSelf.edgeMenuDragging || strongSelf.edgeMenuMenuVisible) {
+        if (!strongSelf || timer != strongSelf.edgeMenuAutoCollapseTimer || token != strongSelf.edgeMenuLifecycleToken) return;
+        strongSelf.edgeMenuAutoCollapseTimer = nil;
+        if (![strongSelf edgeMenuCanInteract]) {
+            [strongSelf transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
             return;
         }
-
+        [strongSelf updateEdgeMenuPointerInsideForPoint:[strongSelf currentMouseLocationInViewCoordinates]];
+        if (strongSelf.edgeMenuPointerInside || strongSelf.edgeMenuDragging || strongSelf.edgeMenuMenuVisible) return;
+        if ([strongSelf hasPressedMouseButtonsForCaptureTransition]) {
+            [strongSelf scheduleEdgeMenuAutoCollapse];
+            return;
+        }
         [strongSelf deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:strongSelf.edgeMenuTemporaryReleaseActive];
     }];
+    [[NSRunLoop mainRunLoop] addTimer:self.edgeMenuAutoCollapseTimer forMode:NSRunLoopCommonModes];
 }
 
 - (void)activateEdgeMenuDockForExitEdge:(MLFreeMouseExitEdge)exitEdge {
-    if (![self edgeMenuMatchesExitEdge:exitEdge] || ![self edgeMenuShouldBeVisible]) {
+    if (![self edgeMenuCanInteract] || ![self edgeMenuMatchesExitEdge:exitEdge] || ![self edgeMenuShouldBeVisible]) {
         return;
     }
 
     self.pendingFreeMouseReentryEdge = MLFreeMouseExitEdgeNone;
     self.pendingFreeMouseReentryAtMs = 0;
-    self.edgeMenuTemporaryReleaseActive = YES;
     [self setEdgeMenuButtonExpanded:YES animated:YES];
     [self refreshMouseMovedAcceptanceState];
     [self updateEdgeMenuPointerInsideForPoint:[self currentMouseLocationInViewCoordinates]];
@@ -693,19 +716,11 @@
 }
 
 - (BOOL)handleEdgeMenuTemporaryReleaseForEvent:(NSEvent *)event {
-    if (!self.edgeMenuTemporaryReleaseActive || self.edgeMenuDragging || self.edgeMenuMenuVisible) {
-        return NO;
-    }
-
-    NSPoint point = [self.hidSupport shouldUseCoreHIDFreeMouseAbsoluteSyncForCurrentConfiguration]
-        ? [self currentMouseLocationInViewCoordinates]
-        : [self viewPointForMouseEvent:event];
-    [self updateEdgeMenuPointerInsideForPoint:point];
-    if (self.edgeMenuPointerInside) {
-        return NO;
-    }
-
-    [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:YES];
+    if (!self.edgeMenuButtonExpanded) return NO;
+    if (self.edgeMenuDragging || self.edgeMenuMenuVisible) return YES;
+    [self handleEdgeMenuHover];
+    // Movement cannot race the grace timer and reclaim the pointer immediately.
+    // A deliberate stream click still resumes through the button paths.
     return YES;
 }
 
@@ -721,26 +736,29 @@
 }
 
 - (void)handleEdgeMenuButtonDragWithState:(NSGestureRecognizerState)state translation:(NSPoint)translation {
-    if (!self.edgeMenuButton || self.edgeMenuButton.hidden || !self.edgeMenuPanel) {
+    if (!self.edgeMenuButton || self.edgeMenuButton.hidden || !self.edgeMenuPanel || self.edgeMenuMenuVisible || ![self edgeMenuCanInteract]) {
+        return;
+    }
+
+    // A visible view may belong to a newer lifecycle after hide/show. Only
+    // an expanded handle can start a drag; later callbacks require that drag.
+    if (state == NSGestureRecognizerStateBegan) {
+        if (self.edgeMenuPhase != MLEdgeMenuPhaseExpanded) return;
+    } else if (!self.edgeMenuDragging) {
         return;
     }
 
     switch (state) {
         case NSGestureRecognizerStateBegan:
-            self.edgeMenuDragging = YES;
+            [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseDragging];
             self.edgeMenuPointerInside = YES;
             [self cancelEdgeMenuAutoCollapse];
             [self setEdgeMenuButtonExpanded:YES animated:NO];
             self.edgeMenuButtonPanStartOrigin = self.edgeMenuPanel.frame.origin;
-            self.edgeMenuButtonSuppressNextClick = NO;
             [self refreshMouseMovedAcceptanceState];
             [self updateEdgeMenuButtonAppearance];
             break;
         case NSGestureRecognizerStateChanged: {
-            if (fabs(translation.x) > 3.0 || fabs(translation.y) > 3.0) {
-                self.edgeMenuButtonSuppressNextClick = YES;
-            }
-
             NSRect anchorRect = [self edgeMenuAnchorRectInScreen];
             if (NSIsEmptyRect(anchorRect)) {
                 break;
@@ -760,11 +778,12 @@
             break;
         }
         case NSGestureRecognizerStateEnded:
-        case NSGestureRecognizerStateCancelled: {
-            self.edgeMenuDragging = NO;
+        case NSGestureRecognizerStateCancelled:
+        case NSGestureRecognizerStateFailed: {
+            [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseExpanded];
             NSRect anchorRect = [self edgeMenuAnchorRectInScreen];
             if (NSIsEmptyRect(anchorRect)) {
-                self.edgeMenuDragging = NO;
+                [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
                 break;
             }
 
@@ -791,20 +810,23 @@
             }
 
             if ([self edgeMenuDockEdgeUsesVerticalAxis]) {
-                CGFloat minY = NSMinY(anchorRect) + MLEdgeMenuButtonInsetY;
-                CGFloat maxY = MAX(minY, NSMaxY(anchorRect) - MLEdgeMenuButtonHeight - MLEdgeMenuButtonInsetY);
+                CGFloat inset = MIN(MLEdgeMenuButtonInsetY, MAX(0, (NSHeight(anchorRect) - MLEdgeMenuButtonHeight) * 0.5));
+                CGFloat minY = NSMinY(anchorRect) + inset;
+                CGFloat maxY = MAX(minY, NSMaxY(anchorRect) - MLEdgeMenuButtonHeight - inset);
                 CGFloat availableHeight = MAX(maxY - minY, 1.0);
                 self.edgeMenuButtonEdgeRatio = MIN(MAX((frame.origin.y - minY) / availableHeight, 0.0), 1.0);
             } else {
-                CGFloat minX = NSMinX(anchorRect) + MLEdgeMenuButtonInsetY;
-                CGFloat maxX = MAX(minX, NSMaxX(anchorRect) - MLEdgeMenuButtonWidth - MLEdgeMenuButtonInsetY);
+                CGFloat inset = MIN(MLEdgeMenuButtonInsetY, MAX(0, (NSWidth(anchorRect) - MLEdgeMenuButtonWidth) * 0.5));
+                CGFloat minX = NSMinX(anchorRect) + inset;
+                CGFloat maxX = MAX(minX, NSMaxX(anchorRect) - MLEdgeMenuButtonWidth - inset);
                 CGFloat availableWidth = MAX(maxX - minX, 1.0);
                 self.edgeMenuButtonEdgeRatio = MIN(MAX((frame.origin.x - minX) / availableWidth, 0.0), 1.0);
             }
-            [self persistFullscreenControlBallPlacement];
 
             [self updateEdgeMenuPointerInsideForPoint:[self currentMouseLocationInViewCoordinates]];
-            [self setEdgeMenuButtonExpanded:self.edgeMenuPointerInside animated:YES];
+            [self setEdgeMenuButtonExpanded:YES animated:YES];
+            [self updateEdgeMenuPointerInsideForPoint:[self currentMouseLocationInViewCoordinates]];
+            if (!self.edgeMenuPointerInside) [self scheduleEdgeMenuAutoCollapse];
             [self updateEdgeMenuButtonTrackingArea];
             [self refreshMouseMovedAcceptanceState];
             [self updateEdgeMenuButtonAppearance];
@@ -1077,29 +1099,9 @@
         }
         [strongSelf handleEdgeMenuButtonDragWithState:state translation:translation];
     };
-    self.edgeMenuButton.hoverHandler = ^(BOOL hovering) {
+    self.edgeMenuButton.hoverHandler = ^(__unused BOOL hovering) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf) {
-            return;
-        }
-        if (strongSelf.edgeMenuDragging) {
-            strongSelf.edgeMenuPointerInside = YES;
-            [strongSelf updateEdgeMenuButtonAppearance];
-            return;
-        }
-        strongSelf.edgeMenuPointerInside = hovering;
-        if (hovering) {
-            [strongSelf cancelEdgeMenuAutoCollapse];
-            if (strongSelf.isRemoteDesktopMode && strongSelf.isMouseCaptured) {
-                strongSelf.edgeMenuTemporaryReleaseActive = YES;
-                [strongSelf uncaptureMouseWithCode:@"MUC202" reason:@"edge-menu-hover-temporary-release"];
-            }
-            [strongSelf setEdgeMenuButtonExpanded:YES animated:!(strongSelf.isRemoteDesktopMode && strongSelf.isMouseCaptured)];
-        } else if (!strongSelf.edgeMenuDragging && !strongSelf.edgeMenuMenuVisible) {
-            [strongSelf scheduleEdgeMenuAutoCollapse];
-        }
-        [strongSelf refreshMouseMovedAcceptanceState];
-        [strongSelf updateEdgeMenuButtonAppearance];
+        [strongSelf handleEdgeMenuHover];
     };
     [panelContentView addSubview:self.edgeMenuButton];
 
@@ -1196,7 +1198,8 @@
         [self hideEdgeMenuForInactiveSpaceIfNeeded];
         return;
     }
-    if (self.fullscreenTransitionInProgress) {
+    if (self.fullscreenTransitionInProgress || self.spaceTransitionInProgress || self.stopStreamInProgress || self.reconnectInProgress) {
+        [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
         [self removeMenuTitlebarAccessoryFromWindowIfNeeded];
         self.edgeMenuButton.hidden = YES;
         [self.edgeMenuPanel orderOut:nil];
@@ -1218,13 +1221,14 @@
 
     [self attachEdgeMenuPanelToWindowIfNeeded];
     if ([self edgeMenuShouldBeVisible]) {
+        if (self.edgeMenuPhase == MLEdgeMenuPhaseHidden) [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseCollapsed];
         self.edgeMenuButton.hidden = NO;
         [self layoutStreamMenuEntrypointsIfNeeded];
         [self updateEdgeMenuButtonAppearance];
         [self bringStreamControlsToFront];
     } else {
         self.edgeMenuButton.hidden = YES;
-        self.edgeMenuButtonExpanded = NO;
+        [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
         self.edgeMenuTemporaryReleaseActive = NO;
         [self cancelEdgeMenuAutoCollapse];
         [self.edgeMenuPanel orderOut:nil];
@@ -1249,6 +1253,7 @@
 }
 
 - (void)presentStreamMenuFromView:(NSView *)sourceView event:(NSEvent *)event {
+    if (self.edgeMenuMenuVisible || self.edgeMenuDragging || ![self edgeMenuCanInteract]) return;
     [self rebuildStreamMenu];
     NSMenu *menu = self.streamMenu;
 
@@ -1273,27 +1278,36 @@
         }
     }
 
-    self.edgeMenuMenuVisible = YES;
+    BOOL wasCaptured = self.isMouseCaptured;
+    if (wasCaptured) [self uncaptureMouseWithCode:@"MUC203" reason:@"stream-menu-open"];
+    if (self.isMouseCaptured) return;
+    self.edgeMenuTemporaryReleaseActive |= wasCaptured && !self.userReleasedInput;
+    if (sourceView == self.edgeMenuButton && [self edgeMenuShouldBeVisible]) {
+        [self setEdgeMenuButtonExpanded:YES animated:NO];
+    }
+    [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseMenu];
+    NSUInteger menuToken = self.edgeMenuLifecycleToken;
     [self refreshMouseMovedAcceptanceState];
     if (sourceView == self.edgeMenuButton && event != nil) {
         [NSMenu popUpContextMenu:menu withEvent:event forView:sourceView];
     } else {
         [menu popUpMenuPositioningItem:nil atLocation:p inView:sourceView];
     }
-    self.edgeMenuMenuVisible = NO;
+    // Menu tracking runs a nested loop: teardown/fullscreen changes may have
+    // invalidated this invocation before it returns.
+    if (menuToken != self.edgeMenuLifecycleToken) return;
+    if (![self edgeMenuCanInteract]) {
+        [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
+        [self refreshMouseMovedAcceptanceState];
+        return;
+    }
+    [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseExpanded];
+    [self updateEdgeMenuPointerInsideForPoint:[self currentMouseLocationInViewCoordinates]];
     [self refreshMouseMovedAcceptanceState];
 
-    if (self.edgeMenuTemporaryReleaseActive && !self.edgeMenuPointerInside && !self.edgeMenuDragging) {
-        [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:YES];
-    } else if (!self.edgeMenuPointerInside && !self.edgeMenuDragging) {
+    if (!self.edgeMenuPointerInside && !self.edgeMenuDragging) {
         [self scheduleEdgeMenuAutoCollapse];
     }
-}
-
-- (void)presentStreamMenuAtEvent:(NSEvent *)event {
-    [self rebuildStreamMenu];
-    NSPoint p = [self.view convertPoint:event.locationInWindow fromView:nil];
-    [self.streamMenu popUpMenuPositioningItem:nil atLocation:p inView:self.view];
 }
 
 - (void)rebuildStreamMenu {
@@ -1303,6 +1317,9 @@
         });
         return;
     }
+    // Settings/diagnostic updates can run in NSMenu's nested tracking loop.
+    // Preserve the active menu; the next presentation rebuilds from live state.
+    if (self.edgeMenuMenuVisible) return;
     if (!self.streamMenu) {
         self.streamMenu = [[NSMenu alloc] initWithTitle:@"StreamMenu"];
     }
@@ -1355,7 +1372,13 @@
     setSymbol(freeMouseItem, @"desktopcomputer");
     [mouseModeMenu addItem:freeMouseItem];
 
-    NSString *releaseHint = [self releaseMouseHintText];
+    NSMenuItem *toggleMouseItem = [[NSMenuItem alloc] initWithTitle:MLString(@"Toggle mouse mode", nil)
+        action:@selector(toggleMouseModeFromMenu:) keyEquivalent:@""];
+    toggleMouseItem.target = self;
+    [self applyShortcut:[self streamShortcutForAction:MLShortcutActionToggleMouseMode] toMenuItem:toggleMouseItem];
+    [mouseModeMenu addItem:toggleMouseItem];
+
+    NSString *releaseHint = self.userReleasedInput ? MLString(@"Click stream to resume input", nil) : [self releaseMouseHintText];
     NSString *controlCenterHint = [self openControlCenterHintText];
     if (releaseHint.length > 0 || controlCenterHint.length > 0) {
         [mouseModeMenu addItem:[NSMenuItem separatorItem]];

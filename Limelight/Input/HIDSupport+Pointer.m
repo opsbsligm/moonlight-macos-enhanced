@@ -120,6 +120,36 @@ static inline double HIDBlendFreeMouseGain(double currentGain, double rawDelta, 
 
 @implementation HIDSupport (Pointer)
 
+// Capture changes, GC producers and the display-link consumer share self's
+// lock. A quick uncapture/recapture must not carry buffered motion into the new
+// capture, even when no display frame ran while forwarding was disabled.
+- (void)resetPointerMotionForCaptureTransition {
+    @synchronized (self) {
+        [self.mouseDeltaAccumulator takeAccumulatedMotionX:NULL deltaY:NULL];
+        self.relativeMotionResidualX = 0;
+        self.relativeMotionResidualY = 0;
+        self.relativeDeltaResidualX = 0;
+        self.relativeDeltaResidualY = 0;
+        self.mouseEmulationResidualX = 0;
+        self.mouseEmulationResidualY = 0;
+        @synchronized (self.inputDiagnosticsLock) {
+            self.pendingCoalescedAbsolutePointerValid = NO;
+            // Invalidate duplicate detection too: the host may have moved its
+            // cursor while this capture did not own it.
+            self.lastAbsolutePointerReferenceWidth = 0;
+            self.lastAbsolutePointerReferenceHeight = 0;
+            self.lastAbsolutePointerAtMs = 0;
+        }
+    }
+}
+
+- (void)accumulateCapturedMouseMotionX:(CGFloat)deltaX deltaY:(CGFloat)deltaY {
+    @synchronized (self) {
+        if (!self.shouldSendInputEvents || !self.useGCMouse) return;
+        [self.mouseDeltaAccumulator accumulateMotionX:deltaX deltaY:deltaY];
+    }
+}
+
 /** Drop the motion owed to the host, because nothing is going to send it.
 
 Each caller of this is a decision that the motion taken from the accumulator will
@@ -292,6 +322,8 @@ only with the delay measured in gestures instead of frames.
     __block short referenceHeight = 0;
     __block NSString *source = nil;
     __block BOOL hasPending = NO;
+    __block HIDInputLease pendingLease = { NULL, 0 };
+    __block uint64_t captureGeneration = 0;
 
     @synchronized (self.inputDiagnosticsLock) {
         if (self.pendingCoalescedAbsolutePointerValid) {
@@ -300,6 +332,9 @@ only with the delay measured in gestures instead of frames.
             referenceWidth = self.pendingCoalescedAbsolutePointerReferenceWidth;
             referenceHeight = self.pendingCoalescedAbsolutePointerReferenceHeight;
             source = [self.pendingCoalescedAbsolutePointerSource copy];
+            pendingLease.context = (PML_INPUT_STREAM_CONTEXT)self.pendingCoalescedAbsolutePointerContext;
+            pendingLease.generation = self.pendingCoalescedAbsolutePointerGeneration;
+            captureGeneration = self.pendingCoalescedAbsolutePointerCaptureGeneration;
             self.pendingCoalescedAbsolutePointerValid = NO;
             hasPending = YES;
         } else {
@@ -311,18 +346,19 @@ only with the delay measured in gestures instead of frames.
         return;
     }
 
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-    if (HIDValidateInputContext(inputCtx, "dispatchPendingCoalescedAbsolutePointerPosition") &&
-        self.shouldSendInputEvents) {
-        if (source.length > 0) {
-            [self recordAbsoluteInputDiagnosticsFrom:source
-                                                   x:hostX
-                                                   y:hostY
-                                               width:referenceWidth
-                                              height:referenceHeight];
+    HIDExecuteInputLeaseOnQueue(self, pendingLease, ^{
+        @synchronized (self) {
+            if (!self.shouldSendInputEvents || captureGeneration != self.inputCaptureGeneration) return;
+            if (source.length > 0) {
+                [self recordAbsoluteInputDiagnosticsFrom:source
+                                                       x:hostX
+                                                       y:hostY
+                                                   width:referenceWidth
+                                                  height:referenceHeight];
+            }
+            LiSendMousePositionEventCtx(pendingLease.context, hostX, hostY, referenceWidth, referenceHeight);
         }
-        LiSendMousePositionEventCtx(inputCtx, hostX, hostY, referenceWidth, referenceHeight);
-    }
+    });
 
     BOOL shouldScheduleNext = NO;
     @synchronized (self.inputDiagnosticsLock) {
@@ -334,11 +370,7 @@ only with the delay measured in gestures instead of frames.
     }
 
     if (shouldScheduleNext) {
-        PML_CONNECTION_CONTEXT connCtx = inputCtx != NULL ? inputCtx->connectionContext : NULL;
         dispatch_async(self.inputQueue, ^{
-            if (connCtx != NULL) {
-                LiSetThreadConnectionContext(connCtx);
-            }
             [self dispatchPendingCoalescedAbsolutePointerPosition];
         });
     }
@@ -348,7 +380,10 @@ only with the delay measured in gestures instead of frames.
                                          referenceSize:(NSSize)referenceSize
                                          clampToBounds:(BOOL)clampToBounds
                                              sourceTag:(NSString *)sourceTag {
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    if (!self.shouldSendInputEvents) return;
+    uint64_t captureGeneration = self.inputCaptureGeneration;
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!HIDValidateInputContext(inputCtx, "sendCoalescedAbsoluteMousePosition")) {
         return;
     }
@@ -396,6 +431,9 @@ only with the delay measured in gestures instead of frames.
             self.pendingCoalescedAbsolutePointerReferenceWidth = referenceWidth;
             self.pendingCoalescedAbsolutePointerReferenceHeight = referenceHeight;
             self.pendingCoalescedAbsolutePointerSource = [sourceTag copy];
+            self.pendingCoalescedAbsolutePointerContext = inputLease.context;
+            self.pendingCoalescedAbsolutePointerGeneration = inputLease.generation;
+            self.pendingCoalescedAbsolutePointerCaptureGeneration = captureGeneration;
             self.pendingCoalescedAbsolutePointerValid = YES;
             if (!self.pendingCoalescedAbsolutePointerDispatch) {
                 self.pendingCoalescedAbsolutePointerDispatch = YES;
@@ -408,11 +446,7 @@ only with the delay measured in gestures instead of frames.
         return;
     }
 
-    PML_CONNECTION_CONTEXT connCtx = inputCtx->connectionContext;
     dispatch_async(self.inputQueue, ^{
-        if (connCtx != NULL) {
-            LiSetThreadConnectionContext(connCtx);
-        }
         [self dispatchPendingCoalescedAbsolutePointerPosition];
     });
 }
@@ -465,60 +499,47 @@ only with the delay measured in gestures instead of frames.
     return YES;
 }
 
+- (NSString *)mouseButtonSourceForGCMouse:(GCMouse *)mouse API_AVAILABLE(macos(11.0)) {
+    return [NSString stringWithFormat:@"gcmouse:%p", mouse];
+}
+
+- (GCControllerButtonValueChangedHandler)mouseButtonHandlerForButton:(int)button
+                                                            source:(NSString *)source {
+    __weak typeof(self) weakSelf = self;
+    return ^(GCControllerButtonInput *input, float value, BOOL pressed) {
+        (void)input;
+        (void)value;
+        __strong typeof(weakSelf) support = weakSelf;
+        if (pressed && !support.useGCMouse) return;
+        [support sendMouseButton:button pressed:pressed source:source];
+    };
+}
+
 -(void)registerMouseCallbacks:(GCMouse *)mouse API_AVAILABLE(macos(11.0)) {
+    NSString *source = [self mouseButtonSourceForGCMouse:mouse];
+    __weak typeof(self) weakSelf = self;
     if (self.useGCMouse) {
-        mouse.mouseInput.mouseMovedHandler = ^(GCMouseInput * _Nonnull mouseInput, float deltaX, float deltaY) {
+        mouse.mouseInput.mouseMovedHandler = ^(GCMouseInput *mouseInput, float deltaX, float deltaY) {
             (void)mouseInput;
-            [self.mouseDeltaAccumulator accumulateMotionX:(CGFloat)deltaX deltaY:(CGFloat)-deltaY];
+            __strong typeof(weakSelf) support = weakSelf;
+            [support accumulateCapturedMouseMotionX:(CGFloat)deltaX deltaY:(CGFloat)-deltaY];
         };
-        
-        mouse.mouseInput.leftButton.pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-            if (self.shouldSendInputEvents) {
-                PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-                if (!inputCtx) {
-                    return;
-                }
-                LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_LEFT);
-            }
-        };
-        mouse.mouseInput.middleButton.pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-            if (self.shouldSendInputEvents) {
-                PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-                if (!inputCtx) {
-                    return;
-                }
-                LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_MIDDLE);
-            }
-        };
-        mouse.mouseInput.rightButton.pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-            if (self.shouldSendInputEvents) {
-                PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-                if (!inputCtx) {
-                    return;
-                }
-                LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_RIGHT);
-            }
-        };
-        
-        mouse.mouseInput.auxiliaryButtons[0].pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-            if (self.shouldSendInputEvents) {
-                PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-                if (!inputCtx) {
-                    return;
-                }
-                LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_X1);
-            }
-        };
-        mouse.mouseInput.auxiliaryButtons[1].pressedChangedHandler = ^(GCControllerButtonInput * _Nonnull button, float value, BOOL pressed) {
-            if (self.shouldSendInputEvents) {
-                PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-                if (!inputCtx) {
-                    return;
-                }
-                LiSendMouseButtonEventCtx(inputCtx, pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, BUTTON_X2);
-            }
-        };
+        mouse.mouseInput.leftButton.pressedChangedHandler =
+            [self mouseButtonHandlerForButton:BUTTON_LEFT source:source];
+        mouse.mouseInput.middleButton.pressedChangedHandler =
+            [self mouseButtonHandlerForButton:BUTTON_MIDDLE source:source];
+        mouse.mouseInput.rightButton.pressedChangedHandler =
+            [self mouseButtonHandlerForButton:BUTTON_RIGHT source:source];
+        static const int auxiliaryCodes[] = { BUTTON_X1, BUTTON_X2 };
+        [mouse.mouseInput.auxiliaryButtons enumerateObjectsUsingBlock:
+            ^(GCControllerButtonInput *input, NSUInteger index, BOOL *stop) {
+                (void)stop;
+                input.pressedChangedHandler = index < sizeof(auxiliaryCodes) / sizeof(auxiliaryCodes[0])
+                    ? [self mouseButtonHandlerForButton:auxiliaryCodes[index] source:source]
+                    : nil;
+            }];
     } else {
+        [self releaseMouseButtonsForSource:source];
         mouse.mouseInput.mouseMovedHandler = nil;
         mouse.mouseInput.leftButton.pressedChangedHandler = nil;
         mouse.mouseInput.middleButton.pressedChangedHandler = nil;
@@ -529,20 +550,20 @@ only with the delay measured in gestures instead of frames.
     }
 
     if (mouse.mouseInput.scroll != nil) {
+        mouse.mouseInput.scroll.valueChangedHandler = nil;
         if (self.useGCMouse) {
-            mouse.mouseInput.scroll.valueChangedHandler = nil;
-            mouse.mouseInput.scroll.yAxis.valueChangedHandler = ^(GCControllerAxisInput * _Nonnull axis, float value) {
+            mouse.mouseInput.scroll.yAxis.valueChangedHandler = ^(GCControllerAxisInput *axis, float value) {
                 (void)axis;
-                [self handleGCMouseScrollValueY:value];
+                [weakSelf handleGCMouseScrollValueY:value];
             };
         } else {
-            mouse.mouseInput.scroll.valueChangedHandler = nil;
             mouse.mouseInput.scroll.yAxis.valueChangedHandler = nil;
         }
     }
 }
 
 -(void)unregisterMouseCallbacks:(GCMouse*)mouse API_AVAILABLE(macos(11.0)) {
+    [self releaseMouseButtonsForSource:[self mouseButtonSourceForGCMouse:mouse]];
     mouse.mouseInput.mouseMovedHandler = nil;
     
     mouse.mouseInput.leftButton.pressedChangedHandler = nil;
@@ -571,102 +592,107 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
         return kCVReturnError;
     }
 
-    CGFloat deltaX = 0, deltaY = 0;
-    [me.mouseDeltaAccumulator takeAccumulatedMotionX:&deltaX deltaY:&deltaY];
-    if (deltaX != 0 || deltaY != 0) {
-        if (me.shouldSendInputEvents) {
-            PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(me);
-            if (!inputCtx) {
-                [me resetRelativeMotionResidualForDisplayLinkConsumer];
-                return kCVReturnSuccess;
-            }
-            NSInteger touchscreenMode = [SettingsClass touchscreenModeFor:me.host.uuid];
-            BOOL useAbsolutePointerPath = HIDShouldUseAbsolutePointerPath(me, touchscreenMode);
-            if (useAbsolutePointerPath) {
-                // The absolute path reports where the cursor is rather than how far it
-                // went, so a pixel owed here would be a pixel charged twice the next
-                // time the pointer path is relative.
-                [me resetRelativeMotionResidualForDisplayLinkConsumer];
-            }
-            if (!useAbsolutePointerPath) {
-                BOOL suppressed = HIDShouldSuppressRelativeMouse(me);
-                if (suppressed) {
+    // Finish consuming/enqueueing before a capture transition clears the debt.
+    @synchronized (me) {
+        CGFloat deltaX = 0, deltaY = 0;
+        [me.mouseDeltaAccumulator takeAccumulatedMotionX:&deltaX deltaY:&deltaY];
+        if (deltaX != 0 || deltaY != 0) {
+            if (me.shouldSendInputEvents) {
+                HIDInputLease inputLease = HIDAcquireInputContext(me);
+                PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+                if (!inputCtx) {
                     [me resetRelativeMotionResidualForDisplayLinkConsumer];
+                    return kCVReturnSuccess;
+                }
+                NSInteger touchscreenMode = [SettingsClass touchscreenModeFor:me.host.uuid];
+                BOOL useAbsolutePointerPath = HIDShouldUseAbsolutePointerPath(me, touchscreenMode);
+                if (useAbsolutePointerPath) {
+                    // The absolute path reports where the cursor is rather than how far it
+                    // went, so a pixel owed here would be a pixel charged twice the next
+                    // time the pointer path is relative.
+                    [me resetRelativeMotionResidualForDisplayLinkConsumer];
+                }
+                if (!useAbsolutePointerPath) {
+                    BOOL suppressed = HIDShouldSuppressRelativeMouse(me);
+                    if (suppressed) {
+                        [me resetRelativeMotionResidualForDisplayLinkConsumer];
+                        [me recordRelativeInputDiagnosticsFrom:@"gcMouse"
+                                                     rawDeltaX:deltaX
+                                                     rawDeltaY:deltaY
+                                                    sentDeltaX:0
+                                                    sentDeltaY:0
+                                                    suppressed:YES];
+                        return kCVReturnSuccess;
+                    }
+                    CGFloat normalizedDeltaX = deltaX / HIDGCMouseRelativeSpeedDivisor;
+                    CGFloat normalizedDeltaY = deltaY / HIDGCMouseRelativeSpeedDivisor;
+                    CGFloat sensitivity = HIDPointerSensitivityForHost(me.host);
+                    CGFloat residualX = me.relativeMotionResidualX;
+                    CGFloat residualY = me.relativeMotionResidualY;
+                    short moveX = HIDDrainRelativeDelta(&residualX, normalizedDeltaX, sensitivity);
+                    short moveY = HIDDrainRelativeDelta(&residualY, normalizedDeltaY, sensitivity);
+                    me.relativeMotionResidualX = residualX;
+                    me.relativeMotionResidualY = residualY;
                     [me recordRelativeInputDiagnosticsFrom:@"gcMouse"
                                                  rawDeltaX:deltaX
                                                  rawDeltaY:deltaY
-                                                sentDeltaX:0
-                                                sentDeltaY:0
-                                                suppressed:YES];
-                    return kCVReturnSuccess;
+                                                sentDeltaX:moveX
+                                                sentDeltaY:moveY
+                                                suppressed:NO];
+                    HIDDispatchInput(me, inputLease, ^{
+                        LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
+                    });
+                    [me noteMotionSource:@"gameController"
+                              summaryKey:@"Mouse Runtime Path GameController Active"
+                               detailKey:@"Mouse Runtime Detail GameController Active"];
                 }
-                CGFloat normalizedDeltaX = deltaX / HIDGCMouseRelativeSpeedDivisor;
-                CGFloat normalizedDeltaY = deltaY / HIDGCMouseRelativeSpeedDivisor;
-                CGFloat sensitivity = HIDPointerSensitivityForHost(me.host);
-                CGFloat residualX = me.relativeMotionResidualX;
-                CGFloat residualY = me.relativeMotionResidualY;
-                short moveX = HIDDrainRelativeDelta(&residualX, normalizedDeltaX, sensitivity);
-                short moveY = HIDDrainRelativeDelta(&residualY, normalizedDeltaY, sensitivity);
-                me.relativeMotionResidualX = residualX;
-                me.relativeMotionResidualY = residualY;
-                [me recordRelativeInputDiagnosticsFrom:@"gcMouse"
-                                             rawDeltaX:deltaX
-                                             rawDeltaY:deltaY
+            }
+        }
+
+        // Mouse Emulation Movement
+        if (me.controller.isMouseMode && me.shouldSendInputEvents) {
+            HIDInputLease inputLease = HIDAcquireInputContext(me);
+            PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+            if (!inputCtx) {
+                return kCVReturnSuccess;
+            }
+            short rx = me.controller.lastRightStickX;
+            short ry = me.controller.lastRightStickY;
+            CGFloat emulationDeltaX = HIDControllerMouseDeltaForAxis(rx);
+            CGFloat emulationDeltaY = HIDControllerMouseDeltaForAxis(ry);
+
+            // updateButtonFlags already converts the stick's raw Z and Rz into "up is
+            // positive", and a relative pointer move counts +Y as down, so the sign is
+            // flipped here and nowhere else: neither the deadzone nor the scaling above
+            // knows which way the host counts.
+            CGFloat emulationResidualX = me.mouseEmulationResidualX;
+            CGFloat emulationResidualY = me.mouseEmulationResidualY;
+            short moveX = HIDDrainRelativeDelta(&emulationResidualX,
+                                                emulationDeltaX,
+                                                HIDMouseEmulationSpeed);
+            short moveY = HIDDrainRelativeDelta(&emulationResidualY,
+                                                -emulationDeltaY,
+                                                HIDMouseEmulationSpeed);
+            me.mouseEmulationResidualX = emulationResidualX;
+            me.mouseEmulationResidualY = emulationResidualY;
+
+            if (emulationDeltaX != 0.0 || emulationDeltaY != 0.0) {
+                [me recordRelativeInputDiagnosticsFrom:@"controllerMouse"
+                                             rawDeltaX:emulationDeltaX
+                                             rawDeltaY:-emulationDeltaY
                                             sentDeltaX:moveX
                                             sentDeltaY:moveY
                                             suppressed:NO];
-                HIDDispatchInput(me, inputCtx, ^{
-                    LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
-                });
-                [me noteMotionSource:@"gameController"
-                          summaryKey:@"Mouse Runtime Path GameController Active"
-                           detailKey:@"Mouse Runtime Detail GameController Active"];
+                if (moveX != 0 || moveY != 0) {
+                    HIDDispatchInput(me, inputLease, ^{
+                        LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
+                    });
+                }
             }
         }
+
+        return kCVReturnSuccess;
     }
-    
-    // Mouse Emulation Movement
-    if (me.controller.isMouseMode && me.shouldSendInputEvents) {
-        PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(me);
-        if (!inputCtx) {
-            return kCVReturnSuccess;
-        }
-        short rx = me.controller.lastRightStickX;
-        short ry = me.controller.lastRightStickY;
-        CGFloat emulationDeltaX = HIDControllerMouseDeltaForAxis(rx);
-        CGFloat emulationDeltaY = HIDControllerMouseDeltaForAxis(ry);
-
-        // updateButtonFlags already converts the stick's raw Z and Rz into "up is
-        // positive", and a relative pointer move counts +Y as down, so the sign is
-        // flipped here and nowhere else: neither the deadzone nor the scaling above
-        // knows which way the host counts.
-        CGFloat emulationResidualX = me.mouseEmulationResidualX;
-        CGFloat emulationResidualY = me.mouseEmulationResidualY;
-        short moveX = HIDDrainRelativeDelta(&emulationResidualX,
-                                            emulationDeltaX,
-                                            HIDMouseEmulationSpeed);
-        short moveY = HIDDrainRelativeDelta(&emulationResidualY,
-                                            -emulationDeltaY,
-                                            HIDMouseEmulationSpeed);
-        me.mouseEmulationResidualX = emulationResidualX;
-        me.mouseEmulationResidualY = emulationResidualY;
-
-        if (emulationDeltaX != 0.0 || emulationDeltaY != 0.0) {
-            [me recordRelativeInputDiagnosticsFrom:@"controllerMouse"
-                                         rawDeltaX:emulationDeltaX
-                                         rawDeltaY:-emulationDeltaY
-                                        sentDeltaX:moveX
-                                        sentDeltaY:moveY
-                                        suppressed:NO];
-            if (moveX != 0 || moveY != 0) {
-                HIDDispatchInput(me, inputCtx, ^{
-                    LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
-                });
-            }
-        }
-    }
-
-    return kCVReturnSuccess;
 }
 
 - (BOOL)initializeDisplayLink
@@ -699,108 +725,176 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
 }
 
 
+// A source owns its physical button until the matching release. The value is
+// the host button selected at press time, so a settings change cannot release
+// another button. All state and enqueue operations share this lock; packets
+// share inputQueue with keyboard and motion events.
+- (HIDInputLease)currentMouseButtonLease {
+    HIDInputLease lease = HIDAcquireInputContext(self);
+    if (self.mouseButtonOwnersGeneration != lease.generation) {
+        [self.mouseButtonOwners removeAllObjects];
+        self.pressedMouseButtonsMask = 0;
+        self.mouseButtonOwnersGeneration = lease.generation;
+    }
+    return lease;
+}
+
+- (uint32_t)mouseButtonMaskForCurrentSources {
+    uint32_t mask = 0;
+    for (NSDictionary<NSNumber *, NSNumber *> *buttons in self.mouseButtonOwners.allValues) {
+        for (NSNumber *hostButton in buttons.allValues) {
+            mask |= HIDMouseButtonBitForButton(hostButton.intValue);
+        }
+    }
+    return mask;
+}
+
 - (BOOL)hasPressedMouseButtons {
-    return self.pressedMouseButtonsMask != 0;
+    @synchronized (self) {
+        [self currentMouseButtonLease];
+        return self.pressedMouseButtonsMask != 0;
+    }
+}
+
+- (void)enqueueMouseButtonReleasesForMask:(uint32_t)mask lease:(HIDInputLease)inputLease {
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+    if (mask == 0 || !HIDValidateInputContext(inputCtx, "releaseMouseButtons")) {
+        return;
+    }
+    uint32_t remainingMask = self.pressedMouseButtonsMask;
+    HIDDispatchInput(self, inputLease, ^{
+        static const int buttons[] = { BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_RIGHT, BUTTON_X1, BUTTON_X2 };
+        for (NSUInteger index = 0; index < sizeof(buttons) / sizeof(buttons[0]); index++) {
+            int button = buttons[index];
+            if ((mask & HIDMouseButtonBitForButton(button)) != 0) {
+                LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_RELEASE, button);
+                [self recordMouseButtonDiagnosticsAction:@"release"
+                                                  button:button
+                                                    mask:remainingMask
+                                               synthetic:YES];
+            }
+        }
+    });
 }
 
 - (void)releaseAllPressedMouseButtons {
-    uint32_t pressedMask = self.pressedMouseButtonsMask;
-    if (pressedMask == 0) {
+    @synchronized (self) {
+        HIDInputLease inputLease = [self currentMouseButtonLease];
+        uint32_t mask = self.pressedMouseButtonsMask;
+        [self.mouseButtonOwners removeAllObjects];
+        self.pressedMouseButtonsMask = 0;
+        [self enqueueMouseButtonReleasesForMask:mask lease:inputLease];
+    }
+}
+
+- (void)releaseMouseButtonsForSource:(NSString *)source {
+    if (source.length == 0) {
         return;
     }
-
-    self.pressedMouseButtonsMask = 0;
-
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-    if (self.shouldSendInputEvents && HIDValidateInputContext(inputCtx, "releaseAllPressedMouseButtons")) {
-        static const int buttons[] = {
-            BUTTON_LEFT,
-            BUTTON_MIDDLE,
-            BUTTON_RIGHT,
-            BUTTON_X1,
-            BUTTON_X2,
-        };
-
-        for (NSUInteger index = 0; index < sizeof(buttons) / sizeof(buttons[0]); index++) {
-            int button = buttons[index];
-            if ((pressedMask & HIDMouseButtonBitForButton(button)) == 0) {
-                continue;
-            }
-
-            LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_RELEASE, button);
-            [self recordMouseButtonDiagnosticsAction:@"release"
-                                              button:button
-                                                mask:self.pressedMouseButtonsMask
-                                           synthetic:YES];
-        }
+    @synchronized (self) {
+        HIDInputLease inputLease = [self currentMouseButtonLease];
+        uint32_t previousMask = self.pressedMouseButtonsMask;
+        [self.mouseButtonOwners removeObjectForKey:source];
+        self.pressedMouseButtonsMask = [self mouseButtonMaskForCurrentSources];
+        [self enqueueMouseButtonReleasesForMask:previousMask & ~self.pressedMouseButtonsMask lease:inputLease];
     }
+}
+
+- (void)sendMouseButton:(int)button
+                pressed:(BOOL)pressed
+                 source:(NSString *)source
+       beforeTransition:(void (^)(PML_INPUT_STREAM_CONTEXT))beforeTransition {
+    if (source.length == 0 || HIDMouseButtonBitForButton(button) == 0) {
+        return;
+    }
+    @synchronized (self) {
+        HIDInputLease inputLease = [self currentMouseButtonLease];
+        NSMutableDictionary<NSNumber *, NSNumber *> *owned = self.mouseButtonOwners[source];
+        NSNumber *savedButton = owned[@(button)];
+        // A held hardware report is not another press. An unpaired release
+        // must never lift a button another device still owns.
+        if ((pressed && savedButton != nil) || (!pressed && savedButton == nil)) {
+            return;
+        }
+        if (pressed && !self.shouldSendInputEvents) {
+            return;
+        }
+        PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+        if (!HIDValidateInputContext(inputCtx, "sendMouseButton")) {
+            if (!pressed) {
+                [owned removeObjectForKey:@(button)];
+                if (owned.count == 0) [self.mouseButtonOwners removeObjectForKey:source];
+                self.pressedMouseButtonsMask = [self mouseButtonMaskForCurrentSources];
+            }
+            return;
+        }
+        uint32_t previousMask = self.pressedMouseButtonsMask;
+        int hostButton = savedButton != nil ? savedButton.intValue : button;
+        if (pressed) {
+            if ([SettingsClass swapMouseButtonsFor:self.host.uuid]) {
+                if (hostButton == BUTTON_LEFT) hostButton = BUTTON_RIGHT;
+                else if (hostButton == BUTTON_RIGHT) hostButton = BUTTON_LEFT;
+            }
+            if (self.mouseButtonOwners == nil) {
+                self.mouseButtonOwners = [NSMutableDictionary dictionary];
+            }
+            if (owned == nil) {
+                owned = [NSMutableDictionary dictionary];
+                self.mouseButtonOwners[source] = owned;
+            }
+            owned[@(button)] = @(hostButton);
+        } else {
+            [owned removeObjectForKey:@(button)];
+            if (owned.count == 0) [self.mouseButtonOwners removeObjectForKey:source];
+        }
+        uint32_t mask = [self mouseButtonMaskForCurrentSources];
+        self.pressedMouseButtonsMask = mask;
+        if ((previousMask & HIDMouseButtonBitForButton(hostButton)) ==
+            (mask & HIDMouseButtonBitForButton(hostButton))) {
+            return;
+        }
+        [self recordMouseButtonDiagnosticsAction:pressed ? @"press" : @"release"
+                                          button:hostButton
+                                            mask:mask
+                                       synthetic:NO];
+        HIDDispatchInput(self, inputLease, ^{
+            if (beforeTransition != nil) beforeTransition(inputCtx);
+            LiSendMouseButtonEventCtx(inputCtx,
+                                      pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE,
+                                      hostButton);
+        });
+    }
+}
+
+- (void)sendMouseButton:(int)button pressed:(BOOL)pressed source:(NSString *)source {
+    [self sendMouseButton:button pressed:pressed source:source beforeTransition:nil];
+}
+
+- (void)sendRelativeMouseMoveDeltaX:(short)deltaX deltaY:(short)deltaY {
+    if (!self.shouldSendInputEvents || (deltaX == 0 && deltaY == 0)) {
+        return;
+    }
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    HIDDispatchInput(self, inputLease, ^{
+        LiSendMouseMoveEventCtx(inputLease.context, deltaX, deltaY);
+    });
 }
 
 - (void)mouseDown:(NSEvent *)event withButton:(int)button {
     if (button == BUTTON_LEFT) {
-        [self logMouseKeyboardFieldResidueForEvent:event where:@"wire-down"];
+        [self logMouseEventDiagnosticsForEvent:event where:@"wire-down"];
     }
-    if (self.useGCMouse) {
-        return;
+    if (!self.useGCMouse) {
+        [self sendMouseButton:button pressed:YES source:@"appkit"];
     }
-    
-    if ([SettingsClass swapMouseButtonsFor:self.host.uuid]) {
-        if (button == BUTTON_LEFT) {
-            button = BUTTON_RIGHT;
-        } else if (button == BUTTON_RIGHT) {
-            button = BUTTON_LEFT;
-        }
-    }
-    
-    if (!self.shouldSendInputEvents) {
-        return;
-    }
-
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-    if (!HIDValidateInputContext(inputCtx, "mouseDown")) {
-        return;
-    }
-
-    self.pressedMouseButtonsMask |= HIDMouseButtonBitForButton(button);
-    [self recordMouseButtonDiagnosticsAction:@"press"
-                                      button:button
-                                        mask:self.pressedMouseButtonsMask
-                                   synthetic:NO];
-    HIDDispatchInput(self, inputCtx, ^{
-        LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_PRESS, button);
-    });
 }
 
 - (void)mouseUp:(NSEvent *)event withButton:(int)button {
     if (button == BUTTON_LEFT) {
-        [self logMouseKeyboardFieldResidueForEvent:event where:@"wire-up"];
+        [self logMouseEventDiagnosticsForEvent:event where:@"wire-up"];
     }
-    if (self.useGCMouse) {
-        return;
-    }
-    
-    if ([SettingsClass swapMouseButtonsFor:self.host.uuid]) {
-        if (button == BUTTON_LEFT) {
-            button = BUTTON_RIGHT;
-        } else if (button == BUTTON_RIGHT) {
-            button = BUTTON_LEFT;
-        }
-    }
-    
-    if (self.shouldSendInputEvents) {
-        PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-        if (HIDValidateInputContext(inputCtx, "mouseUp")) {
-            HIDDispatchInput(self, inputCtx, ^{
-                LiSendMouseButtonEventCtx(inputCtx, BUTTON_ACTION_RELEASE, button);
-            });
-        }
-    }
-
-    self.pressedMouseButtonsMask &= ~HIDMouseButtonBitForButton(button);
-    [self recordMouseButtonDiagnosticsAction:@"release"
-                                      button:button
-                                        mask:self.pressedMouseButtonsMask
-                                   synthetic:NO];
+    // Retire an AppKit press even if the selected driver changed while held.
+    [self sendMouseButton:button pressed:NO source:@"appkit"];
 }
 
 - (void)mouseMoved:(NSEvent *)event {
@@ -808,7 +902,8 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
         return;
     }
 
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!HIDValidateInputContext(inputCtx, "mouseMoved")) {
         return;
     }
@@ -841,7 +936,7 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
         [self noteMotionSource:@"absolute"
                     summaryKey:@"Mouse Runtime Path Absolute Active"
                      detailKey:@"Mouse Runtime Detail Absolute Active"];
-        HIDDispatchInput(self, inputCtx, ^{
+        HIDDispatchInput(self, inputLease, ^{
             LiSendMousePositionEventCtx(inputCtx, hostX, hostY, referenceWidth, referenceHeight);
         });
     } else {
@@ -861,7 +956,8 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
 - (void)sendAbsoluteMousePositionForViewPoint:(NSPoint)viewPoint
                                 referenceSize:(NSSize)referenceSize
                                 clampToBounds:(BOOL)clampToBounds {
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (!HIDValidateInputContext(inputCtx, "sendAbsoluteMousePosition")) {
         return;
     }
@@ -897,7 +993,7 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
                                            y:hostY
                                        width:referenceWidth
                                       height:referenceHeight];
-    HIDDispatchInput(self, inputCtx, ^{
+    HIDDispatchInput(self, inputLease, ^{
         LiSendMousePositionEventCtx(inputCtx, hostX, hostY, referenceWidth, referenceHeight);
     });
 }
@@ -907,83 +1003,23 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
       syncedToViewPoint:(NSPoint)viewPoint
           referenceSize:(NSSize)referenceSize
           clampToBounds:(BOOL)clampToBounds {
-    if (self.useGCMouse) {
+    if (pressed && self.useGCMouse) {
         return;
     }
-
-    if ([SettingsClass swapMouseButtonsFor:self.host.uuid]) {
-        if (button == BUTTON_LEFT) {
-            button = BUTTON_RIGHT;
-        } else if (button == BUTTON_RIGHT) {
-            button = BUTTON_LEFT;
-        }
-    }
-
-    if (!self.shouldSendInputEvents) {
-        return;
-    }
-
-    PML_INPUT_STREAM_CONTEXT inputCtx = HIDInputContext(self);
-    if (!HIDValidateInputContext(inputCtx, pressed ? "sendMouseButtonPressSynced" : "sendMouseButtonReleaseSynced")) {
-        return;
-    }
-
-    short hostX = 0;
-    short hostY = 0;
-    short referenceWidth = 0;
-    short referenceHeight = 0;
-    BOOL shouldSendAbsolute = HIDAbsoluteMousePositionForViewPoint(viewPoint,
-                                                                   referenceSize,
-                                                                   clampToBounds,
-                                                                   &hostX,
-                                                                   &hostY,
-                                                                   &referenceWidth,
-                                                                   &referenceHeight);
-    if (shouldSendAbsolute &&
-        hostX == self.lastAbsolutePointerHostX &&
-        hostY == self.lastAbsolutePointerHostY &&
-        referenceWidth == self.lastAbsolutePointerReferenceWidth &&
-        referenceHeight == self.lastAbsolutePointerReferenceHeight) {
-        if (self.inputDiagnosticsEnabled) {
-            @synchronized (self.inputDiagnosticsLock) {
-                self.inputDiagnosticsAbsoluteDuplicateSkips += 1;
+    short hostX = 0, hostY = 0, referenceWidth = 0, referenceHeight = 0;
+    BOOL hasPosition = HIDAbsoluteMousePositionForViewPoint(viewPoint, referenceSize, clampToBounds,
+                                                           &hostX, &hostY, &referenceWidth, &referenceHeight);
+    [self sendMouseButton:button pressed:pressed source:@"appkit"
+        beforeTransition:^(PML_INPUT_STREAM_CONTEXT inputCtx) {
+            // Keep the click's position and edge in one queue item. A newer
+            // coalesced movement must not make this click use a later position.
+            if (hasPosition) {
+                [self recordAbsoluteInputDiagnosticsFrom:@"sendAbsoluteMouseButtonSync"
+                                                       x:hostX y:hostY
+                                                   width:referenceWidth height:referenceHeight];
+                LiSendMousePositionEventCtx(inputCtx, hostX, hostY, referenceWidth, referenceHeight);
             }
-        }
-        shouldSendAbsolute = NO;
-    }
-
-    if (pressed) {
-        self.pressedMouseButtonsMask |= HIDMouseButtonBitForButton(button);
-        [self recordMouseButtonDiagnosticsAction:@"press"
-                                          button:button
-                                            mask:self.pressedMouseButtonsMask
-                                       synthetic:NO];
-    }
-
-    if (shouldSendAbsolute) {
-        [self recordAbsoluteInputDiagnosticsFrom:@"sendAbsoluteMouseButtonSync"
-                                               x:hostX
-                                               y:hostY
-                                           width:referenceWidth
-                                          height:referenceHeight];
-    }
-
-    HIDDispatchInput(self, inputCtx, ^{
-        if (shouldSendAbsolute) {
-            LiSendMousePositionEventCtx(inputCtx, hostX, hostY, referenceWidth, referenceHeight);
-        }
-        LiSendMouseButtonEventCtx(inputCtx,
-                                  pressed ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE,
-                                  button);
-    });
-
-    if (!pressed) {
-        self.pressedMouseButtonsMask &= ~HIDMouseButtonBitForButton(button);
-        [self recordMouseButtonDiagnosticsAction:@"release"
-                                          button:button
-                                            mask:self.pressedMouseButtonsMask
-                                       synthetic:NO];
-    }
+        }];
 }
 
 - (BOOL)absoluteMousePayloadForViewPoint:(NSPoint)viewPoint

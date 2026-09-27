@@ -238,7 +238,8 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 // is an error; key-state-heal-tests.py is where the held-back press actually has scenarios.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers;
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp;
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
 - (char)translatedModifierFlagsForEvent:(NSEvent *)event;
 - (char)translateKeyModifierWithEvent:(NSEvent *)event;
@@ -248,7 +249,8 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 @implementation MLModifierPairProbe
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers { return NO; }
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp { return NO; }
 - (instancetype)init {
     if ((self = [super init])) {
         _shouldSendInputEvents = YES;
@@ -465,7 +467,11 @@ def implementation(known_bad=None):
         anchor, replacement, _why = KNOWN_BAD[known_bad]
         if body.count(anchor) < 1:
             raise SystemExit("the known-bad anchor is gone from the source: %s" % anchor)
-        body = body.replace(anchor, replacement, 1)
+        if known_bad == "stale-modifier-byte":
+            start = body.index("- (void)keyDown:")
+            body = body[:start] + body[start:].replace(anchor, replacement, 1)
+        else:
+            body = body.replace(anchor, replacement, 1)
     return RECORDER + body + TAIL
 
 

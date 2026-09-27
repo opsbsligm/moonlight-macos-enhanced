@@ -231,7 +231,8 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 // pinned, with its own scenarios, by key-state-heal-tests.py.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers;
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp;
 - (void)releaseAllModifierKeys;
 - (void)releaseRemoteModifierKeysForUncapture;
 - (KMR_CommandPreference)commandKeyPreferenceForCurrentHost;
@@ -259,7 +260,8 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 }
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers { return NO; }
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp { return NO; }
 """
 
 TEST_BODY = r"""
@@ -276,6 +278,10 @@ static void Reset(MLModifiersUnderProbe *k) {
     k.keyboardPhysicalModifierSourceMask = 0;
     k.keyboardRemoteModifierMask = 0;
     k.shouldSendInputEvents = YES;
+    [k.keyboardForwardedKeyDownKeyCodes removeAllObjects];
+    [k.keyboardForwardedKeyDownAtMs removeAllObjects];
+    [k.keyboardHeldUnconfirmedKeyDowns removeAllObjects];
+    [k.keyboardSuppressedKeyDownKeyCodes removeAllObjects];
 }
 static NSString *Seq(void) { return [gHostEvents componentsJoinedByString:@" "]; }
 
@@ -724,6 +730,14 @@ int main(void) {
                want, Seq());
         ExpectAgreement("the secure attention sequence preset", k);
 
+        Reset(k);
+        PressKey(k, kVK_ANSI_W, 0);
+        [k sendSyntheticRemoteShortcut:Rule(kVK_ANSI_W, 0)];
+        Expect("synthetic W cannot release a physically held W", Ev(0x8057, YES, 0), Seq());
+        ReleaseKey(k, kVK_ANSI_W, 0);
+        want = Exp(); Add(want, Ev(0x8057, YES, 0)); Add(want, Ev(0x8057, NO, 0));
+        Expect("physical W still owns its release after a synthetic collision", want, Seq());
+
         printf("%d scenario failure(s)\n", gFailures);
     }
     return gFailures ? 1 : 0;
@@ -901,8 +915,8 @@ def release_forgets_what_was_consumed_locally(text):
     that reads as W and Space conflicting.
     """
     return mutate_key_up(text,
-                         "if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {",
-                         "if (NO) {", "the suppressed-press check")
+                         "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {",
+                         "if (!self.shouldSendInputEvents) {", "the ownership check")
 
 
 CHAIN_PROBE = r"""

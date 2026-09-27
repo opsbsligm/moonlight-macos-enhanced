@@ -233,7 +233,7 @@ def wiring_problems(objc_text, controller_text):
     if refresh is None or "MLSystemKeyboardShortcutCaptureAlways" not in refresh:
         problems.append("a stored mode outside the three cases is not read back to the default")
 
-    capture = method_body(objc_text, "- (void)captureMouse")
+    capture = method_body(objc_text, "- (void)captureMouse {")
     if capture is None or "updateSystemHotkeySuppression" not in capture:
         problems.append("a fresh capture does not bring the system hotkeys to the wanted state")
     if capture is None or "refreshSystemKeyboardShortcutCapturePreference" not in capture:

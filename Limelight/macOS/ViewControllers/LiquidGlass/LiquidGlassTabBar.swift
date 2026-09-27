@@ -1,77 +1,25 @@
-//
-//  LiquidGlassTabBar.swift
-//  Moonlight for macOS
-//
-//  v14.0 — 完整重构版
-//          ═══════════════════════════════════════════════════════
-//          修复透明穿透：独立背景基底 + GlassEffectContainer 玻璃分组 + zIndex 层级锁定
-//          纯原生 .glassEffect 液态玻璃 + matchedGeometryEffect 流体跟随
-//          组件完全解耦，外部仅通过 selection Binding 通信
-//          ═══════════════════════════════════════════════════════
-//
-//  渲染层级 (从底到顶):
-//    L0  trackContainer   — 不透明基底 (controlBackgroundColor)，玻璃采样源
-//    L1  glassPill        — 液态玻璃胶囊，matchedGeometryEffect 流体跟随
-//    L2  tabButtonsRow    — 图标+文字按钮，最顶层确保可交互
-//
-//  隔离策略:
-//    • trackContainer 提供实体背景，.glassEffect 采样此基底而非穿透到桌面
-//    • 玻璃形状由 glassEffect(in:) 的 shape 限定，玻璃层本身不再 clipped：
-//      裁剪会切断液态玻璃的边缘折射与形变，穿透问题属于基底职责而非裁剪职责
-//    • 外层 ZStack 的 .clipped() 只约束容器边界，不参与玻璃自身的成型
-//    • zIndex 锁定三层顺序，切换动画中层级权重不变
-//
-
+import AppKit
 import SwiftUI
 
-// MARK: - 可调参数集中区 ────────────────────────────────────────────
-// 所有视觉/动画参数集中在此，方便微调玻璃通透度与动画速度。
-// 修改参数后无需改动任何逻辑代码。
-
-// Internal so the surrounding settings surface can reuse the same geometry,
-// colour and animation constants instead of repeating them.
+// Presentation timing is independent of AppKit's native control interaction.
 enum TabBarConfig {
-  // ── 布局 (贴近 macOS 原生「设置 App」比例) ──
-  static let tabBarHeight: CGFloat          = 28   // Tab 内容区高度
-  static let containerCornerRadius: CGFloat = 10   // 容器圆角
-  static let pillCornerRadius: CGFloat      = 8    // 选中胶囊圆角 (与容器比例 ~0.62)
-  static let outerPadding: CGFloat          = 3    // 容器内边距
-  static let interSpacing: CGFloat          = 2    // Tab 间距
-  static let iconSize: CGFloat              = 12   // 图标尺寸
-  static let iconTextSpacing: CGFloat       = 5    // 图标与文字间距
-  static let fontSize: CGFloat              = 12   // 文字字号
-
-  // ── 玻璃材质 (通透度调整) ──
-  // ↓ glassTintOpacity → 更通透; ↑ → 更浓 (范围 0.0–1.0,建议 0.10–0.30)
-  static let glassTintOpacity: Double       = 0.18
-
-  // ── 选中高亮色 (冷调通透淡蓝，禁止橙/高饱和暖色) ──
+  static let iconSize: CGFloat = 13
+  static let iconTextSpacing: CGFloat = 6
+  static let fontSize: CGFloat = 12
   static let accentCoolBlue = Color(
     .sRGB, red: 0.34, green: 0.62, blue: 0.95, opacity: 1.0
   )
-
-  // ── 动画 (流体跟随) ──
-  static let animationDuration: Double      = 0.22  // 0.22s 持续时间
-  // macOS 原生系统曲线近似 cubic Bezier (0.4, 0.0, 0.2, 1) — 无回弹、无顿挫
+  static let animationDuration: Double = 0.22
   static let curveCP1x: Double = 0.4
   static let curveCP1y: Double = 0.0
   static let curveCP2x: Double = 0.2
   static let curveCP2y: Double = 1.0
-
-  // ── 容器基底 (修复透明穿透的关键参数) ──
-  // trackContainer 使用 controlBackgroundColor 提供不透明基底，
-  // .glassEffect 采样此基底而非穿透到桌面/下层页面。
-  // containerBaseOpacity = 1.0 完全不透明; 降低可微调通透感但不建议低于 0.85
-  static let containerBaseOpacity: Double   = 0.92
 }
-
-// MARK: - Data Model
 
 public struct LiquidGlassTabItem: Identifiable {
   public let id: Int
   public let title: String
   public let symbol: String
-  /// 保留字段以兼容调用方传入;实际渲染统一使用冷调淡蓝，忽略暖色 tint。
   public let tint: Color
 
   public init(id: Int, title: String, symbol: String, tint: Color) {
@@ -82,191 +30,100 @@ public struct LiquidGlassTabItem: Identifiable {
   }
 }
 
-// MARK: - Core Control
-
-public struct LiquidGlassTabBar: View {
+// Use the system segmented control, including its optical selection, pointer
+// tracking, keyboard navigation and accessibility. Do not overlay a second
+// glass surface or intercept the native tracking loop with a SwiftUI gesture.
+public struct LiquidGlassTabBar: NSViewRepresentable {
   @Binding public var selection: Int
   public let items: [LiquidGlassTabItem]
-
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Namespace private var nsMorph
-
-  /// 系统动画曲线 (macOS 原生 ease，无回弹)。
-  /// reduceMotion 启用时返回 nil，禁用位移动画。
-  private var fluidAnimation: Animation {
-    Animation.timingCurve(
-      TabBarConfig.curveCP1x, TabBarConfig.curveCP1y,
-      TabBarConfig.curveCP2x, TabBarConfig.curveCP2y,
-      duration: TabBarConfig.animationDuration
-    )
-  }
 
   public init(selection: Binding<Int>, items: [LiquidGlassTabItem]) {
     self._selection = selection
     self.items = items
   }
 
-  public var body: some View {
-    GeometryReader { geo in
-      let segW = segmentWidth(in: geo.size.width)
+  public func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-      // ════════════════════════════════════════════════════════════
-      // ZStack 三层结构：基底 → 玻璃胶囊 → 按钮行
-      // 整体 clipped() 确保玻璃效果渲染范围严格限制在容器内
-      // ════════════════════════════════════════════════════════════
-      ZStack(alignment: .topLeading) {
-        // ── L0: 容器底槽 (不透明基底) ──────────────────────────
-        // 提供实体背景，.glassEffect 采样此基底而非穿透到桌面。
-        // 这是修复透明穿透问题的核心：禁止无基底裸渲染。
-        trackContainer
-          .zIndex(0)
-
-        // ── L1: 选中胶囊 (原生 .glassEffect 液态玻璃) ──────────
-        // 仅在选中 Tab 位置渲染，通过 matchedGeometryEffect 流体跟随位移。
-        //
-        // GlassEffectContainer 把所有玻璃元素归入同一个玻璃组：同组元素才能
-        // 相互感知（合并、剔除、morph），并共享 spacing 与渲染批次。
-        // 单个视图上独立调用 .glassEffect 只是互不相干的独立效果。
-        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {
-          HStack(spacing: TabBarConfig.interSpacing) {
-            ForEach(items) { item in
-              if item.id == selection {
-                glassPill(width: segW)
-                  .matchedGeometryEffect(id: "selectionPill", in: nsMorph)
-              } else {
-                Color.clear
-                  .frame(width: segW, height: TabBarConfig.tabBarHeight)
-              }
-            }
-          }
-        }
-        .padding(.horizontal, TabBarConfig.outerPadding)
-        .padding(.vertical, TabBarConfig.outerPadding)
-        // 不再对玻璃层 clipped()：裁剪会切断液态玻璃的边缘折射与形变，
-        // 而玻璃形状已由 glassEffect(in:) 的 shape 限定；防止采样穿透的职责
-        // 属于 L0 的 trackContainer 实体基底，不属于裁剪。
-        .zIndex(1)                    // ← 层级锁定：玻璃层在基底之上
-        .animation(reduceMotion ? nil : fluidAnimation, value: selection)
-
-        // ── L2: Tab 按钮行 (图标 + 文字，水平居中) ─────────────
-        // 最顶层确保可交互，玻璃胶囊在按钮下方不影响点击。
-        tabButtonsRow(segmentWidth: segW)
-          .zIndex(2)                  // ← 层级锁定：按钮在最顶层
-      }
-      .frame(
-        width: geo.size.width,
-        height: TabBarConfig.tabBarHeight + 2 * TabBarConfig.outerPadding
-      )
-      .clipped()                      // ← 整体裁剪：玻璃效果绝不溢出容器
+  public func makeNSView(context: Context) -> NSSegmentedControl {
+    let control = NSSegmentedControl()
+    control.segmentStyle = .rounded
+    control.trackingMode = .selectOne
+    control.isContinuous = false
+    control.controlSize = .large
+    control.font = .systemFont(ofSize: 13)
+    control.segmentDistribution = .fit
+    control.borderShape = .capsule
+    if #available(macOS 27.0, *) {
+      control.role = .tabs
     }
-    .frame(height: TabBarConfig.tabBarHeight + 2 * TabBarConfig.outerPadding)
+    control.target = context.coordinator
+    control.action = #selector(Coordinator.selectSegment(_:))
+    control.setAccessibilityIdentifier("settings-navigation")
+    configure(control, context: context)
+    return control
   }
 
-  // MARK: - 容器底槽 (L0: 不透明基底)
-  // v14 重构核心修复：恢复不透明基底。
-  // 使用 controlBackgroundColor 提供实体背景，.glassEffect 采样此基底
-  // 而非穿透到桌面/下层页面。这是修复透明穿透的关键。
-  //
-  // v13 的 Color.clear 导致玻璃效果采样不到任何实体背景，
-  // 穿透到桌面壁纸，造成"完全透明"问题。
-  private var trackContainer: some View {
-    RoundedRectangle(
-      cornerRadius: TabBarConfig.containerCornerRadius,
-      style: .continuous
-    )
-    .fill(Color(nsColor: .controlBackgroundColor))
-    .opacity(TabBarConfig.containerBaseOpacity)
+  public func updateNSView(_ control: NSSegmentedControl, context: Context) {
+    configure(control, context: context)
   }
 
-  // MARK: - 玻璃胶囊 (L1: 原生 macOS 26 .glassEffect)
-  // 不使用任何手工渐变 / 模糊模拟，纯原生液态玻璃材质。
-  // .glassEffect 采样下方的 trackContainer 基底，渲染冷调通透淡蓝玻璃。
-  @ViewBuilder
-  private func glassPill(width: CGFloat) -> some View {
-    RoundedRectangle(
-      cornerRadius: TabBarConfig.pillCornerRadius,
-      style: .continuous
-    )
-    .fill(Color.clear)
-    .frame(width: width, height: TabBarConfig.tabBarHeight)
-    .glassEffect(
-      .regular.tint(
-        TabBarConfig.accentCoolBlue.opacity(TabBarConfig.glassTintOpacity)
-      ),
-      in: RoundedRectangle(
-        cornerRadius: TabBarConfig.pillCornerRadius,
-        style: .continuous
-      )
-    )
-    // 液态玻璃自带光学边缘：不再叠加手工 shadow。
-    // 在玻璃外自绘泛光/阴影会破坏系统对它的高度与材质判定。
+  public func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl,
+                          context: Context) -> CGSize? {
+    nsView.intrinsicContentSize
   }
 
-  // MARK: - Geometry
-  // 根据容器总宽度和 Tab 数量计算每个 Tab 的等分宽度。
-  // 窗口缩放时 GeometryReader 自动重算，指示器位置同步修正。
-  private func segmentWidth(in totalWidth: CGFloat) -> CGFloat {
-    let count = CGFloat(max(1, items.count))
-    return (totalWidth
-            - 2 * TabBarConfig.outerPadding
-            - CGFloat(max(0, items.count - 1)) * TabBarConfig.interSpacing) / count
-  }
-
-  // MARK: - Tab 按钮行 (L2: 图标 + 文字)
-  private func tabButtonsRow(segmentWidth: CGFloat) -> some View {
-    HStack(alignment: .center, spacing: TabBarConfig.interSpacing) {
-      ForEach(items) { item in
-        let isSelected = item.id == selection
-        Button {
-          selection = item.id
-        } label: {
-          HStack(spacing: TabBarConfig.iconTextSpacing) {
-            Image(systemName: item.symbol)
-              .font(.system(size: TabBarConfig.iconSize,
-                            weight: isSelected ? .semibold : .medium))
-              .symbolRenderingMode(.hierarchical)
-            Text(item.title)
-              .font(.system(size: TabBarConfig.fontSize,
-                            weight: isSelected ? .semibold : .regular))
-              .lineLimit(1)
-              .minimumScaleFactor(0.6)
-              .allowsTightening(true)
-          }
-          .foregroundStyle(isSelected ? TabBarConfig.accentCoolBlue : Color.secondary)
-          .frame(width: segmentWidth, height: TabBarConfig.tabBarHeight, alignment: .center)
-          .contentShape(
-            RoundedRectangle(cornerRadius: TabBarConfig.pillCornerRadius, style: .continuous)
-          )
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-        .accessibilityLabel(Text(item.title))
+  private func configure(_ control: NSSegmentedControl, context: Context) {
+    context.coordinator.parent = self
+    if control.segmentCount != items.count { control.segmentCount = items.count }
+    for (index, item) in items.enumerated() {
+      if control.label(forSegment: index) != item.title {
+        control.setLabel(item.title, forSegment: index)
+      }
+      if control.tag(forSegment: index) != item.id {
+        control.setTag(item.id, forSegment: index)
+      }
+      let labelWidth = (item.title as NSString).size(withAttributes: [
+        .font: control.font ?? NSFont.systemFont(ofSize: 13)
+      ]).width
+      let width = max(66, ceil(labelWidth) + 28)
+      if control.width(forSegment: index) != width {
+        control.setWidth(width, forSegment: index)
       }
     }
-    .padding(.horizontal, TabBarConfig.outerPadding)
-    .padding(.vertical, TabBarConfig.outerPadding)
+    // Pane IDs are not consecutive. Always map by identity, never by raw ID.
+    let index = items.firstIndex { $0.id == selection } ?? -1
+    if control.selectedSegment != index { control.selectedSegment = index }
+  }
+
+  public static func dismantleNSView(_ control: NSSegmentedControl, coordinator: Coordinator) {
+    coordinator.isActive = false
+    coordinator.pendingSelection = nil
+    control.target = nil
+  }
+
+  public final class Coordinator: NSObject {
+    var parent: LiquidGlassTabBar
+    var isActive = true
+    var pendingSelection: Int?
+    private var selectionScheduled = false
+    init(_ parent: LiquidGlassTabBar) { self.parent = parent }
+
+    @objc func selectSegment(_ sender: NSSegmentedControl) {
+      let index = sender.selectedSegment
+      guard parent.items.indices.contains(index) else { return }
+      pendingSelection = parent.items[index].id
+      guard !selectionScheduled else { return }
+      selectionScheduled = true
+      // Native tracking runs in eventTracking mode. Commit only after it exits,
+      // so mounting a settings pane cannot block the glass under the pointer.
+      RunLoop.main.perform(inModes: [.default]) { [weak self] in
+        guard let self else { return }
+        self.selectionScheduled = false
+        guard self.isActive, let selection = self.pendingSelection,
+              self.parent.items.contains(where: { $0.id == selection }) else { return }
+        self.pendingSelection = nil
+        if self.parent.selection != selection { self.parent.selection = selection }
+      }
+    }
   }
 }
-
-// MARK: - 可调参数清单 ────────────────────────────────────────────
-// ┌─────────────────────────────────────────────────────────────┐
-// │ 参数名                    │ 默认值  │ 说明                    │
-// ├───────────────────────────┼─────────┼────────────────────────┤
-// │ glassTintOpacity          │ 0.18    │ 玻璃着色透明度 (0-1)    │
-// │ animationDuration         │ 0.22    │ 动画时长 (秒)           │
-// │ pillCornerRadius          │ 8       │ 胶囊圆角 (pt)           │
-// │ containerCornerRadius     │ 10      │ 容器圆角 (pt)           │
-// │ containerBaseOpacity      │ 0.92    │ 基底不透明度 (0.85-1.0) │
-// │ tabBarHeight              │ 28      │ Tab 高度 (pt)           │
-// │ accentCoolBlue            │ #58A0F2 │ 冷调淡蓝高亮色          │
-// │ curveCP1x/y, CP2x/y       │ 见上    │ 动画贝塞尔曲线控制点    │
-// └─────────────────────────────────────────────────────────────┘
-//
-// 调参指南:
-// • 玻璃更通透 → 降低 glassTintOpacity (如 0.12)
-// • 玻璃更浓郁 → 升高 glassTintOpacity (如 0.25)
-// • 需要强调选中态 → 提高 glassTintOpacity 或加 tint 饱和，勿叠加 shadow：
-//   液态玻璃自带光学，外绘泛光会破坏系统对其高度与材质的判定
-// • 动画更快/慢 → 调整 animationDuration
-// • 基底更不透明 → 升高 containerBaseOpacity (建议不低于 0.85)

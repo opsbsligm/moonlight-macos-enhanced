@@ -163,7 +163,8 @@ RECORD_PROPERTY
 // is an error; key-state-heal-tests.py is where the held-back press actually has scenarios.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers;
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp;
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
 @end
 """
@@ -181,7 +182,8 @@ def epilogue(mapping_literal):
 @implementation MLKeyboardUnderProbe
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
-                                       modifiers:(char)modifiers { return NO; }
+                                       modifiers:(char)modifiers
+                                       timestamp:(NSTimeInterval)timestamp { return NO; }
 - (instancetype)init {
     if ((self = [super init])) {
         _shouldSendInputEvents = YES;

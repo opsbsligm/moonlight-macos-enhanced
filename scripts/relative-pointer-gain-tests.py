@@ -83,6 +83,26 @@ def sensitivity_bounds():
     return float(match.group(1)), float(match.group(2))
 
 
+# Negative control belongs to the test, not to the shipping input API.
+LEGACY_SCALE = r"""
+static inline short HIDScaledRelativeDelta(CGFloat delta, CGFloat sensitivity) {
+    if (delta == 0.0) {
+        return 0;
+    }
+
+    CGFloat scaled = delta * sensitivity;
+    if (scaled > SHRT_MAX) {
+        scaled = SHRT_MAX;
+    } else if (scaled < SHRT_MIN) {
+        scaled = SHRT_MIN;
+    } else if (fabs(scaled) < 1.0) {
+        scaled = scaled > 0.0 ? 1.0 : -1.0;
+    }
+
+    return (short)lrint(scaled);
+}
+"""
+
 TEST_BODY = r"""
 #import <Foundation/Foundation.h>
 #include <stdio.h>
@@ -277,9 +297,7 @@ def main():
 
     header = open(HEADER, encoding="utf-8").read()
     pointer = open(POINTER_M, encoding="utf-8").read()
-    helpers = (block_from(header, "static inline short HIDScaledRelativeDelta",
-                          "the per-frame relative scale")
-               + block_from(header, "static inline short HIDDrainRelativeDelta",
+    helpers = (LEGACY_SCALE + block_from(header, "static inline short HIDDrainRelativeDelta",
                             "the draining relative scale"))
     constants = constant(pointer, "static CGFloat const HIDGCMouseRelativeSpeedDivisor",
                          "the GameController relative divisor")

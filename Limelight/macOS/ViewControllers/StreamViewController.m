@@ -324,6 +324,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
                 [weakSelf scheduleTransientKeyLossRecoveryWithReason:@"window-resigned-key"];
                 return;
             }
+            [weakSelf hideEdgeMenuForInactiveSpaceIfNeeded];
             [weakSelf requestMouseUncaptureWhenSafeWithReason:@"window-resigned-key" code:@"MUC003"];
         }
     }];
@@ -331,6 +332,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
         if ([weakSelf isOurWindowTheWindowInNotiifcation:note]) {
             if ([weakSelf isWindowInCurrentSpace]) {
                 if ([weakSelf.view.window isKeyWindow]) {
+                    [weakSelf requestStreamMenuEntrypointsVisibilityUpdate];
                     [weakSelf claimClipboardSyncOwnershipIfNeeded];
                     Log(LOG_D, @"[diag] Window became key; rearming input capture (fullscreen=%d style=%llu level=%ld)",
                         [weakSelf isWindowFullscreen] ? 1 : 0,
@@ -374,12 +376,14 @@ highFreqMotor:(unsigned short)highFreqMotor {
         weakSelf.globalInactivePointerInsideStreamView = NO;
         // The suppression belongs to this process, so another app in front has to find its
         // Mission Control, Spotlight and input-source switch waiting for it.
+        [weakSelf hideEdgeMenuForInactiveSpaceIfNeeded];
         [weakSelf restoreSystemHotkeySuppressionForReason:@"app-resigned-active"];
         [weakSelf requestMouseUncaptureWhenSafeWithReason:@"app-resigned-active" code:@"MUC006"];
     }];
     self.appDidBecomeActiveObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidBecomeActiveNotification object:NSApp queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         weakSelf.globalInactivePointerInsideStreamView = NO;
         [weakSelf updateSystemHotkeySuppression];
+        [weakSelf requestStreamMenuEntrypointsVisibilityUpdate];
         if ([weakSelf isWindowInCurrentSpace] && [weakSelf isCurrentPointerInsideStreamView]) {
             [weakSelf ensureStreamWindowKeyIfPossible];
         }
@@ -518,6 +522,8 @@ highFreqMotor:(unsigned short)highFreqMotor {
     [[AwdlHelperManager sharedManager] endStreamSessionWithReason:reason ?: @"begin-stop"];
     [self tearDownStreamLifecycleObserversAndTimers];
 
+    [self.hidSupport tearDownKeyboardStateForSessionEnd:"begin-stop"];
+    [self.controllerSupport releaseRemoteMouseButtonsForUncapture];
     self.hidSupport.shouldSendInputEvents = NO;
     self.controllerSupport.shouldSendInputEvents = NO;
     self.hidSupport.inputContext = NULL;
@@ -827,10 +833,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
         self.mouseTrackingArea = nil;
     }
 
-    if (self.edgeMenuButtonTrackingArea && self.edgeMenuButton) {
-        [self.edgeMenuButton removeTrackingArea:self.edgeMenuButtonTrackingArea];
-        self.edgeMenuButtonTrackingArea = nil;
-    }
+
 
     if (self.edgeMenuPanel.parentWindow) {
         [self.edgeMenuPanel.parentWindow removeChildWindow:self.edgeMenuPanel];
@@ -888,6 +891,8 @@ highFreqMotor:(unsigned short)highFreqMotor {
 }
 
 - (void)tearDownStreamLifecycleObserversAndTimers {
+    [self transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
+    [self resetEdgeSensorPointerState];
     NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
 
     if (self.windowDidExitFullScreenNotification != nil) {
@@ -1343,6 +1348,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
         }
     }
     self.hidSupport = [[HIDSupport alloc] init:self.app.host];
+    self.controllerSupport.mouseButtonSupport = self.hidSupport;
     __weak typeof(self) weakSelf = self;
     self.hidSupport.freeMouseAbsoluteSyncHandler = ^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
@@ -1352,13 +1358,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
         strongSelf.pendingHybridRemoteCursorSync = NO;
         [strongSelf reconcileHybridFreeMouseAnchorToCurrentPointer];
     };
-    self.hidSupport.strayKeyPressHandler = ^BOOL(unsigned short physicalKeyCode, uint64_t ageMs) {
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (!strongSelf) {
-            return NO;
-        }
-        return [strongSelf handleStrayKeyPressAsMouseClick:physicalKeyCode ageMs:ageMs];
-    };
+
     [self resetInputDiagnosticsState];
     [self refreshInputDiagnosticsPreference];
     
@@ -1399,6 +1399,42 @@ highFreqMotor:(unsigned short)highFreqMotor {
     });
 }
 
+- (BOOL)isCurrentInputBindingConnection:(Connection *)connection generation:(NSUInteger)generation {
+    // The reconnect flag remains set while its new connection starts. Identity
+    // and generation distinguish that valid start from callbacks of the old one.
+    return connection != nil && !self.stopStreamInProgress &&
+           generation == self.activeStreamGeneration &&
+           self.streamMan.connection == connection && !connection.isCancelled;
+}
+
+- (void)bindInputForConnection:(Connection *)connection
+                   generation:(NSUInteger)generation
+            remainingAttempts:(NSUInteger)remainingAttempts {
+    // Check identity before asking the connection for, or dereferencing, its C
+    // context. A scheduled retry retains this Connection until it has finished.
+    if (![self isCurrentInputBindingConnection:connection generation:generation]) {
+        return;
+    }
+    PML_INPUT_STREAM_CONTEXT inputContext = [connection inputStreamContext];
+    if (inputContext != NULL && LiInputContextIsInitialized(inputContext)) {
+        self.hidSupport.inputContext = inputContext;
+        self.controllerSupport.inputContext = inputContext;
+        // A ready connection is not permission to capture background input.
+        // Only captureMouse opens the two forwarding gates.
+        [connection notifyInputStreamReadyForMicrophoneControlIfNeeded];
+        [self rearmMouseCaptureIfPossibleWithReason:@"input-context-bound"];
+        return;
+    }
+    if (remainingAttempts == 0) {
+        Log(LOG_W, @"Input context still not initialized after retries");
+        return;
+    }
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [weakSelf bindInputForConnection:connection generation:generation remainingAttempts:remainingAttempts - 1];
+    });
+}
+
 - (void)stageComplete:(const char *)stageName {
     if (stageName == NULL) {
         return;
@@ -1406,22 +1442,10 @@ highFreqMotor:(unsigned short)highFreqMotor {
 
     // Ensure input context is bound as soon as input stream establishment completes.
     if (strcmp(stageName, "input stream establishment") == 0) {
+        Connection *callbackConnection = [Connection currentConnection];
+        NSUInteger callbackGeneration = self.activeStreamGeneration;
         dispatch_async(dispatch_get_main_queue(), ^{
-            void *inputContext = self.streamMan.connection ? [self.streamMan.connection inputStreamContext] : NULL;
-            if (inputContext == NULL) {
-                Log(LOG_W, @"Input stream established but inputContext is NULL");
-                return;
-            }
-            PML_INPUT_STREAM_CONTEXT ctx = (PML_INPUT_STREAM_CONTEXT)inputContext;
-            Log(LOG_I, @"Input stream established: ctx=%p initialized=%d libInit=%d libConn=%p", ctx, ctx->initialized, LiInputContextIsInitialized(ctx), LiInputContextGetConnectionCtx(ctx));
-            if (ctx->initialized) {
-                self.hidSupport.inputContext = inputContext;
-                self.controllerSupport.inputContext = inputContext;
-                self.hidSupport.shouldSendInputEvents = YES;
-                self.controllerSupport.shouldSendInputEvents = YES;
-                [self.streamMan.connection notifyInputStreamReadyForMicrophoneControlIfNeeded];
-                [self rearmMouseCaptureIfPossibleWithReason:@"input-stream-established"];
-            }
+            [self bindInputForConnection:callbackConnection generation:callbackGeneration remainingAttempts:0];
         });
     }
 }
@@ -1462,12 +1486,14 @@ highFreqMotor:(unsigned short)highFreqMotor {
         [NSThread isMainThread] ? 1 : 0,
         (unsigned long)self.activeStreamGeneration);
     Connection *callbackConn = [Connection currentConnection];
-    void *callbackInputContext = callbackConn ? [callbackConn inputStreamContext] : NULL;
+    NSUInteger callbackGeneration = self.activeStreamGeneration;
     dispatch_async(dispatch_get_main_queue(), ^{
-        Log(LOG_I, @"[diag] StreamViewController connectionStarted main block begin: window=%p callbackConn=%p callbackInput=%p streamConn=%p",
+        if (![self isCurrentInputBindingConnection:callbackConn generation:callbackGeneration]) {
+            return;
+        }
+        Log(LOG_I, @"[diag] StreamViewController connectionStarted main block begin: window=%p callbackConn=%p streamConn=%p",
             self.view.window,
             callbackConn,
-            callbackInputContext,
             self.streamMan.connection);
         @try {
                 // Notify session manager (main-thread only for window access)
@@ -1483,50 +1509,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
                     self.streamMan.connection,
                     self.clipboardRuntimeConnection);
 
-                void *inputContext = callbackInputContext;
-                if (!inputContext && self.streamMan.connection) {
-                    inputContext = [self.streamMan.connection inputStreamContext];
-                }
-                if (inputContext) {
-                    PML_INPUT_STREAM_CONTEXT ctx = (PML_INPUT_STREAM_CONTEXT)inputContext;
-                    Log(LOG_I, @"Input ABI: size=%u off_init=%u off_conn=%u", LiGetInputContextStructSize(), LiGetInputContextOffsetInitialized(), LiGetInputContextOffsetConnectionContext());
-                    Log(LOG_I, @"Binding input context on connection start: ctx=%p initialized=%d libInit=%d libConn=%p", ctx, ctx->initialized, LiInputContextIsInitialized(ctx), LiInputContextGetConnectionCtx(ctx));
-                    self.hidSupport.inputContext = inputContext;
-                    self.controllerSupport.inputContext = inputContext;
-                    // Ensure input is enabled immediately after stream start
-                    self.hidSupport.shouldSendInputEvents = YES;
-                    self.controllerSupport.shouldSendInputEvents = YES;
-
-                    // If input stream isn't initialized yet, retry briefly to bind after start
-                    __block int remainingAttempts = 20;
-                    __weak typeof(self) weakSelf = self;
-                    __block void (^retryBind)(void) = nil;
-                    __weak void (^weakRetryBind)(void) = nil;
-                    retryBind = ^{
-                        __strong typeof(weakSelf) strongSelf = weakSelf;
-                        if (!strongSelf) {
-                            return;
-                        }
-                        PML_INPUT_STREAM_CONTEXT ctx = (PML_INPUT_STREAM_CONTEXT)inputContext;
-                        if (ctx != NULL && LiInputContextIsInitialized(ctx)) {
-                            strongSelf.hidSupport.inputContext = inputContext;
-                            strongSelf.controllerSupport.inputContext = inputContext;
-                            [strongSelf rearmMouseCaptureIfPossibleWithReason:@"input-context-retry-bound"];
-                            return;
-                        }
-                        if (remainingAttempts-- <= 0) {
-                            Log(LOG_W, @"Input context still not initialized after retries");
-                            return;
-                        }
-                        void (^strongRetryBind)(void) = weakRetryBind;
-                        if (!strongRetryBind) {
-                            return;
-                        }
-                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), strongRetryBind);
-                    };
-                    weakRetryBind = retryBind;
-                    retryBind();
-                }
+                [self bindInputForConnection:callbackConn generation:callbackGeneration remainingAttempts:20];
 
         self.waitingForFirstRenderedFrame = YES;
         self.pendingDisconnectSource = nil;
@@ -1726,9 +1709,20 @@ highFreqMotor:(unsigned short)highFreqMotor {
 }
 
 - (void)stageFailed:(const char *)stageName withError:(int)errorCode {
+    if (![NSThread isMainThread]) {
+        NSString *stage = [NSString stringWithUTF8String:stageName ?: "unknown"];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self stageFailed:stage.UTF8String withError:errorCode];
+        });
+        return;
+    }
     Log(LOG_I, @"Stage %s failed: %ld", stageName, (long)errorCode);
     self.connectWatchdogToken += 1;
     [self.hidSupport tearDownKeyboardStateForSessionEnd:"stage-failed"];
+    [self.controllerSupport releaseRemoteMouseButtonsForUncapture];
+    self.controllerSupport.shouldSendInputEvents = NO;
+    self.hidSupport.inputContext = NULL;
+    self.controllerSupport.inputContext = NULL;
     [self stopStreamHealthDiagnostics];
     [self finalizeInputDiagnosticsWithReason:[NSString stringWithFormat:@"stage-failed:%s", stageName ?: "unknown"]];
     self.streamHealthConnectionStartedMs = 0;
@@ -1743,8 +1737,18 @@ highFreqMotor:(unsigned short)highFreqMotor {
 }
 
 - (void)launchFailed:(NSString *)message {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self launchFailed:message];
+        });
+        return;
+    }
     self.connectWatchdogToken += 1;
     [self.hidSupport tearDownKeyboardStateForSessionEnd:"launch-failed"];
+    [self.controllerSupport releaseRemoteMouseButtonsForUncapture];
+    self.controllerSupport.shouldSendInputEvents = NO;
+    self.hidSupport.inputContext = NULL;
+    self.controllerSupport.inputContext = NULL;
     [self stopStreamHealthDiagnostics];
     [self finalizeInputDiagnosticsWithReason:@"launch-failed"];
     self.streamHealthConnectionStartedMs = 0;

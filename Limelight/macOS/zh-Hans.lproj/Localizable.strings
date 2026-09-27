@@ -267,7 +267,7 @@
 "Cancel" = "取消";
 "Add" = "添加";
 "Wake" = "唤醒";
-"Close and Quit App" = "断开并退出应用";
+"Close and Quit App" = "断开并退出远端应用";
 "Quit App" = "退出应用";
 "Disconnect from Stream" = "断开串流";
 "Pointer & Scroll Tuning" = "指针与滚动调节";
@@ -639,6 +639,10 @@
 "Active Frame Interpolation" = "当前插帧状态";
 "Video Enhancement Runtime Detail Idle" = "这里会在串流开始后显示当前实际生效的增强器。";
 "Video Enhancement Runtime Detail Off" = "当前串流没有启用增强器。";
+"Video Enhancement Runtime Detail No Up Scale Needed" = "窗口并不比串流画面大，没有需要重建的像素，增强器不会介入。把窗口拉得比串流分辨率更大会看到它工作。";
+"Video Enhancement Runtime Detail Disabled For Hdr" = "HDR 串流为了不改动 HDR 输出链路会跳过增强器；窗口需要时画面仍会缩放，只是不再重建细节。";
+"Video Enhancement Runtime Detail Needs Newer System" = "VideoToolbox 超分是 macOS 26 的 API，这台 Mac 在当前系统上跑不了，Moonlight 已改用其他缩放链路。只有升级 macOS 才能启用它。";
+"Video Enhancement Runtime Detail Needs Stream Shape" = "VideoToolbox 的缩放器只接受整数倍放大，塞不进这个窗口的形状。Moonlight 会改用能适配的 MetalFX，没有 MetalFX 时退回基础缩放。";
 "Video Enhancement Runtime Detail Active" = "这里显示当前实际正在使用的增强器。";
 "Video Enhancement Runtime Detail Warmup" = "VideoToolbox 超分正在预热中，Moonlight 会暂时使用回退缩放链路。";
 "Video Enhancement Runtime Detail Fallback" = "当前请求的增强器没有实际启用，Moonlight 正在使用回退缩放链路。";
@@ -681,7 +685,8 @@
 "Client Display HDR Profile" = "本机显示器 HDR 配置";
 "Client Display HDR Profile detail" = "设为手动后，才会显示并启用 Metal 渲染器使用的本机显示器亮度配置。";
 "HDR Manual Luminance detail" = "这些亮度值会作为 Metal 渲染器的本机 HDR 配置，并影响 SDR 回退时的色调映射。";
-"Upscaling detail" = "只有在 Metal 渲染器需要缩放画面时才会生效。串流分辨率低于当前显示大小时更容易看出差异。";
+"Upscaling detail" = "超分重建的是解码后的串流画面本身：把它放大到更大的窗口尺寸，而不是把整个界面变大。它只在 Metal 渲染器上运行，且只有当窗口大于串流分辨率时才会启用；两者一样大时无事可做。每一帧都要多重建一次，因此会多花一点延迟和功耗。";
+"Upscaling needs newer system hint" = "VideoToolbox 超分需要 macOS 26 或更新系统。系统不满足时会自动改用 MetalFX 或基础缩放，下方运行时读数会写明当前用的是哪条链路。";
 "Upscaling Metal only detail" = "仅 Metal 渲染器可用。";
 "Optical Output Scale" = "光学输出倍率";
 "Optical Output Scale detail" = "调整 Metal 渲染器在 EDR 呈现或 SDR 映射前的 HDR 工作强度。";
@@ -816,7 +821,7 @@
 "Window Mode" = "窗口模式";
 "Fullscreen Mode" = "全屏模式";
 "Borderless Window" = "无边框窗口";
-"Fullscreen Control Ball" = "全屏显示悬浮球";
+"Fullscreen Control Ball" = "全屏边缘控制栏";
 "Monitor" = "屏幕";
 "Follow Monitor" = "跟随显示器";
 "Follow Host Native" = "跟随主机原生";
@@ -1112,11 +1117,11 @@
 "Show Local Cursor" = "显示本地光标";
 "Edge Sensor Summon" = "边缘感应唤出功能栏";
 "Capture System Keyboard Shortcuts" = "接管系统键盘快捷键";
-"Capture System Keyboard Shortcuts detail" = "串流占据屏幕期间，F1-F12 与系统自己的快捷键（调度中心、启动台、Spotlight、输入法切换）发往被控端而不是本机。跟随全屏：只在全屏或无边框时接管；始终接管：窗口化串流也接管；从不接管：全部留在本机。本应用不再是前台应用、串流窗口关闭或串流结束时，这些按键一定交还本机。";
+"Capture System Keyboard Shortcuts detail" = "控制 F1-F12、调度中心、Spotlight 等系统快捷键的接管。跟随全屏：仅全屏或无边框串流时接管系统快捷键；始终接管：窗口化串流也接管；从不接管：保留给本机。主动释放输入、切到其他应用或结束串流时归还本机；点击画面恢复输入后，按此设置重新接管。实际能否接管取决于 macOS 对相应按键的处理。";
 "Follow Fullscreen" = "跟随全屏";
 "Always Capture" = "始终接管";
 "Never Capture" = "从不接管";
-"Edge Sensor Summon detail" = "在功能栏所在的那条边设 24pt 常驻感应带：贴边不超过 2pt 并停住 150ms，或向内累计推压 30pt（单个事件最多计 6pt），即唤出功能栏并在 0.82s 后自动收起。快速掠边与甩视角不会触发。关闭后只保留原有的指针逃逸唤出方式。";
+"Edge Sensor Summon detail" = "仅在把手对应的 56pt 边缘范围内，向内 4pt 停留 250ms 才展开；离开展开区域 450ms 后收起。感应以本地光标和窗口逻辑点为准，不随串流分辨率放大。锁定游戏鼠标时不估算远端光标；先用释放鼠标快捷键（按当前快捷键设置）或打开控制中心快捷键操作。主动释放后必须点击串流画面才恢复；移到其他显示器不会自动抢回鼠标。";
 "Mouse and Cursor" = "鼠标与光标";
 "Locked Mouse" = "锁定鼠标";
 "Control Center" = "控制中心";
@@ -1168,7 +1173,6 @@
 "Multi-channel device detected. Use Default for true 5.1/7.1/7.1.4 playback, or Audio Enhancement for headphone/stereo virtualization." = "检测到多通道输出设备。想保留真实 5.1/7.1/7.1.4 请使用默认；想给耳机或立体声音箱做增强处理请使用音效增强。";
 "V-Sync" = "垂直同步";
 "Performance Overlay" = "显示性能统计";
-"Performance Overlay (⌃⌥S)" = "显示性能统计（⌃⌥S）";
 "Show Connection Warnings" = "显示连接质量警告";
 "Unlock max bitrate (1000 Mbps)" = "解锁最高码率（最高 1000 Mbps）";
 "Gamepad Mouse Emulation" = "手柄模拟鼠标";
@@ -1190,27 +1194,27 @@
 "Borderless Windowed" = "无边框窗口";
 "Capture system keyboard shortcuts" = "捕获系统快捷键";
 "Shortcut Reference" = "串流快捷键";
-"Stream shortcut note" = "这里就是串流快捷键总表。断开选项、直接断开、退出应用等都能在这里改。";
+"Stream shortcut note" = "这里显示当前设置对象的实际快捷键；菜单和串流提示使用同一配置。⌃ Control，⌥ Option，⇧ Shift，⌘ Command。恢复默认会恢复该动作的内置组合。";
 "Change Shortcut" = "更改快捷键";
 "Press shortcut to record" = "现在直接按下你想使用的新快捷键。";
-"Shortcut capture note" = "按 Esc 可取消。大多数动作建议使用两个修饰键；断开选项和退出应用也支持单修饰键组合。";
+"Shortcut capture note" = "按 Esc 取消。释放鼠标需至少两个修饰键，不加普通按键；其他动作需“修饰键 + 按键”。断开选项和退出远端应用可用一个修饰键，其余需至少两个。";
 "Restore Default Shortcut" = "恢复默认";
 "Shortcut requires two modifiers" = "自定义串流快捷键至少要使用两个修饰键。";
 "Shortcut must include regular key" = "这个动作需要“修饰键 + 普通按键”的组合。";
 "Shortcut modifiers only required" = "释放鼠标捕获仅支持纯修饰键快捷键。";
-"Shortcut key unsupported" = "这里暂时只支持字母键和数字键。";
+"Shortcut key unsupported" = "支持字母、数字、常用符号、空格、Tab、Return、删除键、Esc、导航键、方向键和 F1–F20；不支持当前按键。";
 "Shortcut already in use" = "这个快捷键已经被其他功能占用了。";
 "Shortcut reserved by system" = "这个快捷键被 macOS 或 Moonlight 内建动作保留，不能用于自定义。";
 "Shortcut reserved by gameplay keys" = "Shift 在游戏中本身就是动作键（奔跑、瞄准）。只用 Shift 加移动键时，Moonlight 会在游玩过程中把这个键从游戏里抢走。请再加上 Control、Option 或 Command。";
 "Release mouse capture" = "释放鼠标捕获";
-"Toggle performance overlay" = "切换性能浮窗";
-"Toggle mouse mode" = "切换鼠标模式";
-"Toggle fullscreen control ball" = "切换全屏悬浮球";
+"Toggle performance overlay" = "显示 / 隐藏性能统计";
+"Toggle mouse mode" = "切换自由 / 锁定鼠标";
+"Toggle fullscreen control ball" = "显示 / 隐藏全屏边缘控制栏";
 "Open control center" = "打开控制中心";
-"Open control center (fullscreen / borderless only)" = "打开控制中心（仅全屏 / 无边框）";
+"Open control center (fullscreen / borderless only)" = "打开控制中心";
 "Toggle borderless / windowed (advanced)" = "无边框 / 窗口切换（高级）";
 "Open Control Center: %@" = "打开控制中心：%@";
-"Release mouse: %@" = "释放鼠标：%@";
+"Release mouse: %@" = "释放鼠标：%@（单击画面恢复）";
 "Basic Info" = "基本信息";
 "System Info" = "系统";
 "Running Game" = "运行游戏";
@@ -1284,3 +1288,25 @@
 "No devices on the bus detail" = "总线被成功读取但没有任何设备应答，或者总线根本读取失败。上面的状态会说明是哪一种，因为这是两个不同的答案。";
 "Devices panel privacy detail" = "设备只以标识、接口类别，以及序列号的短摘要列出。产品名称和完整序列号既不会出现在本页，也不会进入日志。";
 "Use this device" = "使用此设备";
+
+"Click stream to resume input" = "单击串流画面恢复控制";
+
+"releaseMouseCapture shortcut detail" = "停止向主机转发输入并释放鼠标，保持本地控制；单击串流画面恢复。短按组合后松开，或按住约 150ms。不会切换鼠标模式。";
+
+"togglePerformanceOverlay shortcut detail" = "显示或隐藏帧率、延迟等性能统计。";
+
+"toggleMouseMode shortcut detail" = "在自由鼠标（桌面）和锁定鼠标（游戏）之间切换；主动释放的输入仍需单击画面恢复。";
+
+"toggleFullscreenControlBall shortcut detail" = "显示或隐藏全屏时画面边缘的控制栏入口。不会打开控制中心，也不会释放鼠标。";
+
+"showDisconnectOptions shortcut detail" = "打开选项，可选择仅断开、断开并退出远端应用，或取消。";
+
+"disconnectStream shortcut detail" = "直接断开当前串流，不请求退出远端应用。";
+
+"closeAndQuitApp shortcut detail" = "断开串流并请求主机退出当前远端应用；不是退出 Mac 上的 Moonlight。";
+
+"reconnectStream shortcut detail" = "停止当前连接并重新连接同一远端应用。";
+
+"openControlCenter shortcut detail" = "打开串流控制菜单；窗口、全屏和无边框模式均可使用。";
+
+"toggleBorderlessWindowed shortcut detail" = "无边框模式切回普通窗口；其他模式切换为无边框。";
