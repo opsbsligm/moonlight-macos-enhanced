@@ -1328,8 +1328,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floor.
 
 ### Maintenance
+- **The keyboard table the README promises is now in the repository, and an audit keeps it honest.**
+  `docs/input-mapping-design.md` publishes every row of `keys[]` - 114 entries, grouped into letters
+  and punctuation, the numpad, control and navigation, the function row, media keys and the rest - as
+  a Mac virtual key, its `kVK_*` name and the Win32 virtual key the host is handed. The table is
+  rendered from `HIDSupport.m` rather than typed out beside it, and `scripts/constraints-audit.py`
+  now compares the published data rows against the rows in the source, so a key added to the shipped
+  table without the published one being re-rendered fails the audit instead of quietly shipping a
+  stale promise. Verified: the audit passes as it stands, and deleting one published row turns it red
+  with `publishes 113 mapping rows, keys[] has 114`; the two failures it reports are the ones left
+  over from the resolution work and moved with that work, not this one. Not verified: the Windows
+  column is the name Microsoft's published virtual-key table gives each value, not something checked
+  against a running guest.
 
-- **The first `leaks` run on the settings path found a first-party retain
+leaks` run on the settings path found a first-party retain
   cycle, and the page that records it says why the obvious fix is not safe.**
   `TemporaryHost.appList` retains its `TemporaryApp`s while
   `TemporaryApp.host` retains the host back, so the pair is garbage to
