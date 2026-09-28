@@ -621,3 +621,29 @@ Moonlight Enhanced 的**锁定游戏鼠标**是相对位移模式：本机没有
 | Release 构建 | arm64 `** BUILD SUCCEEDED **`，一方源码 0 warning，产物内 120ms 文案已生效 |
 | 部署 | 1.6.0 (1710) `a3434f123f9fa96c…`，回滚 1708 `3c2b3be78b0dd214…`（记录 `uu-style-edge-arrival-install-result.json`） |
 | 实机验收 | **尚未验收**：Sky Computer Use 仍报 `The Mac is locked…`。抵达即点亮的手感、点击展开、四边停靠与拖动重触发、30 次重复、锁定态 `⌃⌥C`/`⇧⌥` 路径、失焦恢复、断线重连、多显示器/触摸板/外置鼠标、FPS 全部未做人工确认 |
+
+### 6. 顺着"能不能点着"查出一个真的不一致（桌面模式）
+
+对照 UU 时只核对了一件事：**会点亮的状态是否都能点着**。答案是桌面模式不能：
+
+| 事实 | 证据 |
+| --- | --- |
+| 点亮允许"捕获中 + 桌面模式" | `armEdgeMenuHandleIfStillAtEdge:` 的门槛是 `(isMouseCaptured && !isRemoteDesktopMode)`；桌面模式本地光标仍是权威指针 |
+| 捕获态在桌面模式下依然成立 | `captureMouse` 无条件 `isMouseCaptured = YES`（日志本身打印 `remoteDesktop=%d`） |
+| 点击却不认这个状态 | `expandEdgeMenuForLocalClickAtCurrentPointer` 原先要求 `!isMouseCaptured` |
+| 未展开时面板不吃鼠标 | `MenuUI.m:411` `ignoresMouseEvents = phase == Collapsed/Hidden`；点击只能走 `mouseDown:` 的这条分支 |
+
+结论：**桌面模式（悬停真正可用的那一种模式）里，把手会点亮，但落在把手上的按下被当作远端点击发走**，
+`mouseDown:` 在 `expandEdgeMenu…` 返回 NO 后继续 `resumeInputForExplicitStreamClick` + 派发按下。
+这正是任务书列的"可见状态 / 命中区域 / 鼠标控制权不一致"，也正是 UU 那类绝对指针用法会踩到的位置。
+
+修法一处门槛：把 `self.isMouseCaptured` 换成 `(self.isMouseCaptured && !self.isRemoteDesktopMode)`，
+即按"指针权威"判定而不是按捕获标志判定，与点亮路径同源。`mouseUp` 靠 `edgeMenuClickConsumedLocally`
+吞掉配对抬起，因此 down/up 仍成对，不会漏一半按键给主机。锁定游戏态行为完全不变（那里门槛等价于旧条件）。
+
+测试先行：新增 4 条运行时断言（桌面模式点亮中→点击展开、抬起被吞、前提状态自证）+ 1 条静态契约
+（门槛必须是指针权威）+ 1 条变异体 `a lit desktop tab cannot be clicked`。旧代码上 2 条断言确实红，改后绿；
+`--self-test` RC=0，negative control 由 33 增至 34。
+
+过程说明（不是放宽断言）：插入用例时先用 `s` 承载新实例，污染了紧随其后依赖同一实例的两条
+既有断言；改为独立作用域 + 局部实例 `d` 后，那两条恢复原判定。既有条目一字未改。

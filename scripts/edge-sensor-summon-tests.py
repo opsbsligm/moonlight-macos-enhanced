@@ -83,6 +83,9 @@ for banned in ('summonEdgeMenuDock', 'uncaptureMouse', 'activateEdgeMenuDock'):
 click = method(mouse, '- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer')
 assert 'edgeMenuVisibleHandleRectInBounds' in click, 'the click is aimed at something other than the drawn tab'
 assert 'edgeMenuInteractionRectInBounds' not in click, 'the invisible expanded box still decides which clicks open the bar'
+# The gate is pointer authority. The capture flag alone refused the click in remote
+# desktop mode, where capture stays on and the tab lights anyway.
+assert '(self.isMouseCaptured && !self.isRemoteDesktopMode)' in click, 'the tab click is gated on the capture flag rather than on pointer authority'
 peek = float(constant('MLEdgeMenuButtonVisiblePeek'))
 idle, lit = float(constant('MLEdgeMenuHandleIdleThickness')), float(constant('MLEdgeMenuHandleArmedThickness'))
 slop = float(constant('MLEdgeMenuHandleHitSlop'))
