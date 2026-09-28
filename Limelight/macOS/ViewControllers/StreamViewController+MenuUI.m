@@ -591,6 +591,40 @@
     return [self edgeMenuFrameInRect:bounds expanded:YES];
 }
 
+- (CGFloat)edgeMenuHandleThickness {
+    return self.edgeMenuHandleArmed ? MLEdgeMenuHandleArmedThickness : MLEdgeMenuHandleIdleThickness;
+}
+
+// Where the tab both is and can be seen, in the stream view's own bounds. The click
+// that opens the bar is measured against this rectangle and against nothing else, so
+// a player is never asked to hit a seam the drawing hid, and is never handed a
+// 56pt switch that was never drawn. The 2pt of air on the screen side counts as the
+// tab's; the inward margin is the only tolerance added.
+- (NSRect)edgeMenuVisibleHandleRectInBounds:(NSRect)bounds {
+    NSRect dock = [self collapsedFrameForEdgeMenuButtonInBounds:bounds];
+    CGFloat thickness = [self edgeMenuHandleThickness] + 2.0 + MLEdgeMenuHandleHitSlop;
+    CGFloat shortest = MIN(NSWidth(bounds), NSHeight(bounds));
+    CGFloat along = MIN(MLEdgeMenuHandleLength, shortest - 8.0);
+    BOOL verticalDock = self.edgeMenuDockEdge == MLFreeMouseExitEdgeLeft ||
+                        self.edgeMenuDockEdge == MLFreeMouseExitEdgeRight;
+    CGFloat cross = verticalDock
+        ? dock.origin.y + (NSHeight(dock) - along) / 2.0
+        : dock.origin.x + (NSWidth(dock) - along) / 2.0;
+    switch (self.edgeMenuDockEdge) {
+        case MLFreeMouseExitEdgeLeft:
+            return NSMakeRect(NSMinX(bounds), cross, thickness, along);
+        case MLFreeMouseExitEdgeRight:
+            return NSMakeRect(NSMaxX(bounds) - thickness, cross, thickness, along);
+        case MLFreeMouseExitEdgeTop:
+            return NSMakeRect(cross, NSMaxY(bounds) - thickness, along, thickness);
+        case MLFreeMouseExitEdgeBottom:
+            return NSMakeRect(cross, NSMinY(bounds), along, thickness);
+        case MLFreeMouseExitEdgeNone:
+        default:
+            return NSZeroRect;
+    }
+}
+
 - (NSRect)edgeMenuInteractionRectInBounds:(NSRect)bounds {
     NSRect frame = [self expandedFrameForEdgeMenuButtonInBounds:bounds];
     switch (self.edgeMenuDockEdge) {
@@ -808,6 +842,9 @@
     BOOL active = self.edgeMenuButtonExpanded || self.edgeMenuPointerInside || self.edgeMenuTemporaryReleaseActive || self.edgeMenuDragging || self.edgeMenuMenuVisible;
     self.edgeMenuButton.activeAppearance = active;
     self.edgeMenuButton.compactAppearance = !self.edgeMenuButtonExpanded && !self.edgeMenuTemporaryReleaseActive && !self.edgeMenuDragging && !self.edgeMenuMenuVisible;
+    // Arming only ever shows on the tab: an open bar does not need a second signal,
+    // and the phase transition clears the flag before the bar is on screen anyway.
+    self.edgeMenuButton.armedAppearance = self.edgeMenuHandleArmed && !self.edgeMenuButtonExpanded;
     self.edgeMenuButton.dockEdge = self.edgeMenuDockEdge;
 }
 

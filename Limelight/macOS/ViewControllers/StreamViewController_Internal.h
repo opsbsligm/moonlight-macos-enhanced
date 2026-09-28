@@ -85,7 +85,22 @@ typedef NS_ENUM(NSInteger, MLEdgeMenuPhase) {
 static CGFloat const MLEdgeMenuButtonWidth = 56.0;
 static CGFloat const MLEdgeMenuButtonHeight = 56.0;
 static CGFloat const MLEdgeMenuButtonInsetY = 88.0;
-static CGFloat const MLEdgeMenuButtonVisiblePeek = 8.0;
+// How far into the stream the docked handle reaches. The handle is a permanent
+// affordance: the player has to see where the control bar is without hunting, and the
+// click that opens the bar has to land on something the player was shown. At 8pt the
+// dock read as an absent seam, while the 56pt panel behind it opened on a click that
+// aimed at nothing - the "it fires on its own" complaint in both directions.
+static CGFloat const MLEdgeMenuButtonVisiblePeek = 34.0;
+// The tab is drawn thinner than the panel that carries it, so the dock reads as a tab
+// and not as a panel that happens to sit half off screen. Growing the drawing to the
+// panel's own width is all "armed" means: the handle answers the pointer that arrived
+// at the edge, and the click is still what opens the bar.
+static CGFloat const MLEdgeMenuHandleIdleThickness = 14.0;
+static CGFloat const MLEdgeMenuHandleArmedThickness = 30.0;
+static CGFloat const MLEdgeMenuHandleLength = 48.0;
+// Click tolerance measured inward from the drawn tab. It is a target margin, not a
+// second sensor: a press beside the seam still belongs to the game.
+static CGFloat const MLEdgeMenuHandleHitSlop = 6.0;
 static CGFloat const MLEdgeMenuInteractionOutwardPadding = 6.0;
 static CGFloat const MLEdgeMenuInteractionInwardPadding = 8.0;
 static CGFloat const MLEdgeMenuInteractionVerticalPadding = 8.0;
@@ -347,6 +362,9 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic, copy) void (^hoverHandler)(BOOL hovering);
 @property (nonatomic) BOOL activeAppearance;
 @property (nonatomic) BOOL compactAppearance;
+// The compact tab answering a pointer that stopped at the edge. Drawing-only: it
+// never hands the pointer over and never opens anything.
+@property (nonatomic) BOOL armedAppearance;
 @property (nonatomic) MLFreeMouseExitEdge dockEdge;
 @end
 
@@ -497,6 +515,9 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic, strong) NSTimer *edgeSensorDwellTimer;
 @property (nonatomic) double edgeSensorIgnoreMotionUntilMs;
 @property (nonatomic) BOOL edgeSensorMustLeaveHoverRegion;
+// Whether the docked tab is currently answering the pointer at the edge. The only
+// visual state the sensor owns, and the only thing it can change.
+@property (nonatomic) BOOL edgeMenuHandleArmed;
 // Locked-mode slam gesture state. One accumulator family, reset by every ownership
 // transition, so no stale stroke can join a later gesture.
 @property (nonatomic) CGFloat edgePushStrokePoints;
@@ -682,13 +703,17 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)resetEdgePushGesture;
 - (BOOL)noteEdgeSensorPushMotionForEvent:(NSEvent *)event;
 - (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer;
+// One rectangle describes where the tab is drawn and where a click opens the bar, so
+// the two can no longer disagree about the player's own pointer.
+- (CGFloat)edgeMenuHandleThickness;
+- (NSRect)edgeMenuVisibleHandleRectInBounds:(NSRect)bounds;
 - (NSPoint)edgeSensorPointForEvent:(NSEvent *)event;
 - (BOOL)edgeSensorPointIsInHoverRegion:(NSPoint)point edge:(MLFreeMouseExitEdge)edge;
 - (BOOL)hasPressedMouseButtonsForCaptureTransition;
 - (void)captureMousePreservingEdgeSensorPoint:(NSPoint)point;
 - (BOOL)edgeMenuOwnsPointer;
 - (void)beginEdgeSensorDwellTimerIfNeededForEdge:(MLFreeMouseExitEdge)edge;
-- (void)finishEdgeSensorSummonIfStillArmedForEdge:(MLFreeMouseExitEdge)edge;
+- (void)armEdgeMenuHandleIfStillAtEdge:(MLFreeMouseExitEdge)edge;
 - (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason;
 // System hotkey capture: the state machine lives in the capture category because every
 // moment that decides it is an input or window moment that category already watches.

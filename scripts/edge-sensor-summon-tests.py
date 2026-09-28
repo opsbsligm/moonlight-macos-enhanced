@@ -47,7 +47,33 @@ for locale, locked_entry in (('en', 'open-control-center'), ('zh-Hans', '控制�
     for fact in promised:
         assert fact in detail, '%s copy states a different geometry than the code: %s' % (locale, fact)
     assert locked_entry in detail, '%s copy hides how to open the bar with a locked game mouse' % locale
+    # Arrival and opening are two different acts now, and a player who reads "hover to
+    # open" will keep blaming the bar for opening itself.
+    if locale == 'en':
+        assert 'click' in detail.lower(), '%s copy still promises that hovering opens the bar' % locale
+        assert 'lights' in detail.lower(), '%s copy never says what arriving at the edge actually does' % locale
+    else:
+        assert '点击' in detail, '%s copy still promises that hovering opens the bar' % locale
+        assert '把手亮起' in detail, '%s copy never says what arriving at the edge actually does' % locale
 print('PASS settings copy carries the geometry the code arms and the locked-mode entry')
+
+# Arrival must not be able to open anything, and the click must be aimed at the drawing.
+# Both used to be true at once: the dwell summoned the dock, and the click measured the
+# expanded interaction box nobody could see.
+arm = method(mouse, '- (void)armEdgeMenuHandleIfStillAtEdge:')
+for banned in ('summonEdgeMenuDock', 'uncaptureMouse', 'activateEdgeMenuDock'):
+    assert banned not in arm, 'arriving at the edge still %s' % banned
+click = method(mouse, '- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer')
+assert 'edgeMenuVisibleHandleRectInBounds' in click, 'the click is aimed at something other than the drawn tab'
+assert 'edgeMenuInteractionRectInBounds' not in click, 'the invisible expanded box still decides which clicks open the bar'
+peek = float(constant('MLEdgeMenuButtonVisiblePeek'))
+idle, lit = float(constant('MLEdgeMenuHandleIdleThickness')), float(constant('MLEdgeMenuHandleArmedThickness'))
+slop = float(constant('MLEdgeMenuHandleHitSlop'))
+assert peek >= 24.0, 'the dock has shrunk back to a seam nobody can find or aim at'
+assert lit > idle >= 12.0, 'arming the tab changes nothing the player can see'
+assert lit <= peek, 'the armed tab is drawn wider than the panel that carries it'
+assert 0.0 <= slop <= 8.0, 'the click tolerance has grown back into a second sensor'
+print('PASS arrival cannot open the bar, the click follows the drawing, and the tab is visible')
 print('PASS no activation bypass, cursor warp, duplicate presentation state or stale menu completion')
 
 # The control-center shortcut once opened the dock and then stacked a modal menu on top
