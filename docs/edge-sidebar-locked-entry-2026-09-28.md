@@ -556,3 +556,68 @@ Verify the published images` **全部 success**，`release = skipped`（本轮�
 再交还槽位/再打断（上限 500ms 自旋兜底，避免握手失效变成挂死），删掉两处 15ms 猜测。
 断言集合、覆盖语义完全不变；验证：原生 5 次 + 并发 10×60 全绿，x86_64/Rosetta 60 次全绿。
 **Intel runner 上是否真的稳定，只能等下一次 CI 判定**（本地无法复现原始慢调度）。
+
+## 廿三、对照 UU 远程：把"抵达即激活"做成手感，而不是做成触发（2026-09-29）
+
+用户给了 UU 远程的截图并要求：鼠标抵达边缘就激活、可以点击，而不是"暴力的乱触发"。先做证据核对，再决定改什么。
+
+### 1. 本机当前是否还存在"抵达就弹"的路径：不存在（静态可达性证据）
+
+`summonEdgeMenuDockForEdge:` / `activateEdgeMenuDockForExitEdge:` 的全部调用点只有三类：
+
+| 调用点 | 触发者 |
+| --- | --- |
+| `MenuUI.m:99`（`openEdgeMenuDockForControlCenterShortcut`） | 用户按"打开控制中心"快捷键（本机关机配置 = `⌃⌥C`） |
+| `MouseCapture.m:2784`（`expandEdgeMenuForLocalClickAtCurrentPointer`） | 用户在**画出来的把手**上按下鼠标（`edgeMenuVisibleHandleRectInBounds:` 命中，未展开时面板 `ignoresMouseEvents=YES`，游戏点击不会被它抢走） |
+| `MouseCapture.m:2328/3372` | 同一个快捷键的两个入口 |
+
+`handleEdgeSensorSummonForEvent:` 与 `armEdgeMenuHandleIfStillAtEdge:` 内部被静态测试禁止出现
+`summonEdgeMenuDock`/`uncaptureMouse`/`activateEdgeMenuDock`（`edge-sensor-summon-tests.py` 断言），
+所以抵达边缘能改变的只有把手的**外观**：不外发一个字节、不交还指针、不展开面板。
+点击路径也不要求"先点亮"：`expandEdgeMenuForLocalClickAtCurrentPointer` 只看 phase 与绘制条带，
+idle 与 armed 两种外观下都能点。这两点与 UU 的行为是同构的。
+
+### 2. 真正与 UU 的差距：点亮的等待时间
+
+UU 的把手是"到了就变大"。本机把点亮压在一个 250ms dwell 之后——对一个已经在边缘的指针来说，
+这 250ms 的沉默正是"点亮但没反应/像坏了"的观感来源。点亮没有任何副作用，没有任何理由等这么久。
+
+改动：`MLEdgeSensorDwellSeconds` 0.25 → **0.12**（低于悬停反馈的可感知延迟阈值；仍是定时器，
+所以触发时刻的 buttons/可见性/停止/重连/偏好重校验语义完全保留）。
+`Edge Sensor Summon detail` 中英文文案同步 250ms → 120ms（该数字是文案与代码的契约，由静态测试推导校验）。
+
+先加契约再改常量：`arriving at the edge waits too long to answer`（>150ms 即失败）在旧代码上确实红，改后绿。
+
+### 3. 与 UU 的结构性差异必须说清楚（不能假装一样）
+
+UU 默认是**绝对鼠标**（桌面模式）：本机光标位置就是远端光标位置，所以"抵达边缘"永远可判定。
+Moonlight Enhanced 的**锁定游戏鼠标**是相对位移模式：本机没有权威光标，把相对位移积分当远端坐标
+= 猜测，第 廿一 节已经证明这种猜测会在瞄准时每分钟完成多次。因此锁定游戏态刻意**没有任何指针入口**
+（第 廿/廿二 节），进入方式是 `⌃⌥C`，或先按释放快捷键（本机配置 = `⇧⌥`）把指针交还本机——释放后
+的把手点亮/点击与自由模式、与 UU 完全一致。**桌面/远程模式**（`isRemoteDesktopMode`）下即使处于
+"捕获"状态，悬停点亮点亮与点击也照常可用，这才是 UU 那种手感的对应模式。
+
+### 4. 顺带纠正一条测试自己的错误建模（不是放宽断言）
+
+上一轮遗留的 `FAIL the dragged tab lights again where it now is`：诊断显示 `blocker=none`、
+`latch=1`、`captured=1`。原因是拖动用例用 `setEdgeMenuButtonExpanded:YES` 直接把面板摆开，
+实例停在"已捕获 + 非桌面模式 + 正在拖把手"——真实产品里拖把手只可能发生在面板持有指针（临时释放，
+`isMouseCaptured=NO`）期间，所以这条断言在测一个不可能存在的状态；`lockedGameMotion` 分支按设计
+在该状态下不接受任何 motion，于是"永远不再点亮"是建模产物而非产品缺陷。
+
+修法：改走真实入口 `openEdgeMenuDockForControlCenterShortcut`（它会交还指针），并**新增**断言而不是删：
+开口必须先交还指针、沿边拖动不改 dock 边、band/panel 跟随新位置（含负原点副屏）、离开再回来必须重新点亮、
+旧位置不再响应，以及新增的锁定态契约"回到游戏里的指针不得凭猜测坐标点亮拖动后的把手"。
+断言净增 4 条，无删除、无放宽。
+
+### 5. 本轮验证
+
+| 项 | 结果 |
+| --- | --- |
+| 运行时探针（真实生产方法） | 4057 检查 / 0 失败（旧 4055 中 1 失败已定位并纠正建模） |
+| 静态+运行时变异测试 | `--self-test` RC=0，33 条 negative control 全被抓 |
+| 键鼠回归套件 | 45 passed / 0 failed |
+| 本地化 / Liquid Glass / `git diff --check` | 0 / 0 / 干净 |
+| Release 构建 | arm64 `** BUILD SUCCEEDED **`，一方源码 0 warning，产物内 120ms 文案已生效 |
+| 部署 | 1.6.0 (1710) `a3434f123f9fa96c…`，回滚 1708 `3c2b3be78b0dd214…`（记录 `uu-style-edge-arrival-install-result.json`） |
+| 实机验收 | **尚未验收**：Sky Computer Use 仍报 `The Mac is locked…`。抵达即点亮的手感、点击展开、四边停靠与拖动重触发、30 次重复、锁定态 `⌃⌥C`/`⇧⌥` 路径、失焦恢复、断线重连、多显示器/触摸板/外置鼠标、FPS 全部未做人工确认 |

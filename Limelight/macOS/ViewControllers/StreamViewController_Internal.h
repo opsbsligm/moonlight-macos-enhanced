@@ -125,7 +125,11 @@ static NSTimeInterval const MLEdgeMenuSummonGraceDelay = 2.5;
 // 12pt is wide enough to stop on reliably after a release yet shallow enough that a
 // pointer parked anywhere but against the dock never qualifies.
 static CGFloat const MLEdgeSensorBandWidth = 12.0;
-static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.25;
+// Lighting the tab is feedback, not an action: it sends nothing, opens nothing and leaves
+// the pointer with the game. A quarter second of it made a pointer that was already at the
+// edge read as ignored, so the wait is now below the threshold where a hover response feels
+// delayed, while still being a timer so the fire-time revalidation keeps its meaning.
+static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.12;
 
 // A locked relative-mode pointer has no authoritative position, and the accumulated-motion
 // gesture that used to stand in for arrival is deleted, not retuned: a 48pt flick, a 24pt
