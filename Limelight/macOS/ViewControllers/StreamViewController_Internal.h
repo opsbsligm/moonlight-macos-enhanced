@@ -107,8 +107,13 @@ static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.25;
 // claim about where the host cursor actually is.
 static CGFloat const MLEdgeSensorPushStrokePoints = 48.0;
 static CGFloat const MLEdgeSensorPushReturnPoints = 24.0;
-static NSUInteger const MLEdgeSensorPushStrokeCount = 3;
-static NSTimeInterval const MLEdgeSensorPushWindowMs = 1200.0;
+static NSUInteger const MLEdgeSensorPushStrokeCount = 2;
+// Two clocks, because they answer two different questions. The idle gap is how long the
+// device may go quiet before an unfinished gesture is forgotten; the window is how long the
+// whole gesture may take. They were one constant, so a player who paused to aim between
+// strokes also lost the strokes already counted: the entry read as broken rather than slow.
+static NSTimeInterval const MLEdgeSensorPushIdleMs = 500.0;
+static NSTimeInterval const MLEdgeSensorPushWindowMs = 1500.0;
 
 // Which moments the app takes the system's own global hotkeys away for. Always captures
 // covers a borderless window that is not fullscreen; never is the regression anchor.
@@ -693,6 +698,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)scheduleDeferredStreamMenuEntrypointsVisibilityRetries;
 - (NSView *)preferredControlCenterSourceView;
 - (void)presentControlCenterFromShortcut;
+- (BOOL)openEdgeMenuDockForControlCenterShortcut;
 - (StreamShortcut *)streamShortcutForAction:(NSString *)action;
 - (BOOL)event:(NSEvent *)event matchesShortcut:(StreamShortcut *)shortcut;
 - (void)applyShortcut:(StreamShortcut *)shortcut toMenuItem:(NSMenuItem *)item;

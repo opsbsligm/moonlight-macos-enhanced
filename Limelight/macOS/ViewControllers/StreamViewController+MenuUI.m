@@ -75,6 +75,20 @@
     });
 }
 
+// Locked game mode detaches the local pointer, parks it at the centre of the video and
+// hides it, so no hover exists to open the dock there. That used to leave the keyboard as
+// the only entry, and it reached the dock only by accident: the source-view helper prefers
+// the dock's button solely when the panel happens to be on screen already. Take the dock
+// through the same transition a dwell or a slam makes, so the sidebar itself always opens:
+// one release path, one temporary-release intent, one return-to-stream re-capture. Nothing
+// here decides ownership on its own.
+- (BOOL)openEdgeMenuDockForControlCenterShortcut {
+    // Every refusal stays inside the summon, which is also the only place that decides
+    // pointer ownership: a second copy of its guards here could only drift.
+    [self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"control-center-shortcut"];
+    return self.edgeMenuButtonExpanded;
+}
+
 - (StreamShortcut *)streamShortcutForAction:(NSString *)action {
     NSDictionary *shortcuts = [SettingsClass streamShortcutsFor:self.app.host.uuid];
     StreamShortcut *shortcut = shortcuts[action];

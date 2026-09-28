@@ -3,7 +3,7 @@
 
 The full-edge/push-budget contract has been replaced by two explicit entries: a
 12pt × handle local-pointer dwell (free mouse and explicit release, where the local
-pointer is authoritative) and a separated three-stroke slam gesture for locked game
+pointer is authoritative) and a separated two-stroke slam gesture for locked game
 motion, which never infers a remote position. One exclusive presentation phase
 governs both. This gate covers that contract plus the prior right/middle click,
 modifier-release and tab-click bugs. No mouse/key events are posted to the desktop.
@@ -29,6 +29,24 @@ assert 'handleEdgeMenuHover' in hover and 'uncaptureMouse' not in hover, 'native
 assert 'menuToken != self.edgeMenuLifecycleToken' in method(menu,'- (void)presentStreamMenuFromView:(NSView *)sourceView event:'), 'nested menu tracking can revive a closed session'
 for name in ('edgeMenuButtonExpanded','edgeMenuDragging','edgeMenuMenuVisible'):
     assert 'self.'+name+' =' not in menu, name+' has an independent writable state'
+# The settings copy is the only thing a player can read, so the numbers in it are a
+# contract, not prose. It drifted to "4pt" while the code armed a 12pt band, and no
+# assertion counted because no assertion read the strings. Derive them from the code.
+def constant(name):
+    return re.search(r'%s = ([0-9.]+)' % name, internal).group(1)
+def points(name):
+    return ('%dpt' % round(float(constant(name))))
+def millis(name):
+    return ('%dms' % round(float(constant(name)) * 1000))
+promised = [points('MLEdgeSensorBandWidth'), millis('MLEdgeSensorDwellSeconds'),
+            millis('MLEdgeMenuAutoCollapseDelay'), points('MLEdgeMenuButtonWidth')]
+for locale, locked_entry in (('en', 'open-control-center'), ('zh-Hans', '控制中心')):
+    strings = (root / 'Limelight/macOS' / (locale + '.lproj') / 'Localizable.strings').read_text()
+    detail = re.search(r'"Edge Sensor Summon detail" = "(.*?)";\n', strings, re.S).group(1)
+    for fact in promised:
+        assert fact in detail, '%s copy states a different geometry than the code: %s' % (locale, fact)
+    assert locked_entry in detail, '%s copy hides how to open the bar with a locked game mouse' % locale
+print('PASS settings copy carries the geometry the code arms and the locked-mode entry')
 print('PASS no activation bypass, cursor warp, duplicate presentation state or stale menu completion')
 
 rebuild=method(menu,'- (void)rebuildStreamMenu')

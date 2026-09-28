@@ -1121,7 +1121,7 @@
 "Follow Fullscreen" = "Follow Fullscreen";
 "Always Capture" = "Always Capture";
 "Never Capture" = "Never Capture";
-"Edge Sensor Summon detail" = "Hover for 250ms within 4pt of the edge, only along the 56pt handle span. Controls collapse 450ms after leaving the expanded area. Detection uses the local pointer and window points, independent of stream resolution. Locked game mode does not estimate the remote cursor: use your configured release-input or open-control-center shortcut. Explicit release requires a click in the stream to resume; moving onto another display never captures the pointer back.";
+"Edge Sensor Summon detail" = "Hover for 250ms within 12pt of the edge, only along the 56pt handle span. Controls collapse 450ms after leaving the expanded area. Detection uses the local pointer and window points, independent of stream resolution. Locked game mode has no local pointer to hover and never estimates the remote cursor: there the open-control-center shortcut always opens the sidebar, and two flicks toward the docked edge are the pointer entry. Explicit release requires a click in the stream to resume; moving onto another display never captures the pointer back.";
 "Mouse and Cursor" = "Mouse & Cursor";
 "Locked Mouse" = "Locked Mouse";
 "Control Center" = "Control Center";
