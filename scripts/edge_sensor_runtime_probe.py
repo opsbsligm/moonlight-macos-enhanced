@@ -289,6 +289,15 @@ int main(void) { @autoreleasepool {
             CHECK(s.edgeSensorDwellTimer.isValid, "authoritative local position starts dwell");
             NSRect idleTab = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
             CGFloat idleDepth = MIN(NSWidth(idleTab), NSHeight(idleTab));
+            // The tab has to sit on the span the sensor watches. The panel is square, so
+            // reading the wrong axis still centres it on screen and only shows up as a
+            // handle that does not line up with where a dwell actually arms.
+            NSPoint watched = NSMakePoint(NSMidX(region), NSMidY(region));
+            NSPoint drawn = NSMakePoint(NSMidX(idleTab), NSMidY(idleTab));
+            CGFloat alongEdge = edge == MLFreeMouseExitEdgeLeft || edge == MLFreeMouseExitEdgeRight
+                ? fabs(watched.y - drawn.y) : fabs(watched.x - drawn.x);
+            CHECK(alongEdge <= 1.0, "the tab the player clicks sits on the span the sensor watches");
+            CHECK(NSPointInRect(watched, idleTab), "the point that arms the tab is inside the tab it lights");
             [ProbeLog reset];
             fire(s.edgeSensorDwellTimer);
             CHECK(s.edgeMenuHandleArmed && !s.expanded, "arrival at the edge lights the tab instead of opening the bar");
@@ -889,6 +898,8 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('arrival at the edge still grabs the pointer', '    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;', '    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];\n    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;'),
                 ('the hit rect ignores what the player can see', 'NSRect handle = [self edgeMenuVisibleHandleRectInBounds:self.view.bounds];', 'NSRect handle = [self edgeMenuInteractionRectInBounds:self.view.bounds];'),
                 ('arming is invisible', 'return self.edgeMenuHandleArmed ? MLEdgeMenuHandleArmedThickness : MLEdgeMenuHandleIdleThickness;', 'return MLEdgeMenuHandleIdleThickness;'),
+                ('the click target reads the wrong axis for a horizontal dock', 'BOOL verticalDock = self.edgeMenuDockEdge == MLFreeMouseExitEdgeLeft ||\n                        self.edgeMenuDockEdge == MLFreeMouseExitEdgeRight;', 'BOOL verticalDock = YES;'),
+                ('the click target reads the wrong axis for a vertical dock', 'BOOL verticalDock = self.edgeMenuDockEdge == MLFreeMouseExitEdgeLeft ||\n                        self.edgeMenuDockEdge == MLFreeMouseExitEdgeRight;', 'BOOL verticalDock = NO;'),
                 ('the armed light never goes out', 'if (self.edgeMenuHandleArmed) {\n        self.edgeMenuHandleArmed = NO;\n        [self updateEdgeMenuButtonAppearance];\n    }', 'if (NO) {\n        self.edgeMenuHandleArmed = NO;\n        [self updateEdgeMenuButtonAppearance];\n    }'),
             ]
             for label,before,after in mutations:
