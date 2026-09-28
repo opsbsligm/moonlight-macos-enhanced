@@ -388,3 +388,43 @@ stddev 0.070, 53 distinct colours`。
   连拨两下。armed 不适用于锁定态（`armEdgeMenuHandleIfStillAtEdge:` 的守卫直接挡住）。
 - 文案：设置页中英双语都改成"常驻可见 → 停留 250ms 把手亮起（不展开、指针仍在游戏里）→
   点击亮起的把手才展开"，并保留 12pt/56pt/250ms/450ms/2500ms 全部既有数字契约。
+
+## 十八、本轮门禁、构建、部署与验收状态
+
+### 自动门禁（实测，全部本机执行）
+
+| 门禁 | 结果 |
+| --- | --- |
+| `edge-sensor-summon-tests.py --self-test` | 通过；新增 4 条负向对照（抵达仍夺指针 / 命中区无视可见把手 / 点亮不可见 / 灯不熄灭）全部如期变红 |
+| `input-regression-suite.py` | **45 passed / 0 failed** |
+| `l10n-audit.py` | 0 localization failures |
+| `liquid-glass-audit.py` | 0 violations（5 文件 / 8 面板） |
+| `render-probe.py --self-test` | 32 ok / **0 失败**（修掉夹具既存缺陷 + 新增 3 条对照） |
+| `build-warning-audit.py` | first-party 0 警告（3 条 vendored 忽略） |
+| `git diff --check` | 干净 |
+| `local-gates.sh` | 71 passed / 1 "failed" / 15 需要 CI 产物 |
+
+`local-gates` 唯一红项是 `compile-audit.py --self-test`：它需要 xcodebuild 生成的
+`DerivedSources`（CI analyze job 的 `Debug/Audit.build` 产物），本机没有该产物时按设计跳过并以
+非零码报告——属既存环境性缺口，CI 的 Static analyzer 覆盖它，与本轮改动无关。
+
+### 构建与部署（实测）
+
+- Release 构建 `build-input-review/uu-handle-build.log`：`RC=0`，产物 **1.6.0 (1702)**，
+  二进制 `836076abb38b902f10dce60d254670353697ab50ccd81ac84e0d3bba2f038ae4`。
+- 暂存签名 → `codesign --verify --deep --strict` 通过（valid on disk / satisfies DR）→
+  部署 `/Applications/MoonlightEnhanced.app`：bundle 哈希
+  `17205fd4a3a165bccf4b76c94559de7abf28b70ace637fd9248699a34a138023`（替换前
+  `c11f5cef…`，回滚记录 `build-input-review/uu-handle-install-result.json`）；实例数 1。
+- 已安装的版本被 Computer Use 的 AX 树直接确认：标题栏 `Moonlight – Version 1.6.0 (1702)`。
+
+### 实机验收：本轮仍被阻塞（不得当作已通过）
+
+- 上一轮的 Sky AX 桥接故障本轮**已恢复**：`cua.getApp(完整路径)` 重新读到主机列表 AX 树
+  （`HOME-PC 在线，未配对`、工具栏、版本号）。
+- 但双击主机行的动作被系统拒绝：**`The Mac is locked and automatic unlock could not unlock
+  it.`** —— Mac 处于锁屏，Codex 无法也不应解锁，因此串流未能进入。
+- 于是本轮**仍未拿到**实机证据的项：把手常驻可见的实际观感、抵达点亮→点击展开的真实手感、
+  四边停靠与拖动后重新触发、连续 30 次不衰减、⌃⌥C 开关、锁定模式入口、幽灵窗口是否消失。
+  以上一律标记 **尚未验收**；自动门禁只证明"实现不再违背契约"，不证明"玩家的问题已消失"。
+- 下一轮第一件事：屏幕解锁后立刻重跑第八节的实机矩阵（含本节新增的 armed 观感核对）。
