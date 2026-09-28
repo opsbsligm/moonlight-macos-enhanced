@@ -534,3 +534,25 @@ Verify the published images` **全部 success**，`release = skipped`（本轮�
 新增 5 条运行时用例（入带点亮 → 回缩仍亮 → 点击展开 → 离开熄灭 → 深处既不能点灯也不能开栏）
 与 1 条变异体 `the lit tab shrinks under the pointer that is clicking it`（把"离开把手才熄灭"改成
 "每次 motion 都熄灭"，套件必须变红）。实测：runtime 3997 检查 0 失败、36 条变异体全部捕获。
+
+## 二十二、x86_64 门禁不稳定：一次真正的取证，不是重跑糊过去
+
+`5cbb3f1` 推上去后 CI 红在 `Verify keyboard and mouse edges survive input queue congestion`（只红 x86_64 job）。
+按"先看日志再动手"处理，结论与本轮侧边栏无关：
+
+| 证据 | 观测 |
+|---|---|
+| 同一 commit 两个 arch job | arm64 该步骤 success，x86_64 两次都 failure（重跑仍红） |
+| 失败形态 | `congestionRecovery(mouse)` 四条连锁 FAIL：release 未入队 → 队列上界不符 → FIFO 不符 → 会话未存活；第一次重跑还多一条 shutdown FAIL |
+| 探针输入 | 只读 `moonlight-common-c/src/InputStream.c`，本轮提交未触碰任何 C 输入文件 |
+| 产品约束 | `INPUT_EDGE_QUEUE_WAIT_MS = 100ms`：生产者最多等 100ms，超时就按设计 fail closed（"persistent congestion fails closed"用例正是断言这个） |
+| 本地复现 | 原生 5 次 + 8×40/12×96 并发共 136 次全绿；x86_64 走 Rosetta 60 次全绿 |
+
+根因在**测试自己的调度**：`freeOneSlot`/`stopProducer` 用固定 `PltSleepMs(15)` 去猜"生产者已经阻塞"，
+慢 runner 上线程启动延迟 + 15ms 可以超过产品那 100ms 等待窗口，于是生产者按设计 fail closed，
+测试把它报成产品故障；shutdown 用例同源于"打断早了没人阻塞、晚了已失败"。
+
+修法只动探针、不动任何断言：新增 `producerStarted` 原子量，`waitForProducer()` 等生产者真的开始发送后
+再交还槽位/再打断（上限 500ms 自旋兜底，避免握手失效变成挂死），删掉两处 15ms 猜测。
+断言集合、覆盖语义完全不变；验证：原生 5 次 + 并发 10×60 全绿，x86_64/Rosetta 60 次全绿。
+**Intel runner 上是否真的稳定，只能等下一次 CI 判定**（本地无法复现原始慢调度）。

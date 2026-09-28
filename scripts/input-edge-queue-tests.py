@@ -37,6 +37,9 @@ PREAMBLE = r'''
 
 static int failures, callbackCount, callbackError;
 static bool denyAllocation;
+// Set by the thread that is about to enqueue, so the helper that hands a slot back stops guessing
+// when that moment happens. See waitForProducer for why a fixed sleep cannot work here.
+static atomic_int producerStarted;
 static pthread_t callbackThread;
 static void check(bool value, const char *name) {
     printf("%s %s\n", value ? "ok  " : "FAIL", name);
@@ -101,6 +104,17 @@ static void destroy(ML_CONNECTION_CONTEXT *connection) {
         }
     }
 }
+// A fixed sleep used to space "the producer is blocked" against "a slot came back", and on a
+// slow runner the producer's own 100ms edge wait expired before the helper thread was even
+// scheduled. The product then failed closed exactly as designed and the test reported it as a
+// product failure: two x86_64 CI runs, both with the same cascade (release not queued, bound
+// broken, session not alive), while arm64 and 136 local runs stayed green. Waiting for the
+// producer instead of sleeping removes that race without touching one assertion, and the bound
+// keeps a broken handshake from turning into a hang.
+static void waitForProducer(int extraMs) {
+    for (int spin = 0; spin < 500 && !atomic_load(&producerStarted); spin++) PltSleepMs(1);
+    for (int spin = 0; spin < extraMs; spin++) PltSleepMs(1);
+}
 static void fill(ML_INPUT_STREAM_CONTEXT *ctx) {
     for (int i = 0; i < MAX_QUEUED_INPUT_PACKETS; i++) {
         if (LiSendKeyboardEvent2Ctx(ctx, (short)(0x8000 | i), KEY_ACTION_DOWN, 0, 0)) abort();
@@ -108,7 +122,7 @@ static void fill(ML_INPUT_STREAM_CONTEXT *ctx) {
 }
 static void *freeOneSlot(void *argument) {
     ML_INPUT_STREAM_CONTEXT *ctx = argument;
-    PltSleepMs(15);
+    waitForProducer(0);
     PPACKET_HOLDER holder;
     if (LbqPollQueueElement(&ctx->packetQueue, (void **)&holder)) abort();
     freePacketHolder(ctx, holder);
@@ -116,7 +130,9 @@ static void *freeOneSlot(void *argument) {
 }
 static void *stopProducer(void *argument) {
     ML_INPUT_STREAM_CONTEXT *ctx = argument;
-    PltSleepMs(15);
+    // Interrupt inside the wait window: too early and the send never blocks (so nothing is
+    // interrupted), too late and it has already failed closed.
+    waitForProducer(2);
     atomic_store(&ctx->initialized, false);
     LbqSignalQueueDrain(&ctx->packetQueue);
     return NULL;
@@ -137,7 +153,9 @@ static void congestionRecovery(bool mouse) {
     ML_INPUT_STREAM_CONTEXT *ctx = &connection.inputContext;
     fill(ctx);
     pthread_t consumer;
+    atomic_store(&producerStarted, 0);
     pthread_create(&consumer, NULL, freeOneSlot, ctx);
+    atomic_store(&producerStarted, 1);
     int result = mouse ? LiSendMouseButtonEventCtx(ctx, BUTTON_ACTION_RELEASE, BUTTON_LEFT)
                        : LiSendKeyboardEvent2Ctx(ctx, 0x8043, KEY_ACTION_UP, 0, 0);
     pthread_join(consumer, NULL);
@@ -191,7 +209,9 @@ int main(void) {
     init(&connection);
     fill(ctx);
     pthread_t stopper;
+    atomic_store(&producerStarted, 0);
     pthread_create(&stopper, NULL, stopProducer, ctx);
+    atomic_store(&producerStarted, 1);
     result = LiSendMouseButtonEventCtx(ctx, BUTTON_ACTION_RELEASE, BUTTON_LEFT);
     pthread_join(stopper, NULL);
     check(result == LBQ_INTERRUPTED && callbackCount == 0 && !atomic_load(&ctx->inputEdgeFailure),
