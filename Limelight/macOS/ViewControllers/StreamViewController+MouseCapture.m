@@ -814,6 +814,12 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 // the player experienced as the sidebar firing on its own. Now arrival only lights the
 // tab, and the tab is what a click is aimed at. Nothing here hands over the pointer,
 // shows the panel, or sends a byte to the host.
+- (BOOL)edgeSensorPointIsOnVisibleHandle:(NSPoint)point {
+    if (![self edgeMenuShouldBeVisible] || !isfinite(point.x) || !isfinite(point.y)) return NO;
+    NSRect handle = [self edgeMenuVisibleHandleRectInBounds:self.view.bounds];
+    return !NSIsEmptyRect(handle) && NSPointInRect(point, handle);
+}
+
 - (void)armEdgeMenuHandleIfStillAtEdge:(MLFreeMouseExitEdge)edge {
     if (!self.edgeSensorSummonEnabled || ![self edgeMenuCanInteract] ||
         (self.isMouseCaptured && !self.isRemoteDesktopMode) || self.edgeMenuButtonExpanded ||
@@ -900,6 +906,14 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         // A completed gesture must leave the activation zone before a new dwell.
         if (!inside) self.edgeSensorMustLeaveHoverRegion = NO;
         [self resetEdgeSensorSummonState];
+        return NO;
+    }
+    if (self.edgeMenuHandleArmed) {
+        // The tab keeps the pointer that lit it. A player who pulls back a little to click
+        // is still aiming at the tab they were shown, and a target that shrank back to idle
+        // under that pointer is the "it lit up but the click did nothing" report. Leaving the
+        // drawn tab is what puts the light out, and only the band can light it again.
+        if (![self edgeSensorPointIsOnVisibleHandle:point]) [self resetEdgeSensorSummonState];
         return NO;
     }
     if (inside) [self beginEdgeSensorDwellTimerIfNeededForEdge:self.edgeMenuDockEdge];
