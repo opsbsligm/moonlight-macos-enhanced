@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Compile and exercise the production edge-control lifecycle and native sensor.
 
-The full-edge/push-budget contract has been replaced by two explicit entries: a
-12pt × handle local-pointer dwell (free mouse and explicit release, where the local
-pointer is authoritative) and a separated two-stroke slam gesture for locked game
-motion, which never infers a remote position. One exclusive presentation phase
-governs both. This gate covers that contract plus the prior right/middle click,
-modifier-release and tab-click bugs. No mouse/key events are posted to the desktop.
+The contract is two acts and never one: arrival at the edge lights the docked tab
+(a 12pt x handle local-pointer dwell, in the states where the local pointer is
+authoritative), and a click on that lit tab opens the bar. Locked game motion has no
+pointer entry at all -- the accumulated-motion slam gesture that used to stand in for
+arrival completed on ordinary aiming and took the pointer out of the game each time,
+so it is deleted rather than retuned, and locked mode opens the bar with the configured
+shortcut. One exclusive presentation phase governs everything. This gate covers that
+contract plus the prior right/middle click, modifier-release and tab-click bugs. No
+mouse/key events are posted to the desktop.
 """
 from pathlib import Path
 import re
@@ -21,7 +24,17 @@ internal=(vc/'StreamViewController_Internal.h').read_text()
 run_runtime_probe(mouse,menu,internal,self_test='--self-test' in sys.argv)
 band=re.search(r'MLEdgeSensorBandWidth = ([0-9.]+)', internal)
 assert band and 8.0 <= float(band.group(1)) <= 16.0, 'summon band must stay findable after release without growing into the old 24pt regression'
-assert 'MLEdgeSensorPushStrokeCount' in internal and 'MLEdgeSensorPushWindowMs' in internal, 'locked-mode slam entry must not be silently dropped'
+# The locked-mode slam gesture is deleted, not tuned. Out-and-back-and-out motion inside
+# 1.5s is what aiming at moving targets looks like, and each completion pulled the pointer
+# out of the game; that is the report this gate exists to keep fixed. Restoring it in any
+# form must fail here, and so must a sensor path that opens anything from motion.
+for _dead in ('MLEdgeSensorPushStrokeCount', 'MLEdgeSensorPushWindowMs', 'edgePushStrokePoints'):
+    assert _dead not in internal, 'the locked-mode slam gesture is back: ' + _dead
+for _dead in ('noteEdgeSensorPushMotionForEvent', 'edge-sensor-push'):
+    assert _dead not in mouse, 'the locked-mode slam gesture is back: ' + _dead
+summon_path = method(mouse, '- (BOOL)handleEdgeSensorSummonForEvent:')
+for _banned in ('summonEdgeMenuDock', 'uncaptureMouse', 'activateEdgeMenuDock'):
+    assert _banned not in summon_path, 'mouse motion can still %s' % _banned
 assert 'edgeMenuReleaseExitEdgeForEvent' not in mouse, 'legacy outward-motion activation bypass remains'
 assert 'CGWarpMouseCursorPosition' not in method(mouse,'- (void)summonEdgeMenuDockForEdge:'), 'hover must not warp a guessed remote cursor'
 hover=method(menu,'self.edgeMenuButton.hoverHandler =')
@@ -72,7 +85,9 @@ slop = float(constant('MLEdgeMenuHandleHitSlop'))
 assert peek >= 24.0, 'the dock has shrunk back to a seam nobody can find or aim at'
 assert lit > idle >= 12.0, 'arming the tab changes nothing the player can see'
 assert lit <= peek, 'the armed tab is drawn wider than the panel that carries it'
-assert 0.0 <= slop <= 8.0, 'the click tolerance has grown back into a second sensor'
+assert 0.0 <= slop <= 2.0, 'the click tolerance has grown back into a second sensor'
+assert idle + 2.0 + slop <= 18.0, 'an idle click reaches deeper into the frame than the tab it can see'
+assert lit + 2.0 + slop <= 36.0, 'a lit click reaches deeper into the frame than the tab it can see'
 print('PASS arrival cannot open the bar, the click follows the drawing, and the tab is visible')
 print('PASS no activation bypass, cursor warp, duplicate presentation state or stale menu completion')
 
