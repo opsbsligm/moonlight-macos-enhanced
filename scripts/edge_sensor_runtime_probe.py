@@ -683,6 +683,48 @@ int main(void) { @autoreleasepool {
           s.edgeMenuAutoCollapseTimer.isValid && !s.edgeMenuPointerHasVisited,
           "the press after a return opens a fresh stay on screen instead of dying on the second use");
 
+    // The switch has to have both sides. A bar that can only come out is a bar the player
+    // has to wait out, and a second press that does nothing is how the entry got reported as
+    // dead again while the log said it had opened.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO; s.wire = [NSMutableArray array];
+    s.systemPoint = NSMakePoint(960, 540);
+    [ProbeLog reset];
+    [s openEdgeMenuDockForControlCenterShortcut];
+    CHECK(s.expanded && !s.isMouseCaptured, "the first press takes the pointer for the bar");
+    CHECK([s openEdgeMenuDockForControlCenterShortcut] && !s.expanded && s.isMouseCaptured &&
+          !s.edgeMenuTemporaryReleaseActive && [s.wire count] == 0,
+          "the same press gives the bar back and the pointer to the game without waiting for a clock");
+    CHECK([ProbeLog countMatching:@"Edge controls returned to stream"] == 1,
+          "the press that closes the bar reports the return like every other way of going back");
+    CHECK([s openEdgeMenuDockForControlCenterShortcut] && s.expanded && !s.isMouseCaptured &&
+          s.edgeMenuAutoCollapseTimer.isValid && !s.edgeMenuPointerHasVisited,
+          "the press after closing opens a fresh stay on screen, so repeating the switch never dead-ends");
+
+    // Dragging the handle is the one state where a press must not tear the bar out of the
+    // pointer's hand, and must not answer with the modal menu on top of the drag either.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO; s.wire = [NSMutableArray array];
+    s.systemPoint = NSMakePoint(960, 540);
+    [s openEdgeMenuDockForControlCenterShortcut];
+    s.edgeMenuPhase = MLEdgeMenuPhaseDragging;
+    CHECK([s openEdgeMenuDockForControlCenterShortcut] && s.expanded &&
+          s.edgeMenuPhase == MLEdgeMenuPhaseDragging && s.edgeMenuTemporaryReleaseActive &&
+          !s.isMouseCaptured,
+          "a press during a drag neither drops the bar nor gives away that the bar holds the pointer");
+
+    // A click in the stream is the other way the bar leaves the screen, and it used to be
+    // silent: that missing half of the cycle is why 18 openings read like 17 returns.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO; s.wire = [NSMutableArray array];
+    s.systemPoint = NSMakePoint(960, 540);
+    [ProbeLog reset];
+    [s openEdgeMenuDockForControlCenterShortcut];
+    Motion *streamMotion = [Motion new];
+    NSEvent *streamClick = (NSEvent *)streamMotion;
+    [s mouseDown:streamClick];
+    [s mouseUp:streamClick];
+    CHECK(!s.expanded && s.isMouseCaptured &&
+          [ProbeLog countMatching:@"Edge controls returned to stream"] == 1,
+          "the click that takes the pointer back also says that the bar went back");
+
     printf("%d runtime edge checks, %d failures\n", count, failures);
     return failures != 0;
 } }
@@ -710,6 +752,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (BOOL)edgeMenuButtonExpanded', '- (BOOL)edgeMenuDragging', '- (BOOL)edgeMenuMenuVisible',
         '- (void)transitionEdgeMenuToPhase:', '- (void)handleEdgeMenuHover', '- (NSRect)edgeSensorActivationRectInBounds:',
         '- (void)deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:', '- (void)setEdgeMenuButtonExpanded:',
+        '- (NSTimeInterval)edgeMenuReturnDelay', '- (BOOL)edgeMenuPhaseIsOnScreen:',
         '- (void)cancelEdgeMenuAutoCollapse', '- (void)scheduleEdgeMenuAutoCollapse',
         '- (void)activateEdgeMenuDockForExitEdge:', '- (BOOL)handleEdgeMenuTemporaryReleaseForEvent:',
         '- (BOOL)openEdgeMenuDockForControlCenterShortcut',
@@ -753,10 +796,13 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('slam gesture keeps the old 1200ms budget', 'BOOL completed = now - self.edgePushWindowStartMs <= MLEdgeSensorPushWindowMs;', 'BOOL completed = now - self.edgePushWindowStartMs <= 1200.0;'),
                 ('one flick is enough to summon', 'if (self.edgePushStrokeCount >= MLEdgeSensorPushStrokeCount) {', 'if (self.edgePushStrokeCount >= 1) {'),
                 ('a summoned bar is left on screen forever', '    [self handleEdgeMenuHover];\n    [self attachEdgeMenuPanelToWindowIfNeeded];', '    [self attachEdgeMenuPanelToWindowIfNeeded];'),
-                ('the summon grace collapses into the hover delay', 'NSTimeInterval delay = self.edgeMenuPointerHasVisited ? MLEdgeMenuAutoCollapseDelay : MLEdgeMenuSummonGraceDelay;', 'NSTimeInterval delay = MLEdgeMenuAutoCollapseDelay;'),
+                ('the summon grace collapses into the hover delay', 'return self.edgeMenuPointerHasVisited ? MLEdgeMenuAutoCollapseDelay : MLEdgeMenuSummonGraceDelay;', 'return MLEdgeMenuAutoCollapseDelay;'),
+                ('the keyboard entry is a one-way switch', 'if (self.edgeMenuButtonExpanded && !self.edgeMenuDragging) {\n        [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:self.edgeMenuTemporaryReleaseActive];\n        return YES;\n    }', 'if (NO) {\n        [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:self.edgeMenuTemporaryReleaseActive];\n        return YES;\n    }'),
+                ('a press during a drag drops the bar out of the pointer', 'if (self.edgeMenuButtonExpanded && !self.edgeMenuDragging) {', 'if (self.edgeMenuButtonExpanded) {'),
+                ('a bar that vanished on its own is not a return', 'if ([self edgeMenuPhaseIsOnScreen:previousPhase] && ![self edgeMenuPhaseIsOnScreen:phase]) {', 'if (self.edgeMenuPointerHasVisited && [self edgeMenuPhaseIsOnScreen:previousPhase] && ![self edgeMenuPhaseIsOnScreen:phase]) {'),
                 ('a pointer that visited the bar is forgotten', '        self.edgeMenuPointerHasVisited = YES;', '        self.edgeMenuPointerHasVisited = NO;'),
                 ('a bar that goes back leaves no trace', '@"[diag] Edge controls returned to stream', '@"[diag] ignored'),
-                ('the two waits report one number', 'delay * 1000.0,', '0.0,'),
+                ('the two waits report one number', '[self edgeMenuReturnDelay] * 1000.0,', 'MLEdgeMenuAutoCollapseDelay * 1000.0,'),
                 ('tab click leaks into the game', 'if ([self expandEdgeMenuForLocalClickAtCurrentPointer]) {\n        return;\n    }', 'if (NO) {\n        return;\n    }'),
             ]
             for label,before,after in mutations:
