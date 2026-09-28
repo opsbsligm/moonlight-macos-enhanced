@@ -530,6 +530,35 @@ int main(void) { @autoreleasepool {
               "the matching release is swallowed with the press that opened the bar");
     }
 
+    // The oldest report in the file is "it works once, then never again". Thirty full
+    // cycles of the free-pointer path, each one asserting the same answers as the first:
+    // arrive, light, click open, close, leave, arrive again. Anything that leaks a latch,
+    // a timer or a light across a cycle shows up as a differing cycle, not as a lucky pass.
+    {
+        Sensor *f = fresh(MLFreeMouseExitEdgeRight); f.isRemoteDesktopMode = NO;
+        f.isMouseCaptured = NO;   // free pointer: the state in which the local cursor is authoritative
+        for (int cycle = 0; cycle < 30; cycle++) {
+            f.systemPoint = NSMakePoint(NSMaxX(f.view.bounds) - 300, 540); move(f, 0, 0);
+            CHECK(!f.edgeMenuHandleArmed && !f.edgeSensorDwellTimer,
+                  "away from the edge nothing is lit and nothing is pending");
+            f.systemPoint = NSMakePoint(NSMaxX(f.view.bounds) - 2, 540); move(f, 0, 0);
+            CHECK(f.edgeSensorDwellTimer != nil, "arriving at the edge always starts a dwell");
+            fire(f.edgeSensorDwellTimer);
+            CHECK(f.edgeMenuHandleArmed && !f.expanded && !f.isMouseCaptured,
+                  "arrival lights the tab while the local pointer keeps its freedom");
+            CHECK([f expandEdgeMenuForLocalClickAtCurrentPointer] && f.expanded,
+                  "the click that aimed at the lit tab always opens the bar");
+            [f deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:NO];
+            CHECK(!f.expanded && f.edgeSensorMustLeaveHoverRegion,
+                  "closing the bar under the pointer asks to be left before the next dwell");
+            f.systemPoint = NSMakePoint(NSMaxX(f.view.bounds) - 300, 540); move(f, 0, 0);
+            CHECK(!f.edgeSensorMustLeaveHoverRegion && !f.edgeMenuHandleArmed,
+                  "leaving the band after a close is accepted, not remembered as a grudge");
+        }
+        CHECK(!f.edgeSensorDwellTimer && !f.edgeMenuAutoCollapseTimer && !f.edgeMenuHandleArmed,
+              "thirty cycles leave no timer, no light and no latch behind");
+    }
+
     [s releaseInputToLocalControlWithCode:@"test" reason:@"explicit"];
     s.edgeSensorIgnoreMotionUntilMs=0; move(s,0,0); fire(s.edgeSensorDwellTimer);
     CHECK(s.edgeMenuHandleArmed && s.userReleasedInput && !s.expanded,
