@@ -591,6 +591,12 @@ int main(void) { @autoreleasepool {
     for (int k = 0; k < 3; k++) move(s, 20, 0);   // armed and allowed: the sensor acts
     CHECK([ProbeLog countMatching:@"Edge sensor refused"] == 0, "an armed sensor keeps the log quiet");
 
+    [ProbeLog reset];
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    [s openEdgeMenuDockForControlCenterShortcut];
+    for (int k = 0; k < 3; k++) move(s, 20, 0);   // motion over an open bar
+    CHECK([ProbeLog countMatching:@"Edge sensor refused"] == 0, "an open bar is not logged as a refusal");
+
     // Locked mode has no pointer to hover, so the keyboard must take the dock itself.
     // The panel is deliberately off screen: the sidebar may not depend on it.
     s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;

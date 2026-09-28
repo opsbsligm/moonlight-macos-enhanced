@@ -911,7 +911,10 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         [self resetEdgeSensorSummonState];
         [self resetEdgePushGesture];
         double blockedNow = [self nowMs];
-        if (blockedNow - self.edgeSensorLastRefusalLogMs >= 1000.0) {
+        // An open bar is the sensor working, not a refusal. A field log that says
+        // "refused" once a second while the controls are on screen teaches the wrong thing.
+        BOOL ordinary = [blocker isEqualToString:@"already-open"];
+        if (!ordinary && blockedNow - self.edgeSensorLastRefusalLogMs >= 1000.0) {
             self.edgeSensorLastRefusalLogMs = blockedNow;
             Log(LOG_I, @"[diag] Edge sensor refused: reason=%@ captured=%d locked=%d edge=%ld",
                 blocker, self.isMouseCaptured, self.isMouseCaptured && !self.isRemoteDesktopMode,
