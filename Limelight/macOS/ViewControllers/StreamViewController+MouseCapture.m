@@ -767,76 +767,11 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 
 - (void)resetEdgeSensorPointerState {
     [self resetEdgeSensorSummonState];
-    [self resetEdgePushGesture];
     self.edgeSensorMustLeaveHoverRegion = NO;
     // Capture/mode changes warp the system pointer. Do not treat that warp as intent.
     self.edgeSensorIgnoreMotionUntilMs = [self nowMs] + 120.0;
 }
 
-- (void)resetEdgePushGesture {
-    self.edgePushStrokePoints = 0;
-    self.edgePushReturnPoints = 0;
-    self.edgePushAwaitingReturn = NO;
-    self.edgePushStrokeCount = 0;
-    self.edgePushWindowStartMs = 0;
-    self.edgePushLastMotionMs = 0;
-}
-
-// Locked relative mode trusts motion, never position. A stroke toward the docked
-// edge counts only once an unambiguous return has followed it, so monotonic aiming,
-// held buttons and stalled windows cannot accumulate silently. This is a deliberate
-// local gesture; it never claims to know where the host cursor is.
-- (BOOL)noteEdgeSensorPushMotionForEvent:(NSEvent *)event {
-    if ([self hasPressedMouseButtonsForCaptureTransition]) {
-        [self resetEdgePushGesture];
-        return NO;
-    }
-    double now = [self nowMs];
-    if (self.edgePushLastMotionMs != 0 && now - self.edgePushLastMotionMs > MLEdgeSensorPushIdleMs) {
-        [self resetEdgePushGesture];
-    }
-    self.edgePushLastMotionMs = now;
-
-    CGFloat delta = 0;
-    switch (self.edgeMenuDockEdge) {
-        case MLFreeMouseExitEdgeLeft:   delta = -event.deltaX; break;
-        case MLFreeMouseExitEdgeRight:  delta = event.deltaX; break;
-        case MLFreeMouseExitEdgeTop:    delta = event.deltaY; break;
-        case MLFreeMouseExitEdgeBottom: delta = -event.deltaY; break;
-        default: [self resetEdgePushGesture]; return NO;
-    }
-    if (!isfinite(delta) || delta == 0) return NO;
-
-    if (delta > 0) {
-        if (self.edgePushAwaitingReturn) {
-            // A stroke is only over once the device came back inside. Continuous
-            // outward motion, however large, is one stroke and never a gesture.
-            if (self.edgePushReturnPoints < MLEdgeSensorPushReturnPoints) return NO;
-            self.edgePushAwaitingReturn = NO;
-            self.edgePushReturnPoints = 0;
-        }
-        if (self.edgePushStrokeCount == 0 && self.edgePushStrokePoints == 0) {
-            self.edgePushWindowStartMs = now;
-        }
-        self.edgePushStrokePoints += delta;
-        if (self.edgePushStrokePoints >= MLEdgeSensorPushStrokePoints) {
-            self.edgePushStrokeCount += 1;
-            self.edgePushStrokePoints = 0;
-            self.edgePushAwaitingReturn = YES;
-            if (self.edgePushStrokeCount >= MLEdgeSensorPushStrokeCount) {
-                BOOL completed = now - self.edgePushWindowStartMs <= MLEdgeSensorPushWindowMs;
-                [self resetEdgePushGesture];
-                return completed;
-            }
-        }
-    } else if (self.edgePushAwaitingReturn) {
-        self.edgePushReturnPoints += -delta;
-    } else {
-        // Symmetric play jitter nets to nothing; only a real stroke stays net outward.
-        self.edgePushStrokePoints = MAX(0.0, self.edgePushStrokePoints + delta);
-    }
-    return NO;
-}
 
 - (NSPoint)edgeSensorPointForEvent:(__unused NSEvent *)event {
     // Never infer a remote game cursor from accumulated raw motion. The native
@@ -926,7 +861,6 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     NSString *blocker = event ? [self edgeSensorSummonBlocker] : @"no-event";
     if (blocker) {
         [self resetEdgeSensorSummonState];
-        [self resetEdgePushGesture];
         double blockedNow = [self nowMs];
         // An open bar is the sensor working, not a refusal. A field log that says
         // "refused" once a second while the controls are on screen teaches the wrong thing.
@@ -944,22 +878,22 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     if (sampleNow - self.edgeSensorLastSampleLogMs >= 1000.0) {
         self.edgeSensorLastSampleLogMs = sampleNow;
         NSPoint samplePoint = lockedGameMotion ? NSMakePoint(NAN, NAN) : [self edgeSensorPointForEvent:event];
-        Log(LOG_D, @"[diag] Edge sensor sample: locked=%d captured=%d push=%lu/%.0f hover=%d valid=%d point=(%.1f,%.1f)",
-            lockedGameMotion, self.isMouseCaptured, (unsigned long)self.edgePushStrokeCount,
-            self.edgePushStrokePoints, !lockedGameMotion,
+        Log(LOG_D, @"[diag] Edge sensor sample: locked=%d captured=%d hover=%d valid=%d point=(%.1f,%.1f)",
+            lockedGameMotion, self.isMouseCaptured, !lockedGameMotion,
             (int)(isfinite(samplePoint.x) && isfinite(samplePoint.y)), samplePoint.x, samplePoint.y);
     }
     if (lockedGameMotion) {
-        // No authoritative cursor exists while locked: hover is impossible by design and
-        // the slam gesture is the sensor entry. The configured release and control-center
-        // shortcuts stay available beside it.
+        // No authoritative cursor exists while locked: hover is impossible by design. The
+        // gesture that used to stand in for arrival is gone, because completing it was not a
+        // deliberate act -- aiming at moving targets completes it many times a minute, and
+        // each completion answered by taking the pointer out of the game and opening a panel
+        // nobody asked for. Locked mode therefore has no pointer entry at all: the configured
+        // control-center shortcut opens the bar, and the configured release shortcut frees the
+        // pointer so the tab can be lit and clicked like arrival at any other edge. Motion
+        // here may only ever take a light off the tab.
         [self resetEdgeSensorSummonState];
-        if ([self noteEdgeSensorPushMotionForEvent:event]) {
-            [self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"edge-sensor-push"];
-        }
         return NO;
     }
-    [self resetEdgePushGesture];
     NSPoint point = [self edgeSensorPointForEvent:event];
     BOOL inside = [self edgeSensorPointIsInHoverRegion:point edge:self.edgeMenuDockEdge];
     if (self.edgeSensorMustLeaveHoverRegion) {

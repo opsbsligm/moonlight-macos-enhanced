@@ -756,6 +756,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the gate asserts the pinned spellings are still in the header, because the alternative is a
   page that compiles on one compiler version and not on the next.
 
+### Changed
+- **Arrival lights the tab; only a deliberate act opens the control bar, and in locked game mode
+  that act is now the configured shortcut.** A player brought screenshots of another remote-desktop
+  product - a sliver at the edge that becomes a bordered, obviously clickable button when the pointer
+  reaches it, and a menu only after it is clicked - with one instruction: arrive, light, click, and
+  never fire on its own. Free and explicitly released pointer already worked that way, so the fault was
+  the locked-mode substitute: a stroke of 48 points toward the docked edge, a return of 24, and a second
+  stroke of 48 inside 1.5 seconds opened the bar, and that sequence is what aiming at moving targets
+  looks like in a real game, dozens of times a match, each one taking the pointer out of the player's
+  hands and opening a panel nobody had asked for. Nothing about the thresholds explains the report, so
+  the gesture is deleted together with its six accumulators, five constants and its probe cases, and the
+  contract is now stated as a negative: while a game mouse is locked, mouse motion may only ever take a
+  light off the tab. Opening the bar is the configured control-center shortcut (read from this host's own
+  settings, not from the global defaults: `⌃⌥C`), and returning the pointer is the configured release
+  shortcut (`⇧⌥` on this host), after which the tab lights and clicks like arrival at any other edge. A
+  click now reaches only as deep as what it can see - the drawn tab, the 2pt of air it floats on, and 2pt
+  more, 18pt while idle and 34pt while lit - where 6pt of tolerance had made a 22pt invisible band that
+  swallowed presses meant for a HUD or a taskbar sitting on the seam. The six gesture cases became
+  negative contract cases (four docked edges, three timing schedules including the one that used to
+  complete, thirty repeats, buttons held: pointer stays in the game, tab stays dark) plus a mutation that
+  puts the summon back and is caught; the runtime suite now reports 3992 checks, 0 failures, 30 mutations
+  caught, and the keyboard-mouse regression suite is still 45/45. Locked-mode field acceptance is still
+  not performed - the machine is at a lock screen - so "does it stop firing on its own" remains unverified
+  by the only test that counts.
+
 ### Fixed
 - **Arriving at the edge now lights the handle instead of taking the mouse, and the click is aimed
   at the tab the player can see.** "The sidebar fires on its own" and "the sidebar is not there" were
