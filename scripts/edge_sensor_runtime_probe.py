@@ -384,6 +384,87 @@ int main(void) { @autoreleasepool {
               "the lit tab is clickable across the width the player was shown");
     }
 
+    // Geometry has only ever been measured on one nearly-square window on the main display.
+    // The panel (screen coordinates), the visible tab (view bounds) and the activation band
+    // come from three different functions, and the placement depends on a ratio the player
+    // changes by dragging. A disagreement between them is what "it answered twice and then
+    // stopped after I moved it" reports look like, and no case below duplicates the 1920x1080
+    // centred one. These are the production rectangles, not a model of them.
+    {
+        NSRect windows[] = { NSMakeRect(0,0,1920,1080), NSMakeRect(0,0,1000,375),
+                             NSMakeRect(0,0,375,1000), NSMakeRect(0,0,320,60) };
+        for (int w = 0; w < 4; w++) for (int edge = 1; edge <= 4; edge++) {
+            s = fresh((MLFreeMouseExitEdge)edge);
+            s.view.bounds = windows[w];
+            NSRect tab = [s edgeMenuVisibleHandleRectInBounds:windows[w]];
+            NSRect band = [s edgeSensorActivationRectInBounds:windows[w]];
+            NSRect overlap = NSIntersectionRect(tab, band);
+            CHECK(!NSIsEmptyRect(tab) && !NSIsEmptyRect(band) && overlap.size.width > 0.5 && overlap.size.height > 0.5,
+                  "every edge of every window size has a tab, a band, and the band sits on the tab");
+            BOOL vertical = (edge == MLFreeMouseExitEdgeLeft || edge == MLFreeMouseExitEdgeRight);
+            CGFloat tabCentre = vertical ? NSMidY(tab) : NSMidX(tab);
+            CGFloat bandCentre = vertical ? NSMidY(band) : NSMidX(band);
+            CHECK(fabs(tabCentre - bandCentre) <= 0.6,
+                  "the band is centred on the tab it lights at this window size and edge");
+            CHECK(NSMinX(tab) >= NSMinX(windows[w]) - 0.5 && NSMaxX(tab) <= NSMaxX(windows[w]) + 0.5 &&
+                  NSMinY(tab) >= NSMinY(windows[w]) - 0.5 && NSMaxY(tab) <= NSMaxY(windows[w]) + 0.5,
+                  "the click target never leaves the window it belongs to");
+        }
+    }
+
+    // Dragging is a placement change, not a new control: band, tab and panel must all follow,
+    // and the light has to come back at the new place. This is the automated half of the
+    // acceptance item "docked on each of the four edges, and re-triggers after a drag".
+    {
+        s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+        NSRect before = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
+        // A drag can only happen while the bar holds the pointer, which in a game session
+        // means the pointer has been handed over. Modeling the drag any other way asked the
+        // sensor to light a tab in a state the app can never be in, and the answer it got
+        // ("it never lights again") was an artifact of that impossible state.
+        CHECK([s openEdgeMenuDockForControlCenterShortcut] && !s.isMouseCaptured,
+              "opening the bar hands the pointer over before anything can be dragged");
+        [s handleEdgeMenuButtonDragWithState:NSGestureRecognizerStateBegan translation:NSZeroPoint];
+        [s handleEdgeMenuButtonDragWithState:NSGestureRecognizerStateChanged translation:NSMakePoint(0, -400)];
+        [s handleEdgeMenuButtonDragWithState:NSGestureRecognizerStateEnded translation:NSZeroPoint];
+        CHECK(fabs(NSMidY([s edgeMenuVisibleHandleRectInBounds:s.view.bounds]) - NSMidY(before)) > 100.0,
+              "a real drag through the handler moves the tab");
+        CHECK(s.edgeMenuDockEdge == MLFreeMouseExitEdgeRight,
+              "dragging along the edge re-parks the tab on the edge it was docked to");
+        [s deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:NO];
+        s.edgeSensorIgnoreMotionUntilMs = 0;
+        s.suppressFreeMouseEdgeUncaptureUntilMs = 0;
+        NSRect after = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
+        NSRect band = [s edgeSensorActivationRectInBounds:s.view.bounds];
+        CHECK(fabs(NSMidY(band) - NSMidY(after)) <= 0.6, "the activation band follows the dragged tab");
+        NSRect anchor = NSMakeRect(-1900.0, 320.0, 1920.0, 1080.0);   // second display, left of main
+        NSRect panel = [s collapsedFrameForEdgeMenuPanelInScreenRect:anchor];
+        CGFloat onScreen = NSMidY(NSIntersectionRect(panel, anchor));
+        CHECK(fabs((onScreen - NSMinY(anchor)) - NSMidY(after)) <= 0.6,
+              "the panel is put where the tab is measured, even on a display with a negative origin");
+        // A bar that closed under the pointer is not allowed to re-light from the resting
+        // position it left the pointer in (edgeSensorMustLeaveHoverRegion), so the honest
+        // sequence is the one the acceptance item describes: leave the band, come back.
+        s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 300, 540); move(s, 0, 0);
+        CHECK(!s.edgeMenuHandleArmed, "leaving the band after a drag answers nothing");
+        s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 2, NSMidY(after)); move(s, 0, 0);
+        CHECK(s.edgeSensorDwellTimer != nil, "returning to the dragged tab starts a dwell");
+        CHECK(!s.edgeSensorMustLeaveHoverRegion, "leaving the band opened the leave-before-dwell latch");
+        CHECK(!s.edgeMenuButtonExpanded, "the bar is collapsed again after the drag");
+        fire(s.edgeSensorDwellTimer);
+        CHECK(s.edgeMenuHandleArmed && !s.expanded, "the dragged tab lights again where it now is");
+        s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 2, NSMidY(before)); move(s, 0, 0);
+        CHECK(!s.edgeMenuHandleArmed, "the place the tab was dragged away from stops answering");
+        // The same pointer back inside the game is a different contract. No local position
+        // is authoritative there, so the tab has to stay dark instead of lighting from a
+        // guessed coordinate; release the pointer or use the shortcut to get in.
+        s.isMouseCaptured = YES;
+        s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 300, 540); move(s, 0, 0);
+        s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 2, NSMidY(after)); move(s, 0, 0);
+        CHECK(!s.edgeSensorDwellTimer && !s.edgeMenuHandleArmed,
+              "a locked game pointer cannot light the dragged tab from a guessed position");
+    }
+
     // The way back belongs to a bar the pointer holds, which is what a keyboard summon
     // buys in a locked session. Ten repeats per edge, same reason as above.
     for (int edge = 1; edge <= 4; edge++) for (int cycle = 0; cycle < 10; cycle++) {
@@ -926,6 +1007,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('the two waits report one number', '[self edgeMenuReturnDelay] * 1000.0,', 'MLEdgeMenuAutoCollapseDelay * 1000.0,'),
                 ('tab click leaks into the game', 'if ([self expandEdgeMenuForLocalClickAtCurrentPointer]) {\n        return;\n    }', 'if (NO) {\n        return;\n    }'),
                 ('arrival at the edge still grabs the pointer', '    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;', '    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];\n    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;'),
+                ('the tab ignores where the player dragged it', 'return minValue + available * MIN(MAX(self.edgeMenuButtonEdgeRatio, 0.0), 1.0);', 'return minValue + available * 0.5;'),
                 ('the lit tab shrinks under the pointer that is clicking it', '        if (![self edgeSensorPointIsOnVisibleHandle:point]) [self resetEdgeSensorSummonState];', '        if (YES) [self resetEdgeSensorSummonState];'),
                 ('locked motion opens the bar again', '        // here may only ever take a light off the tab.\n        [self resetEdgeSensorSummonState];\n        return NO;', '        // here may only ever take a light off the tab.\n        [self resetEdgeSensorSummonState];\n        [self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"edge-sensor-push"];\n        return NO;'),
                 ('the hit rect ignores what the player can see', 'NSRect handle = [self edgeMenuVisibleHandleRectInBounds:self.view.bounds];', 'NSRect handle = [self edgeMenuInteractionRectInBounds:self.view.bounds];'),
