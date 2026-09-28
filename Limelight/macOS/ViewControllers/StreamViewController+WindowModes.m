@@ -632,15 +632,56 @@
         if ([self isWindowFullscreen]) {
             if (!self.pendingCloseWindowAfterFullscreenExit) {
                 self.pendingCloseWindowAfterFullscreenExit = YES;
+                [self watchFullscreenExitOnceToCloseStreamWindow:window];
                 [window toggleFullScreen:self];
             }
             return;
         }
 
         self.pendingCloseWindowAfterFullscreenExit = NO;
+        if (self.closeWindowOnFullscreenExitObserver != nil) {
+            [[NSNotificationCenter defaultCenter] removeObserver:self.closeWindowOnFullscreenExitObserver];
+            self.closeWindowOnFullscreenExitObserver = nil;
+        }
         [self prepareStreamWindowForSafeClose:window];
         [window close];
     });
+}
+
+// Leaving fullscreen is the only safe way to close a window that owns a Space, but the
+// listener that used to act on it belongs to the session: beginStopStreamIfNeeded removes
+// the lifecycle observers before it runs the completion that asks for this close. So the
+// player who disconnected from a fullscreen stream left behind an invisible window that the
+// Window menu still listed and still showed the last frame of - the leftover "Desktop"
+// window. The close intent now brings its own one-shot listener instead of hoping somebody
+// else is still watching, and it stands down if any other path already closed the window.
+- (void)watchFullscreenExitOnceToCloseStreamWindow:(NSWindow *)window {
+    if (self.closeWindowOnFullscreenExitObserver != nil) {
+        return;
+    }
+
+    __weak typeof(self) weakSelf = self;
+    __block id observer = nil;
+    observer = [[NSNotificationCenter defaultCenter]
+        addObserverForName:NSWindowDidExitFullScreenNotification
+                    object:window
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *note) {
+        [[NSNotificationCenter defaultCenter] removeObserver:observer];
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        if (strongSelf.closeWindowOnFullscreenExitObserver == observer) {
+            strongSelf.closeWindowOnFullscreenExitObserver = nil;
+        }
+        if (!strongSelf.pendingCloseWindowAfterFullscreenExit) {
+            return;
+        }
+        strongSelf.pendingCloseWindowAfterFullscreenExit = NO;
+        [strongSelf requestSafeCloseOfStreamWindow];
+    }];
+    self.closeWindowOnFullscreenExitObserver = observer;
 }
 
 - (void)closeWindowFromMainQueueWithMessage:(NSString *)message {
