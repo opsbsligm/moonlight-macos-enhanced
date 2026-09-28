@@ -428,3 +428,19 @@ stddev 0.070, 53 distinct colours`。
   四边停靠与拖动后重新触发、连续 30 次不衰减、⌃⌥C 开关、锁定模式入口、幽灵窗口是否消失。
   以上一律标记 **尚未验收**；自动门禁只证明"实现不再违背契约"，不证明"玩家的问题已消失"。
 - 下一轮第一件事：屏幕解锁后立刻重跑第八节的实机矩阵（含本节新增的 armed 观感核对）。
+
+## 十九、CI 变绿（run 36467884750，commit 35e79d9）
+
+`Repository audits / Build arm64 / Build x86_64 / Static analyzer / Build universal / build /
+Verify the published images` **全部 success**，`release = skipped`（本轮不打 tag、不发 Release，
+跳过符合预期）。
+
+`Build *` 这道门此前红过三次，原因各不相同，全部单独取证后修掉：
+1. `input-edge-queue-tests.py` 读子模块里的 C 源文件，而那份 C 改动只存在于本机工作树 →
+   子模块 fork 已发布并把 gitlink 指过去（commit 32920c5）。
+2. 内部头文件被写成部分可空标注，触发 1308 条 `-Wnullability-completeness`；analyzer 基线里
+   留了一条源码已不再报告的 finding（commit 7391af0 / 792b604）。
+3. `Verify the settings page renders embedded` 用 `stddev>=0.08` 判"空白页"，而真实浅色页面只
+   有 0.0702 → 见第十六节，重锚阈值并把两端用夹具钉住（commit 43fb9eb）。
+
+本轮没有为变绿删除任何断言：新增的是 1 条正向夹具、3 条负向夹具、6 条探针负向对照与 2 条轴向对照。
