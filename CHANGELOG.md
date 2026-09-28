@@ -757,6 +757,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **The control-center shortcut is now a switch, and a bar that goes back always says so.** Players
+  who learned that `Ctrl+Option+C` calls the sidebar out pressed it a second time to put it away and
+  got nothing: the entry only knew how to open, and `summonEdgeMenuDockForEdge:` - which dwell and
+  edge-flicks share, and which must never close a bar a pointer is resting on - refused the press as
+  already open. The keyboard entry now closes through the one funnel that already hands the pointer
+  back, so the second press collapses the bar, keeps the explicit-release intent it inherited, and the
+  press after that opens a fresh stay on screen; a bar being dragged by its handle is deliberately left
+  in the pointer's hand rather than torn out of it. The return line moved to the same place phase
+  changes are decided, because it had been written at the auto-collapse timer and counted only that
+  one way of going back: a session could log 18 openings and 17 returns while the player pressed
+  eighteen times, since the click in the stream that took the pointer back was silent. The reported
+  wait now reads the same rule the timer uses, so the log cannot disagree with the clock that fired.
+  Runtime probe: 2686 checks, 30 negative controls, three of them new. Not claimed: the live
+  open-close-open cycle, because the desktop automation bridge died mid-verification on this machine
+  and no field run was completed for this change.
+- **Disconnecting from a fullscreen stream no longer leaves a window behind.**
+  `requestSafeCloseOfStreamWindow` cannot close a window that owns a Space directly: it asks the
+  window to leave fullscreen first and sets a flag for the close, which the session's own
+  exit-fullscreen observer used to consume. But `beginStopStreamIfNeededWithReason:` removes the
+  lifecycle observers *before* it runs the completion that asks for the close, so the flag was set for
+  a listener that had already been unregistered. The window stayed behind at alpha zero - still listed
+  in the Window menu, still showing the last frame of the stream, closeable only from
+  `Window -> Close Stream Window` - and the whole 35,000-line log had never once printed the
+  exit-fullscreen context that would have shown the hand-off failing. The close intent now registers
+  its own one-shot listener and stands down if any other path closed the window first. Field evidence
+  that the leftover window is gone for good is still outstanding.
 - **A summoned control bar now comes back on its own, so the next press is not refused as
   already-open — and the control-center shortcut stopped stacking a modal menu on top of it.**
   The failure the player kept reporting was "it works once, then never again", and the field log
