@@ -890,14 +890,33 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         reason, (long)edge, wasCaptured, MLEdgeSensorBandWidth, MLEdgeSensorDwellSeconds * 1000.0);
 }
 
+// Seven conditions decide whether the sensor may act, and they used to bail in silence.
+// The real failure log proves what that costs: a session that never mentions the sensor
+// cannot say which gate stayed shut, so "it stopped working" has no evidence to work from.
+// One named reason, at most once a second, and one place that owns the decision.
+- (NSString *)edgeSensorSummonBlocker {
+    if (!self.edgeSensorSummonEnabled) return @"disabled";
+    if (![self edgeMenuCanInteract]) return @"cannot-interact";
+    if (![self edgeMenuShouldBeVisible]) return @"not-visible";
+    if (self.edgeMenuButtonExpanded) return @"already-open";
+    if ([self hasPressedMouseButtonsForCaptureTransition]) return @"button-held";
+    if (self.edgeSensorIgnoreMotionUntilMs > [self nowMs]) return @"warp-cooldown";
+    if (self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) return @"reentry-cooldown";
+    return nil;
+}
+
 - (BOOL)handleEdgeSensorSummonForEvent:(NSEvent *)event {
-    if (!event || !self.edgeSensorSummonEnabled || ![self edgeMenuCanInteract] ||
-        ![self edgeMenuShouldBeVisible] || self.edgeMenuButtonExpanded ||
-        [self hasPressedMouseButtonsForCaptureTransition] ||
-        self.edgeSensorIgnoreMotionUntilMs > [self nowMs] ||
-        self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) {
+    NSString *blocker = event ? [self edgeSensorSummonBlocker] : @"no-event";
+    if (blocker) {
         [self resetEdgeSensorSummonState];
         [self resetEdgePushGesture];
+        double blockedNow = [self nowMs];
+        if (blockedNow - self.edgeSensorLastRefusalLogMs >= 1000.0) {
+            self.edgeSensorLastRefusalLogMs = blockedNow;
+            Log(LOG_I, @"[diag] Edge sensor refused: reason=%@ captured=%d locked=%d edge=%ld",
+                blocker, self.isMouseCaptured, self.isMouseCaptured && !self.isRemoteDesktopMode,
+                (long)self.edgeMenuDockEdge);
+        }
         return NO;
     }
     BOOL lockedGameMotion = self.isMouseCaptured && !self.isRemoteDesktopMode;

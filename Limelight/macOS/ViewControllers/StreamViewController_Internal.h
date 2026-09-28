@@ -496,6 +496,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 // not reach the host either, or the game sees an unpaired button-up.
 @property (nonatomic) BOOL edgeMenuClickConsumedLocally;
 @property (nonatomic) double edgeSensorLastSampleLogMs;
+@property (nonatomic) double edgeSensorLastRefusalLogMs;
 // The three-way capture mode read from settings, and whether the system's global hotkeys
 // are ours to suppress right now. The second is a claim about the outside world, so it is
 // only written after the call that changes it reported success.
@@ -659,6 +660,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (BOOL)handleKeyboardTranslationRuleForEvent:(NSEvent *)event;
 // The edge summon band is read and armed in the capture category, and only its dock
 // call reaches the menu one, so these belong to the capture interface.
+- (NSString *)edgeSensorSummonBlocker;
 - (BOOL)handleEdgeSensorSummonForEvent:(NSEvent *)event;
 - (void)refreshEdgeSensorSummonPreference;
 - (void)resetEdgeSensorSummonState;

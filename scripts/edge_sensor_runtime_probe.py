@@ -19,7 +19,22 @@ def method(source, signature):
 HARNESS = r'''
 #import <AppKit/AppKit.h>
 #include <math.h>
-#define Log(level, ...) do {} while (0)
+static NSMutableArray<NSString *> *ProbeLogLines;
+@interface ProbeLog : NSObject
++ (void)reset;
++ (void)record:(NSString *)line;
++ (NSInteger)countMatching:(NSString *)needle;
+@end
+@implementation ProbeLog
++ (void)reset { ProbeLogLines = [NSMutableArray array]; }
++ (void)record:(NSString *)line { if (!ProbeLogLines) ProbeLogLines = [NSMutableArray array]; [ProbeLogLines addObject:line ?: @""]; }
++ (NSInteger)countMatching:(NSString *)needle {
+    NSInteger hits = 0;
+    for (NSString *line in ProbeLogLines) if ([line rangeOfString:needle].location != NSNotFound) hits++;
+    return hits;
+}
+@end
+#define Log(level, ...) [ProbeLog record:[NSString stringWithFormat:__VA_ARGS__]]
 #define BUTTON_LEFT 1
 #define BUTTON_RIGHT 3
 __CONSTANTS__
@@ -125,7 +140,7 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 @property NSRect edgeSensorRelativeBounds;
 @property NSTimer *edgeSensorDwellTimer;
 @property CGFloat edgeSensorPushAccumulator, edgeMenuButtonEdgeRatio;
-@property double edgeSensorIgnoreMotionUntilMs, suppressFreeMouseEdgeUncaptureUntilMs;
+@property double edgeSensorIgnoreMotionUntilMs, suppressFreeMouseEdgeUncaptureUntilMs, edgeSensorLastRefusalLogMs;
 @property double fakeNowMs;
 @property MLFreeMouseExitEdge edgeMenuDockEdge, freeEdge;
 @property NSInteger summons;
@@ -555,6 +570,27 @@ int main(void) { @autoreleasepool {
     moveAt(s, 5400, 20, 0); moveAt(s, 5500, 20, 0); moveAt(s, 5900, 20, 0); // 1900ms is past the budget
     CHECK(!s.expanded, "strokes outside the gesture window do not chain");
 
+    // A refused sensor has to say why. The field log for the failing session contained
+    // no sensor line at all, which is the reason the report could not be diagnosed.
+    [ProbeLog reset];
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO; s.visible = NO;
+    move(s, 40, 0);
+    CHECK([ProbeLog countMatching:@"Edge sensor refused: reason=cannot-interact"] == 1,
+          "the gate that keeps the bar away names itself in the log");
+    for (int i = 0; i < 300; i++) move(s, 40, 0);
+    CHECK([ProbeLog countMatching:@"Edge sensor refused"] == 1,
+          "the refusal is named once a second, not once a motion sample");
+    [ProbeLog reset];
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO; s.buttons = YES;
+    move(s, 40, 0);
+    CHECK([ProbeLog countMatching:@"reason=button-held"] == 1,
+          "a held mouse button names itself instead of swallowing the gesture silently");
+
+    [ProbeLog reset];
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 3; k++) move(s, 20, 0);   // armed and allowed: the sensor acts
+    CHECK([ProbeLog countMatching:@"Edge sensor refused"] == 0, "an armed sensor keeps the log quiet");
+
     // Locked mode has no pointer to hover, so the keyboard must take the dock itself.
     // The panel is deliberately off screen: the sidebar may not depend on it.
     s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
@@ -602,7 +638,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (void)otherMouseDown:', '- (void)otherMouseUp:', '- (void)handleModifierOnlyReleaseShortcut:',
         '- (void)releaseInputToLocalControlWithCode:', '- (void)resumeInputForExplicitStreamClick:',
         '- (NSPoint)edgeSensorPointForEvent:', '- (void)beginEdgeSensorDwellTimerIfNeededForEdge:',
-        '- (void)finishEdgeSensorSummonIfStillArmedForEdge:', '- (BOOL)handleEdgeSensorSummonForEvent:',
+        '- (void)finishEdgeSensorSummonIfStillArmedForEdge:', '- (BOOL)handleEdgeSensorSummonForEvent:', '- (NSString *)edgeSensorSummonBlocker',
         '- (void)summonEdgeMenuDockForEdge:',
         '- (void)resetEdgePushGesture', '- (BOOL)noteEdgeSensorPushMotionForEvent:',
         '- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer', '- (void)mouseDown:', '- (void)mouseUp:',
@@ -651,6 +687,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('slam counts continuous outward motion as strokes', 'if (self.edgePushReturnPoints < MLEdgeSensorPushReturnPoints) return NO;', 'if (NO) return NO;'),
                 ('slam strokes shrink to nothing', 'if (self.edgePushStrokePoints >= MLEdgeSensorPushStrokePoints) {', 'if (self.edgePushStrokePoints > 0) {'),
                 ('slam survives a button press', 'if ([self hasPressedMouseButtonsForCaptureTransition]) {\n        [self resetEdgePushGesture];\n        return NO;\n    }', 'if (NO) {\n        [self resetEdgePushGesture];\n        return NO;\n    }'),
+                ('a refused sensor stays silent', 'Log(LOG_I, @"[diag] Edge sensor refused: reason=%@ captured=%d locked=%d edge=%ld",\n                blocker, self.isMouseCaptured, self.isMouseCaptured && !self.isRemoteDesktopMode,\n                (long)self.edgeMenuDockEdge);', 'Log(LOG_D, @"ignored");'),
                 ('keyboard entry never takes the dock', '[self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@\"control-center-shortcut\"];', ';'),
                 ('keyboard entry reports a dock it never opened', '[self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"control-center-shortcut"];\n    return self.edgeMenuButtonExpanded;', '[self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"control-center-shortcut"];\n    return NO;'),
                 ('slam gesture reuses one clock for both questions', 'now - self.edgePushLastMotionMs > MLEdgeSensorPushIdleMs', 'now - self.edgePushLastMotionMs > 1e9'),
