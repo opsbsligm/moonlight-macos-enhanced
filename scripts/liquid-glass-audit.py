@@ -65,6 +65,11 @@ def check(files):
             problems.append("%s uses an overshooting curve (%s)" % (name, hit.group(0).strip()))
 
     bar = files.get("LiquidGlassTabBar.swift", "")
+    # NSSegmentedControl.role is not in the macOS 26 SDK this project also builds against
+    # (that is the SDK CI builds with), so an unguarded assignment is a build break there,
+    # not a style preference. #available alone does not help: the symbol must not compile.
+    if ".role = " in strip_comments(bar) and "#if ML_APPKIT_TABS_ROLE" not in strip_comments(bar):
+        problems.append("the tabs role compiles unguarded, so the macOS 26 SDK cannot build the tab bar")
     match = COLOUR.search(strip_comments(bar))
     if match is None:
         problems.append("the glass accent colour could not be read from TabBarConfig")
@@ -119,6 +124,17 @@ def mutate(text, old, new):
 def self_test():
     cases = []
     cases.append(("the compliant fixture", FIXTURE, False))
+
+    unguarded = dict(FIXTURE)
+    unguarded["LiquidGlassTabBar.swift"] = FIXTURE["LiquidGlassTabBar.swift"] + (
+        "\n        let control = NSSegmentedControl()\n        control.role = .tabs\n        ")
+    cases.append(("tabs role compiled without the SDK guard", unguarded, True))
+
+    guarded = dict(FIXTURE)
+    guarded["LiquidGlassTabBar.swift"] = FIXTURE["LiquidGlassTabBar.swift"] + (
+        "\n        let control = NSSegmentedControl()\n        #if ML_APPKIT_TABS_ROLE\n"
+        "        control.role = .tabs\n        #endif\n        ")
+    cases.append(("tabs role behind the SDK guard", guarded, False))
 
     native = dict(FIXTURE)
     native["LiquidGlassTabBar.swift"] = native["LiquidGlassTabBar.swift"].replace(
@@ -378,6 +394,14 @@ def main():
     problems += panel_problems(texts,
                                os.path.isfile(os.path.join(args.repo, "Limelight", "macOS",
                                                            "Views", "GlassOverlayContainer.m")))
+    # The guard only means something if the project still declares the condition for the
+    # SDK that has the symbol; without it the accepted tabs look silently disappears.
+    if "#if ML_APPKIT_TABS_ROLE" in files.get("LiquidGlassTabBar.swift", ""):
+        project_path = os.path.join(args.repo, "Moonlight.xcodeproj", "project.pbxproj")
+        project = open(project_path, encoding="utf-8").read() if os.path.isfile(project_path) else ""
+        if "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" not in project:
+            problems.append("the tabs role waits for a build condition no configuration declares, "
+                            "so no build ever sets it")
     for problem in problems:
         print("violation: %s" % problem)
     print("%d liquid glass violations across %d files, %d panels checked"
