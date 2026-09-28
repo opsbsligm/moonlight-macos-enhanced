@@ -1767,7 +1767,11 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         report[@"settingsPagePixels"] = pixels;
         double stddev = [pixels[@"stddev"] doubleValue];
         NSUInteger distinct = [pixels[@"distinctColours"] unsignedIntegerValue];
-        if (stddev < 0.08 || distinct < 40) {
+        // The floor is 0.02, not the 0.08 this gate was written with: the settings page is
+        // a light theme, so a fully drawn page measures 0.0702 here against 0.001 when flat.
+        // The old floor sat above the real number and refused a page that rendered properly.
+        // `render-probe.py --self-test` pins both ends of the line with fixtures.
+        if (stddev < 0.02 || distinct < 40) {
             refuse([NSString stringWithFormat:@"the settings page rendered as flat: stddev %.3f, %lu distinct colours",
                     stddev, (unsigned long)distinct]);
         }
