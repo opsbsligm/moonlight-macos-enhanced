@@ -133,3 +133,89 @@ CI run 36363126921（commit 931cf7e）：`Repository audits` 已 success（上�
    源码有守卫但工程未声明条件也判违规），并各带一个自测用例（一拒一收）。
 
 注意：`Build arm64` 是在第 13 步失败后跳过后续步骤，所以这条 Swift 编译错误此前从未在 CI 暴露过。
+
+## 八、本轮实机验收（13:57–14:36，第一次拿到真机证据）
+
+环境（本机单显示器 1920x1080@180，无第二块屏；配置从
+`~/Library/Preferences/std.skyhua.MoonlightMac2.plist` 只读取得，未修改）：
+HOME-PC 192.168.3.110，`displayMode=1`（全屏）、`mouseMode=0`（锁定）、
+`openControlCenter=⌃⌥C`、`releaseMouseCapture=⇧⌥`（modifierOnly，主机级覆盖全局 ⌃⌥）、
+`disconnectStream=⌃⌥W`。UI 操作全部经Computer Use，未使用 CGEvent/osascript 合成。
+
+修复前同一台机器的基线（旧构建 a6a4aa5，11:57）：8 次 ⌃⌥C 只有 4 次 `Edge controls opened`，
+其余按键完全无日志；且 ⌃⌥C 同时弹模态菜单，一次杂散点击真的选中了"断开连接"。
+
+修复后（安装版 67fd39fb，全部以 `moonlight-debug.log` 为准）：
+
+| 路径 | 结果 |
+| --- | --- |
+| ⌃⌥C × 10（间隔 3.2s，锁定态） | 10 次 `opened`（capturedBefore=1）+ 10 次 `returned`（grace=2500ms，均 +2.50s）**10/10 实机通过** |
+| ⌃⌥C × 10（间隔 900ms，控制栏仍在屏上） | 7 次 `opened`；差额是"栏已可见时再按"按设计不动作；1 次由用户画面内真实单击收回（显式单击路径不打 returned 日志）；0 拒绝、0 模态菜单、0 误断连 **实机通过（含"重复按"设计行为）** |
+| 真实外拨手势 `edge-sensor-push` | 会话内 3 次成功打开，其中 1 次指针确实停在栏上 → `visited=1 grace=450ms` **实机通过** |
+| 失焦→恢复→再按 | 切到活动监视器再切回，`opened`+`returned` 各 1 次，无卡死 **实机通过** |
+| 断开后新建会话 | 同进程第二次会话仍然 `opened`+`returned`；把手复位到右边缘 **实机通过** |
+| 会话 1 总量 | 18 `opened` / 17 `returned`（差额由真实单击收回解释）、0 `refused` **实机通过** |
+| 普通 C 键 × 12 | 12 `view-down` / 12 `sent-down` / 12 `sent-up`，0 `dropped-unconfirmed`、0 swallowed **自动+注入实机（真实键盘未验收：注入事件 sourcePid 非本进程）** |
+| 相对位移完整性 | 会话 1：moves=184=rel=184，rawΔ=sentΔ，suppressed=0，capture=19/uncapture=18 **实机通过** |
+| ⌃⌥D（未绑定组合） | 无任何断连/吞键日志，未被误当作 ⌃⌥W **实机通过** |
+
+原始证据片段：`build-input-review/edge-return-live-check.log`。
+
+## 九、根因与所有权（本轮定案）
+
+1. **收起计时器只由悬停/菜单路径 arm**。锁定模式把本地光标停在画面中心且不动，
+   控制栏永远 expanded，下一次召唤被 `already-open` 静默拒绝——这就是"第一次有效、后续失效"。
+   修法：显示把手与安排回程是同一次决策（`setEdgeMenuButtonExpanded:` 展开后立刻走
+   `handleEdgeMenuHover`），仍然只有一个计时器；`edgeMenuPointerHasVisited` 只决定
+   这一个计时器用 2500ms（指针从未上过栏）还是 450ms（上过栏又离开）。
+2. **⌃⌥C 在刚召唤出的侧边栏上又叠了一个模态菜单**，指针没有可瞄准的位置，玩家下一次
+   键/点击落进菜单（真机日志里真的落到"断开连接"）。两个调用点改为 dock 与菜单二选一，
+   窗口模式没有 dock 才回退到菜单。
+3. **诊断盲点**：`updateEdgeMenuPointerInsideForPoint:` 在探针里被替身重复实现，生产漏斗
+   没被测试覆盖；现在改抽取生产方法本体，并新增 5 个变异体（把栏永久留在屏上、grace 塌回
+   450ms、忘记 visit、回程不留日志、两个等待打同一个数字）全部被抓到。
+
+| 状态 | 指针归属 | 进入条件 | 回程/清理者 |
+| --- | --- | --- | --- |
+| 锁定游戏中 | 远端 | ⌃⌥C 或两次外拨 | `summonEdgeMenuDockForEdge:` |
+| 栏可见（指针未上过栏） | 本地（临时释放） | 召唤成功 | 2500ms 计时器 → `deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:` |
+| 栏可见（指针在栏上） | 本地 | 指针进入交互区 | 离开后 450ms 同一计时器 |
+| 栏可见 + 玩家点击画面 | 交还远端 | 显式单击串流 | `resumeInputForExplicitStreamClick:`（不打 returned 日志） |
+| 菜单/拖动 | 本地 | 菜单打开或按住把手 | `edgeMenuPhase` 单阶段 + lifecycle token |
+
+本轮没有新增布尔量拥有生命周期，也没有新增计时器；visit 只是"这一次在屏上停留期间指针是否上过栏"的记录。
+
+## 十、仍未解决 / 未验收（不得当作已通过）
+
+- **真实硬件项**：⇧⌥ 纯修饰键释放（工具无法注入）、真实键盘 C 的 source-check 分支、
+  真实触摸板/外置鼠标切换、多显示器与跨屏（本机只有一块屏）——**尚未验收**。
+- **拖动把手重新停靠**：Computer Use 在屏幕边界的坐标命中不可靠（`windowNotFoundAtPosition`），
+  本轮未能实机拖动；仅有自动测试覆盖（含 `collapsed dock drag`、`stale drag callbacks` 变异体）。
+- **"栏已可见时再按 ⌃⌥C"是设计上的空操作**：屏幕上有栏可点，但玩家若期望它是开关，
+  需要产品决策（改成 toggle 会连带改文案）；本轮未改语义。
+- **显式单击收起不打 `returned` 日志**：日志读起来像"少了一次回程"。可加一条不同措辞的日志，
+  本轮未做（避免与 346af90 的"开栏不是拒绝"口径混淆）。
+- **会话结束后仍收到指针事件**（旧构建 12:02:55 有 4 条 `cannot-interact` 日志，防护有效、
+  功能未受影响）：新构建本轮未复现，但成因（teardown 不移除 tracking area / 面板生命周期）未修。
+- **退出串流后遗留 "Desktop" 窗口**（`performCloseStreamWindow: safe close` 之后窗口仍在，
+  性能浮层文本停在最后一帧；`窗口 ▸ Close Stream Window` 可关）：本轮新观察到的既存缺陷，未修。
+- **普通 C 键 `dropped-unconfirmed`（旧日志 6 次）**：本轮 12 次注入 0 复现，但样本小且依赖
+  宿主确认；C 层输入边缘队列改动仍未发布（见第七节），不能宣告关闭。
+- **CI**：`Build arm64` 仍会在第 13 步红（C 层三个文件只在本机工作树，子模块无推送权限）——需用户决策。
+- **性能**：本轮未做刷新率测量，不作任何 120/180 FPS 声明。
+
+## 十一、本轮构建与部署（实测）
+
+- Release 构建（同 CI 参数，BUILD_NUMBER=1692）：`** BUILD SUCCEEDED **`；
+  `build-warning-audit.py --log` first-party 0 warning。
+- 门禁：`edge-sensor-summon-tests.py --self-test` rc=0（27 个负向对照，其中 5 个本轮新增 +
+  1 个守卫自测）；`local-gates.sh` 73 passed / 0 failed / 14 需 CI 产物；断言电池
+  `144/144`（副本 `--allow-dirty`，0 not-caught）；l10n 0、liquid-glass 0、workflow 25 规则通过、
+  `constraints-audit --no-battery` 0、键鼠回归 45/45、`git diff --check` 干净。
+- 暂存 → `codesign-bundle.sh` → `codesign --verify --deep --strict` 通过 → 确认旧实例 0 socket
+  （未在串流）且 HID 空闲 43s → `kill -TERM` → `deploy-local-app.sh`。
+- 安装 `67fd39fb0fd339950e5edb295596add5cb3805accb09e5f0fa9fe75734dbcb55`
+  （替换前 `a6a4aa5af30c11ea31cea1fe8eff76d47abaf1297d883fc00d2cfd2f0bdca3e4`），
+  回滚副本 `~/.Trash/.MoonlightEnhanced-before-edge-return-bar-47B85B5AAE9D4CEF86DD24274E048FF0.app`，
+  记录 `build-input-review/edge-return-bar-install-result.json`；安装后实例数 = 1。
+- 注意：`build-number.sh` 由提交历史推导，本轮改动未提交时仍是 1692，故区分构建只能靠二进制哈希。
