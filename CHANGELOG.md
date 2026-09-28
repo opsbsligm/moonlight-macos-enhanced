@@ -757,7 +757,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
-### Fixed
+- **A summoned control bar now comes back on its own, so the next press is not refused as
+  already-open — and the control-center shortcut stopped stacking a modal menu on top of it.**
+  The failure the player kept reporting was "it works once, then never again", and the field log
+  said exactly that: eight presses of the configured shortcut, four `Edge controls opened` lines,
+  and nothing at all for the other four. The auto-collapse timer was armed only by the hover and
+  menu paths, and in locked game mode the local pointer is detached and parked at the centre of the
+  video, where it never moves — so nothing ever armed the timer, the bar stayed expanded forever,
+  and `summonEdgeMenuDockForEdge:` refused each later press as already open without saying so.
+  Showing the bar and scheduling its return are now one decision: `setEdgeMenuButtonExpanded:`
+  reaches `handleEdgeMenuHover` once the handle is on screen, which is still the single rule that
+  reads where the pointer is. There is still one timer, and one recorded fact picks which of its
+  two honest durations applies — 450ms for a pointer that has actually been on the bar and left,
+  2500ms for a bar called out from wherever the pointer happened to be, because 960 points of
+  travel is not 450ms. The return is now one named line in the log next to the opening, so a log
+  that only ever says "opened" can no longer hide a bar that never came down. The second defect was
+  the shortcut itself: both call sites presented the control-center menu on top of the dock they had
+  just summoned, putting a modal menu in front of a pointer that has no position to aim with, and one
+  field log shows the player's next click landing on Disconnect. The dock and the menu are now
+  alternatives, with the menu kept as the windowed-mode entry. Three things keep this from being
+  believed rather than measured: `updateEdgeMenuPointerInsideForPoint:` had been reimplemented as a
+  probe stub, so the production funnel was never under test — it is lifted out of the shipped source
+  now, and five new mutations (a bar left on screen forever, a summon grace collapsed to the hover
+  delay, a visit forgotten, a return with no trace, two waits reporting one number) are each caught.
+  On the installed build, on the player's own host, the same path then ran 30 times in one locked
+  session and produced 30 `opened` and 30 `returned` lines, all with `capturedBefore=1` and
+  `grace=2500ms`, zero refusals, and no modal menu anywhere in the session. Not yet accepted on real
+  hardware: modifier-only release (Shift+Option), a physical keyboard's `C`, external mouse and
+  trackpad swaps, multi-display, and dragging the handle to re-dock — the pointer tool cannot aim at
+  the screen edge, so that row stays automated-only.
+
 - **A leaked keyboard press is now thrown away instead of turned into a click, and it is only held back
   at all on a machine that has a device capable of leaking it.** The previous round read the left button
   as arriving only as a keyboard usage and spent the denied press on the click it thought the device
