@@ -2770,7 +2770,12 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 // a click on it must open the controls instead of resuming capture or leaking a press
 // the host would read as a game click at an unexplained position.
 - (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer {
-    if (self.isMouseCaptured || self.edgeMenuPhase != MLEdgeMenuPhaseCollapsed ||
+    // The gate is pointer authority, not the capture flag. A locked relative-mode pointer has
+    // no position to aim with, and the tab never lights there; a remote-desktop pointer stays
+    // authoritative while capture is on, which is why arrival lights the tab there and why a
+    // press that lands on the drawn tab has to be answered by the tab instead of the host.
+    if ((self.isMouseCaptured && !self.isRemoteDesktopMode) ||
+        self.edgeMenuPhase != MLEdgeMenuPhaseCollapsed ||
         ![self edgeMenuCanInteract] || ![self edgeMenuShouldBeVisible]) {
         return NO;
     }
