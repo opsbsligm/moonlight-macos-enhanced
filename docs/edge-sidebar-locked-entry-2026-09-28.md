@@ -154,6 +154,7 @@ HOME-PC 192.168.3.110，`displayMode=1`（全屏）、`mouseMode=0`（锁定）�
 | 真实外拨手势 `edge-sensor-push` | 会话内 3 次成功打开，其中 1 次指针确实停在栏上 → `visited=1 grace=450ms` **实机通过** |
 | 失焦→恢复→再按 | 切到活动监视器再切回，`opened`+`returned` 各 1 次，无卡死 **实机通过** |
 | 断开后新建会话 | 同进程第二次会话仍然 `opened`+`returned`；把手复位到右边缘 **实机通过** |
+| **⌃⌥C × 30 连测（分 4 批，间隔 3.2s，锁定态，会话 3）** | **30 次 `opened` + 30 次 `returned`（全部 capturedBefore=1、grace=2500ms、0 refused），不存在第一次有效后续失效 15:04:15→15:07:10 实机通过 30/30** |
 | 会话 1 总量 | 18 `opened` / 17 `returned`（差额由真实单击收回解释）、0 `refused` **实机通过** |
 | 普通 C 键 × 12 | 12 `view-down` / 12 `sent-down` / 12 `sent-up`，0 `dropped-unconfirmed`、0 swallowed **自动+注入实机（真实键盘未验收：注入事件 sourcePid 非本进程）** |
 | 相对位移完整性 | 会话 1：moves=184=rel=184，rawΔ=sentΔ，suppressed=0，capture=19/uncapture=18 **实机通过** |
@@ -219,3 +220,18 @@ HOME-PC 192.168.3.110，`displayMode=1`（全屏）、`mouseMode=0`（锁定）�
   回滚副本 `~/.Trash/.MoonlightEnhanced-before-edge-return-bar-47B85B5AAE9D4CEF86DD24274E048FF0.app`，
   记录 `build-input-review/edge-return-bar-install-result.json`；安装后实例数 = 1。
 - 注意：`build-number.sh` 由提交历史推导，本轮改动未提交时仍是 1692，故区分构建只能靠二进制哈希。
+
+## 十二、CI 复跑结果（run 36387608025，commit 725e180）
+
+- `Repository audits` ✅ 11m58s 通过（上一轮修的超时与不可判定门禁成立）。
+- `Build x86_64` / `Build arm64` ❌ 均在"Verify keyboard and mouse edges survive input queue
+  congestion"（`input-edge-queue-tests.py`）失败，日志原文
+  `input consumer no longer reports edge failures` —— 与第七节结论一致：C 层三个文件只在本机
+  工作树，子模块未发布。后续步骤被跳过，故其后的设备级 C 过滤等门禁从未在 CI 跑到过。
+- `Static analyzer` ❌ 变成新的失败原因（原来的 `.role` 编译错误已随 75bc354 消失）：
+  `accepted finding no longer reported (1): StreamViewController.m [deadcode.DeadStores]
+  Value stored to X is never read`，即基线里接受的一条死存储已被本轮前后的改动真的修掉了，
+  基线需要删掉这一条。**本机无法安全再生成**：本机只有 Xcode 27.0，CI 是 Xcode 26.6，
+  用 27 的转录再生成会把"CI 的分析器并不会报"的条目写进基线。需要一台 26.6 转录，
+  或人工删掉这一条后由 CI 自证（若仍存在会改报"unaccepted finding"，同样可见）。
+- 结论：本轮不擅自改 analyzer 基线；CI 变绿的前置条件是用户对"C 层是否发布"的决策。
