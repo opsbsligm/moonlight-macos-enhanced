@@ -83,6 +83,17 @@
 // one release path, one temporary-release intent, one return-to-stream re-capture. Nothing
 // here decides ownership on its own.
 - (BOOL)openEdgeMenuDockForControlCenterShortcut {
+    // A press that can only open is half a switch: the player who presses again wants the
+    // bar out of the way, and instead gets a bar that keeps the pointer until its own timer
+    // expires. Going away uses the one funnel that already hands the pointer back, so the
+    // collapse is recorded, the temporary-release intent is honoured, and the press after it
+    // opens a fresh stay on screen. Mid-drag falls through to the summon, which refuses, so
+    // a dragged bar is never torn out of the pointer's hand and no second guard appears here.
+    if (self.edgeMenuButtonExpanded && !self.edgeMenuDragging) {
+        [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:self.edgeMenuTemporaryReleaseActive];
+        return YES;
+    }
+
     // Every refusal stays inside the summon, which is also the only place that decides
     // pointer ownership: a second copy of its guards here could only drift.
     [self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"control-center-shortcut"];
@@ -348,12 +359,40 @@
            [self isWindowInCurrentSpace];
 }
 
+// Which of the two waits a bar that is on screen lives under: once the pointer has been on
+// it, it is a hover and gets the short grace; a bar nobody looked at keeps the summon grace.
+// Both the clock that fires and the line that reports the return read it here, so the log
+// can never disagree with the timer that produced it.
+- (NSTimeInterval)edgeMenuReturnDelay {
+    return self.edgeMenuPointerHasVisited ? MLEdgeMenuAutoCollapseDelay : MLEdgeMenuSummonGraceDelay;
+}
+
+// Expanded, menu and drag are the states where the controls are on screen and may hold the
+// pointer. Collapsed is the docked handle, hidden is gone.
+- (BOOL)edgeMenuPhaseIsOnScreen:(MLEdgeMenuPhase)phase {
+    return phase == MLEdgeMenuPhaseExpanded ||
+           phase == MLEdgeMenuPhaseMenu ||
+           phase == MLEdgeMenuPhaseDragging;
+}
+
 - (void)transitionEdgeMenuToPhase:(MLEdgeMenuPhase)phase {
     // Hidden is also a lifecycle barrier. Repeated teardown must invalidate
     // work queued while the controls were already hidden (e.g. a shortcut).
     if (self.edgeMenuPhase == phase && phase != MLEdgeMenuPhaseHidden) return;
     BOOL wasMenu = self.edgeMenuMenuVisible;
     MLEdgeMenuPhase previousPhase = self.edgeMenuPhase;
+    // The bar came out because someone asked for it, so the moment it goes back is worth one
+    // line - and it has to be one line for every way of going back. The clock that collapses
+    // the bar is only one of them: a click in the stream, a window that stopped being able to
+    // host the controls and the second press of the shortcut all take the pointer away too. A
+    // return written at one caller's level is why a field session could log 18 openings and 17
+    // returns while the player pressed eighteen times.
+    if ([self edgeMenuPhaseIsOnScreen:previousPhase] && ![self edgeMenuPhaseIsOnScreen:phase]) {
+        Log(LOG_I, @"[diag] Edge controls returned to stream: edge=%ld visited=%d grace=%.0fms captured=%d from=%ld to=%ld",
+            (long)self.edgeMenuDockEdge, self.edgeMenuPointerHasVisited,
+            [self edgeMenuReturnDelay] * 1000.0, self.isMouseCaptured,
+            (long)previousPhase, (long)phase);
+    }
     self.edgeMenuPhase = phase;
     // A visit record describes one stay on screen: it is opened when the bar comes out
     // and forgotten when it goes away, never by whichever caller happens to look at it.
@@ -718,7 +757,7 @@
     if (self.edgeMenuAutoCollapseTimer.isValid || !self.edgeMenuButtonExpanded ||
         self.edgeMenuDragging || self.edgeMenuMenuVisible) return;
     NSUInteger token = self.edgeMenuLifecycleToken;
-    NSTimeInterval delay = self.edgeMenuPointerHasVisited ? MLEdgeMenuAutoCollapseDelay : MLEdgeMenuSummonGraceDelay;
+    NSTimeInterval delay = [self edgeMenuReturnDelay];
     __weak typeof(self) weakSelf = self;
     self.edgeMenuAutoCollapseTimer = [NSTimer timerWithTimeInterval:delay repeats:NO block:^(NSTimer *timer) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
@@ -734,12 +773,6 @@
             [strongSelf scheduleEdgeMenuAutoCollapse];
             return;
         }
-        // The bar came out because someone asked for it, so the moment it goes back is
-        // worth one line: a field log that only ever says "opened" cannot tell a bar that
-        // returned from a bar that was still on screen when the next press went unanswered.
-        Log(LOG_I, @"[diag] Edge controls returned to stream: edge=%ld visited=%d grace=%.0fms captured=%d",
-            (long)strongSelf.edgeMenuDockEdge, strongSelf.edgeMenuPointerHasVisited, delay * 1000.0,
-            strongSelf.isMouseCaptured);
         [strongSelf deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:strongSelf.edgeMenuTemporaryReleaseActive];
     }];
     [[NSRunLoop mainRunLoop] addTimer:self.edgeMenuAutoCollapseTimer forMode:NSRunLoopCommonModes];
