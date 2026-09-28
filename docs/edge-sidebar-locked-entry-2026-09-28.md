@@ -324,3 +324,67 @@ HOME-PC 192.168.3.110，`displayMode=1`（全屏）、`mouseMode=0`（锁定）�
   幽灵窗口在真实全屏断开后确实消失。以上连同第十节的硬件项，一律 **尚未验收**。
 - 下一轮第一件事：等 Computer Use 恢复后，从"双击主机行进入 Desktop"重跑第八节的实机矩阵，
   并补测断开后 Window 菜单里是否还有残留窗口。
+
+## 十六、CI 红在 render-probe：先取证，再改判据
+
+`Build arm64/x86_64` 在 run 36429561479 里越过 input-edge 与 nullability 两道门禁后，
+红在 `Verify the settings page renders embedded`：
+`FAIL the page drew no variation at all (stddev 0.07016)`，而 `note the probe itself also refused:
+stddev 0.070, 53 distinct colours`。
+
+- 本机用同一个 Debug 探针跑真实显示器，**同样 FAIL**（`render-probe-local-1698.log`，RC=1）。
+- 探针自己导出的截图 `02-settings-page.png` 肉眼完整：分段控件、开关、下拉、中文文案都在。
+- 用与生产 `MLProbePixels` 完全相同的算法（3px 采样、5bit 量化、sRGB 亮度）复算该截图：
+  `mean 0.9765 / stddev 0.0702 / distinct 53`。**设置页是浅色主题，亮度几乎全压在白附近**，
+  所以"渲染正常"的页面本来就只贡献 0.07 的亮度散布；`distinctColours>=40` 才是判别力所在
+  （真空白页实测 2 色）。
+- 结论：这不是渲染故障，是门禁**词不达意**——`stddev>=0.08` 这个绝对阈值高于真实页面能产出的
+  数值，而这一步在 CI 历史上从未真正执行过（前面一直被更早的失败挡住）。
+- 处理：**不是随手放宽**。把下限改到 0.02（真实页面 0.0702 仍有 3.5 倍余量，纯色夹具 0.001
+  低 20 倍），并补上把两端钉住的夹具：
+  - 正向：`a light-theme page measured on a real display`（0.0702/53）必须通过，防止有人再把
+    阈值抬回 0.08；
+  - 负向：`a flat colour lifted only by antialiasing noise`（0.012/44）必须被拒，防止"只要有色
+    就放行"；
+  - 生产侧 `AppDelegateForAppKit.m` 的同一条判定同步为 0.02，并注明取证依据。
+- 顺手修掉自测夹具的既存缺陷：夹具的 pane 报告从不带 `hostReadsDuringPresent`，于是
+  `--self-test` 在 HEAD 上就有 1 个失败（`verify_host_reads` 拒绝夹具自己），把后面所有 refusal
+  都变成噪音。夹具补齐读计数（stream 3 / video 1 / app 3），并新增两条负向对照
+  （某页读取次数翻倍、关闭期间读库）。`render-probe.py --self-test`：32 ok / **0 失败**。
+
+## 十七、把手按 UU 的设计改：抵达点亮，点击展开
+
+用户反馈原文是"鼠标抵达边缘激活，可以点击，而不是你这种暴力的乱触发"。三条截图显示 UU 远程的
+形态是：**把手常驻可见 → 光标到边缘时把手高亮 → 点击才展开控制中心**。
+
+代码层的两个根因（不是"感应太灵敏"，而是"看到的东西和点的东西不是一回事"）：
+
+1. **可见≠命中**。把手在收起态只画 `peek-4 = 4pt` 的细缝并隐藏图标
+   （`MLEdgeMenuUI.m` 的 compact 分支），而 `expandEdgeMenuForLocalClickAtCurrentPointer`
+   的命中判定用 `edgeMenuInteractionRectInBounds:` —— 那是由 **展开态 56×56 再外扩 padding**
+   推出来的矩形。玩家看不见 52pt，却能在 56pt 区域内点开启，且面板透明区也吃点击。
+2. **抵达即夺权**。`finishEdgeSensorSummonIfStillAtEdge:` 在 250ms 停留到点时直接
+   `summonEdgeMenuDockForEdge:` → uncapture（MUC109）+ 展开面板 + 记一条 `Edge controls opened`。
+   光标只是路过边缘，指针就从游戏手里被拿走。
+
+改后的三段状态，只有一个所有者：
+
+| 状态 | 谁拥有指针 | 进入条件 | 退出条件 | 谁清理 |
+| --- | --- | --- | --- | --- |
+| idle（把手常驻） | 游戏 / 本地自由指针 | 控制栏可见且收起 | 指针进入感应带 250ms | 感应计时器 |
+| armed（把手高亮） | **仍然是游戏/本地指针，一个字节都不外发** | 停留到点且仍在带内、无按下键、未被 warp 冷却 | 离开感应带 / 按住键 / 失能 / 阶段变化 | `resetEdgeSensorSummonState` 唯一出口 |
+| expanded（控制中心） | 控制栏 | **点击可见把手**（自由/释放态）、⌃⌥C、锁定态连拨两下 | 450ms/2500ms 收起、再按 ⌃⌥C、点击串流 | `deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:` |
+
+- 常量：`VisiblePeek 8→34`（面板在收起态真正露出的厚度）、`HandleIdleThickness 14`、
+  `HandleArmedThickness 30`、`HandleLength 48`、`HandleHitSlop 6`。
+  idle 时屏幕上是一条距边 2pt、厚 14pt、长 48pt 的圆角条；armed 时加粗到 30pt、露出图标、
+  描 accent 边。**绘制厚度与命中矩形都由同一个 `edgeMenuVisibleHandleRectInBounds:` 推导**，
+  所以"看见的"和"点得动的"必然一致。
+- `finishEdgeSensorSummonIfStillAtEdge:` 改名 `armEdgeMenuHandleIfStillAtEdge:`，方法体内
+  **禁止**出现 `summonEdgeMenuDock` / `uncaptureMouse` / `activateEdgeMenuDock`（源码级守卫）。
+- 轴向修正：Left/Right 的沿边方向是 y，Top/Bottom 是 x。面板是正方形，读错轴也照样居中，
+  所以这类 bug 只在别的停靠边上露头；两处几何都改成按停靠边显式判轴。
+- 锁定模式不变：本地没有可信光标位置，绝不猜远端光标；入口仍是 ⌃⌥C（开关语义）与向把手边
+  连拨两下。armed 不适用于锁定态（`armEdgeMenuHandleIfStillAtEdge:` 的守卫直接挡住）。
+- 文案：设置页中英双语都改成"常驻可见 → 停留 250ms 把手亮起（不展开、指针仍在游戏里）→
+  点击亮起的把手才展开"，并保留 12pt/56pt/250ms/450ms/2500ms 全部既有数字契约。

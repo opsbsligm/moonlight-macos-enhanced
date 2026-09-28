@@ -757,6 +757,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page that compiles on one compiler version and not on the next.
 
 ### Fixed
+- **Arriving at the edge now lights the handle instead of taking the mouse, and the click is aimed
+  at the tab the player can see.** "The sidebar fires on its own" and "the sidebar is not there" were
+  the same defect seen from two sides. The docked handle drew a `peek-4` = 4pt seam with the icon
+  hidden, while `expandEdgeMenuForLocalClickAtCurrentPointer` hit-tested `edgeMenuInteractionRectInBounds:` -
+  a rectangle derived from the *expanded* 56×56 panel plus its padding - so a press 50pt away from
+  anything drawn opened the bar, and a press on the tab the player was aiming at did not have to work.
+  The 250ms dwell then called `summonEdgeMenuDockForEdge:` itself, which uncaptured the pointer and
+  expanded the panel in one step: rest the cursor against the dock while aiming and the game lost the
+  mouse to a control bar nobody asked for. Arrival now sets one bit (`edgeMenuHandleArmed`), which
+  thickens the drawn tab from 14pt to 30pt and shows the icon and an accent border, and nothing else -
+  a source guard refuses `summonEdgeMenuDock`, `uncaptureMouse` and `activateEdgeMenuDock` inside it,
+  and `resetEdgeSensorSummonState` is the only way the light goes out. Opening is a click on
+  `edgeMenuVisibleHandleRectInBounds:`, the same rectangle the drawing is measured from, so visible
+  and hittable can no longer disagree, and the idle dock reaches 34pt into the stream instead of an
+  8pt seam nobody could find. Locked game mode keeps its two deliberate entries (`Ctrl+Option+C` as a
+  switch, two flicks toward the docked edge): with no local pointer there is nothing to light, and the
+  remote cursor position is still never guessed. Both axes are now derived from the docked edge rather
+  than from the panel's own square bounds, which had quietly centred the tab on the wrong axis for
+  top and bottom docks. Four negative controls pin the contract down - arrival that still grabs the
+  pointer, a hit rect that ignores the drawing, arming nobody can see, and a light that never goes out.
 - **The control-center shortcut is now a switch, and a bar that goes back always says so.** Players
   who learned that `Ctrl+Option+C` calls the sidebar out pressed it a second time to put it away and
   got nothing: the entry only knew how to open, and `summonEdgeMenuDockForEdge:` - which dwell and
