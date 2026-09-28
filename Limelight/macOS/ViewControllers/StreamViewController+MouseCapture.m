@@ -2355,8 +2355,14 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 
         StreamShortcut *controlCenterShortcut = [strongSelf streamShortcutForAction:MLShortcutActionOpenControlCenter];
         if ([strongSelf event:event matchesShortcut:controlCenterShortcut]) {
-            [strongSelf openEdgeMenuDockForControlCenterShortcut];
-            [strongSelf presentControlCenterFromShortcut];
+            // When the dock is on screen it *is* the control center: opening its menu on
+            // top of it put a modal menu in front of a pointer that has no position to
+            // aim with, and the player's next key or click went to that menu -- a field
+            // log shows one such press ending in a disconnect chosen by a stray click.
+            // The windowed mode has no dock, so there the menu stays the entry point.
+            if (![strongSelf openEdgeMenuDockForControlCenterShortcut]) {
+                [strongSelf presentControlCenterFromShortcut];
+            }
             return [strongSelf consumeMonitoredKeyDownEvent:event];
         }
 
@@ -3396,8 +3402,10 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
             // bound to the client.
             return [self consumeKeyDownEvent:event];
         }
-        [self openEdgeMenuDockForControlCenterShortcut];
-        [self presentControlCenterFromShortcut];
+        // See the monitored path: the dock and its menu are alternatives, never stacked.
+        if (![self openEdgeMenuDockForControlCenterShortcut]) {
+            [self presentControlCenterFromShortcut];
+        }
         return [self consumeKeyDownEvent:event];
     }
     

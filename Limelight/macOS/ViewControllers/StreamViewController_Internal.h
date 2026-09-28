@@ -91,6 +91,15 @@ static CGFloat const MLEdgeMenuInteractionInwardPadding = 8.0;
 static CGFloat const MLEdgeMenuInteractionVerticalPadding = 8.0;
 static NSTimeInterval const MLEdgeMenuAutoCollapseDelay = 0.45;
 
+// One timer, two honest durations, chosen by one fact the timer already reads.
+// 450ms is what a pointer that has just left the bar deserves. A bar summoned by a
+// keyboard or a slam has to be reachable from wherever the pointer happens to be --
+// in locked game mode the local pointer is parked at the centre of the screen, and
+// 960 points of travel is not 450ms: the bar vanished before it could be clicked, so
+// the entry the player asked for looked broken. Until the pointer has actually been
+// on the bar, the bar waits.
+static NSTimeInterval const MLEdgeMenuSummonGraceDelay = 2.5;
+
 // Activation is a narrow local-pointer target at the dock, independent of the
 // expanded interaction region and of the host's resolution or mouse acceleration.
 // It only governs states where the local pointer is authoritative (free mouse or an
@@ -463,6 +472,10 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) CGFloat edgeMenuButtonEdgeRatio;
 @property (nonatomic, strong) NSTimer *edgeMenuAutoCollapseTimer;
 @property (nonatomic) BOOL edgeMenuPointerInside;
+// Has the pointer been on the bar during this expansion? It is a record of a fact,
+// not a second owner of the lifecycle: it only picks which of the two collapse
+// durations the single auto-collapse timer was armed with.
+@property (nonatomic) BOOL edgeMenuPointerHasVisited;
 @property (nonatomic) MLEdgeMenuPhase edgeMenuPhase;
 @property (nonatomic) NSUInteger edgeMenuLifecycleToken;
 @property (nonatomic) BOOL edgeMenuTemporaryReleaseActive;
