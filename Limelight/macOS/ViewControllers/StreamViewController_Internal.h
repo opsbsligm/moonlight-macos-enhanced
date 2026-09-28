@@ -98,9 +98,12 @@ static CGFloat const MLEdgeMenuButtonVisiblePeek = 34.0;
 static CGFloat const MLEdgeMenuHandleIdleThickness = 14.0;
 static CGFloat const MLEdgeMenuHandleArmedThickness = 30.0;
 static CGFloat const MLEdgeMenuHandleLength = 48.0;
-// Click tolerance measured inward from the drawn tab. It is a target margin, not a
-// second sensor: a press beside the seam still belongs to the game.
-static CGFloat const MLEdgeMenuHandleHitSlop = 6.0;
+// A click may fall on the 2pt of air the tab floats on plus this much again, and no
+// further in. It used to be 6pt, which made the target 22pt deep and swallowed presses
+// meant for a HUD or a taskbar sitting on the seam: the bar opened because something was
+// clicked near the edge, not because the player aimed at the tab. The tab flush with the
+// edge is the target, and a wider invisible band would only be a second sensor.
+static CGFloat const MLEdgeMenuHandleHitSlop = 2.0;
 static CGFloat const MLEdgeMenuInteractionOutwardPadding = 6.0;
 static CGFloat const MLEdgeMenuInteractionInwardPadding = 8.0;
 static CGFloat const MLEdgeMenuInteractionVerticalPadding = 8.0;
@@ -108,7 +111,7 @@ static NSTimeInterval const MLEdgeMenuAutoCollapseDelay = 0.45;
 
 // One timer, two honest durations, chosen by one fact the timer already reads.
 // 450ms is what a pointer that has just left the bar deserves. A bar summoned by a
-// keyboard or a slam has to be reachable from wherever the pointer happens to be --
+// keyboard has to be reachable from wherever the pointer happens to be --
 // in locked game mode the local pointer is parked at the centre of the screen, and
 // 960 points of travel is not 450ms: the bar vanished before it could be clicked, so
 // the entry the player asked for looked broken. Until the pointer has actually been
@@ -124,20 +127,13 @@ static NSTimeInterval const MLEdgeMenuSummonGraceDelay = 2.5;
 static CGFloat const MLEdgeSensorBandWidth = 12.0;
 static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.25;
 
-// A locked relative-mode pointer has no authoritative position, so its only sensor
-// entry is a deliberate local gesture: repeatedly slamming the device toward the
-// docked edge. Ordinary aiming is monotonic and never completes a counted stroke;
-// a stroke only counts after an unambiguous return of its own. The gesture makes no
-// claim about where the host cursor actually is.
-static CGFloat const MLEdgeSensorPushStrokePoints = 48.0;
-static CGFloat const MLEdgeSensorPushReturnPoints = 24.0;
-static NSUInteger const MLEdgeSensorPushStrokeCount = 2;
-// Two clocks, because they answer two different questions. The idle gap is how long the
-// device may go quiet before an unfinished gesture is forgotten; the window is how long the
-// whole gesture may take. They were one constant, so a player who paused to aim between
-// strokes also lost the strokes already counted: the entry read as broken rather than slow.
-static NSTimeInterval const MLEdgeSensorPushIdleMs = 500.0;
-static NSTimeInterval const MLEdgeSensorPushWindowMs = 1500.0;
+// A locked relative-mode pointer has no authoritative position, and the accumulated-motion
+// gesture that used to stand in for arrival is deleted, not retuned: a 48pt flick, a 24pt
+// return and a second flick inside 1.5 seconds is what aiming at moving targets looks like,
+// and every completion answered it by taking the pointer out of the game. Locked mode has
+// no pointer-based entry. The configured control-center shortcut opens the bar, and the
+// configured release shortcut frees the pointer so the tab can be lit and clicked like
+// arrival at any other edge.
 
 // Which moments the app takes the system's own global hotkeys away for. Always captures
 // covers a borderless window that is not fullscreen; never is the regression anchor.
@@ -518,14 +514,6 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 // Whether the docked tab is currently answering the pointer at the edge. The only
 // visual state the sensor owns, and the only thing it can change.
 @property (nonatomic) BOOL edgeMenuHandleArmed;
-// Locked-mode slam gesture state. One accumulator family, reset by every ownership
-// transition, so no stale stroke can join a later gesture.
-@property (nonatomic) CGFloat edgePushStrokePoints;
-@property (nonatomic) CGFloat edgePushReturnPoints;
-@property (nonatomic) BOOL edgePushAwaitingReturn;
-@property (nonatomic) NSUInteger edgePushStrokeCount;
-@property (nonatomic) double edgePushWindowStartMs;
-@property (nonatomic) double edgePushLastMotionMs;
 // A left press that opened the collapsed tab was consumed locally; its release must
 // not reach the host either, or the game sees an unpaired button-up.
 @property (nonatomic) BOOL edgeMenuClickConsumedLocally;
@@ -700,8 +688,6 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)refreshEdgeSensorSummonPreference;
 - (void)resetEdgeSensorSummonState;
 - (void)resetEdgeSensorPointerState;
-- (void)resetEdgePushGesture;
-- (BOOL)noteEdgeSensorPushMotionForEvent:(NSEvent *)event;
 - (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer;
 // One rectangle describes where the tab is drawn and where a click opens the bar, so
 // the two can no longer disagree about the player's own pointer.
