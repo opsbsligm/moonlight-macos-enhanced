@@ -15,6 +15,7 @@ import re
 import signal
 import subprocess
 import sys
+from apple_toolchain import NO_TOOLCHAIN_MESSAGE
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HID = os.path.join(root, "Limelight", "Input", "HIDSupport.m")
@@ -152,27 +153,36 @@ MDNS = os.path.join(root, "Limelight", "Network", "MDNSManager.h")
 ASSET_MANAGER = os.path.join(root, "Limelight", "Network", "AppAssetManager.m")
 MICROPHONE = os.path.join(root, "Limelight", "macOS", "Helpers", "MicrophoneManager.swift")
 
-UP_GUARD = """        if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {
-            // The host never saw this key go down, so it must not see it come up
-            // either: an unmatched release reads as the key being let go by
-            // itself, which is what made local shortcuts look like gameplay keys
-            // releasing mid-action.
-            [self.keyboardSuppressedKeyDownKeyCodes removeObject:physicalKeyCode];
-            return;
-        }
+# What the release path refuses before it sends anything: a release whose press the app kept to
+# itself, and every release once the host stopped taking input. The four records are spent ahead
+# of this guard rather than inside it, which is a proof of its own (drop-release): a release the
+# app keeps to itself still ends the press, and a record left behind here answers the next
+# keyDown as a press still owned.
+UP_GUARD = """    if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {
+        Log(LOG_D, @"[inputdiag] keyboard-wire up-swallowed kVK=%hu", event.keyCode);
+        // No matching forwarded press: no orphan UP reaches the host.
+        return;
+    }
 """
-UP_DISPATCH = """        HIDDispatchInput(self, inputCtx, ^{
-            LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_UP, modifiers);
-        });
+UP_GUARD_TEST = "    if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {\n"
+UP_DISPATCH = """        Log(LOG_D, @"[inputdiag] keyboard-wire sent-up code=0x%hx mods=0x%hhx", (unsigned short)keyCode, modifiers);
+        LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_UP, modifiers);
+    });
 """
-DOWN_CLEAR = """        [self.keyboardSuppressedKeyDownKeyCodes removeObject:@(event.keyCode)];
+UP_SPEND = """    [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:physical];
 """
-DOWN_DISPATCH = """        HIDDispatchInput(self, inputCtx, ^{
-            LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
-        });
+DOWN_CLEAR = """    [self.keyboardSuppressedKeyDownKeyCodes removeObject:physical];
 """
-
-
+# The same line clears the record in both -keyDown: and -keyUp:, and the clear that
+# late-clear moves is keyDown's -- the one that follows the guard refusing a repeat with no
+# press of its own. Naming that neighbour is what turns "found 2 times" into a claim that
+# can actually go stale: the assertion says which clear it means, not just what it says.
+DOWN_CLEAR_ONESHOT = "    }\n" + DOWN_CLEAR
+DOWN_DISPATCH = """    HIDDispatchInput(self, inputLease, ^{
+        Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx", (unsigned short)keyCode, modifiers);
+        LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
+    });
+"""
 # What the stick cursor asks before it moves the remote cursor, and the send it
 # asks about. Handing the pointer back to the Mac clears this flag and leaves the
 # timer running, so these two anchors are what a session depends on.
@@ -187,9 +197,9 @@ STICK_SEND = "                if (truncX != 0 || truncY != 0) {\n"
 # handler that does it outlives the pointer capture, so these two anchors are
 # what a hand-back depends on.
 MOUSE_MODE_A_EDGE = ("                    if (currentA != lastA && pointerForwarded) {\n"
-                     "                        if (inputCtx) {\n")
+                     "                        [self sendMouseButton:BUTTON_LEFT pressed:currentA forController:limeController];\n")
 MOUSE_MODE_B_EDGE = ("                    if (currentB != lastB && pointerForwarded) {\n"
-                     "                        if (inputCtx) {\n")
+                     "                        [self sendMouseButton:BUTTON_RIGHT pressed:currentB forController:limeController];\n")
 POINTER_GATE_DECL = "                    BOOL pointerForwarded = self->_shouldSendInputEvents;\n"
 UNCAPTURE_MOUSE_RELEASE = ("    [self.controllerSupport releaseRemoteMouseButtonsForUncapture];\n")
 
@@ -308,37 +318,35 @@ def promise_a_path_the_sender_never_took(text):
 
 
 def neuter_if(text):
-    return once(text, UP_GUARD, "keyUp guard").replace(
-        "if ([self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {",
-        "if (NO && [self.keyboardSuppressedKeyDownKeyCodes containsObject:physicalKeyCode]) {", 1)
+    once(text, UP_GUARD, "keyUp guard")
+    return text.replace(UP_GUARD_TEST,
+                        "    if (NO && (!self.shouldSendInputEvents ||"
+                        " (savedCode == nil && pending == nil))) {\n", 1)
 
 
 def no_return(text):
     once(text, UP_GUARD, "keyUp guard")
-    return text.replace(
-        "[self.keyboardSuppressedKeyDownKeyCodes removeObject:physicalKeyCode];\n            return;",
-        "[self.keyboardSuppressedKeyDownKeyCodes removeObject:physicalKeyCode];", 1)
+    return text.replace(UP_GUARD, UP_GUARD.replace("        return;\n", "", 1), 1)
 
 
 def drop_release(text):
     once(text, UP_GUARD, "keyUp guard")
-    return text.replace(
-        "            [self.keyboardSuppressedKeyDownKeyCodes removeObject:physicalKeyCode];\n            return;\n",
-        "            return;\n", 1)
+    once(text, UP_SPEND, "the release path's held-key spend")
+    rest = text.replace(UP_SPEND, "", 1)
+    return rest.replace(UP_GUARD, UP_GUARD + UP_SPEND, 1)
 
 
 def late_guard(text):
     once(text, UP_GUARD, "keyUp guard")
     once(text, UP_DISPATCH, "keyUp dispatch")
     rest = text.replace(UP_GUARD, "", 1)
-    return rest.replace(UP_DISPATCH, UP_DISPATCH + "\n" + UP_GUARD.rstrip("\n") + "\n", 1)
+    return rest.replace(UP_DISPATCH, UP_DISPATCH + UP_GUARD, 1)
 
 
 def commented_guard(text):
     once(text, UP_GUARD, "keyUp guard")
     return text.replace(UP_GUARD, "".join("//" + line + "\n" for line in
                                           UP_GUARD.rstrip("\n").split("\n")), 1)
-
 
 def neuter_settings(text):
     return once(text, "if ([SettingsWindowObjCBridge isSettingsPresentedInWindow:self.view.window]) {",
@@ -348,18 +356,15 @@ def neuter_settings(text):
 
 
 def late_clear(text):
-    once(text, DOWN_CLEAR, "keyDown clear")
+    once(text, DOWN_CLEAR_ONESHOT, "keyDown clear")
     once(text, DOWN_DISPATCH, "keyDown dispatch")
     rest = text.replace(DOWN_CLEAR, "", 1)
     return rest.replace(DOWN_DISPATCH, DOWN_DISPATCH + DOWN_CLEAR, 1)
 
 
-DOWN_DISPATCH = """        HIDDispatchInput(self, inputCtx, ^{
-            LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
-        });
+REC = """    self.keyboardForwardedKeyDownKeyCodes[physical] = @(keyCode);
 """
-REC = """        self.keyboardForwardedKeyDownKeyCodes[@(event.keyCode)] = @(keyCode);
-"""
+
 INIT = """        self.keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
 """
 
@@ -369,12 +374,15 @@ INIT = """        self.keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary d
 # one record there: Return and Keypad Enter, Equals and Keypad Equals. The gate
 # for this pair of edits is the identity harness, which reads the colliding pairs
 # out of the table itself.
-SPEND = """        [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(event.keyCode)];
+# The spend is the same line the release path spends it with, and the pair of edits is the
+# defect that shipped: file the press by the code it sent and spend it by that code too, and
+# two Mac keys that share one Windows code share one record.
+SPEND = UP_SPEND
+RECORD_BY_DISPATCHED_CODE = """    self.keyboardForwardedKeyDownKeyCodes[@(keyCode)] = @(keyCode);
 """
-RECORD_BY_DISPATCHED_CODE = """        self.keyboardForwardedKeyDownKeyCodes[@(keyCode)] = @(keyCode);
+SPEND_BY_DISPATCHED_CODE = """    [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(keyCode)];
 """
-SPEND_BY_DISPATCHED_CODE = """        [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(keyCode)];
-"""
+
 
 
 def record_keyed_by_dispatched_code(text):
@@ -499,7 +507,8 @@ def constant_toggle(text):
 
 
 
-UNMAPPED_GUARD = "        if (translated == 0) {\n"
+UNMAPPED_GUARD = "    if (translated == 0) {\n"
+
 SPACE_ROW = "    {kVK_Space, 0x20},\n"
 ISO_ROW = "    {kVK_ISO_Section, 0xE2},\n"
 JIS_ROW = "    {kVK_JIS_Yen, 0x7D},\n"
@@ -512,8 +521,9 @@ def unmapped_press(text):
 
 
 def unmapped_release(text):
-    return replace_nth(text, UNMAPPED_GUARD,
-                       "        if (NO && translated == 0) {\n", 2, "keyUp zero guard")
+    once(text, UP_GUARD, "keyUp guard")
+    return text.replace(UP_GUARD_TEST, "    if (!self.shouldSendInputEvents) {\n", 1)
+
 
 
 def drop_space_row(text):
@@ -778,7 +788,8 @@ POINTER_DRAIN = "                short moveX = HIDDrainRelativeDelta(&residualX,
 
 
 # The count a wheel event answers with, and the step the changelog claims for it.
-CLICK_LIMIT = "    NSInteger limit = SHRT_MAX / HIDScrollWheelDelta;\n"
+WHEEL_ROUND = "    NSInteger clicks = (NSInteger)llround(MIN(MAX(delta, -limit), limit));\n"
+
 GAIN_STEP = re.compile(
     r"    - name: Verify the pointer ships the motion it was asked for\n"
     r"(?:.*\n)*?      run: python3 scripts/relative-pointer-gain-tests\.py\n\n"
@@ -786,16 +797,16 @@ GAIN_STEP = re.compile(
 
 
 def answer_one_notch(text):
-    """Put the one-notch clamp back on the count a wheel event answers with.
+    """Answer one notch for a wheel event that carries several.
 
-    The count is what the fix widened, so the mutation is the exact line the
-    defect shipped with: round, then refuse anything past a single notch. The
-    accumulator half of the path is untouched, which is why only the harness
-    that runs the quantized branch can see it.
+    The count is what the fix widened, so the mutation is the exact line the defect shipped
+    with: round the accumulated delta, then refuse anything past a single notch. The
+    accumulator half of the path is untouched, which is why only the harness that runs the
+    quantized branch can see it.
     """
-    once(text, CLICK_LIMIT, "the packet bound on a discrete scroll count")
+    once(text, WHEEL_ROUND, "the rounded notch count a wheel event answers with")
     clamp = "    if (clicks > 1) { clicks = 1; } else if (clicks < -1) { clicks = -1; }\n"
-    return text.replace(CLICK_LIMIT, clamp + CLICK_LIMIT, 1)
+    return text.replace(WHEEL_ROUND, WHEEL_ROUND + clamp, 1)
 
 
 LOST_ROUND_HEADER = ("### Round 33: a fast flick lost most of its scroll before "
@@ -805,11 +816,12 @@ LOST_ROUND_HEADER = ("### Round 33: a fast flick lost most of its scroll before 
 RETRY_FLAGS = "         --retry 5 --retry-all-errors --retry-connrefused \\\n"
 
 
-TRUNCATE_A_FRAME = """        short moveX = HIDDrainRelativeDelta(&emulationResidualX,
-                                            emulationDeltaX,
-                                            HIDMouseEmulationSpeed);\n"""
-DRAFT_THE_RATE = """                                            -emulationDeltaY,
-                                            HIDMouseEmulationSpeed);\n"""
+TRUNCATE_A_FRAME = ("            short moveX = HIDDrainRelativeDelta(&emulationResidualX,\n"
+                    "                                                emulationDeltaX,\n"
+                    "                                                HIDMouseEmulationSpeed);\n")
+DRAFT_THE_RATE = ("                                                -emulationDeltaY,\n"
+                  "                                                HIDMouseEmulationSpeed);\n")
+
 NORMALISE_Y_HERE = "        CGFloat emulationDeltaY = HIDControllerMouseDeltaForAxis(ry);\n"
 
 
@@ -860,7 +872,7 @@ def truncate_a_stick_frame(text):
     """
     once(text, TRUNCATE_A_FRAME, "the drained X frame of the emulated pointer")
     return text.replace(TRUNCATE_A_FRAME,
-                        "        short moveX = (short)(emulationDeltaX * HIDMouseEmulationSpeed);\n",
+                        "            short moveX = (short)(emulationDeltaX * HIDMouseEmulationSpeed);\n",
                         1)
 
 
@@ -868,8 +880,8 @@ def draft_the_emulation_rate(text):
     """Give one axis its own number for the pointer rate."""
     once(text, DRAFT_THE_RATE, "the drained Y frame of the emulated pointer")
     return text.replace(DRAFT_THE_RATE,
-                        "                                            -emulationDeltaY,\n"
-                        "                                            8.0);\n", 1)
+                        "                                                -emulationDeltaY,\n"
+                        "                                                8.0);\n", 1)
 
 
 def count_the_stick_in_raw_units(text):
@@ -946,8 +958,8 @@ def gate_the_packet_and_record_the_edge_anyway(text):
     rest = text
     for edge in (MOUSE_MODE_A_EDGE, MOUSE_MODE_B_EDGE):
         moved = edge.replace(" && pointerForwarded", "")
-        moved = moved.replace("                        if (inputCtx) {",
-                              "                        if (inputCtx && pointerForwarded) {")
+        send = edge.splitlines()[1].strip()
+        moved = moved.replace(send, "if (pointerForwarded) " + send)
         rest = rest.replace(edge, moved, 1)
     return rest
 
@@ -1885,7 +1897,8 @@ MUTATIONS = [
      "the bars around a letterboxed picture keep whatever the drawable carried",
      ASPECT_GATE),
     ("no-return", HID, no_return, "keyUp guard records without returning"),
-    ("drop-release", HID, drop_release, "keyUp guard no longer clears the record"),
+    ("drop-release", HID, drop_release,
+     "the release spends its record only when it forwards, so the next press reads as owned"),
     ("late-guard", HID, late_guard, "keyUp guard runs after the release is sent"),
     ("commented-guard", HID, commented_guard, "keyUp guard moved into a comment"),
     ("neuter-settings", CAPTURE, neuter_settings, "settings guard is disabled but still worded"),
@@ -1909,7 +1922,8 @@ MUTATIONS = [
     ("unmeasured-sr", DERIVED, unmeasured_scaler, "the scaler ignores an empty scale factor list"),
     ("constant-fi-toggle", VIDEO_RULES, constant_toggle, "the interpolation control ignores the measured capability"),
     ("unmapped-keydown", HID, unmapped_press, "an unmapped press is forwarded as VK 0"),
-    ("unmapped-keyup", HID, unmapped_release, "an unmapped release is forwarded as VK 0"),
+    ("unmapped-keyup", HID, unmapped_release,
+     "an orphan release reaches the host, which lets go of a key it never saw pressed"),
     ("drop-space-row", HID, drop_space_row, "the mapping table loses the space bar"),
     ("duplicate-row", HID, duplicate_w_row, "a physical code is mapped twice so one row wins"),
     ("undocumented-mapping", HID, undocumented_mapping, "a key gap closes without the list saying why"),
@@ -2251,10 +2265,21 @@ def refuse_a_dirty_checkout(paths):
 def gate_failed(gate):
     # A gate that runs the battery as one of its own checks has to be told not to
     # ask back, which is what the flags carried with each gate are for.
+
+    # True and False are verdicts. None is the answer a boolean cannot carry: a gate
+    # that reached for a clang and macOS SDK pair and found none has not read the
+    # source at all, and a battery that counted that as a caught mutation was printing
+    # 128 proofs on a runner that had made none -- a green that meant the environment
+    # had answered instead of the assertion. The sentence is apple_toolchain's own, not
+    # a phrase invented here, so the tool that refuses is the tool that is read.
     script, extra_args = gate
     proc = subprocess.run([sys.executable, script] + list(extra_args),
                           capture_output=True, text=True, cwd=root)
-    detail = [line for line in (proc.stdout + proc.stderr).splitlines() if "FAIL" in line]
+    outcome = proc.stdout + proc.stderr
+    if proc.returncode != 0 and NO_TOOLCHAIN_MESSAGE in outcome:
+        return None, [line for line in outcome.splitlines()
+                      if NO_TOOLCHAIN_MESSAGE in line]
+    detail = [line for line in outcome.splitlines() if "FAIL" in line]
     return proc.returncode != 0, detail
 
 
@@ -2271,6 +2296,7 @@ def main():
                 for entry in MUTATIONS}
     missed = []
     unapplied = []
+    unproved = []
 
     # A planted mutation lives in the real file for as long as the gate reads it.
     # The restore below runs in a finally, which covers an exception inside the
@@ -2354,6 +2380,16 @@ def main():
                 if text is not None:
                     with open(path, "w", encoding="utf-8") as handle:
                         handle.write(text)
+            if failed is None:
+                # The gate reached for a compiler this host does not have. Counting that
+                # either way would be a lie -- as a proof, because nothing was tested, and
+                # as a miss, because nothing in the tree caused it -- so it is named apart
+                # and the summary says how many proofs this host was unable to make.
+                unproved.append(name)
+                print("UNPROVED %-18s %s" % (name, note))
+                if detail:
+                    print("        %s" % detail[0].strip()[:160])
+                continue
             caught = "CAUGHT " if failed else "MISSED "
             print("%s %-18s %s" % (caught, name, note))
             if failed and detail:
@@ -2366,12 +2402,17 @@ def main():
             signal.signal(signum, handler)
 
     print("\n%d/%d mutations caught"
-          % (len(MUTATIONS) - len(missed) - len(unapplied), len(MUTATIONS)))
+          % (len(MUTATIONS) - len(missed) - len(unapplied) - len(unproved),
+             len(MUTATIONS)))
     if missed:
         print("assertions that a real regression would slip past: %s" % ", ".join(missed))
     if unapplied:
         print("mutations whose anchor is gone, so nothing was proved either way: %s"
               % ", ".join(unapplied))
+    if unproved:
+        print("mutations this host could not test at all, %d of them, because the gate that"
+              " judges each one asked for a clang and macOS SDK pair that is not here: %s"
+              % (len(unproved), ", ".join(unproved)))
     if keep:
         for entry in MUTATIONS:
             name, path, mutate = entry[0], entry[1], entry[2]
