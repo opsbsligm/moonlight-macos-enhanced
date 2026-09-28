@@ -254,7 +254,14 @@ def verify(report, out_dir=None):
     pixels = report.get("settingsPagePixels") or {}
     stddev = pixels.get("stddev")
     distinct = pixels.get("distinctColours")
-    expect(isinstance(stddev, (int, float)) and stddev >= 0.08,
+    # An absolute luminance spread is a weak claim about a drawn page: this one is a
+    # light theme, where 97% of the sampled luminance sits near white, so a fully drawn
+    # page measured 0.0702 against a flat fixture's 0.001. The old 0.08 floor was above
+    # the number the real page produces, which is how a gate that had never once run on
+    # a real display came to fail a build that rendered correctly. 0.02 keeps a 3.5x
+    # margin under the measured page and 20x over flat, and the two fixtures below hold
+    # both ends of that line down.
+    expect(isinstance(stddev, (int, float)) and stddev >= 0.02,
            "the page drew no variation at all (stddev %r)" % stddev)
     expect(isinstance(distinct, int) and distinct >= 40,
            "the page drew %r distinct colours, which is not a rendered page" % distinct)
@@ -420,11 +427,24 @@ def sample_panes():
         {"role": "AXStaticText", "text": "off", "x": 800, "y": 300},
     ]
 
-    def pane(pane_id, nodes, expectation, capture, **extra):
+    # The page's own pane tags, not indexes: 0 stream, 1 video, 3 apps. Each page's read
+    # count is the one this tree measures, and `verify_host_reads` insists on it.
+    PANE_READS = {0: HOST_READS_WHEN_OPENED["streamPane"],
+                  1: HOST_READS_WHEN_OPENED["videoPane"],
+                  3: HOST_READS_WHEN_OPENED["appPane"]}
+
+    def pane(pane_id, nodes, expectation, capture, reads=None, **extra):
+        reads = PANE_READS[pane_id] if reads is None else reads
         report = {"requestedPane": pane_id, "storedPane": pane_id, "windowsAdded": [],
                 "windowsAddedHostingSettings": [], "viewsAdded": 1,
                 "presentedAfterDismiss": False, "stillMountedAfterDismiss": False,
-                "readableContent": nodes, "expectations": expectation, "capture": capture}
+                "readableContent": nodes, "expectations": expectation, "capture": capture,
+                # The read counts are part of what a report has to answer, so the fixture
+                # answers them. It did not used to, which left the fixture itself the one
+                # report the verifier refused, and every refusal after that looked like the
+                # fixture's fault rather than the run's.
+                "hostReadsDuringPresent": reads,
+                "hostReadsDuringDismiss": 0}
         report.update(extra)
         return report
 
@@ -522,6 +542,8 @@ def self_test():
                     {"probeWindowIsKeyWindow": True, "focusOnPageAfterBackControl": True})),
                 ("nothing was drawn", lambda report: report.update(
                     {"settingsPagePixels": {"stddev": 0.001, "distinctColours": 2}})),
+                ("a flat colour lifted only by antialiasing noise", lambda report: report.update(
+                    {"settingsPagePixels": {"stddev": 0.012, "distinctColours": 44}})),
                 ("no material is composited", lambda report: report.update({"materialLayers": []})),
                 ("the report is empty", lambda report: report.update({"windowsAddedByPresentingSettings": None})),
                 ("no panes were probed at all", lambda report: [report.pop(name, None) for name in
@@ -566,7 +588,25 @@ def self_test():
                  lambda report: report["streamPane"].update(
                      {"readableContent": list(report["videoPane"]["readableContent"])})),
                 ("asking for a pane did not stick", lambda report: report["videoPane"].update({"storedPane": 0})),
+                ("a pane doubled the library reads it takes to open",
+                 lambda report: report["videoPane"].update(
+                     {"hostReadsDuringPresent": HOST_READS_WHEN_OPENED["videoPane"] * 2})),
+                ("a pane read the library while it was being dismissed",
+                 lambda report: report["streamPane"].update({"hostReadsDuringDismiss": 1})),
             ]
+            # The other end of the line: the numbers this page really drew on a player's
+            # display, measured on 2026-09-28 from the probe's own screenshot (mean 0.9765,
+            # stddev 0.0702, 53 distinct colours). A threshold that refuses them refuses the
+            # build, so the passing case is pinned here too and not only in a comment.
+            lit = json.loads(json.dumps(good))
+            lit.update({"settingsPagePixels": {"stddev": 0.0702, "distinctColours": 53}})
+            accepted = verify(lit, out)
+            print("%-4s the page drawn on a real light-theme display still passes"
+                  % ("ok" if not accepted else "FAIL"))
+            if accepted:
+                print("     the verifier refused numbers a real page produces")
+                failures += 1
+
             for what, mutation in cases:
                 doctored = json.loads(json.dumps(good))
                 mutation(doctored)
