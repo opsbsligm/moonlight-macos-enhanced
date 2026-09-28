@@ -235,3 +235,92 @@ HOME-PC 192.168.3.110，`displayMode=1`（全屏）、`mouseMode=0`（锁定）�
   用 27 的转录再生成会把"CI 的分析器并不会报"的条目写进基线。需要一台 26.6 转录，
   或人工删掉这一条后由 CI 自证（若仍存在会改报"unaccepted finding"，同样可见）。
 - 结论：本轮不擅自改 analyzer 基线；CI 变绿的前置条件是用户对"C 层是否发布"的决策。
+
+## 十三、第二次续跑：先把上一轮自己欠的四项收掉（代码层已闭合）
+
+### 1. ⌃⌥C 从"只能开"改成开关
+
+- 触发步骤：锁定模式下按 ⌃⌥C 唤起侧边栏，随后再按一次。
+- 预期：收起并把指针交还游戏。实际（修复前）：空操作，栏继续持有指针直到自己的定时器到期。
+  玩家看到的仍然是"按了没反应"，与最初的故障同一观感。
+- 根因：`openEdgeMenuDockForControlCenterShortcut` 只有 summon 一个方向，而
+  `summonEdgeMenuDockForEdge:` 的第一组 guard 就把 `edgeMenuButtonExpanded` 挡掉——那个入口是
+  dwell/push 共用的，悬停时栏已开绝不能收起，所以"关"的方向只能加在键盘入口自己身上。
+- 修法：键盘入口在"已展开且不在拖动"时改走 `deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:`
+  （收起唯一出口，含取消菜单跟踪、临时释放意图与归还判定），并返回 YES，`if (![self …])` 的
+  模态菜单回退因此不会触发。拖动中不拦截：落到 summon 的拒绝上，既不会把栏从指针手里抢走，
+  也不会弹出模态菜单。未新增布尔量，未新增定时器。
+- 证据：运行时探针新增 4 条断言（按下开→再按关→再按又开；收起仍归还指针且不外发按键；
+  拖动期间既不丢栏也不交出所有权），新增变异体 `the keyboard entry is a one-way switch`、
+  `a press during a drag drops the bar out of the pointer`。中英设置文案同步"再按一次收起"。
+
+### 2. 退出全屏串流遗留的 "Desktop" 幽灵窗口
+
+- 触发步骤：全屏会话中断开串流，走 `performCloseStreamWindow:` 的非立即分支。
+- 预期：窗口关闭。实际：窗口以 alpha=0 留在 Window 菜单里，性能浮层停在最后一帧，
+  `窗口 ▸ Close Stream Window` 才关得掉。
+- 日志证据：`performCloseStreamWindow: safe close (style=16399 …)`（16399 含 16384 全屏位）
+  之后没有任何 `window-did-exit-fullscreen` 上下文；整份 35184 行日志里该上下文出现 **0 次**。
+- 根因：`beginStopStreamIfNeededWithReason:completion:` 先调用
+  `tearDownStreamLifecycleObserversAndTimers`（移除 `NSWindowDidExitFullScreenNotification` 观察者），
+  之后才执行 completion 里的 `requestSafeCloseOfStreamWindow`。全屏分支置
+  `pendingCloseWindowAfterFullscreenExit = YES` 并 `toggleFullScreen:`，然后等待一个已经被移除的
+  观察者来消费这个标志——永远等不到，于是 `close` 从未发生。
+- 修法：关闭意图自带一次性观察者 `watchFullscreenExitOnceToCloseStreamWindow:`；若其他路径已经
+  关过（标志被清）则自行退出；只有 dealloc 才回收它。未新增定时器、未改动重连路径。
+- 状态：代码与构建/签名已验证；**实机尚未验收**（见第十五节）。
+
+### 3. "回程"日志收到唯一出口
+
+- 触发步骤：栏可见时玩家在画面里真实单击取回指针。
+- 实际（修复前）：会话日志出现 18 条 `Edge controls opened`、只有 17 条
+  `Edge controls returned to stream`——栏确实收回去了，但没有任何一行说明它回去了。
+- 根因：`returned` 只写在 auto-collapse 定时器块里，而收回指针还有别的路（
+  `captureFreeMouseIfNeededForEvent:` → `deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:`），
+  那些路是静默的。一条写在某个调用者层面的日志，只能证明它自己那一条路。
+- 修法：日志下沉到 `transitionEdgeMenuToPhase:` 的"可见→不可见"唯一转换点，带 `from=`/`to=`
+  区分真正归还与隐藏；`grace` 改读 `edgeMenuReturnDelay`，与计时器共用同一条规则，日志不可能再
+  和计时器各说一套。定时器块里那条私有日志删除，避免一次收起打两行。
+- 证据：新增断言"the click that takes the pointer back also says that the bar went back"，
+  变异体 `a bar that vanished on its own is not a return`（只承认计时器路径的日志会立刻失败）。
+
+### 4. 第 4 项（teardown 不摘 tracking area）：评估后不改
+
+`installMouseTrackingArea` 只由 `viewDidAppear` 调用，断线重连复用同一控制器时不会再来第二次，
+摘掉它会让第二次会话失去 enter/exit——这是拿真实功能换一个不可见的整洁度。面板本身在
+`transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden` 里已经 `orderOut`，会话结束后的指针事件也已被
+`edgeMenuCanInteract` 拦下并有命名日志。本项按"不修"结案，不再重复提出。
+
+## 十四、本轮门禁与构建（实测）
+
+- `local-gates.sh` 73 passed / 0 failed / 14 需 CI 产物；键鼠回归 45/45；
+  `edge-sensor-summon-tests.py --self-test` rc=0，运行时断言 **2686** 项、负向对照 **30** 个
+  （本轮新增 3 个 + 2 个改写到新实现上）；`git diff --check` 干净。
+- 第一次 Release 构建被 `build-warning-audit.py` 拦下：新属性写成
+  `@property (nullable, nonatomic, strong)` 让本未做空性标注的
+  `StreamViewController_Internal.h` 变成"部分标注"头文件，一次刷出 1308 条
+  `-Wnullability-completeness`，first-party 报 1 类失败。已改回该文件既有风格（不带空性标注），
+  重建后 first-party 0 warning。**是门禁起了作用，不是把门禁放宽。**
+- BUILD_NUMBER=1698（由提交历史推导，本轮两次提交后自然递增）。
+- 暂存 `/tmp/ml-stage-edge-5259` → `codesign-bundle.sh` → `codesign --verify --deep --strict`
+  通过 → 确认旧实例 0 socket（未在串流）→ `kill -TERM` → `deploy-local-app.sh`。
+- 安装 `c11f5cef4ddd4f520321a3592bf8616aa96dc6c5f491fe0c2b8acd435d093733`
+  （替换前 `67fd39fb0fd339950e5edb295596add5cb3805accb09e5f0fa9fe75734dbcb55`），
+  回滚副本 `~/.Trash/.MoonlightEnhanced-before-edge-switch-3C0A2B372E9540E1A56C5E89CA64657E.app`，
+  记录 `build-input-review/edge-switch-install-result.json`；安装后实例数 = 1、版本 1698，
+  二进制里能读到新的回程日志格式串（`… captured=%d from=%ld to=%ld`）。
+
+## 十五、本轮实机验收：被 Computer Use 工具阻塞（不得当作已通过）
+
+- 部署后第一次 `cua.getApp("/Applications/MoonlightEnhanced.app")` 成功读到主机列表 AX 树，
+  标题栏显示 `Moonlight – Version 1.6.0 (1698)`，说明安装的就是本轮构建。
+- 之后按元素索引双击主机行、双击其容器、先 Raise 再双击，AX 树都返回
+  "There has been no change in the accessibility tree"；同时 `moonlight-debug.log` 里只有
+  `Discovery summary for HOME-PC` 心跳，**没有任何点击或连接日志**——事件根本没到达应用。
+- 随后 Computer Use 后端持续返回 `Sky Computer Use native pipe closed before response`；
+  `js_reset`、改用完整路径重试均失败，而 `cua.getState()` 仍能列出应用清单，
+  判定为 Sky 的 AX 桥接故障，不是本应用故障。
+- 因此本轮 **未拿到**：⌃⌥C 开关的实机开→关→开、连续 30 次不衰减、四边停靠与拖动后重触发、
+  幽灵窗口在真实全屏断开后确实消失。以上连同第十节的硬件项，一律 **尚未验收**。
+- 下一轮第一件事：等 Computer Use 恢复后，从"双击主机行进入 Desktop"重跑第八节的实机矩阵，
+  并补测断开后 Window 菜单里是否还有残留窗口。
