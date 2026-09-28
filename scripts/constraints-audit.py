@@ -989,6 +989,20 @@ def ordered_once(body, first_prefix, second_prefix, what):
     return None
 
 
+# The records are spent ahead of the swallow, not after it, and the ordering above cannot see
+# that: a spend moved inside the guard is still ahead of the send, so it keeps that rule green
+# while the key dies. A release the app keeps to itself still ends the press, and a record left
+# behind that guard answers the next keyDown as a press still owned -- the key stops reaching
+# the host for the rest of the session, which is the same class of defect as the one the record
+# was written for. So the guard's own position is what gets asked here.
+problem = ordered_once(
+    hid_up,
+    "[self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:physical]",
+    "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {",
+    "spending the record the swallow would otherwise leave behind")
+check(problem is None, "a release the app keeps still spends the held-key record"
+      if problem is None else "the held-key spend is not effective: " + problem)
+
 problem = ordered_once(
     hid_down,
     "[self.keyboardSuppressedKeyDownKeyCodes removeObject:",
@@ -2266,6 +2280,15 @@ CI_ONLY = {
     "relative-pointer-gain-tests.py": "macOS SDK",
     "discrete-scroll-click-tests.py": "macOS SDK",
     "controller-mouse-emulation-tests.py": "macOS SDK",
+    # The edge dock's band and the settings readout are both lifted out of the shipping
+    # sources and compiled, so neither can answer on the audits runner: that host has no clang
+    # for Apple's headers, which is the same toolchain question as the four lines above. Each
+    # keeps its own step in the build matrix -- "Verify the edge summon band lets go only for a
+    # player who meant it" and "Verify the interpolation readout carries measurements to the
+    # settings page" -- and the reachability rule above refuses a workflow that drops either, so
+    # excusing them here cannot lose a proof, only move it to a host able to give an answer.
+    "edge-sensor-summon-tests.py": "edge_sensor_runtime_probe",
+    "interpolation-readout-tests.py": "clang_and_sdk",
     # The excuse is thinner here than the others and worth reading exactly: the script runs
     # anywhere, and what it cannot do is invent its own input. It reads the transcript a build
     # left behind, and local-gates.sh has no build to hand it, so the step skips on a laptop and
@@ -2310,22 +2333,13 @@ for leak_shape, leak_answer in (("--self-test", "its fixtures"),
           "the leak reader failed %s: %s"
           % (leak_answer, (leak_run.stdout + leak_run.stderr).strip().splitlines()[-1:]))
 
-# The edge summon band is geometry and arithmetic, so it needs nothing but a C compiler: the
-# aggregate drives the shipped helpers here, and a band that stopped telling "inside the band"
-# from "against the edge" goes red on a laptop instead of eight minutes into a build job. Its
-# own red proofs run too, because a harness that cannot fail is exactly how a band ships that
-# never lets a player open the dock -- or one that lets go on every flick.
-for sensor_shape, sensor_arguments in (("its readings", []),
-                                       ("its red proofs", ["--self-test"])):
-    sensor_run = subprocess.run([sys.executable,
-                                 os.path.join(scripts_dir, "edge-sensor-summon-tests.py")]
-                                + sensor_arguments,
-                                capture_output=True, text=True, cwd=root)
-    check(sensor_run.returncode == 0,
-          "the edge summon gate passes %s" % sensor_shape
-          if sensor_run.returncode == 0 else
-          "the edge summon gate failed %s: %s"
-          % (sensor_shape, (sensor_run.stdout + sensor_run.stderr).strip().splitlines()[-1:]))
+# The edge summon band is judged by scripts/edge-sensor-summon-tests.py, which compiles the
+# shipped helpers out of MouseCapture.m and runs them, red proofs included. It is excused above
+# rather than run here, because a host with no compiler cannot tell a band that works from one
+# that never opens the dock -- and a gate that reports success without asking the question is
+# exactly how the dock shipped unreachable in the mode a game is played in. The build matrix
+# answers it on a runner that has Xcode on it, as its own step, where a band that stopped
+# telling the inside of the band from a push against the edge goes red in minutes.
 
 # The hotkey handoff is a claim about the outside world, so its gate is worth running here even
 # though the call itself is not: what the gate judges is which error code is allowed to move the
@@ -2398,23 +2412,14 @@ for cadence_shape, cadence_arguments in (("its readings", []),
           "the cadence policy gate failed %s: %s"
           % (cadence_shape, (cadence_run.stdout + cadence_run.stderr).strip().splitlines()[-1:]))
 
-# The readout is a laptop's check as well: the publisher is pure Foundation and the policy header is
-# pure C, so its answers can be played here. What it forecloses cannot be -- a settings page that
-# reports numbers from the wrong counters reads as evidence, and a feed attached to the performance
-# overlay's timer goes silent for the players who never enable the overlay, which is a green build
-# and a page full of stale measurements.
-for readout_shape, readout_arguments in (("its readings", []),
-                                         ("its red proofs", ["--self-test"])):
-    readout_run = subprocess.run([sys.executable,
-                                  os.path.join(scripts_dir, "interpolation-readout-tests.py")]
-                                 + readout_arguments,
-                                 capture_output=True, text=True, cwd=root)
-    check(readout_run.returncode == 0,
-          "the interpolation readout gate passes %s" % readout_shape
-          if readout_run.returncode == 0 else
-          "the interpolation readout gate failed %s: %s"
-          % (readout_shape, (readout_run.stdout + readout_run.stderr).strip().splitlines()[-1:]))
-
+# The readout is judged by scripts/interpolation-readout-tests.py, which lifts the shipping
+# publisher out of VideoDecoderRenderer.m and runs it against a fake settings class. That is a
+# compiled harness, so the audits runner has no answer for it and the build matrix carries the
+# answer as its own step. What the gate is worth is unchanged: a settings page that reports
+# numbers from the wrong counters reads as evidence, and a feed attached to the performance
+# overlay's timer goes silent for the players who never enable the overlay -- a green build with
+# a page full of last second's measurements, which is why its red proofs move the feed onto that
+# timer rather than leaving the shape to be judged by eye.
 # The ownership experiment gets the same treatment, and its controls make the reason stronger
 # rather than different: a probe that retains its own pair reports today's retain cycle as a
 # reading of the app, and a build that ignores the flag reports an empty record as a clean graph.

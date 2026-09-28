@@ -34,6 +34,31 @@ def _ask_xcrun(arguments):
         return ""
 
 
+# The sentence that means "this host cannot answer the question at all", in the words a
+# toolchain gate prints. One constant rather than three copies of a phrase: the aggregate reads
+# it to report a skip, and the battery reads it to refuse a verdict, and an edit to this message
+# that broke either reader would turn "no compiler here" back into a gate that reports a clean
+# tree -- or, worse for the battery, back into a mutation "caught" by an environment error.
+# Neither is an answer: the audits runner is ubuntu and has no clang for Apple's headers, so the
+# honest reading is always the same one -- not here, and not by anyone, on this host.
+NO_TOOLCHAIN_MESSAGE = "no usable clang and macOS SDK pair was found"
+
+
+def clang_and_sdk_or_none():
+    """A usable (clang, sdk) pair, or None when this host has none at all.
+
+    The non-raising half of `clang_and_sdk`, asked by readers that sit inside a larger pass and
+    have to report a skip rather than end the run -- the same shape as `swiftc_and_sdk` below.
+    Callers that cannot work without a compiler keep using `clang_and_sdk`, whose refusal names
+    what is missing and says it is not a defect in the code under test.
+    """
+    for locate in (_xcrun_pair, _command_line_tools_pair):
+        clang, sdk = locate()
+        if clang and sdk and os.path.exists(clang) and os.path.isdir(sdk):
+            return clang, sdk
+    return None
+
+
 def _xcrun_pair():
     return (_ask_xcrun(["--find", "clang"]),
             _ask_xcrun(["--sdk", "macosx", "--show-sdk-path"]))
@@ -54,9 +79,9 @@ def clang_and_sdk(what="probe"):
             return clang, sdk
         tried.append("%s (%s)" % (name, "no clang" if not clang or not os.path.exists(clang)
                                   else "no readable SDK"))
-    raise SystemExit("no usable clang and macOS SDK pair was found for the %s, tried %s. "
+    raise SystemExit("%s for the %s, tried %s. "
                      "Neither is a defect in the code under test."
-                     % (what, " and ".join(tried)))
+                     % (NO_TOOLCHAIN_MESSAGE, what, " and ".join(tried)))
 
 
 def _xcrun_swift_pair():
