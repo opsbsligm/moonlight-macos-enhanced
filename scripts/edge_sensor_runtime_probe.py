@@ -339,6 +339,26 @@ int main(void) { @autoreleasepool {
         [s deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:NO];
         CHECK(!s.expanded, "closing the bar puts the controls away");
     }
+    // The light has to survive the pointer travelling to it. Pulling back from the band
+    // onto the tab is how a click is actually aimed, and a tab that went dark on the way
+    // made the lit state a promise the click could not keep.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    [s releaseInputToLocalControlWithCode:@"test" reason:@"explicit"];
+    s.edgeSensorIgnoreMotionUntilMs = 0;
+    s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 2, 540); move(s, 0, 0);
+    fire(s.edgeSensorDwellTimer);
+    CHECK(s.edgeMenuHandleArmed && !s.expanded, "the band lights the tab");
+    s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 20, 540); move(s, 0, 0);
+    CHECK(s.edgeMenuHandleArmed && !s.expanded, "pulling back onto the lit tab keeps it lit");
+    CHECK([s expandEdgeMenuForLocalClickAtCurrentPointer] && s.expanded,
+          "the click that follows the light opens the bar where the player was shown it");
+    [s deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:NO];
+    s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 60, 540); move(s, 0, 0);
+    CHECK(!s.edgeMenuHandleArmed, "leaving the tab puts the light out");
+    s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 25, 540); move(s, 0, 0);
+    CHECK(!s.edgeMenuHandleArmed && ![s expandEdgeMenuForLocalClickAtCurrentPointer],
+          "a deeper point can neither re-light the tab nor open the bar without the band");
+
     // How deep a click may reach is a measurement, not a feeling: the drawn tab, the 2pt
     // of air it floats on, and 2pt of tolerance. Past that the press belongs to whatever
     // sits on the seam -- a HUD, a taskbar -- which used to open the bar instead.
@@ -838,7 +858,8 @@ int main(void) { @autoreleasepool {
 def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
     signatures = [
         '- (void)resetEdgeSensorSummonState', '- (void)resetEdgeSensorPointerState',
-        '- (BOOL)edgeSensorPointIsInHoverRegion:', '- (void)captureMousePreservingEdgeSensorPoint:',
+        '- (BOOL)edgeSensorPointIsInHoverRegion:', '- (BOOL)edgeSensorPointIsOnVisibleHandle:',
+        '- (void)captureMousePreservingEdgeSensorPoint:',
         '- (BOOL)captureFreeMouseIfNeededForEvent:', '- (BOOL)edgeMenuOwnsPointer', '- (void)rightMouseDown:', '- (void)rightMouseUp:',
         '- (void)otherMouseDown:', '- (void)otherMouseUp:', '- (void)handleModifierOnlyReleaseShortcut:',
         '- (void)releaseInputToLocalControlWithCode:', '- (void)resumeInputForExplicitStreamClick:',
@@ -905,6 +926,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('the two waits report one number', '[self edgeMenuReturnDelay] * 1000.0,', 'MLEdgeMenuAutoCollapseDelay * 1000.0,'),
                 ('tab click leaks into the game', 'if ([self expandEdgeMenuForLocalClickAtCurrentPointer]) {\n        return;\n    }', 'if (NO) {\n        return;\n    }'),
                 ('arrival at the edge still grabs the pointer', '    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;', '    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];\n    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;'),
+                ('the lit tab shrinks under the pointer that is clicking it', '        if (![self edgeSensorPointIsOnVisibleHandle:point]) [self resetEdgeSensorSummonState];', '        if (YES) [self resetEdgeSensorSummonState];'),
                 ('locked motion opens the bar again', '        // here may only ever take a light off the tab.\n        [self resetEdgeSensorSummonState];\n        return NO;', '        // here may only ever take a light off the tab.\n        [self resetEdgeSensorSummonState];\n        [self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"edge-sensor-push"];\n        return NO;'),
                 ('the hit rect ignores what the player can see', 'NSRect handle = [self edgeMenuVisibleHandleRectInBounds:self.view.bounds];', 'NSRect handle = [self edgeMenuInteractionRectInBounds:self.view.bounds];'),
                 ('arming is invisible', 'return self.edgeMenuHandleArmed ? MLEdgeMenuHandleArmedThickness : MLEdgeMenuHandleIdleThickness;', 'return MLEdgeMenuHandleIdleThickness;'),
