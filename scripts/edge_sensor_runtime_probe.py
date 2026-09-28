@@ -128,7 +128,7 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 - (BOOL)edgeMenuCanInteract;
 - (void)handleEdgeMenuHover;
 - (NSRect)edgeSensorActivationRectInBounds:(NSRect)bounds;
-@property BOOL edgeMenuPointerInside, staleEvent;
+@property BOOL edgeMenuPointerInside, edgeMenuPointerHasVisited, staleEvent;
 @property (readonly) BOOL expanded;
 @property BOOL edgeSensorMustLeaveHoverRegion;
 @property Panel *edgeMenuPanel;
@@ -232,7 +232,6 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 - (void)syncRemoteCursorToViewPoint:(NSPoint)point clampToBounds:(BOOL)clamp {}
 - (BOOL)edgeMenuMatchesExitEdge:(MLFreeMouseExitEdge)edge { return edge == self.edgeMenuDockEdge; }
 - (void)updateControlCenterEntrypointHints {}
-- (void)updateEdgeMenuPointerInsideForPoint:(NSPoint)point { self.edgeMenuPointerInside = [self isPointInsideEdgeMenuInteractionRect:point]; }
 - (NSPoint)viewPointForMouseEvent:(NSEvent *)event { return self.staleEvent ? NSMakePoint(960,540) : self.systemPoint; }
 __METHODS__
 @end
@@ -631,6 +630,59 @@ int main(void) { @autoreleasepool {
     CHECK(s.isMouseCaptured && !s.expanded && [s.wire count] == 2,
           "ordinary stream clicks still capture and forward their button pair");
 
+    // A summon the pointer is already resting on must not schedule its own dismissal:
+    // stopping still is what a player does after they hover, and the bar disappearing
+    // under a still pointer is the same "it opened and then it did nothing" report.
+    s = fresh(MLFreeMouseExitEdgeRight);
+    s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 6, NSMidY(s.view.bounds));
+    s.edgeSensorIgnoreMotionUntilMs = 0;
+    move(s, 0, 0);
+    fire(s.edgeSensorDwellTimer);
+    CHECK(s.expanded && s.edgeMenuPointerHasVisited && !s.edgeMenuAutoCollapseTimer.isValid,
+          "a summon the pointer is resting on waits for the pointer to leave, not for a clock");
+
+    // A bar that was called out still has to find its way back, and the player who
+    // repeats the entry must not be refused because the first one is still on screen.
+    // This is the failure the field log showed: eight presses, four openings, and a bar
+    // that never came down because nothing in a locked session moves the local pointer.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO; s.wire = [NSMutableArray array];
+    s.systemPoint = NSMakePoint(960, 540);              // where locked mode parks the pointer
+    [ProbeLog reset];
+    CHECK([s openEdgeMenuDockForControlCenterShortcut] && s.expanded,
+          "the keyboard entry opens the bar from the centre of the screen");
+    CHECK(s.edgeMenuAutoCollapseTimer.isValid,
+          "a bar the pointer never touched is scheduled to go back the moment it came out");
+    CHECK(!s.edgeMenuPointerHasVisited, "one stay on screen starts with no visit recorded");
+    CHECK([ProbeLog countMatching:@"Edge controls returned to stream"] == 0,
+          "a bar that has not gone back yet does not claim to have gone back");
+    fire(s.edgeMenuAutoCollapseTimer);
+    CHECK(!s.expanded && s.isMouseCaptured && !s.edgeMenuTemporaryReleaseActive && [s.wire count] == 0,
+          "the summon grace ends with the pointer back in the game, once, and nothing sent");
+    CHECK([ProbeLog countMatching:@"Edge controls returned to stream"] == 1,
+          "the return to the stream is one named line in the log beside the opening");
+    CHECK([ProbeLog countMatching:@"grace=2500ms"] == 1,
+          "the wait it chose was the summon grace, not the 450ms hover grace");
+
+    // The player who does reach the bar must not be kept waiting twice as long, and the
+    // press after a return must open again rather than be refused as already-open.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO; s.wire = [NSMutableArray array];
+    s.systemPoint = NSMakePoint(960, 540);
+    [ProbeLog reset];
+    [s openEdgeMenuDockForControlCenterShortcut];
+    s.systemPoint = NSMakePoint(NSMaxX(s.view.bounds) - 6, NSMidY(s.view.bounds));  // the pointer arrives
+    [s handleEdgeMenuTemporaryReleaseForEvent:nil];
+    CHECK(s.edgeMenuPointerHasVisited && !s.edgeMenuAutoCollapseTimer.isValid,
+          "the pointer reaching the bar cancels the wait and records the visit");
+    s.systemPoint = NSMakePoint(960, 540);                                            // and leaves it
+    [s handleEdgeMenuTemporaryReleaseForEvent:nil];
+    fire(s.edgeMenuAutoCollapseTimer);
+    CHECK(!s.expanded && s.isMouseCaptured && [ProbeLog countMatching:@"grace=450ms"] == 1,
+          "a bar the pointer has been on returns on the short 450ms grace");
+    s.systemPoint = NSMakePoint(960, 540);
+    CHECK([s openEdgeMenuDockForControlCenterShortcut] && s.expanded &&
+          s.edgeMenuAutoCollapseTimer.isValid && !s.edgeMenuPointerHasVisited,
+          "the press after a return opens a fresh stay on screen instead of dying on the second use");
+
     printf("%d runtime edge checks, %d failures\n", count, failures);
     return failures != 0;
 } }
@@ -653,6 +705,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
     methods += "\n" + "\n".join(method(menu, sig) for sig in (
         '- (void)presentStreamMenuFromView:(NSView *)sourceView event:',
         '- (void)handleEdgeMenuButtonDragWithState:',
+        '- (void)updateEdgeMenuPointerInsideForPoint:',
         '- (BOOL)isPointInsideEdgeMenuInteractionRect:',
         '- (BOOL)edgeMenuButtonExpanded', '- (BOOL)edgeMenuDragging', '- (BOOL)edgeMenuMenuVisible',
         '- (void)transitionEdgeMenuToPhase:', '- (void)handleEdgeMenuHover', '- (NSRect)edgeSensorActivationRectInBounds:',
@@ -699,6 +752,11 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('slam gesture reuses one clock for both questions', 'now - self.edgePushLastMotionMs > MLEdgeSensorPushIdleMs', 'now - self.edgePushLastMotionMs > 1e9'),
                 ('slam gesture keeps the old 1200ms budget', 'BOOL completed = now - self.edgePushWindowStartMs <= MLEdgeSensorPushWindowMs;', 'BOOL completed = now - self.edgePushWindowStartMs <= 1200.0;'),
                 ('one flick is enough to summon', 'if (self.edgePushStrokeCount >= MLEdgeSensorPushStrokeCount) {', 'if (self.edgePushStrokeCount >= 1) {'),
+                ('a summoned bar is left on screen forever', '    [self handleEdgeMenuHover];\n    [self attachEdgeMenuPanelToWindowIfNeeded];', '    [self attachEdgeMenuPanelToWindowIfNeeded];'),
+                ('the summon grace collapses into the hover delay', 'NSTimeInterval delay = self.edgeMenuPointerHasVisited ? MLEdgeMenuAutoCollapseDelay : MLEdgeMenuSummonGraceDelay;', 'NSTimeInterval delay = MLEdgeMenuAutoCollapseDelay;'),
+                ('a pointer that visited the bar is forgotten', '        self.edgeMenuPointerHasVisited = YES;', '        self.edgeMenuPointerHasVisited = NO;'),
+                ('a bar that goes back leaves no trace', '@"[diag] Edge controls returned to stream', '@"[diag] ignored'),
+                ('the two waits report one number', 'delay * 1000.0,', '0.0,'),
                 ('tab click leaks into the game', 'if ([self expandEdgeMenuForLocalClickAtCurrentPointer]) {\n        return;\n    }', 'if (NO) {\n        return;\n    }'),
             ]
             for label,before,after in mutations:

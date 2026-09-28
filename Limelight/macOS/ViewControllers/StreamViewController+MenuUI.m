@@ -353,7 +353,17 @@
     // work queued while the controls were already hidden (e.g. a shortcut).
     if (self.edgeMenuPhase == phase && phase != MLEdgeMenuPhaseHidden) return;
     BOOL wasMenu = self.edgeMenuMenuVisible;
+    MLEdgeMenuPhase previousPhase = self.edgeMenuPhase;
     self.edgeMenuPhase = phase;
+    // A visit record describes one stay on screen: it is opened when the bar comes out
+    // and forgotten when it goes away, never by whichever caller happens to look at it.
+    BOOL freshExpansion = phase == MLEdgeMenuPhaseExpanded &&
+        previousPhase != MLEdgeMenuPhaseExpanded &&
+        previousPhase != MLEdgeMenuPhaseMenu &&
+        previousPhase != MLEdgeMenuPhaseDragging;
+    if (freshExpansion || phase == MLEdgeMenuPhaseHidden) {
+        self.edgeMenuPointerHasVisited = NO;
+    }
     self.edgeMenuLifecycleToken += 1;
     [self resetEdgeSensorSummonState];
     [self cancelEdgeMenuAutoCollapse];
@@ -586,6 +596,9 @@
 
 - (void)updateEdgeMenuPointerInsideForPoint:(NSPoint)point {
     self.edgeMenuPointerInside = [self isPointInsideEdgeMenuInteractionRect:point];
+    if (self.edgeMenuPointerInside) {
+        self.edgeMenuPointerHasVisited = YES;
+    }
 }
 
 - (NSRect)frameForEdgeMenuButtonInBounds:(NSRect)bounds {
@@ -635,6 +648,15 @@
     }
 
     self.edgeMenuButton.hidden = NO;
+
+    // Showing the bar and scheduling its return are one decision. Until now only the
+    // hover and menu paths armed the timer, and in locked game mode the local pointer
+    // never moves: the bar stayed expanded forever, so the next summon was refused as
+    // already-open and the entry looked dead after one use. handleEdgeMenuHover is the
+    // one rule that reads where the pointer is and decides to wait or to schedule, and
+    // it runs once the handle is on screen, so a pointer resting on the bar is read as
+    // resting on the bar and not as an empty space where a bar used to be.
+    [self handleEdgeMenuHover];
     [self attachEdgeMenuPanelToWindowIfNeeded];
     NSRect anchorRect = [self edgeMenuAnchorRectInScreen];
     if (NSIsEmptyRect(anchorRect)) {
@@ -696,8 +718,9 @@
     if (self.edgeMenuAutoCollapseTimer.isValid || !self.edgeMenuButtonExpanded ||
         self.edgeMenuDragging || self.edgeMenuMenuVisible) return;
     NSUInteger token = self.edgeMenuLifecycleToken;
+    NSTimeInterval delay = self.edgeMenuPointerHasVisited ? MLEdgeMenuAutoCollapseDelay : MLEdgeMenuSummonGraceDelay;
     __weak typeof(self) weakSelf = self;
-    self.edgeMenuAutoCollapseTimer = [NSTimer timerWithTimeInterval:MLEdgeMenuAutoCollapseDelay repeats:NO block:^(NSTimer *timer) {
+    self.edgeMenuAutoCollapseTimer = [NSTimer timerWithTimeInterval:delay repeats:NO block:^(NSTimer *timer) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf || timer != strongSelf.edgeMenuAutoCollapseTimer || token != strongSelf.edgeMenuLifecycleToken) return;
         strongSelf.edgeMenuAutoCollapseTimer = nil;
@@ -711,6 +734,12 @@
             [strongSelf scheduleEdgeMenuAutoCollapse];
             return;
         }
+        // The bar came out because someone asked for it, so the moment it goes back is
+        // worth one line: a field log that only ever says "opened" cannot tell a bar that
+        // returned from a bar that was still on screen when the next press went unanswered.
+        Log(LOG_I, @"[diag] Edge controls returned to stream: edge=%ld visited=%d grace=%.0fms captured=%d",
+            (long)strongSelf.edgeMenuDockEdge, strongSelf.edgeMenuPointerHasVisited, delay * 1000.0,
+            strongSelf.isMouseCaptured);
         [strongSelf deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:strongSelf.edgeMenuTemporaryReleaseActive];
     }];
     [[NSRunLoop mainRunLoop] addTimer:self.edgeMenuAutoCollapseTimer forMode:NSRunLoopCommonModes];

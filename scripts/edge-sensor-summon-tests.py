@@ -39,7 +39,8 @@ def points(name):
 def millis(name):
     return ('%dms' % round(float(constant(name)) * 1000))
 promised = [points('MLEdgeSensorBandWidth'), millis('MLEdgeSensorDwellSeconds'),
-            millis('MLEdgeMenuAutoCollapseDelay'), points('MLEdgeMenuButtonWidth')]
+            millis('MLEdgeMenuAutoCollapseDelay'), points('MLEdgeMenuButtonWidth'),
+            millis('MLEdgeMenuSummonGraceDelay')]
 for locale, locked_entry in (('en', 'open-control-center'), ('zh-Hans', '控制中心')):
     strings = (root / 'Limelight/macOS' / (locale + '.lproj') / 'Localizable.strings').read_text()
     detail = re.search(r'"Edge Sensor Summon detail" = "(.*?)";\n', strings, re.S).group(1)
@@ -48,6 +49,24 @@ for locale, locked_entry in (('en', 'open-control-center'), ('zh-Hans', '控制�
     assert locked_entry in detail, '%s copy hides how to open the bar with a locked game mouse' % locale
 print('PASS settings copy carries the geometry the code arms and the locked-mode entry')
 print('PASS no activation bypass, cursor warp, duplicate presentation state or stale menu completion')
+
+# The control-center shortcut once opened the dock and then stacked a modal menu on top
+# of it. A modal menu in front of a pointer that has no position to aim with swallowed the
+# player's next click, and one field log shows that click landing on Disconnect. The dock
+# and the menu are alternatives at both shortcut callsites; the menu is the fallback for
+# windowed mode, where there is no dock to open. (The third presentation is the separate
+# keyboard-translation action, which never opens a dock.)
+guarded = len(re.findall(r'if \(!\[(?:self|strongSelf) openEdgeMenuDockForControlCenterShortcut\]\)\s*\{\s*\[(?:self|strongSelf) presentControlCenterFromShortcut\];', mouse))
+assert guarded == 2, 'the control-center shortcut must open the dock OR present the menu, never both (%d guarded callsites)' % guarded
+bare = len(re.findall(r'^\s*\[(?:self|strongSelf) openEdgeMenuDockForControlCenterShortcut\];', mouse, re.M))
+assert bare == 0, 'an unguarded dock call can no longer report whether the menu is still needed'
+DOCK_MENU = r'if \(!\[(?:self|strongSelf) openEdgeMenuDockForControlCenterShortcut\]\)\s*\{\s*\[(?:self|strongSelf) presentControlCenterFromShortcut\];'
+if '--self-test' in sys.argv:
+    legacy = re.sub(r'if \(!\[(\w+) openEdgeMenuDockForControlCenterShortcut\]\)\s*\{\s*\[\1 presentControlCenterFromShortcut\];\s*\}',
+                    r'[\1 openEdgeMenuDockForControlCenterShortcut];\n [\1 presentControlCenterFromShortcut];', mouse)
+    assert len(re.findall(DOCK_MENU, legacy)) == 0, 'the shape guard accepts the calls it exists to prevent'
+    print('PASS negative control: modal menu stacked on the open sidebar')
+print('PASS the control-center shortcut cannot stack a modal menu on the open sidebar')
 
 rebuild=method(menu,'- (void)rebuildStreamMenu')
 assert rebuild.index('if (self.edgeMenuMenuVisible) return;') < rebuild.index('[self.streamMenu removeAllItems]'), 'live updates can mutate the tracked menu'
