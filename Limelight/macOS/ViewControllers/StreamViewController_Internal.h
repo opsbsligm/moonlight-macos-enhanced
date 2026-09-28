@@ -695,6 +695,10 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (NSRect)edgeMenuVisibleHandleRectInBounds:(NSRect)bounds;
 - (NSPoint)edgeSensorPointForEvent:(NSEvent *)event;
 - (BOOL)edgeSensorPointIsInHoverRegion:(NSPoint)point edge:(MLFreeMouseExitEdge)edge;
+// Whether a point is on the tab as it is currently drawn. The band decides when a pointer
+// may ask for the tab; this decides whether the tab keeps answering one that already asked,
+// so a player who pulls back slightly to click is still pointing at what they were shown.
+- (BOOL)edgeSensorPointIsOnVisibleHandle:(NSPoint)point;
 - (BOOL)hasPressedMouseButtonsForCaptureTransition;
 - (void)captureMousePreservingEdgeSensorPoint:(NSPoint)point;
 - (BOOL)edgeMenuOwnsPointer;
