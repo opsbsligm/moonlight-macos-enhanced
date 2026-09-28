@@ -790,6 +790,10 @@ highFreqMotor:(unsigned short)highFreqMotor {
 - (void)dealloc {
     [[AwdlHelperManager sharedManager] endStreamSessionWithReason:@"stream-view-controller-dealloc"];
     [self releaseClipboardSyncOwnershipWithUnbind:NO];
+    // Not part of the session observers: this one belongs to a close that is still waiting
+    // to leave fullscreen, so nothing may drop it earlier than here.
+    [[NSNotificationCenter defaultCenter] removeObserver:self.closeWindowOnFullscreenExitObserver];
+    self.closeWindowOnFullscreenExitObserver = nil;
     [self restoreStreamWindowChromeIfNeeded];
     [self tearDownStreamLifecycleObserversAndTimers];
 

@@ -618,6 +618,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) BOOL fullscreenTransitionInProgress;
 @property (nonatomic) BOOL streamMenuEntrypointsUpdateScheduled;
 @property (nonatomic) BOOL pendingCloseWindowAfterFullscreenExit;
+@property (nullable, nonatomic, strong) id closeWindowOnFullscreenExitObserver;
 @property (nonatomic) NSUInteger pendingMouseCaptureRetryToken;
 @property (nonatomic) BOOL pendingMouseUncaptureAfterButtonsReleased;
 @property (nonatomic) BOOL pendingMouseUncaptureRecheckScheduled;
