@@ -82,6 +82,8 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 - (void)orderOut:(id)sender { self.isVisible = NO; }
 @end
 @interface ProbeHandle : NSView
+@property BOOL armedAppearance;
+@property BOOL compactAppearance;
 @end
 @implementation ProbeHandle
 @end
@@ -131,6 +133,7 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 @property BOOL edgeMenuPointerInside, edgeMenuPointerHasVisited, staleEvent;
 @property (readonly) BOOL expanded;
 @property BOOL edgeSensorMustLeaveHoverRegion;
+@property BOOL edgeMenuHandleArmed;
 @property Panel *edgeMenuPanel;
 @property ProbeHandle *edgeMenuButton;
 @property NSTimer *edgeMenuAutoCollapseTimer;
@@ -161,7 +164,6 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 - (BOOL)hasPressedMouseButtonsForCaptureTransition;
 - (MLFreeMouseExitEdge)freeMouseExitEdgeForEvent:(NSEvent *)event;
 - (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason;
-- (void)finishEdgeSensorSummonIfStillArmedForEdge:(MLFreeMouseExitEdge)edge;
 - (void)cancelEdgeMenuAutoCollapse;
 - (void)scheduleEdgeMenuAutoCollapse;
 - (void)uncaptureMouseWithCode:(NSString *)code reason:(NSString *)reason;
@@ -218,7 +220,9 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 - (void)attachEdgeMenuPanelToWindowIfNeeded {}
 - (NSRect)edgeMenuAnchorRectInScreen { return self.view.bounds; }
 - (void)refreshMouseMovedAcceptanceState {}
-- (void)updateEdgeMenuButtonAppearance {}
+- (void)updateEdgeMenuButtonAppearance {
+    self.edgeMenuButton.armedAppearance = self.edgeMenuHandleArmed && !self.edgeMenuButtonExpanded;
+}
 - (BOOL)canCaptureMouseNow { return self.captureAllowed && !self.userReleasedInput && ![self edgeMenuOwnsPointer]; }
 - (void)updateSystemHotkeySuppression {}
 - (StreamShortcut *)streamShortcutForAction:(NSString *)action { return self.releaseShortcut; }
@@ -276,37 +280,89 @@ int main(void) { @autoreleasepool {
         NSPoint outsideSpan = edge <= 2 ? NSMakePoint(NSMidX(region),NSMinY(s.view.bounds)+1) : NSMakePoint(NSMinX(s.view.bounds)+1,NSMidY(region));
         CHECK(![s edgeSensorPointIsInHoverRegion:outsideSpan edge:edge], "rest of the screen edge cannot summon controls");
         for (int cycle=0; cycle<10; cycle++) {
+            // Arrival is not a request. Resting against the dock lights the tab and must
+            // change nothing else: the same ten cycles are what turned "the sidebar fires
+            // on its own" into a repeatable expectation instead of an anecdote.
             s.systemPoint = NSMakePoint(NSMidX(region),NSMidY(region));
             s.edgeSensorIgnoreMotionUntilMs = 0;
             move(s,0,0);
             CHECK(s.edgeSensorDwellTimer.isValid, "authoritative local position starts dwell");
+            NSRect idleTab = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
+            CGFloat idleDepth = MIN(NSWidth(idleTab), NSHeight(idleTab));
+            [ProbeLog reset];
             fire(s.edgeSensorDwellTimer);
-            CHECK(s.expanded && !s.isMouseCaptured && s.edgeMenuTemporaryReleaseActive, "dwell acquires pointer and opens controls");
-            CHECK(!s.edgeMenuPanel.ignoresMouseEvents, "expanded controls accept native input");
+            CHECK(s.edgeMenuHandleArmed && !s.expanded, "arrival at the edge lights the tab instead of opening the bar");
+            CHECK(s.isMouseCaptured && !s.edgeMenuTemporaryReleaseActive, "lighting the tab leaves the pointer with the game");
+            CHECK(s.edgeMenuPanel.ignoresMouseEvents, "an armed tab never takes native input away from the stream");
+            CHECK([ProbeLog countMatching:@"Edge controls opened"] == 0, "lighting the tab opens nothing it could report");
+            NSRect litTab = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
+            CHECK(MIN(NSWidth(litTab), NSHeight(litTab)) > idleDepth,
+                  "arming the tab is something the player can see, not a flag only the code reads");
             s.systemPoint = NSMakePoint(edge == MLFreeMouseExitEdgeLeft ? NSMaxX(s.view.bounds)-1 : NSMinX(s.view.bounds)+1,
                                         edge == MLFreeMouseExitEdgeBottom ? NSMaxY(s.view.bounds)-1 : NSMinY(s.view.bounds)+1);
-            [s handleEdgeMenuTemporaryReleaseForEvent:nil];
-            NSTimer *deadline = s.edgeMenuAutoCollapseTimer;
-            [s handleEdgeMenuTemporaryReleaseForEvent:nil];
-            CHECK(s.expanded && deadline == s.edgeMenuAutoCollapseTimer, "movement neither collapses immediately nor restarts the grace deadline");
-            fire(deadline);
-            CHECK(!s.expanded && s.isMouseCaptured && !s.edgeMenuTemporaryReleaseActive, "grace completion returns captured input exactly once");
-            CHECK(s.edgeMenuPanel.ignoresMouseEvents, "collapsed transparent panel cannot swallow stream clicks");
-            s.edgeSensorIgnoreMotionUntilMs=0;
-            move(s,0,0); // leave before rearming
+            move(s,0,0);
+            CHECK(!s.edgeMenuHandleArmed, "leaving the band takes the light away again");
         }
+    }
+    // The idle tab is where a player looks for the control bar before they have found
+    // it, so it has to be deep enough to see and no deeper than a deliberate target.
+    for (int edge = 1; edge <= 4; edge++) {
+        s = fresh(edge);
+        NSRect idleTab = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
+        CGFloat idleDepth = MIN(NSWidth(idleTab), NSHeight(idleTab));
+        CHECK(idleDepth >= MLEdgeMenuHandleIdleThickness && idleDepth <= MLEdgeMenuButtonVisiblePeek + 2.0,
+              "the idle tab is visible at the dock without reaching into the game");
+    }
+    // The click is what asks for the bar, and it is aimed at the tab the player was
+    // shown. Repeated on every docked edge, because the first open used to work and the
+    // ones after it did not.
+    for (int edge = 1; edge <= 4; edge++) for (int cycle = 0; cycle < 10; cycle++) {
+        s = fresh(edge);
+        s.wire = [NSMutableArray array];
+        NSRect region = [s edgeSensorActivationRectInBounds:s.view.bounds];
+        s.systemPoint = NSMakePoint(NSMidX(region),NSMidY(region));
+        s.edgeSensorIgnoreMotionUntilMs = 0;
+        move(s,0,0); fire(s.edgeSensorDwellTimer);
+        [s releaseInputToLocalControlWithCode:@"probe" reason:@"free mouse"];
+        s.edgeSensorIgnoreMotionUntilMs = 0;
+        CHECK([s expandEdgeMenuForLocalClickAtCurrentPointer] && s.expanded && s.edgeMenuClickConsumedLocally,
+              "the click on the lit tab opens the controls and consumes the press");
+        CHECK(!s.edgeMenuPanel.ignoresMouseEvents, "expanded controls accept native input");
+        CHECK(!s.edgeMenuHandleArmed, "an open bar does not keep the tab lit");
+        [s mouseUp:(NSEvent *)[Motion new]];
+        CHECK(!s.edgeMenuClickConsumedLocally && [s.wire count] == 0,
+              "the press that opened the bar never reaches the host as a game click");
+        [s deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:NO];
+        CHECK(!s.expanded, "closing the bar puts the controls away");
+    }
+    // The way back belongs to a bar the pointer holds, which is what a keyboard or a
+    // slam summon buys in a locked session. Ten repeats per edge, same reason as above.
+    for (int edge = 1; edge <= 4; edge++) for (int cycle = 0; cycle < 10; cycle++) {
+        s = fresh(edge); s.isRemoteDesktopMode = NO; s.wire = [NSMutableArray array];
+        CHECK([s openEdgeMenuDockForControlCenterShortcut] && s.expanded && s.edgeMenuTemporaryReleaseActive,
+              "the keyboard summon still hands the pointer to the bar");
+        s.systemPoint = NSMakePoint(edge == MLFreeMouseExitEdgeLeft ? NSMaxX(s.view.bounds)-1 : NSMinX(s.view.bounds)+1,
+                                    edge == MLFreeMouseExitEdgeBottom ? NSMaxY(s.view.bounds)-1 : NSMinY(s.view.bounds)+1);
+        [s handleEdgeMenuTemporaryReleaseForEvent:nil];
+        NSTimer *deadline = s.edgeMenuAutoCollapseTimer;
+        [s handleEdgeMenuTemporaryReleaseForEvent:nil];
+        CHECK(s.expanded && deadline == s.edgeMenuAutoCollapseTimer, "movement neither collapses immediately nor restarts the grace deadline");
+        fire(deadline);
+        CHECK(!s.expanded && s.isMouseCaptured && !s.edgeMenuTemporaryReleaseActive, "grace completion returns captured input exactly once");
+        CHECK(s.edgeMenuPanel.ignoresMouseEvents, "collapsed transparent panel cannot swallow stream clicks");
     }
     s=fresh(MLFreeMouseExitEdgeRight); s.systemPoint=NSMakePoint(1918,540);
     move(s,0,0);
     [[NSRunLoop currentRunLoop] runMode:NSEventTrackingRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
-    CHECK(s.expanded, "native event-tracking mode does not suspend dwell");
+    CHECK(s.edgeMenuHandleArmed, "native event-tracking mode does not suspend dwell");
     s=fresh(MLFreeMouseExitEdgeRight); s.systemPoint=NSMakePoint(1918,540); move(s,0,0);
     NSTimer *obsolete=s.edgeSensorDwellTimer;
     s.view.bounds=NSMakeRect(0,0,1280,720); fire(obsolete);
-    CHECK(!s.expanded, "resizing invalidates geometry captured by a dwell");
+    CHECK(!s.expanded && !s.edgeMenuHandleArmed, "resizing invalidates geometry captured by a dwell");
     s=fresh(MLFreeMouseExitEdgeRight); s.systemPoint=NSMakePoint(1918,540); move(s,0,0); obsolete=s.edgeSensorDwellTimer;
     [s transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden]; fire(obsolete);
-    CHECK(!s.expanded && !s.edgeSensorDwellTimer && !s.edgeMenuAutoCollapseTimer, "hidden lifecycle cancels all pending work");
+    CHECK(!s.expanded && !s.edgeSensorDwellTimer && !s.edgeMenuAutoCollapseTimer && !s.edgeMenuHandleArmed,
+          "hidden lifecycle cancels all pending work and every light it left on");
     for (int blocker=0; blocker<5; blocker++) {
         s=fresh(MLFreeMouseExitEdgeRight); s.systemPoint=NSMakePoint(1918,540); move(s,0,0);
         if(blocker==0)s.buttons=YES;
@@ -315,7 +371,8 @@ int main(void) { @autoreleasepool {
         if(blocker==3)s.reconnectInProgress=YES;
         if(blocker==4)s.edgeSensorSummonEnabled=NO;
         fire(s.edgeSensorDwellTimer);
-        CHECK(!s.expanded && s.isMouseCaptured, "timeout revalidates buttons, focus/visibility, stop, reconnect and preference");
+        CHECK(!s.expanded && !s.edgeMenuHandleArmed && s.isMouseCaptured,
+              "timeout revalidates buttons, focus/visibility, stop, reconnect and preference");
     }
     s=fresh(MLFreeMouseExitEdgeRight); s.systemPoint=NSMakePoint(NAN,540); move(s,1000,0);
     CHECK(!s.edgeSensorDwellTimer, "nonfinite coordinate cannot arm");
@@ -327,18 +384,25 @@ int main(void) { @autoreleasepool {
     CHECK(s.edgePushStrokeCount <= 1, "continuous outward motion is one stroke, never a completed gesture");
     [s releaseInputToLocalControlWithCode:@"test" reason:@"explicit"];
     s.edgeSensorIgnoreMotionUntilMs=0; move(s,0,0); fire(s.edgeSensorDwellTimer);
-    CHECK(s.expanded && s.userReleasedInput && !s.edgeMenuTemporaryReleaseActive, "released game mode uses local hover without promising automatic recapture");
+    CHECK(s.edgeMenuHandleArmed && s.userReleasedInput && !s.expanded,
+          "released game mode lights the tab without promising a bar it did not open");
+    CHECK([s expandEdgeMenuForLocalClickAtCurrentPointer] && s.expanded && !s.edgeMenuTemporaryReleaseActive,
+          "the released player opens the bar with a click, still without automatic recapture");
     s.systemPoint=NSMakePoint(1000,500); [s handleEdgeMenuTemporaryReleaseForEvent:nil]; fire(s.edgeMenuAutoCollapseTimer);
     CHECK(!s.isMouseCaptured && s.userReleasedInput, "collapse respects persistent user release");
     [s resumeInputForExplicitStreamClick:nil];
     CHECK(s.isMouseCaptured && !s.userReleasedInput, "explicit click resumes game after closing controls");
     s=fresh(MLFreeMouseExitEdgeRight); s.systemPoint=NSMakePoint(1918,540); move(s,0,0); fire(s.edgeSensorDwellTimer);
+    [s activateEdgeMenuDockForExitEdge:MLFreeMouseExitEdgeRight];
     [s deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:YES]; s.edgeSensorIgnoreMotionUntilMs=0;
     move(s,0,0);
     CHECK(!s.edgeSensorDwellTimer, "dismiss over activation region requires exit and reentry");
     s.systemPoint=NSMakePoint(1800,540); move(s,0,0); s.systemPoint=NSMakePoint(1918,540); move(s,0,0);
     CHECK(s.edgeSensorDwellTimer.isValid, "leaving and reentering reliably rearms");
     fire(s.edgeSensorDwellTimer);
+    CHECK(s.edgeMenuHandleArmed && s.isMouseCaptured, "arrival offers the tab and still keeps the pointer in the game");
+    [s openEdgeMenuDockForControlCenterShortcut];
+    CHECK(s.expanded && s.edgeMenuTemporaryReleaseActive, "the keyboard takes the bar the lit tab was offering");
     s.systemPoint=NSMakePoint(2000,540); [s handleEdgeMenuTemporaryReleaseForEvent:nil]; fire(s.edgeMenuAutoCollapseTimer);
     CHECK(!s.isMouseCaptured && !s.expanded, "leaving onto another display cannot warp or capture the pointer back");
     for(int phase=MLEdgeMenuPhaseExpanded;phase<=MLEdgeMenuPhaseDragging;phase++) {
@@ -613,8 +677,9 @@ int main(void) { @autoreleasepool {
     // Clicking the visible collapsed tab opens the controls instead of leaking a click.
     s = fresh(MLFreeMouseExitEdgeRight); s.isMouseCaptured = NO; s.isRemoteDesktopMode = NO;
     s.wire = [NSMutableArray array];
-    NSRect tab = [s edgeMenuInteractionRectInBounds:s.view.bounds];
+    NSRect tab = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
     s.systemPoint = NSMakePoint(NSMidX(tab), NSMidY(tab));
+    CHECK(s.edgeMenuButton.armedAppearance == NO, "a click without arrival still finds the tab to press");
     Motion *tabMotion = [Motion new]; NSEvent *tabClick = (NSEvent *)tabMotion;
     [s mouseDown:tabClick];
     CHECK(s.expanded && s.edgeMenuClickConsumedLocally && !s.isMouseCaptured && [s.wire count] == 0,
@@ -622,6 +687,20 @@ int main(void) { @autoreleasepool {
     [s mouseUp:tabClick];
     CHECK(!s.edgeMenuClickConsumedLocally && s.expanded && [s.wire count] == 0,
           "the consumed press's release never reaches the host either");
+    // The panel is wider than the tab it shows. A press on the part of it that was
+    // never drawn belongs to the game, which is the half of "it fires on its own"
+    // that no arrival test can see.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isMouseCaptured = NO; s.isRemoteDesktopMode = NO;
+    s.wire = [NSMutableArray array];
+    NSRect box = [s edgeMenuInteractionRectInBounds:s.view.bounds];
+    NSRect hiddenPart = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
+    s.systemPoint = NSMakePoint(NSMinX(box) + 1, NSMidY(box));
+    CHECK(NSPointInRect(s.systemPoint, box) && !NSPointInRect(s.systemPoint, hiddenPart),
+          "the click outside the tab is aimed inside the panel and outside the drawing");
+    [s mouseDown:tabClick];
+    [s mouseUp:tabClick];
+    CHECK(!s.expanded && !s.edgeMenuClickConsumedLocally && s.isMouseCaptured && [s.wire count] == 2,
+          "a click on the undrawn part of the dock stays a game click in both directions");
     s = fresh(MLFreeMouseExitEdgeRight); s.isMouseCaptured = NO; s.isRemoteDesktopMode = NO;
     s.wire = [NSMutableArray array];
     s.systemPoint = NSMakePoint(960, 540);
@@ -638,8 +717,9 @@ int main(void) { @autoreleasepool {
     s.edgeSensorIgnoreMotionUntilMs = 0;
     move(s, 0, 0);
     fire(s.edgeSensorDwellTimer);
+    [s activateEdgeMenuDockForExitEdge:MLFreeMouseExitEdgeRight];
     CHECK(s.expanded && s.edgeMenuPointerHasVisited && !s.edgeMenuAutoCollapseTimer.isValid,
-          "a summon the pointer is resting on waits for the pointer to leave, not for a clock");
+          "a bar the pointer is resting on waits for the pointer to leave, not for a clock");
 
     // A bar that was called out still has to find its way back, and the player who
     // repeats the entry must not be refused because the first one is still on screen.
@@ -738,7 +818,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (void)otherMouseDown:', '- (void)otherMouseUp:', '- (void)handleModifierOnlyReleaseShortcut:',
         '- (void)releaseInputToLocalControlWithCode:', '- (void)resumeInputForExplicitStreamClick:',
         '- (NSPoint)edgeSensorPointForEvent:', '- (void)beginEdgeSensorDwellTimerIfNeededForEdge:',
-        '- (void)finishEdgeSensorSummonIfStillArmedForEdge:', '- (BOOL)handleEdgeSensorSummonForEvent:', '- (NSString *)edgeSensorSummonBlocker',
+        '- (void)armEdgeMenuHandleIfStillAtEdge:', '- (BOOL)handleEdgeSensorSummonForEvent:', '- (NSString *)edgeSensorSummonBlocker',
         '- (void)summonEdgeMenuDockForEdge:',
         '- (void)resetEdgePushGesture', '- (BOOL)noteEdgeSensorPushMotionForEvent:',
         '- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer', '- (void)mouseDown:', '- (void)mouseUp:',
@@ -761,6 +841,8 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (NSRect)expandedFrameForEdgeMenuButtonInBounds:',
         '- (NSRect)frameForCurrentEdgeMenuPanelStateInScreenRect:',
         '- (NSRect)collapsedFrameForEdgeMenuPanelInScreenRect:', '- (NSRect)expandedFrameForEdgeMenuPanelInScreenRect:',
+        '- (NSRect)collapsedFrameForEdgeMenuButtonInBounds:', '- (CGFloat)edgeMenuHandleThickness',
+        '- (NSRect)edgeMenuVisibleHandleRectInBounds:',
     ))
     enums = "\n".join(re.findall(r'typedef NS_ENUM\(NSInteger, (?:MLFreeMouseExitEdge|MLEdgeMenuPhase)\) \{.*?\};', internal, re.S))
     constants = "\n".join(re.findall(r'static (?:CGFloat|NSTimeInterval|NSUInteger) const (?:MLEdgeSensor\w+|MLEdgeMenu\w+) = .*?;', internal))
@@ -804,6 +886,10 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('a bar that goes back leaves no trace', '@"[diag] Edge controls returned to stream', '@"[diag] ignored'),
                 ('the two waits report one number', '[self edgeMenuReturnDelay] * 1000.0,', 'MLEdgeMenuAutoCollapseDelay * 1000.0,'),
                 ('tab click leaks into the game', 'if ([self expandEdgeMenuForLocalClickAtCurrentPointer]) {\n        return;\n    }', 'if (NO) {\n        return;\n    }'),
+                ('arrival at the edge still grabs the pointer', '    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;', '    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];\n    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;'),
+                ('the hit rect ignores what the player can see', 'NSRect handle = [self edgeMenuVisibleHandleRectInBounds:self.view.bounds];', 'NSRect handle = [self edgeMenuInteractionRectInBounds:self.view.bounds];'),
+                ('arming is invisible', 'return self.edgeMenuHandleArmed ? MLEdgeMenuHandleArmedThickness : MLEdgeMenuHandleIdleThickness;', 'return MLEdgeMenuHandleIdleThickness;'),
+                ('the armed light never goes out', 'if (self.edgeMenuHandleArmed) {\n        self.edgeMenuHandleArmed = NO;\n        [self updateEdgeMenuButtonAppearance];\n    }', 'if (NO) {\n        self.edgeMenuHandleArmed = NO;\n        [self updateEdgeMenuButtonAppearance];\n    }'),
             ]
             for label,before,after in mutations:
                 assert before in methods,label
