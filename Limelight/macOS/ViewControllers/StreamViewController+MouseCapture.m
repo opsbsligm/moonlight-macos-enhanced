@@ -756,6 +756,13 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 - (void)resetEdgeSensorSummonState {
     [self.edgeSensorDwellTimer invalidate];
     self.edgeSensorDwellTimer = nil;
+    // The tab answers the pointer that is at the edge, and only that pointer. Leaving
+    // the band, pressing a button, opening the bar or losing the right to interact all
+    // take the answer away; nothing else gets to clear it.
+    if (self.edgeMenuHandleArmed) {
+        self.edgeMenuHandleArmed = NO;
+        [self updateEdgeMenuButtonAppearance];
+    }
 }
 
 - (void)resetEdgeSensorPointerState {
@@ -852,7 +859,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         if (!strongSelf || timer != strongSelf.edgeSensorDwellTimer) return;
         strongSelf.edgeSensorDwellTimer = nil;
         if (token != strongSelf.edgeMenuLifecycleToken || !NSEqualRects(bounds, strongSelf.view.bounds)) return;
-        [strongSelf finishEdgeSensorSummonIfStillArmedForEdge:edge];
+        [strongSelf armEdgeMenuHandleIfStillAtEdge:edge];
     }];
     [[NSRunLoop mainRunLoop] addTimer:self.edgeSensorDwellTimer forMode:NSRunLoopCommonModes];
 }
@@ -866,7 +873,13 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
            point.y >= NSMinY(region) && point.y <= NSMaxY(region);
 }
 
-- (void)finishEdgeSensorSummonIfStillArmedForEdge:(MLFreeMouseExitEdge)edge {
+// Arriving at the edge and asking for the control bar are two different acts, and the
+// bar used to treat them as one: a pointer that happened to rest against the dock for a
+// quarter of a second took the mouse out of the game and opened the panel, which is what
+// the player experienced as the sidebar firing on its own. Now arrival only lights the
+// tab, and the tab is what a click is aimed at. Nothing here hands over the pointer,
+// shows the panel, or sends a byte to the host.
+- (void)armEdgeMenuHandleIfStillAtEdge:(MLFreeMouseExitEdge)edge {
     if (!self.edgeSensorSummonEnabled || ![self edgeMenuCanInteract] ||
         (self.isMouseCaptured && !self.isRemoteDesktopMode) || self.edgeMenuButtonExpanded ||
         ![self edgeMenuShouldBeVisible] || self.edgeMenuDockEdge != edge ||
@@ -874,7 +887,11 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         self.edgeSensorIgnoreMotionUntilMs > [self nowMs] ||
         self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) return;
     if (![self edgeSensorPointIsInHoverRegion:[self edgeSensorPointForEvent:nil] edge:edge]) return;
-    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];
+    if (self.edgeMenuHandleArmed) return;
+    self.edgeMenuHandleArmed = YES;
+    [self updateEdgeMenuButtonAppearance];
+    Log(LOG_D, @"[diag] Edge handle armed: edge=%ld band=%.0fpt dwell=%.0fms pointer held=1 opened=0",
+        (long)edge, MLEdgeSensorBandWidth, MLEdgeSensorDwellSeconds * 1000.0);
 }
 
 - (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason {
@@ -2809,16 +2826,17 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         ![self edgeMenuCanInteract] || ![self edgeMenuShouldBeVisible]) {
         return NO;
     }
-    // The production hit-rect helper is expanded-only by design; the tab geometry
-    // helper still describes the collapsed dock and is the one the user can see.
+    // The click has to be aimed at the tab the player can see, so it is measured
+    // against the drawn strip and not against the panel that carries it.
     NSPoint point = [self currentMouseLocationInViewCoordinates];
-    if (!NSPointInRect(point, [self edgeMenuInteractionRectInBounds:self.view.bounds])) {
+    NSRect handle = [self edgeMenuVisibleHandleRectInBounds:self.view.bounds];
+    if (NSIsEmptyRect(handle) || !NSPointInRect(point, handle)) {
         return NO;
     }
     [self activateEdgeMenuDockForExitEdge:self.edgeMenuDockEdge];
     self.edgeMenuClickConsumedLocally = self.edgeMenuButtonExpanded;
-    Log(LOG_I, @"[diag] Edge controls opened by local click on collapsed tab: expanded=%d",
-        self.edgeMenuButtonExpanded);
+    Log(LOG_I, @"[diag] Edge controls opened by local click on collapsed tab: expanded=%d armed=%d",
+        self.edgeMenuButtonExpanded, self.edgeMenuHandleArmed);
     return self.edgeMenuClickConsumedLocally;
 }
 
