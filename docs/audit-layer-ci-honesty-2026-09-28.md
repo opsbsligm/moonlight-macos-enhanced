@@ -103,7 +103,32 @@ swallow 分支仍然是绿的，而那时按键会整局失去（下一次 keyDo
 - 重锚定的 16 项 mutation：16/16 CAUGHT
 - `git diff --check`：干净
 
-## 四、尚未完成 / 未验证
+## 四、CI #291 的结果与剩下的唯一阻塞
+
+推送 a064782 后 CI #291（run 36361445238）的 audits job 打印：
+
+```
+ok assertion battery: 120/144 mutations caught
+0 constraint failures
+```
+
+也就是说第二节的 A/B/C 三项都成立：重锚定在 ubuntu runner 上同样可种植
+（unapplied=0，退出码 0），120 项真证明 + 24 项如实标为 UNPROVED（这些门禁需要
+Apple 的 clang+SDK 配对，ubuntu 没有，改由 macOS 矩阵承担）。
+
+但整个 run 仍是红的：audits job 在 **00:14:10→00:29:14** 被取消，而 `timeout-minutes: 15`
+正是取消原因——它已经打印完 0 failures，却在收尾时被 timeout 杀掉，于是下面的
+`Verify required build jobs` 把 build_arch/analyze 的 skipped 当成自己的红。两次实测：
+#290 battery 单段 13m27s，#291 aggregate 单段 14m55s。15 分钟预算对这个 battery 没有
+余量，因此把 audits job 的预算改为 25 分钟，并把两次测量写进 workflow 注释；不是
+放宽任何判定，只是让一个慢的绿色不必从被取消的 job 日志里读。
+
+顺带记录一条本轮踩到的坑：在本机沙箱里 `nohup … &` 起的后台进程会随启动它的
+exec 会话一起被杀；如果它当时正把 mutation 种在源文件里，树就被留在污染状态
+（本轮一次 `HIDSupport.m` 停在 `neuter-if`，已 `git checkout --` 精准恢复并核对过
+diff 就是那个 mutation）。长时 audit/battery 必须在**保持打开的前台会话**里跑。
+
+## 五、尚未完成 / 未验证
 
 - 全套 battery（144 项，含未改动的 128 项）尚未在提交树上跑完一轮：单轮约
   30 分钟，放在提交后的干净 clone 里执行，结论回填本节。

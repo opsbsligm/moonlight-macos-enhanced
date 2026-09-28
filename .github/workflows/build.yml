@@ -35,7 +35,13 @@ jobs:
   # Cheap repository audits that do not need Xcode. They gate every build job
   # so a broken tree fails in seconds instead of after a full matrix build.
   audit:
-    timeout-minutes: 15  # seconds of grep plus the mutation battery
+    timeout-minutes: 25
+    # Measured, not guessed: the aggregate itself answers in seconds, but the battery it
+    # runs plants 144 regressions and asks a real gate about each one, and on the hosted
+    # runner that took 13m27s on run 290 and 14m55s on run 291 -- where the fifteen-minute
+    # cap cancelled a job that had already printed 0 constraint failures, and the build
+    # gate below reported the resulting skips as its own red. A budget with no headroom
+    # turns a slow green into a red that has to be read from a cancelled job's log.
     name: Repository audits
     runs-on: ubuntu-latest
     steps:
