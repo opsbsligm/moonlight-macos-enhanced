@@ -126,6 +126,7 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 @property NSTimer *edgeSensorDwellTimer;
 @property CGFloat edgeSensorPushAccumulator, edgeMenuButtonEdgeRatio;
 @property double edgeSensorIgnoreMotionUntilMs, suppressFreeMouseEdgeUncaptureUntilMs;
+@property double fakeNowMs;
 @property MLFreeMouseExitEdge edgeMenuDockEdge, freeEdge;
 @property NSInteger summons;
 @property NSString *reason;
@@ -190,7 +191,7 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 - (void)completeDeferredMouseUncaptureIfNeeded {}
 - (void)presentStreamMenuAtEvent:(NSEvent *)event { self.menuOpens++; }
 - (int)getMouseButtonFromEvent:(NSEvent *)event { return 2; }
-- (double)nowMs { return NSProcessInfo.processInfo.systemUptime * 1000.0; }
+- (double)nowMs { return self.fakeNowMs != 0 ? self.fakeNowMs : NSProcessInfo.processInfo.systemUptime * 1000.0; }
 - (NSPoint)currentMouseLocationInViewCoordinates { return self.systemPoint; }
 - (NSPoint)boundaryInteractionViewPointForMouseEvent:(NSEvent *)event { return [self currentMouseLocationInViewCoordinates]; }
 - (BOOL)edgeMenuShouldBeVisible { return self.visible; }
@@ -233,6 +234,9 @@ static Sensor *fresh(MLFreeMouseExitEdge edge) {
 static void move(Sensor *s, double x, double y) {
     Motion *m = [Motion new]; m.deltaX = x; m.deltaY = y;
     [s handleEdgeSensorSummonForEvent:(NSEvent *)m];
+}
+static void moveAt(Sensor *s, double atMs, double x, double y) {
+    s.fakeNowMs = atMs; move(s, x, y);
 }
 static void waitForDwell(void) {
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.30]];
@@ -475,26 +479,27 @@ int main(void) { @autoreleasepool {
 
     }
 
-    // Locked-mode slam gesture: three separated strokes toward the docked edge.
+    // Locked-mode slam gesture: two separated strokes toward the docked edge. A stroke ends
+    // when the device comes back inside, so the gesture is out-back-out.
     double toward[][2] = {{-60,0},{60,0},{0,60},{0,-60}};   // left, right, top, bottom
     double back[][2]   = {{ 30,0},{-30,0},{0,-30},{0,30}};
     for (int edge = 1; edge <= 4; edge++) {
         s = fresh(edge); s.isRemoteDesktopMode = NO;
-        for (int stroke = 0; stroke < 3; stroke++) {
+        for (int stroke = 0; stroke < 2; stroke++) {
             move(s, toward[edge-1][0]/3, toward[edge-1][1]/3);
             move(s, toward[edge-1][0]/3, toward[edge-1][1]/3);
             move(s, toward[edge-1][0]/3, toward[edge-1][1]/3);
-            if (stroke < 2) { move(s, back[edge-1][0]/2, back[edge-1][1]/2); move(s, back[edge-1][0]/2, back[edge-1][1]/2); }
+            if (stroke < 1) { move(s, back[edge-1][0]/2, back[edge-1][1]/2); move(s, back[edge-1][0]/2, back[edge-1][1]/2); }
         }
         CHECK(s.expanded && !s.isMouseCaptured && s.edgeMenuTemporaryReleaseActive,
-              "three slams open the dock on every edge while the game mouse stays locked");
+              "two slams open the dock on every edge while the game mouse stays locked");
         CHECK(!s.isRemoteDesktopMode, "the slam gesture never switches the host out of game mode");
     }
     s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
     for (int cycle = 0; cycle < 30; cycle++) {
-        for (int stroke = 0; stroke < 3; stroke++) {
+        for (int stroke = 0; stroke < 2; stroke++) {
             for (int k = 0; k < 3; k++) move(s, 20, 0);
-            if (stroke < 2) { move(s, -15, 0); move(s, -15, 0); }
+            if (stroke < 1) { move(s, -15, 0); move(s, -15, 0); }
         }
         CHECK(s.expanded && !s.isMouseCaptured, "thirtieth slam still opens; no first-hit-only failure");
         [s deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:YES];
@@ -508,14 +513,12 @@ int main(void) { @autoreleasepool {
     for (int i = 0; i < 300; i++) move(s, (i % 2) ? 10 : -10, 0);
     CHECK(!s.expanded && s.edgePushStrokeCount == 0, "jitter below both thresholds never counts");
     s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
-    for (int stroke = 0; stroke < 2; stroke++) {
-        for (int k = 0; k < 3; k++) move(s, 20, 0);
-        move(s, -15, 0); move(s, -15, 0);
-    }
+    for (int k = 0; k < 3; k++) move(s, 20, 0);
+    move(s, -15, 0); move(s, -15, 0);          // one stroke counted
     Motion *pressed = [Motion new]; pressed.deltaX = 20;
     s.buttons = YES; [s noteEdgeSensorPushMotionForEvent:(NSEvent *)pressed]; s.buttons = NO;
     CHECK(s.edgePushStrokeCount == 0, "a button press voids the accumulated slam strokes");
-    for (int k = 0; k < 3; k++) move(s, 20, 0); // would be the third counted stroke
+    for (int k = 0; k < 3; k++) move(s, 20, 0); // one fresh stroke, and it is not enough on its own
     CHECK(!s.expanded, "a button press inside the gesture cannot be replayed as a summon");
     s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
     for (int stroke = 0; stroke < 4; stroke++) {
@@ -523,15 +526,48 @@ int main(void) { @autoreleasepool {
         move(s, 0, -15); move(s, 0, -15);
     }
     CHECK(!s.expanded, "vertical play cannot farm a horizontal dock");
+    // The two clocks are separate on purpose: the idle gap forgets a stale gesture,
+    // the window bounds the whole one. One flick, one stroke: never a summon.
     s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
-    for (int k = 0; k < 3; k++) move(s, 20, 0);
-    move(s, -15, 0); move(s, -15, 0);
-    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1.35]];
-    for (int stroke = 0; stroke < 2; stroke++) {
-        for (int k = 0; k < 3; k++) move(s, 20, 0);
-        if (stroke < 1) { move(s, -15, 0); move(s, -15, 0); }
-    }
+    for (int k = 0; k < 3; k++) moveAt(s, 1000, 20, 0);
+    moveAt(s, 1050, -15, 0); moveAt(s, 1080, -15, 0);
+    CHECK(!s.expanded, "one slam toward the dock is never a summon");
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 3; k++) moveAt(s, 1000, 20, 0);
+    moveAt(s, 1050, -15, 0); moveAt(s, 1080, -15, 0);
+    for (int k = 0; k < 3; k++) moveAt(s, 1380, 20, 0);   // a 300ms pause to re-aim
+    CHECK(s.expanded && !s.isMouseCaptured, "pausing to re-aim inside the idle gap keeps the counted stroke");
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 3; k++) moveAt(s, 1000, 20, 0);
+    moveAt(s, 1050, -15, 0); moveAt(s, 1080, -15, 0);
+    for (int k = 0; k < 3; k++) moveAt(s, 1780, 20, 0);   // 700ms of quiet: the idle gap ends it
+    CHECK(!s.expanded && s.edgePushStrokeCount <= 1, "a stalled gesture is forgotten, not chained");
+    // Two clocks, so two schedules that differ only in the total: the same
+    // 1400ms gesture must open, the same gesture at 1600ms must not.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 3; k++) moveAt(s, 2000 + 300 * k, 20, 0);
+    moveAt(s, 2700, -15, 0); moveAt(s, 2800, -15, 0);
+    moveAt(s, 3100, 20, 0); moveAt(s, 3200, 20, 0); moveAt(s, 3400, 20, 0); // 1400ms total, no gap over 300ms
+    CHECK(s.expanded, "a gesture the old 1200ms budget refused still completes inside the window");
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 3; k++) moveAt(s, 4000 + 400 * k, 20, 0);
+    moveAt(s, 4900, -15, 0); moveAt(s, 5000, -15, 0);
+    moveAt(s, 5400, 20, 0); moveAt(s, 5500, 20, 0); moveAt(s, 5900, 20, 0); // 1900ms is past the budget
     CHECK(!s.expanded, "strokes outside the gesture window do not chain");
+
+    // Locked mode has no pointer to hover, so the keyboard must take the dock itself.
+    // The panel is deliberately off screen: the sidebar may not depend on it.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    s.wire = [NSMutableArray array]; s.edgeMenuPanel.isVisible = NO; s.isMouseCaptured = YES;
+    CHECK([s openEdgeMenuDockForControlCenterShortcut] && s.expanded && !s.isMouseCaptured &&
+          s.edgeMenuTemporaryReleaseActive && [s.wire count] == 0,
+          "the control-center shortcut opens the sidebar itself in locked mode, with nothing sent to the host");
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO; s.visible = NO;
+    CHECK(![s openEdgeMenuDockForControlCenterShortcut] && !s.expanded && s.isMouseCaptured,
+          "the shortcut cannot open a control bar the window refused to show");
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO; s.buttons = YES;
+    CHECK(![s openEdgeMenuDockForControlCenterShortcut] && !s.expanded && s.isMouseCaptured,
+          "a held mouse button is not interrupted by the keyboard entry");
 
     // Clicking the visible collapsed tab opens the controls instead of leaking a click.
     s = fresh(MLFreeMouseExitEdgeRight); s.isMouseCaptured = NO; s.isRemoteDesktopMode = NO;
@@ -581,6 +617,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (void)deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:', '- (void)setEdgeMenuButtonExpanded:',
         '- (void)cancelEdgeMenuAutoCollapse', '- (void)scheduleEdgeMenuAutoCollapse',
         '- (void)activateEdgeMenuDockForExitEdge:', '- (BOOL)handleEdgeMenuTemporaryReleaseForEvent:',
+        '- (BOOL)openEdgeMenuDockForControlCenterShortcut',
         '- (BOOL)edgeMenuDockEdgeUsesVerticalAxis', '- (CGFloat)resolvedEdgeMenuCoordinateInRect:',
         '- (NSRect)edgeMenuFrameInRect:', '- (NSRect)edgeMenuInteractionRectInBounds:',
         '- (NSRect)expandedFrameForEdgeMenuButtonInBounds:',
@@ -614,6 +651,11 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('slam counts continuous outward motion as strokes', 'if (self.edgePushReturnPoints < MLEdgeSensorPushReturnPoints) return NO;', 'if (NO) return NO;'),
                 ('slam strokes shrink to nothing', 'if (self.edgePushStrokePoints >= MLEdgeSensorPushStrokePoints) {', 'if (self.edgePushStrokePoints > 0) {'),
                 ('slam survives a button press', 'if ([self hasPressedMouseButtonsForCaptureTransition]) {\n        [self resetEdgePushGesture];\n        return NO;\n    }', 'if (NO) {\n        [self resetEdgePushGesture];\n        return NO;\n    }'),
+                ('keyboard entry never takes the dock', '[self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@\"control-center-shortcut\"];', ';'),
+                ('keyboard entry reports a dock it never opened', '[self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"control-center-shortcut"];\n    return self.edgeMenuButtonExpanded;', '[self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"control-center-shortcut"];\n    return NO;'),
+                ('slam gesture reuses one clock for both questions', 'now - self.edgePushLastMotionMs > MLEdgeSensorPushIdleMs', 'now - self.edgePushLastMotionMs > 1e9'),
+                ('slam gesture keeps the old 1200ms budget', 'BOOL completed = now - self.edgePushWindowStartMs <= MLEdgeSensorPushWindowMs;', 'BOOL completed = now - self.edgePushWindowStartMs <= 1200.0;'),
+                ('one flick is enough to summon', 'if (self.edgePushStrokeCount >= MLEdgeSensorPushStrokeCount) {', 'if (self.edgePushStrokeCount >= 1) {'),
                 ('tab click leaks into the game', 'if ([self expandEdgeMenuForLocalClickAtCurrentPointer]) {\n        return;\n    }', 'if (NO) {\n        return;\n    }'),
             ]
             for label,before,after in mutations:

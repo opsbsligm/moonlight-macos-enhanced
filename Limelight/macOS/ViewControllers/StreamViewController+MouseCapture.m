@@ -785,7 +785,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         return NO;
     }
     double now = [self nowMs];
-    if (self.edgePushLastMotionMs != 0 && now - self.edgePushLastMotionMs > MLEdgeSensorPushWindowMs) {
+    if (self.edgePushLastMotionMs != 0 && now - self.edgePushLastMotionMs > MLEdgeSensorPushIdleMs) {
         [self resetEdgePushGesture];
     }
     self.edgePushLastMotionMs = now;
@@ -2333,6 +2333,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 
         StreamShortcut *controlCenterShortcut = [strongSelf streamShortcutForAction:MLShortcutActionOpenControlCenter];
         if ([strongSelf event:event matchesShortcut:controlCenterShortcut]) {
+            [strongSelf openEdgeMenuDockForControlCenterShortcut];
             [strongSelf presentControlCenterFromShortcut];
             return [strongSelf consumeMonitoredKeyDownEvent:event];
         }
@@ -3373,6 +3374,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
             // bound to the client.
             return [self consumeKeyDownEvent:event];
         }
+        [self openEdgeMenuDockForControlCenterShortcut];
         [self presentControlCenterFromShortcut];
         return [self consumeKeyDownEvent:event];
     }
