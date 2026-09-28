@@ -512,6 +512,24 @@ int main(void) { @autoreleasepool {
     for(int i=0;i<100;i++)move(s,1000,0);
     CHECK(!s.edgeSensorDwellTimer && s.isMouseCaptured && !s.expanded, "locked game motion never invents a remote cursor");
     CHECK(!s.edgeMenuHandleArmed, "locked motion never lights a tab the player could not click");
+    {
+        // A lit tab has to be clickable wherever a lit tab is allowed to exist. Remote desktop
+        // mode keeps the capture bookkeeping on while the local pointer stays authoritative --
+        // that is exactly why arrival may light the tab there -- so a press that lands on the
+        // drawn tab belongs to the tab. Forwarding it sent the player's click to the host at a
+        // spot they had aimed at our own UI, which is the "it lit up but the click did nothing"
+        // report in the one mode where hovering works at all.
+        Sensor *d = fresh(MLFreeMouseExitEdgeRight); d.systemPoint = NSMakePoint(1918, 540); move(d, 0, 0);
+        CHECK(d.isMouseCaptured && d.isRemoteDesktopMode,
+              "desktop mode keeps capture on while the local pointer is still authoritative");
+        fire(d.edgeSensorDwellTimer);
+        CHECK(d.edgeMenuHandleArmed, "desktop mode lights the tab while capture is on");
+        CHECK([d expandEdgeMenuForLocalClickAtCurrentPointer] && d.expanded,
+              "a click on the lit tab opens the bar in desktop mode too");
+        CHECK(d.edgeMenuClickConsumedLocally,
+              "the matching release is swallowed with the press that opened the bar");
+    }
+
     [s releaseInputToLocalControlWithCode:@"test" reason:@"explicit"];
     s.edgeSensorIgnoreMotionUntilMs=0; move(s,0,0); fire(s.edgeSensorDwellTimer);
     CHECK(s.edgeMenuHandleArmed && s.userReleasedInput && !s.expanded,
@@ -1006,6 +1024,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('a bar that goes back leaves no trace', '@"[diag] Edge controls returned to stream', '@"[diag] ignored'),
                 ('the two waits report one number', '[self edgeMenuReturnDelay] * 1000.0,', 'MLEdgeMenuAutoCollapseDelay * 1000.0,'),
                 ('tab click leaks into the game', 'if ([self expandEdgeMenuForLocalClickAtCurrentPointer]) {\n        return;\n    }', 'if (NO) {\n        return;\n    }'),
+                ('a lit desktop tab cannot be clicked', '((self.isMouseCaptured && !self.isRemoteDesktopMode) ||\n        self.edgeMenuPhase != MLEdgeMenuPhaseCollapsed ||', '(self.isMouseCaptured ||\n        self.edgeMenuPhase != MLEdgeMenuPhaseCollapsed ||'),
                 ('arrival at the edge still grabs the pointer', '    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;', '    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];\n    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;'),
                 ('the tab ignores where the player dragged it', 'return minValue + available * MIN(MAX(self.edgeMenuButtonEdgeRatio, 0.0), 1.0);', 'return minValue + available * 0.5;'),
                 ('the lit tab shrinks under the pointer that is clicking it', '        if (![self edgeSensorPointIsOnVisibleHandle:point]) [self resetEdgeSensorSummonState];', '        if (YES) [self resetEdgeSensorSummonState];'),
