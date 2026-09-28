@@ -51,6 +51,10 @@ def points(name):
     return ('%dpt' % round(float(constant(name))))
 def millis(name):
     return ('%dms' % round(float(constant(name)) * 1000))
+# Arrival feedback has no side effects: no byte leaves, the pointer stays in the game,
+# and nothing opens. A dwell that long makes the tab look broken to a pointer that is
+# already at the edge, which is how "it lit up but nothing happened" started.
+assert float(constant('MLEdgeSensorDwellSeconds')) * 1000.0 <= 150.0, 'arriving at the edge waits too long to answer'
 promised = [points('MLEdgeSensorBandWidth'), millis('MLEdgeSensorDwellSeconds'),
             millis('MLEdgeMenuAutoCollapseDelay'), points('MLEdgeMenuButtonWidth'),
             millis('MLEdgeMenuSummonGraceDelay')]
