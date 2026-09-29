@@ -4899,7 +4899,19 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     if (!_computePipelineState) {
         [self setupMetalPipeline];
     }
-    if (!_computePipelineState || !_textureCache) {
+    // stop() tears the texture cache down from another thread. Take our own reference under
+    // the lock stop() has to take, and keep it for the whole method: a CVMetalTexture made
+    // here finalizes against the cache that made it, and a cache freed first leaves CoreVideo
+    // dereferencing a dead pointer (the 2026-09-26 SIGSEGV: CVMetalTexture::finalize ->
+    // CFArrayAppendValue -> __CF_IS_OBJC). ARC drops the snapshot on every exit path.
+    CVMetalTextureCacheRef cacheSnapshot = NULL;
+    @synchronized(self) {
+        if (_textureCache) {
+            cacheSnapshot = (CVMetalTextureCacheRef)CFRetain(_textureCache);
+        }
+    }
+    id textureCacheLifetime = (__bridge_transfer id)cacheSnapshot;
+    if (!_computePipelineState || textureCacheLifetime == nil) {
         if (interpolatedFrame) {
             CVBufferRelease(interpolatedFrame);
         }
@@ -4908,6 +4920,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         }
         return;
     }
+    CVMetalTextureCacheRef textureCache = (__bridge CVMetalTextureCacheRef)textureCacheLifetime;
 
     const NSUInteger sourceWidth = CVPixelBufferGetWidth(presentationFrame);
     const NSUInteger sourceHeight = CVPixelBufferGetHeight(presentationFrame);
@@ -4993,7 +5006,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         const size_t chromaWidth = CVPixelBufferGetWidthOfPlane(workingFrame, 1);
         const size_t chromaHeight = CVPixelBufferGetHeightOfPlane(workingFrame, 1);
         CVReturn yStatus = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-                                                                     _textureCache,
+                                                                     textureCache,
                                                                      workingFrame,
                                                                      nil,
                                                                      [self metalLumaPlaneFormatForPixelBuffer:workingFrame],
@@ -5002,7 +5015,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                                                      0,
                                                                      &primaryTextureRef);
         CVReturn uvStatus = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-                                                                      _textureCache,
+                                                                      textureCache,
                                                                       workingFrame,
                                                                       nil,
                                                                       [self metalChromaPlaneFormatForPixelBuffer:workingFrame],
@@ -5050,7 +5063,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         }
     } else if (pixelFormat == kCVPixelFormatType_32BGRA) {
         CVReturn textureStatus = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-                                                                           _textureCache,
+                                                                           textureCache,
                                                                            workingFrame,
                                                                            nil,
                                                                            MTLPixelFormatBGRA8Unorm,
@@ -5548,11 +5561,18 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     }
 
     [self clearCurrentFrame];
-    if (_textureCache) {
+    // Hand the cache over to a draw that is still in flight rather than killing it underneath:
+    // the pointer moves under the lock the draw path snapshots it with, and the release happens
+    // after the lock, so a mid-flight frame keeps the cache alive until its own textures are gone.
+    CVMetalTextureCacheRef retiredCache = NULL;
+    @synchronized(self) {
+        retiredCache = _textureCache;
+        _textureCache = NULL;
+    }
+    if (retiredCache) {
         // CVMetalTextureCacheRef is a CFTypeRef; use CFRelease since the
         // dedicated CVMetalTextureCacheRelease is not declared in this SDK.
-        CFRelease(_textureCache);
-        _textureCache = NULL;
+        CFRelease(retiredCache);
     }
     [self teardownDecompressionSession];
     [self teardownFormatDescription];

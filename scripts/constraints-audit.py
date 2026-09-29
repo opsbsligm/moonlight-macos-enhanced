@@ -1458,6 +1458,26 @@ check(bool(named_states) and answered_states == named_states,
       % ", ".join(sorted(set(named_states) - set(answered_states)) or
                   "none; extra: " + ", ".join(sorted(set(answered_states) - set(named_states)))))
 
+
+# A texture cache either outlives the frame that used it or it does not: a CVMetalTexture
+# finalizes against the cache that created it, so freeing the cache while a draw is in flight is
+# a dead pointer inside CoreVideo, not a crash at one of our call sites. The tree shipped that
+# shape -- `drawInMTKView:` read `_textureCache` outside every lock and `stop` released it outside
+# every lock -- and the field report (2026-09-26, SIGSEGV at __CF_IS_OBJC under
+# CVMetalTexture::finalize) is that window closing on a real stream. The rule is the lifetime,
+# not the pointer value: a drawn frame holds its own reference, and stop hands the pointer over
+# under the lock the draw reads it with, releasing only afterwards.
+renderer_draw = method_body(renderer, "- (void)drawInMTKView:(MTKView *)view")
+renderer_stop = method_body(renderer, "- (void)stop")
+check("@synchronized(self)" in renderer_draw and "CFRetain(_textureCache)" in renderer_draw
+      and "(__bridge_transfer id)cacheSnapshot" in renderer_draw,
+      "a drawn frame holds its own reference to the texture cache")
+check("CVMetalTextureCacheCreateTextureFromImage(" in renderer_draw
+      and "_textureCache," not in renderer_draw,
+      "the draw builds textures from the reference it holds rather than the shared pointer")
+check("CFRelease(_textureCache)" not in renderer_stop and "@synchronized(self)" in renderer_stop
+      and "_textureCache = NULL;" in renderer_stop and "CFRelease(retiredCache)" in renderer_stop,
+      "stop hands the texture cache over under the lock the draw reads it with")
 # Every string the switch hands back, not every string matching a pattern: a filter that
 # quietly missed the keys with spaces in them would leave six of ten sentences unchecked
 # while the rule reported green, which is the failure this round keeps tripping over.
