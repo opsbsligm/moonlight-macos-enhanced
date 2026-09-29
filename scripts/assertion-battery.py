@@ -1869,6 +1869,35 @@ def the_helper_plist_traps_again(text):
                         "        return try! PropertyListSerialization.data(", 1)
 
 
+# The texture cache lifetime. Both mutations are the shipped shape before the fix: read the
+# shared pointer while drawing, or free the cache without handing it over.
+CACHE_SNAPSHOT_BLOCK = """    CVMetalTextureCacheRef cacheSnapshot = NULL;
+    @synchronized(self) {
+        if (_textureCache) {
+            cacheSnapshot = (CVMetalTextureCacheRef)CFRetain(_textureCache);
+        }
+    }
+    id textureCacheLifetime = (__bridge_transfer id)cacheSnapshot;
+    if (!_computePipelineState || textureCacheLifetime == nil) {"""
+CACHE_STOP_HANDOFF = """    CVMetalTextureCacheRef retiredCache = NULL;
+    @synchronized(self) {
+        retiredCache = _textureCache;
+        _textureCache = NULL;
+    }
+    if (retiredCache) {"""
+
+
+def draw_with_the_shared_pointer(text):
+    once(text, CACHE_SNAPSHOT_BLOCK, "the draw cache snapshot")
+    return text.replace(CACHE_SNAPSHOT_BLOCK,
+                        "    if (!_computePipelineState || !_textureCache) {", 1)
+
+
+def stop_frees_the_cache_under_a_draw(text):
+    once(text, CACHE_STOP_HANDOFF, "the stop cache handoff")
+    return text.replace(CACHE_STOP_HANDOFF, "    if (_textureCache) {", 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-key-cancel", CAPTURE, drop_pending_cancel,
@@ -1882,6 +1911,10 @@ MUTATIONS = [
     ("release-as-a-press", NAVIGATION, swallow_controller_release,
      "the release half of a gamepad stroke is delivered as a second press",
      NAVIGATION_GATE),
+    ("cache-freed-under-a-draw", VIDEO_RENDERER, stop_frees_the_cache_under_a_draw,
+     "stop frees the texture cache while a drawn frame is still using it", AUDIT_GATE),
+    ("draw-shares-the-cache-pointer", VIDEO_RENDERER, draw_with_the_shared_pointer,
+     "a drawn frame builds textures from the shared cache pointer it does not own", AUDIT_GATE),
     ("oversized-stream-blames-the-gpu", VIDEO_RENDERER, merge_the_two_zero_slot_answers,
      "a stream above the interpolation ceiling is reported as a Mac without the engine",
      VIDEO_GATE),
