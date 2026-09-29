@@ -412,6 +412,35 @@ int main(void) { @autoreleasepool {
         }
     }
 
+    // Letterboxed video: the picture does not fill the window, so the edge the player aims
+    // at is the edge of the picture. A panel parked against the window frame would sit on
+    // the black bar, visible but unreachable, and the acceptance list names the black bars
+    // for a reason. The anchor is what the view says it is; this asserts the panel obeys it.
+    {
+        NSRect picture = NSMakeRect(0, 120, 1920, 840);   // 1080p window with 120pt bars top and bottom
+        CGFloat visibleAlong[5] = {0,0,0,0,0}, visibleThickness[5] = {0,0,0,0,0};
+        for (int edge = 1; edge <= 4; edge++) {
+            Sensor *b = fresh(edge);
+            NSRect panel = [b collapsedFrameForEdgeMenuPanelInScreenRect:picture];
+            NSRect shown = NSIntersectionRect(panel, picture);   // the collapsed panel hides the rest on purpose
+            CHECK(!NSIsEmptyRect(shown), "a docked tab is partly on screen even when the video is letterboxed");
+            BOOL vertical = (edge == MLFreeMouseExitEdgeLeft || edge == MLFreeMouseExitEdgeRight);
+            visibleAlong[edge] = vertical ? NSHeight(shown) : NSWidth(shown);
+            visibleThickness[edge] = vertical ? NSWidth(shown) : NSHeight(shown);
+            CHECK(vertical ? (fabs(NSMaxX(shown) - NSMaxX(picture)) < 0.5 || fabs(NSMinX(shown) - NSMinX(picture)) < 0.5)
+                           : (fabs(NSMaxY(shown) - NSMaxY(picture)) < 0.5 || fabs(NSMinY(shown) - NSMinY(picture)) < 0.5),
+                  "the visible tab touches the picture edge rather than the window edge behind the bars");
+            CHECK(NSMinY(shown) >= NSMinY(picture) - 0.5 && NSMaxY(shown) <= NSMaxY(picture) + 0.5,
+                  "no part of the visible tab reaches into the letterbox bar");
+        }
+        CHECK(fabs(visibleThickness[1] - visibleThickness[2]) < 0.5 &&
+              fabs(visibleThickness[2] - visibleThickness[3]) < 0.5 &&
+              fabs(visibleThickness[3] - visibleThickness[4]) < 0.5 && visibleThickness[1] > 8.0,
+              "every edge reveals the same tab thickness, so no dock edge hides the affordance");
+        CHECK(fabs(visibleAlong[1] - visibleAlong[2]) < 0.5 && visibleAlong[1] > 24.0,
+              "the tab is revealed to the same depth along the edge on the vertical and horizontal edges alike");
+    }
+
     // Dragging is a placement change, not a new control: band, tab and panel must all follow,
     // and the light has to come back at the new place. This is the automated half of the
     // acceptance item "docked on each of the four edges, and re-triggers after a drag".

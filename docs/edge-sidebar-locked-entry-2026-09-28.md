@@ -659,3 +659,68 @@ Moonlight Enhanced 的**锁定游戏鼠标**是相对位移模式：本机没有
 写这条用例时先红了一次：用例主体沿用 `fresh()` 的"已捕获 + 非桌面"默认，那是锁定态，
 锁定态按设计不起 dwell——**用例自己踩中了第 3 节那条边界**，改为自由指针后绿。
 这条红不是产品缺陷，但它说明：任何"看起来没触发"的反馈，第一件要查的都是当时处于哪种指针所有权。
+
+## 廿四、失焦/全屏/Space 与黑边：替身藏起来的两个契约（2026-09-29 续）
+
+实机仍被锁屏阻塞（同一条件连续三轮），因此这一节做的是**替身盲区审查**，不是新增手感补丁。
+两条契约此前完全没有自动化保护，且都属于验收清单点名的条目。
+
+### 1. 生命周期闸门被探针简化掉了
+
+真实实现把"控制栏此刻能不能响应"收在一个闸门里（这是对的：单一判定源，避免一堆布尔值互抢）：
+
+```objc
+- (BOOL)edgeMenuCanInteract {
+    NSWindow *window = self.view.window;
+    return window && window.isKeyWindow && window.isVisible && !window.isMiniaturized && [NSApp isActive] &&
+           !self.stopStreamInProgress && !self.reconnectInProgress &&
+           !self.spaceTransitionInProgress && !self.fullscreenTransitionInProgress &&
+           [self isWindowInCurrentSpace];
+}
+```
+
+探针为了可运行，把它替身成 `!stop && !reconnect && visible`。**后果**：失焦、应用非活动、
+最小化、Space 切换、全屏切换这 5 类验收项在自动化里其实一条都没测——而它们是 `blocker=cannot-interact`
+这条唯一出口的全部成因。任何一项写反或漏项，自动化不会响。
+
+闭合（用正确的工具：闸门内容属于源码契约，替身无法重新导出）：
+
+- 静态契约要求闸门必须同时含 `window.isKeyWindow`、`window.isVisible`、`!window.isMiniaturized`、
+  `[NSApp isActive]`、`!stopStreamInProgress`、`!reconnectInProgress`、`!spaceTransitionInProgress`、
+  `!fullscreenTransitionInProgress`、`[self isWindowInCurrentSpace]` 九项；
+- 并且闸门**不得兼管** `userReleasedInput`（主动释放意图归释放状态机，闸门只判"能不能碰控制栏"）；
+- 两条 negative control：逐项把任一条件替换成 `YES` 必须让检查变红（self-test 内验证，共 9 条 + 3 条 anchor）。
+
+### 2. 感应边界对应**视频视图**，不是窗口外框，也不是像素
+
+验收条件原话：明确感应边界对应窗口还是视频区域。生产答案在 `edgeMenuAnchorRectInScreen`：
+把 `self.view.bounds` 经视图→窗口→屏幕转换（注释明确写着含全屏 content insets，窗口外框、backing 像素、
+主机分辨率都可能与之不同）。**但探针把这个方法替身成恒等返回 `view.bounds`**，等于把结论当假设写进了测试。
+
+闭合分两层，并如实说明各层能抓什么：
+
+- **静态**（负责"取哪个矩形"）：`anchor_ok()` 要求含 `self.view.bounds` 与 `convertRectToScreen`，
+  且**不得**出现 `window.frame` / `backingScaleFactor`。3 条 negative control：换成 `window.frame`、
+  换成 `convertRect`、塞进 `backingScaleFactor` 都必须红。
+- **运行时**（负责"给定画面，面板摆哪"）：构造 1080p 窗口 + 上下各 120pt 黑边（picture = y∈[120,960]），
+  四条边分别取 collapsed 面板，断言**可见交集**贴住 picture 边而非窗口边、不吃黑边、
+  四边露出厚度一致且 >8pt、沿边露出深度一致且 >24pt。
+  诚实边界：探针是把 picture 当参数传进去的，所以"生产哪天改用 window.frame"这类回归由静态契约负责；
+  真实全屏 inset / 多显示器排布下的对位仍属实机项。
+
+### 3. 记录一次自己写错的期望（避免下次重犯）
+
+黑边用例第一版断言"collapsed panel 必须落在 picture 内"，跑出 5 条红。看实现才确认：
+collapsed 面板**故意**大部分在锚区之外（left `NSMinX(rect)-Width+Peek`、bottom `NSMinY(rect)-Height+Peek`…），
+只有 `MLEdgeMenuButtonVisiblePeek` 那一条是可见的。**可见条带**才是断言对象，panel frame 不是。
+改成对 `NSIntersectionRect(panel, picture)` 断言后 4256 检查 0 失败。同理 `CHECK` 宏只接受两参，
+带 `%d` 的格式化消息会在编译期炸——用例消息要静态字符串。
+
+### 4. 本轮验证（生产代码未变，1712 仍是 HEAD 的产物，无需重构建）
+
+| 项 | 结果 |
+| --- | --- |
+| 运行时探针 | 4256 检查 / 0 失败（新增黑边可见条带 4 边用例） |
+| 变异 + negative control | `--self-test` RC=0，negative control 34 → 36（闸门逐项 + anchor 逐项） |
+| 键鼠回归 / l10n / Liquid Glass / `git diff --check` | 45 / 45，0，0，干净 |
+| 实机 | **仍未验收**：锁屏阻塞第 N 次复现，失焦恢复、全屏与 Space 切换、真实黑边对位、多显示器全部未做人工确认 |
