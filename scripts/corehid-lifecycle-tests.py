@@ -111,7 +111,15 @@ let previousSum = recorder.sum
 driver.maximumReportRate = 50
 driver.reportForTest(1)
 driver.reportForTest(2)
-Thread.sleep(forTimeInterval: 0.08)
+// A guessed 80ms is what made this case red on a loaded arm64 runner while green everywhere
+// else: the wait has to end when the delivery has happened, not when a guess expires.
+let waitDeadline = Date().addingTimeInterval(2.0)
+while (recorder.sum - previousSum < 3 || !driver.timerCleared), Date() < waitDeadline {
+  Thread.sleep(forTimeInterval: 0.005)
+}
+// Then three timer periods of settle, so an extra delivery still shows up and "exactly once"
+// keeps meaning what it said before the wait became bounded.
+Thread.sleep(forTimeInterval: 0.06)
 check(recorder.sum - previousSum == 3 && driver.timerCleared, "real delayed timer delivers final motion exactly once")
 driver.stop()
 print("\(failures) failure(s)")

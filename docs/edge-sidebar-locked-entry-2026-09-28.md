@@ -783,3 +783,22 @@ CVMetalTexture::finalize ← _CFRelease
 部署 1716 `1c2e492459d86a6e…`，回滚 1712 `984009b1…`（`renderer-cache-lifetime-install-result.json`）。
 教训：判断"是否在串流"必须写 `lsof -a -p PID -i TCP -i UDP`——`-p` 与 `-i` 之间没有 `-a` 是 OR 语义，
 会把别的进程端口打进来，得出看似通过实则无意义的结论。
+
+## 廿六、CI 抓到第二类"测试自己猜调度"（2026-09-29）
+
+HEAD `fc9e7040` 的 run 36506337382 红在 arm64 的 `Verify CoreHID timer cancellation and session isolation`，
+失败的是 `--self-test` 的**基线**断言：`FAIL real delayed timer delivers final motion exactly once`（1 failure）。
+同 commit 的 x86_64、audits、analyzer 全绿，本地同脚本正测 + `--self-test` 也全绿。
+
+判据不是"看起来像抖动"，而是用例写法：`maximumReportRate = 50`（约 20ms 一 period），
+然后**固定 `Thread.sleep(0.08)`** 再断言 `sum 恰好 +3 && timerCleared`——第 3 个 delta 到得晚一点，
+断言就早于事实。这与第廿二节的 `PltSleepMs(15)` 是同一类缺陷：用猜测的时长代替"等真的发生"。
+
+改法（不是放宽）：等**条件成立或有界截止**（2s，5ms 步进），再追加 3 个 period 的 settle 窗口，
+最后仍断言 `+3 且 timerCleared`。语义只增不减：早到不再产生假红，重复投递仍会被 settle 窗口抓到
+（该文件的 negative control `stale timer execution` 依旧必须红，本地 self-test 已证）。
+同文件另一处 `Thread.sleep(0.05)` 不动：它断言的是**没有发生**（取消后 pending 仍为 7），
+断言不存在无法轮询，固定等待是唯一正确工具，且它不会朝"过早"方向出错。
+
+验证：本地正测 3 次 + CPU 满载 8 次全绿，`--self-test` 仍抓住宿定时器执行；
+真实 runner 上是否止血只能由下一次 CI 判定（与第廿二节同样的诚实边界）。
