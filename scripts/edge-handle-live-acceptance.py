@@ -115,6 +115,32 @@ def self_test():
         print("%-4s synthetic %-6s band: %s" % ("ok" if ok else "FAIL", n,
               "none" if not got else "%.1f pt" % got["width_pt"]))
         fails += 0 if ok else 1
+    # The pair that proves the delta rule earns its keep: a bright video edge
+    # present in BOTH frames inflates the absolute width in both, and only the
+    # growth between frames still separates armed from idle. If this case ever
+    # shows absolute width agreeing with the delta, the delta rule is dead
+    # weight and the rule above can go back to one number.
+    base = Image.new("RGB", (800, 600), (38, 42, 48))
+    # A full-height pale wall against the edge is the content that can fool a
+    # plain width rule: it reads as a wide band in both frames. The idle frame
+    # is the trap -- the absolute rule would call it armed before the pointer
+    # ever dwelt -- and only the growth from the base can say idle.
+    for x in range(800 - 22, 800):           # bright wall along the whole edge
+        for y in range(0, 600):
+            base.putpixel((x, y), (246, 247, 251))
+    hover = base.copy()
+    for x in range(800 - 30, 800 - 22):      # armed widening past the wall
+        for y in range(0, 600):
+            hover.putpixel((x, y), (246, 247, 251))
+    b, hv = band_detect(base, "right"), band_detect(hover, "right")
+    bw = b["width_pt"] if b else 0.0
+    hw = hv["width_pt"] if hv else 0.0
+    idle_abs_rule_says_armed = bw >= ARMED_MIN
+    delta_rule = hw >= max(ARMED_MIN, bw + 6.0)
+    ok = idle_abs_rule_says_armed and delta_rule
+    print("%-4s synthetic bright-content pair: base %.1f armed %.1f, idle fooled by absolute rule=%s, delta armed=%s"
+          % ("ok" if ok else "FAIL", bw, hw, idle_abs_rule_says_armed, delta_rule))
+    fails += 0 if ok else 1
     print("%d band-detector self-test failure(s)" % fails)
     return 1 if fails else 0
 
@@ -181,6 +207,7 @@ def main():
               "top": (handle_c, IDLE_PT / 2.0), "bottom": (handle_c, h - IDLE_PT / 2.0)}[args.edge]
         if mode in ("free", "released"):
             armed_ok = collapsed_ok = 0
+            base_w = base["width_pt"]
             for i in range(args.loops):
                 run([helper, "move", str(centre["x"]), str(centre["y"])])
                 time.sleep(0.3)
@@ -188,7 +215,11 @@ def main():
                 run([helper, "move", str(hp[0]), str(hp[1])])
                 time.sleep(0.35)  # 0.12 s dwell lights it; 0.35 covers shot latency
                 path, got = shot("loop-%02d-hover" % i)
-                armed = got and got["width_pt"] >= ARMED_MIN
+                # Absolute width alone can be satisfied by bright video content
+                # at the screen edge; the acceptance-relevant fact is that the
+                # band grows past the baseline the same pointer position does
+                # not produce. The delta rule cannot be met by content alone.
+                armed = bool(got) and got["width_pt"] >= max(ARMED_MIN, base_w + 6.0)
                 armed_ok += armed
                 run([helper, "move", str(centre["x"]), str(centre["y"])])
                 time.sleep(0.8)  # 0.45 s auto-collapse after the pointer leaves
@@ -198,7 +229,8 @@ def main():
                 if not armed:
                     record("hover lights the handle x%d" % args.loops, "FAIL",
                            "armed width %.1f pt at loop %d (expect >= %.0f)" %
-                           (got["width_pt"] if got else -1, i, ARMED_MIN), path)
+                           (got["width_pt"] if got else -1, i,
+                            max(ARMED_MIN, base_w + 6.0)), path)
                     break
                 if not ok2:
                     record("handle collapses x%d" % args.loops, "FAIL",
