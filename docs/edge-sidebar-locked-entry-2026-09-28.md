@@ -724,3 +724,62 @@ collapsed 面板**故意**大部分在锚区之外（left `NSMinX(rect)-Width+Pe
 | 变异 + negative control | `--self-test` RC=0，negative control 34 → 36（闸门逐项 + anchor 逐项） |
 | 键鼠回归 / l10n / Liquid Glass / `git diff --check` | 45 / 45，0，0，干净 |
 | 实机 | **仍未验收**：锁屏阻塞第 N 次复现，失焦恢复、全屏与 Space 切换、真实黑边对位、多显示器全部未做人工确认 |
+
+## 廿五、一条真实崩溃证据：渲染器纹理缓存在在途帧下被释放（2026-09-29）
+
+翻本机诊断日志时发现一份**既存**崩溃（2026-09-26，早于本轮全部改动），落在目标 1 第 6 项
+"断线重连和关闭"的生命周期上，因此本轮一并处理。
+
+### 证据
+
+`~/Library/Logs/DiagnosticReports/MoonlightEnhanced-2026-09-26-104757.ips`：
+`EXC_BAD_ACCESS / SIGSEGV`，`KERN_INVALID_ADDRESS at 0x0`，栈：
+
+```
+__CF_IS_OBJC ← CFArrayAppendValue
+CVMetalTextureCache::bufferBackingNotInUse / CVBufferBacking::releaseUsage
+CVMetalTexture::finalize ← _CFRelease
+-[VideoDecoderRenderer drawInMTKView:] ← -[MTKView draw]
+```
+
+### 根因（机制，不是猜测）
+
+`CVMetalTexture` 的 `finalize` 必须回到**造它的那张 cache** 上做簿记。而当时的代码：
+
+| 位置 | 当时行为 |
+| --- | --- |
+| `drawInMTKView:` | 在**任何锁之外**读 `_textureCache`，并三次把它传给 `CVMetalTextureCacheCreateTextureFromImage` |
+| `stop` | 在**任何锁之外** `CFRelease(_textureCache); _textureCache = NULL;` |
+
+于是"这帧正在用缓存"与"缓存被释放"之间没有任何约束：`_textureCache = NULL` 只能拦住**下一次**绘制，
+拦不住已经过了判定的在途帧；等它的 `CVMetalTextureRef` 释放时，`finalize` 就踩在死指针上，
+崩在 CoreVideo 内部（与上面栈完全一致）。`dealloc → stop` 有 NULL 守卫，排除二次释放；
+崩溃不在我们的调用点，正是"缓存在使用者之下先死"的典型形态。
+
+### 修法：只改生命周期，不碰任何渲染语义
+
+1. `drawInMTKView:` 在 `stop` 必须取的那把锁内 `CFRetain` 一份快照，交给 ARC 局部量
+   （`(__bridge_transfer id)`，覆盖该方法所有 return 路径），三处实参改用快照；
+2. `stop` 改为**锁内换出指针、锁外释放**：`retiredCache = _textureCache; _textureCache = NULL;` →
+   `CFRelease(retiredCache)`，于是仍在绘制的帧自持引用，缓存活到它自己的纹理释放为止；
+3. 创建点未动：没有并发创建的证据，不臆造兜底分支。
+
+没有新增锁顺序：两条路径本来就用同一把 `@synchronized(self)`；也没有新增定时/延时/兜底路径。
+渲染调用序列与使用的缓存指针完全不变（同一对象，多一个引用）。
+
+### 守护
+
+`constraints-audit.py` 三条不变量（绘制帧自持引用／实参不得再用共享指针／`stop` 必须锁内换出锁外释放），
+`assertion-battery.py` 两条变异回放旧形状：`cache-freed-under-a-draw`、`draw-shares-the-cache-pointer`。
+**146/146 变异全部被抓住**（RC=0），`constraints-audit` 0 失败，构建 arm64 成功、一方源码 0 warning。
+
+### 边界（不得越）
+
+本机只有这一份三天前的报告，且当前**无法起流复现**（屏幕锁定、无进行中会话）。因此这条只能声明：
+"崩溃的具体机制被消除，且渲染语义不变"，**不得**声称"闪退已修复/不再闪退"——该结论仍属**实机未验收**。
+
+### 部署与操作教训
+
+部署 1716 `1c2e492459d86a6e…`，回滚 1712 `984009b1…`（`renderer-cache-lifetime-install-result.json`）。
+教训：判断"是否在串流"必须写 `lsof -a -p PID -i TCP -i UDP`——`-p` 与 `-i` 之间没有 `-a` 是 OR 语义，
+会把别的进程端口打进来，得出看似通过实则无意义的结论。
