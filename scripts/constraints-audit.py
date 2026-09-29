@@ -3336,6 +3336,7 @@ if run_battery:
                           os.path.join("scripts", "interpolation-source-format-tests.py"),
                           os.path.join("scripts", "scaling-output-evidence-tests.py"),
                           os.path.join("scripts", "liquid-glass-overlay-tests.py"),
+                          os.path.join("scripts", "liquid-glass-tab-drag-tests.py"),
                           os.path.join("scripts", "shortcut-menu-key-tests.py"),
                           os.path.join("scripts", "command-to-control-tests.py"),
                           os.path.join("scripts", "gamepad-menu-gesture-tests.py"),
