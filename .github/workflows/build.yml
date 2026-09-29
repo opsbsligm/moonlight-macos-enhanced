@@ -428,7 +428,12 @@ jobs:
       # one event worth at most 6 pt), and the harness compiles the shipped helpers out of
       # MouseCapture.m and drives them, then refuses a tree where a single uncapped flick
       # spends the budget or the switch stopped being the first question asked.
-      run: python3 scripts/edge-sensor-summon-tests.py
+      # The flag is the gate. Without it the step replays the production methods and
+      # never asks whether a replay could fail, and the 36 negative controls -- the ones
+      # that notice when 'arrival at the edge grabs the pointer' or 'the lit tab cannot
+      # be clicked' has been edited into a no-op -- ran only wherever a human remembered
+      # to type them. Measured on this repository's sources: about a minute of compiles.
+      run: python3 scripts/edge-sensor-summon-tests.py --self-test
 
     - name: Verify the system hotkey handoff is paired in both directions
       # Taking the player's Mission Control, Launchpad, Spotlight and input-source switch is a

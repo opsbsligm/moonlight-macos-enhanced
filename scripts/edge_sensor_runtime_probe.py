@@ -1097,3 +1097,16 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 assert before in methods,label
                 assert run(methods.replace(before,after)).returncode!=0,label
                 print('PASS negative control: '+label)
+
+
+if __name__ == "__main__":
+    # Executing this file used to exit 0 having run nothing: every check lives inside
+    # `run_runtime_probe`, which the CI entry imports. A "returncode 0" from the file run
+    # directly therefore read as a green edge suite while the compiler was never started,
+    # which is the shape of false proof this repository refuses everywhere else. The entry
+    # point also owns the source files the probe compiles, so it stays the only way in.
+    raise SystemExit(
+        "edge_sensor_runtime_probe.py defines checks, it does not run them.\n"
+        "Run the entry that hands it the shipping sources: "
+        "python3 scripts/edge-sensor-summon-tests.py "
+        "(add --self-test to also replay the 36 negative controls).")
