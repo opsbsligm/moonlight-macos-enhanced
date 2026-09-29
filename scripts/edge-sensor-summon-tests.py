@@ -95,6 +95,36 @@ assert lit <= peek, 'the armed tab is drawn wider than the panel that carries it
 assert 0.0 <= slop <= 2.0, 'the click tolerance has grown back into a second sensor'
 assert idle + 2.0 + slop <= 18.0, 'an idle click reaches deeper into the frame than the tab it can see'
 assert lit + 2.0 + slop <= 36.0, 'a lit click reaches deeper into the frame than the tab it can see'
+# One gate decides whether the bar may answer at all, and the runtime probe deliberately
+# stubs it away. That makes the gate's own contents a static contract: losing focus, app
+# inactivity, miniaturising, a Space switch, a fullscreen transition, a stop and a reconnect
+# are each named on the acceptance list, and no stub can re-derive them.
+GATE_FACTS = ('window.isKeyWindow', 'window.isVisible', '!window.isMiniaturized',
+              '[NSApp isActive]', '!self.stopStreamInProgress', '!self.reconnectInProgress',
+              '!self.spaceTransitionInProgress', '!self.fullscreenTransitionInProgress',
+              '[self isWindowInCurrentSpace]')
+def gate_ok(text):
+    return all(fact in text for fact in GATE_FACTS)
+gate = method(menu, '- (BOOL)edgeMenuCanInteract')
+assert gate_ok(gate), 'the interaction gate lost: ' + ', '.join(f for f in GATE_FACTS if f not in gate)
+assert 'self.userReleasedInput' not in gate, 'the interaction gate also owns pointer release'
+# The sensor measures the video view, not the window frame. Fullscreen insets and letterbox
+# bars move the picture inside the window, and a tab parked on the window edge would sit on
+# the black bar instead of on the frame the player is aiming at.
+def anchor_ok(text):
+    return ('self.view.bounds' in text and 'convertRectToScreen' in text and
+            'window.frame' not in text and 'backingScaleFactor' not in text)
+anchor = method(menu, '- (NSRect)edgeMenuAnchorRectInScreen')
+assert anchor_ok(anchor), 'the anchor rect stopped being the video view converted to screen coordinates'
+if '--self-test' in sys.argv:
+    for lost in GATE_FACTS:
+        assert not gate_ok(gate.replace(lost, 'YES')), 'the gate check tolerates losing ' + lost
+    print('PASS negative control: a lifecycle condition removed from the interaction gate')
+    for broken in (anchor.replace('self.view.bounds', 'self.view.window.frame'),
+                   anchor.replace('convertRectToScreen', 'convertRect'),
+                   anchor.replace('rectInWindow', 'rectInWindow), backingScaleFactor:self.view): return [self.view.window convertRectToScreen:rectInWindow')):
+        assert not anchor_ok(broken), 'the anchor check tolerates leaving the video view'
+    print('PASS negative control: an anchor measured from the window frame or in pixels')
 print('PASS arrival cannot open the bar, the click follows the drawing, and the tab is visible')
 print('PASS no activation bypass, cursor warp, duplicate presentation state or stale menu completion')
 
