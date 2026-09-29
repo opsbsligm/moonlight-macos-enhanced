@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0-build1720] - 2026-09-29
+
+
 ### Added
 - **A press the keyboard denies is now spent on the click the device owed it, and the button-edge
   probe got its own credit so it can never again starve into silence.** The capture that ended the
