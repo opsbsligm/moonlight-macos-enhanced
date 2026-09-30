@@ -111,3 +111,18 @@
  artefacts: /var/folders/.../mle-edge-acceptance-iz9uytb0
 - 尚未验收：四边停靠（左/上/下）、失焦恢复、断线重连、窗口大小/全屏切换、
   硬件 ⇧⌥、多显示器、触摸板/外置鼠标、远端解锁后 free 模式远端行为。
+
+## 失焦恢复验收（21:00–21:25，commit 待）
+- 矩阵新增"失焦恢复"行后完整重跑：**8 PASS / 0 FAIL / 1 UNVERIFIED**
+  （artefacts mle-edge-acceptance-ftkeh90_）：基线/hover×30/收起×30/⌃⌥C/
+  菜单开关取消/按住经过边缘/**失焦恢复（strip delta 1.02）**/注入⇧⌥释放。
+- 失焦路径＝用户真实路径：Finder 抢占前台→大厅 sheet→点"显示流窗口"回
+  全屏 Space。回全屏按设计重新捕获鼠标（回到锁定态），released 模式必须
+  先重新释放——工装此前隐式假设 released 持续成立，是验收姿势缺陷。
+- 工装本轮修的三个自身缺陷：
+  1. 起跑前未 park 指针：上一轮死在右缘时把手常驻 armed（蓝色），近白宽度
+     判据读不到 idle 带，把环境状态记成 app FAIL；
+  2. 蓝按钮定位被桌宠/横幅污染：改为"横贯整行的 accent 色条"run 判据；
+  3. app 非前台时 sheet 主按钮渲染为灰色：先 activate 再截图定位。
+- 结论：失焦→返回全屏 Space 后控制栏 hover/收起/菜单全部正常，未发现 app
+  侧焦点生命周期缺陷。app 本轮零代码改动。
