@@ -15,6 +15,13 @@ case "screens":
     for s in NSScreen.screens {
         print("\(s.frame.minX) \(s.frame.minY) \(s.frame.width) \(s.frame.height) \(s.backingScaleFactor)")
     }
+case "locked":
+    // Authoritative lock-screen state. Foreground-app heuristics lie while the
+    // login window shares the display with a fullscreen stream; this dictionary
+    // is what the WindowServer itself publishes.
+    if let d = CGSessionCopyCurrentDictionary() as? [String: Any] {
+        print((d["CGSSessionScreenIsLocked"] as? Int) ?? 0)
+    } else { print(0) }
 case "pos":
     let loc = CGEvent(source: nil)?.location ?? .zero
     print("\(loc.x) \(loc.y)")
