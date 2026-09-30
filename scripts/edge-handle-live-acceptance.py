@@ -147,6 +147,111 @@ def band_detect(img, edge="right", scale=1.0):
             "start_depth_pt": start_depth / scale}
 
 
+def handle_window(app_pid, edge, helper, screen_w, screen_h):
+    """The app's own window list is the geometry authority: the idle handle is a
+    56x56 panel window hugging the docked edge. Reading presence from the app
+    rather than from wallpaper brightness is what kept this row honest on a
+    pale Desktop wallpaper, where a colour rule measured the picture behind the
+    bar and reported a 40 pt idle band that the app never drew."""
+    out = run([helper, "wins", str(app_pid)]).stdout
+    for line in out.splitlines():
+        parts = line.split("|")
+        if len(parts) != 7:
+            continue
+        num, layer, alpha, wx, wy, ww, wh = parts
+        wx, wy, ww, wh = float(wx), float(wy), float(ww), float(wh)
+        if abs(ww - 56) > 1 or abs(wh - 56) > 1:
+            continue
+        # An idle dock hugs its edge with most of the 56 pt window sitting
+        # outside the screen -- the visible strip is the capsule, not the frame.
+        # Hugging means the on-screen edge of the window is the screen edge.
+        if edge == "right" and not (screen_w - ww <= wx <= screen_w + 4): continue
+        if edge == "left" and not (-4 <= wx <= ww): continue
+        if edge == "top" and not (-4 <= wy <= wh): continue
+        if edge == "bottom" and not (screen_h - wh <= wy <= screen_h + 4): continue
+        return {"x": wx, "y": wy, "w": ww, "h": wh, "alpha": float(alpha),
+                "layer": int(layer), "number": int(num)}
+    return None
+
+
+def anchored_band(img, edge, win, scale):
+    """Idle-handle width measured against the pixels beside the handle rather
+    than against a fixed brightness. A pale wallpaper makes every pixel
+    "near-white"; the handle still differs from the screen behind it, and that
+    contrast is what the eye uses to find it."""
+    from PIL import Image  # noqa
+    px = img.load()
+    w, h = img.size
+    if edge in ("right", "left"):
+        ax = (int(win["x"]) - 10) if edge == "right" else int(win["x"] + win["w"] + 10)
+        # The right dock's own frame can sit past the screen edge; a sample
+        # point outside the capture is not a background, so clamp inside.
+        ax = min(ax, w - 1) if edge == "right" else max(ax, 0)
+        ax = max(0, min(w - 1, ax))
+        y0 = int(win["y"]) + 10
+        y1 = min(h, int(win["y"] + win["h"]) - 10)
+        bg = px[ax, (y0 + y1) // 2][:3]
+        depth_max = int(win["w"] * scale) + 4
+        spans = range(y0, y1)
+        def col(depth):
+            x = (w - 1 - depth) if edge == "right" else depth
+            return [px[x, y][:3] for y in spans]
+    else:
+        ax0 = int(win["x"]) + 10
+        ax1 = min(w, int(win["x"] + win["w"]) - 10)
+        ay = (int(win["y"]) - 10) if edge == "top" else int(win["y"] + win["h"] + 10)
+        ay = max(0, min(h - 1, ay))
+        bg = px[(ax0 + ax1) // 2, ay][:3]
+        depth_max = int(win["h"] * scale) + 4
+        spans = range(ax0, ax1)
+        def col(depth):
+            yv = depth if edge == "top" else (ay + depth)
+            return [px[x, yv][:3] for x in spans]
+    # Measure from the screen edge inward: an idle dock sits mostly offscreen
+    # (only the capsule shows), so depths 0..N are the strip the player sees.
+    if edge in ("right", "left"):
+        origin = w if edge == "right" else 0
+        base_col = px[max(0, min(w - 1, origin + (-1 if edge == "right" else 0))), (int(win["y"]) + int(win["h"])) // 2][:3]
+    else:
+        base_col = px[(int(win["x"]) + int(win["w"])) // 2, max(0, min(h - 1, int(win["y"]) if edge == "top" else int(win["y"] + win["h"])))][:3]
+    bg = bg if sum(abs(a - b) for a, b in zip(bg, base_col)) > 200 else bg  # keep the beside-window sample
+    del base_col
+    ratios = []
+    for depth in range(depth_max):
+        if edge in ("right", "left"):
+            x = (w - 1 - depth) if edge == "right" else depth
+            hits = sum(1 for y in spans if sum(abs(c - b) for c, b in zip(px[x, y][:3], bg)) > 60)
+            ratios.append(hits / max(1, len(list(spans))))
+        else:
+            yv = depth if edge == "top" else (h - 1 - depth)
+            hits = sum(1 for xx in spans if sum(abs(c - b) for c, b in zip(px[xx, yv][:3], bg)) > 60)
+            ratios.append(hits / max(1, len(list(spans))))
+    width = 0
+    started = False
+    start_i = 0
+    # A top/bottom dock anchors to the video area, which sits below the menu-bar
+    # strip; the band must still start within a bounded gap of the physical edge.
+    outer_gap = int(round((4 if edge in ("right", "left") else 60) * scale))
+    for i, ratio in enumerate(ratios):
+        if ratio > 0.5:
+            if not started:
+                if i > outer_gap:
+                    break  # nothing handle-like near the edge
+                started = True
+                start_i = i
+            width = i + 1 - (start_i if edge in ("top", "bottom") else 0)
+        elif not started and i <= outer_gap:
+            continue  # anchor offset or capsule shadow before the band starts
+        elif i == 0 and ratio > 0.15:
+            continue  # the capsule's outer shadow margin before the band starts
+        elif i and ratio > 0.25 and i + 1 < len(ratios) and ratios[i + 1] > 0.5:
+            continue  # anti-aliased seam inside the capsule
+        else:
+            break
+    centre = (int(win["y"] + win["h"] / 2.0)) / scale if edge in ("right", "left") else (int(win["x"] + win["w"] / 2.0)) / scale
+    return {"width_pt": width / scale, "centre_pt": centre, "start_depth_pt": 0.0}
+
+
 def strip_signature(img, edge, handle_c, scale, start_depth=0.0):
     """Colour signature of the handle neighbourhood, independent of the armed
     look. The earlier rule assumed armed = a wider near-white band; on this
@@ -333,6 +438,30 @@ def main():
         except Exception as e:
             return path, {"error": str(e)}
 
+    def anchored_shot(tag):
+        """Baseline measurement anchored on the app's own handle window: the
+        colour rule is kept for the hover delta (which is content-independent),
+        but "is the idle handle drawn at all" is answered by the window server
+        and by contrast against the pixels next to the window, not by a fixed
+        near-white threshold the desktop picture can defeat."""
+        path = os.path.join(out, tag + ".png")
+        full = path + ".full.png"
+        if run(["screencapture", "-x", "-o", full]).returncode:
+            return path, None
+        from PIL import Image
+        Image.open(full).crop((0, 0, int(w), int(h))).save(path)
+        os.remove(full)
+        try:
+            pid = run(["pgrep", "-x", "MoonlightEnhanced"]).stdout.strip()
+            win = handle_window(pid, args.edge, helper, w, h)
+            if not win or win["alpha"] < 0.5:
+                return path, {"width_pt": 0.0, "centre_pt": None}
+            img = Image.open(path)
+            det = anchored_band(img, args.edge, win, scale)
+            return path, det
+        except Exception as e:
+            return path, {"error": str(e)}
+
     centre = {"x": w / 2.0, "y": h / 2.0}
     # A notification banner over the docked edge hides the idle handle and
     # the baseline reads empty (this fooled one run after a reconnect banner).
@@ -342,14 +471,42 @@ def main():
     # pointer on the edge, the handle sits armed (accent blue), and the idle
     # band detector — a width rule on a near-white strip — reads no handle at
     # all. The app was fine; the entry state was not.
+    # Rows that judge a hover stand on the released precondition. A previous run
+    # or a manual session can leave the stream captured — one resume-by-click is
+    # all it takes — and judging a hover while captured tests nothing and blames
+    # the app for the entry state (observed three times on hardware). The app's
+    # own log is authoritative for who owns the pointer: whichever of the two
+    # state lines came last says.
+    def ensure_released(where):
+        # Hover rows need a free pointer in every mode that judges hover
+        # (free and released); only locked deliberately stays captured.
+        if mode == "locked":
+            return
+        log_tail = ""
+        try:
+            with open(os.path.expanduser(
+                    "~/Library/Logs/Moonlight/moonlight-debug.log"),
+                      errors="replace") as fh:
+                log_tail = fh.read()[-400000:]
+        except OSError:
+            pass
+        rel = log_tail.rfind("Input explicitly released")
+        res = log_tail.rfind("Input resume by explicit click")
+        if res > rel:
+            run([helper, "mod", "56", "58"])
+            time.sleep(0.6)
+        run([helper, "move", str(w / 2.0), str(h / 2.0)])
+        time.sleep(0.5)
+
+    ensure_released("entry")
     run([helper, "move", str(w / 2.0), str(h / 2.0)])
     time.sleep(1.0)  # the bar auto-collapses 0.45 s after the pointer leaves
-    path, base = shot("00-baseline")
+    path, base = anchored_shot("00-baseline")
     if not base or base.get("width_pt", 0) <= 0:
         time.sleep(8)
         run(["killall", "NotificationCenter"])
         time.sleep(1)
-        path, base = shot("00-baseline-retry")
+        path, base = anchored_shot("00-baseline-retry")
         if not base or base.get("width_pt", 0) <= 0:
             # A lobby sheet on screen means the stream is running but the
             # app is looking at the desktop, not its own fullscreen Space;
@@ -361,7 +518,7 @@ def main():
                 if mode == "released":
                     run([helper, "mod", "56", "58"])
                     time.sleep(0.5)
-                path, base = shot("00-baseline-reentry")
+                path, base = anchored_shot("00-baseline-reentry")
     if not base or base.get("width_pt", 0) <= 0:
         record("baseline band visible", "FAIL",
                "no 14 pt handle band found on the %s edge; if it is docked elsewhere pass --edge" % args.edge, path)
@@ -485,6 +642,13 @@ def main():
         # the stream may now hold a stale hover; park the pointer
         run([helper, "move", str(centre["x"]), str(centre["y"])])
         time.sleep(0.6)
+        # Re-assert the precondition this row stands on. The cleanup above
+        # leaves a trail of real clicks in the stream, and one resume-by-click is
+        # all it takes to silently recapture; judging the hover while captured
+        # tests nothing and blames the app for the harness (twice observed on
+        # hardware at 01:13 and 01:23). The log is authoritative for capture
+        # state: whichever of the two state lines came last says who owns it.
+        ensure_released("before focus row")
         # Focus-loss recovery. The honest user path on a fullscreen Space:
         # another app goes frontmost (macOS leaves the stream's Space visible),
         # and the app is summoned back through the lobby's own "show stream"
@@ -508,7 +672,7 @@ def main():
             run([helper, "click", str(btn[0]), str(btn[1])])
             # Re-entering the stream recaptures the pointer by design; restore
             # the precondition this mode stands on before judging the hover.
-            if mode == "released":
+            if mode != "locked":
                 time.sleep(0.8)
                 run([helper, "mod", "56", "58"])
         time.sleep(1.5)

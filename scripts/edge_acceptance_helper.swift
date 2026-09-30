@@ -57,6 +57,23 @@ case "click":
     if let d = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: p, mouseButton: .left) { d.post(tap: .cghidEventTap) }
     usleep(40_000)
     if let u = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: p, mouseButton: .left) { u.post(tap: .cghidEventTap) }
+case "dbl":
+    // dbl x y: one press+release pair with clickState=2, which is how AppKit
+    // delivers a real double-click (clickCount 2). Two single clicks posted back
+    // to back read as two singles to some gesture recognisers, which is why a
+    // synthetic double-press sometimes only selected the card.
+    guard args.count == 4 else { die("dbl x y") }
+    let p = CGPoint(x: Double(args[2])!, y: Double(args[3])!)
+    CGWarpMouseCursorPosition(p)
+    if let d = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: p, mouseButton: .left) {
+        d.setIntegerValueField(.mouseEventClickState, value: 2)
+        d.post(tap: .cghidEventTap)
+    }
+    usleep(40_000)
+    if let u = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: p, mouseButton: .left) {
+        u.setIntegerValueField(.mouseEventClickState, value: 2)
+        u.post(tap: .cghidEventTap)
+    }
 case "down":
     guard args.count == 4 else { die("down x y") }
     let p = CGPoint(x: Double(args[2])!, y: Double(args[3])!)
@@ -86,6 +103,26 @@ case "up":
     let p = CGPoint(x: Double(args[2])!, y: Double(args[3])!)
     CGWarpMouseCursorPosition(p)
     if let u = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: p, mouseButton: .left) { u.post(tap: .cghidEventTap) }
+case "flick":
+    // flick dx dy steps gap_us: post `steps` mouseMoved events that carry an
+    // explicit relative delta (dx/dy split evenly) with a fixed gap, so a locked
+    // session sees one continuous stroke without the pointer being warped. This
+    // is the closest reproducible stand-in for a wrist flick on real hardware;
+    // the matrix still records it as injected, not hardware.
+    guard args.count == 6 else { die("flick dx dy steps gap_us") }
+    let dx = Double(args[2])!, dy = Double(args[3])!
+    let steps = Int(args[4])!, gap = UInt32(args[5])!
+    let start = CGEvent(source: nil)?.location ?? .zero
+    for i in 0..<steps {
+        guard let m = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                              mouseCursorPosition: CGPoint(x: start.x + dx * Double(i + 1) / Double(steps),
+                                                           y: start.y + dy * Double(i + 1) / Double(steps)),
+                              mouseButton: .left) else { continue }
+        m.setIntegerValueField(.mouseEventDeltaX, value: Int64(dx / Double(steps)))
+        m.setIntegerValueField(.mouseEventDeltaY, value: Int64(dy / Double(steps)))
+        m.post(tap: .cghidEventTap)
+        usleep(gap)
+    }
 case "mod":
     // mod <codeA> <codeB>: A down, B down while A is held, then both up. That
     // is the only shape where a modifierOnly rule on A+B can see both flags

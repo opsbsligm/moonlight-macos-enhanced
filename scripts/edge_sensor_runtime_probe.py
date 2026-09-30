@@ -144,6 +144,8 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 @property NSTimer *edgeSensorDwellTimer;
 @property CGFloat edgeMenuButtonEdgeRatio;
 @property double edgeSensorIgnoreMotionUntilMs, suppressFreeMouseEdgeUncaptureUntilMs, edgeSensorLastRefusalLogMs;
+@property double edgeSensorFlickSegmentStartMs, edgeSensorFlickLastEventMs, edgeSensorFlickTravel, edgeSensorFlickCooldownUntilMs;
+@property NSInteger edgeSensorFlickDirection;
 @property double fakeNowMs;
 @property MLFreeMouseExitEdge edgeMenuDockEdge, freeEdge;
 @property NSInteger summons;
@@ -538,9 +540,15 @@ int main(void) { @autoreleasepool {
     s.systemPoint=NSMakePoint(1921,540); move(s,0,0);
     CHECK(!s.edgeSensorDwellTimer, "pointer on another display cannot arm");
     s=fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode=NO; s.systemPoint=NSMakePoint(1918,540);
-    for(int i=0;i<100;i++)move(s,1000,0);
+    // Away-from-dock strokes: hover cannot run on a guessed position and the flick
+    // must not read them as an entry toward the dock. Both entries stay silent.
+    for(int i=0;i<100;i++)move(s,-1000,0);
     CHECK(!s.edgeSensorDwellTimer && s.isMouseCaptured && !s.expanded, "locked game motion never invents a remote cursor");
     CHECK(!s.edgeMenuHandleArmed, "locked motion never lights a tab the player could not click");
+    // Toward-dock motion is the flick entry, not a hover: it may open the bar but it
+    // never arms a dwell or lights the tab from a position the game pointer does not own.
+    for(int i=0;i<5;i++)move(s,20,0);
+    CHECK(!s.edgeSensorDwellTimer && !s.edgeMenuHandleArmed && !s.expanded, "short locked strokes arm neither dwell nor tab nor bar");
     {
         // A lit tab has to be clickable wherever a lit tab is allowed to exist. Remote desktop
         // mode keeps the capture bookkeeping on while the local pointer stays authoritative --
@@ -588,8 +596,11 @@ int main(void) { @autoreleasepool {
               "thirty cycles leave no timer, no light and no latch behind");
     }
 
+    // Fresh session for the released-pointer contract: the locked strokes above may
+    // have opened a bar, and a released player starts from a clean, uncaptured tab.
+    s=fresh(MLFreeMouseExitEdgeRight);
     [s releaseInputToLocalControlWithCode:@"test" reason:@"explicit"];
-    s.edgeSensorIgnoreMotionUntilMs=0; move(s,0,0); fire(s.edgeSensorDwellTimer);
+    s.systemPoint=NSMakePoint(1918,540); s.edgeSensorIgnoreMotionUntilMs=0; move(s,0,0); fire(s.edgeSensorDwellTimer);
     CHECK(s.edgeMenuHandleArmed && s.userReleasedInput && !s.expanded,
           "released game mode lights the tab without promising a bar it did not open");
     CHECK([s expandEdgeMenuForLocalClickAtCurrentPointer] && s.expanded && !s.edgeMenuTemporaryReleaseActive,
@@ -823,6 +834,55 @@ int main(void) { @autoreleasepool {
         move(s, -15, 0); move(s, -15, 0);
     }
     CHECK(!s.expanded && s.isMouseCaptured, "a held button cannot open the bar either");
+    // The locked-mode pointer entry the player actually asked for: arrive at the
+    // edge by FLICKING into it. One stroke, one direction, fast: 10 events of 80pt
+    // inside 150ms is 800pt at ~5300pt/s, a scale and speed the aim schedules above
+    // never reach. The dock opens with the pointer handed to it (temporary release),
+    // exactly like arriving at the edge in free mode.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 10; k++) moveAt(s, 10000 + k * 15, 80, 0);
+    CHECK(s.expanded && !s.isMouseCaptured && s.edgeMenuTemporaryReleaseActive,
+          "one fast flick at the docked edge opens the bar and hands it the pointer");
+    // The cooldown: the collapse animation trails more motion, and a bar that
+    // reopens under a pointer that just closed it reads as "it will not close".
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 10; k++) moveAt(s, 20000 + k * 15, 80, 0);
+    CHECK(s.expanded, "the first flick opens the bar");
+    [s setEdgeMenuButtonExpanded:NO animated:NO]; s.isMouseCaptured = YES; s.edgeMenuTemporaryReleaseActive = NO;
+    [s transitionEdgeMenuToPhase:MLEdgeMenuPhaseCollapsed];
+    for (int k = 0; k < 10; k++) moveAt(s, 21000 + k * 15, 80, 0);
+    CHECK(!s.expanded, "the cooldown swallows the flick that follows one stroke later");
+    for (int k = 0; k < 10; k++) moveAt(s, 23000 + k * 15, -80, 0);
+    CHECK(!s.expanded, "a flick at the opposite edge cannot dodge the cooldown");
+    for (int k = 0; k < 10; k++) moveAt(s, 24500 + k * 15, 80, 0);
+    CHECK(s.expanded, "after the cooldown the flick entry works again");
+    // Direction is part of the gesture: a fast pull AWAY from the docked edge is a
+    // game motion, and a cross-axis streak is aiming past the dock.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 10; k++) moveAt(s, 30000 + k * 15, -80, 0);
+    CHECK(!s.expanded && s.isMouseCaptured, "a flick away from the docked edge stays in the game");
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 10; k++) moveAt(s, 31000 + k * 15, 20, 80);
+    CHECK(!s.expanded && s.isMouseCaptured, "a fast vertical streak past a horizontal dock is aim, not arrival");
+    // The reversed stroke breaks the accumulation: out 400, one frame back, out 400
+    // travelled 800pt gross and must still be inert, because the pull-back is exactly
+    // what corrective aiming looks like.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 5; k++) moveAt(s, 40000 + k * 15, 80, 0);
+    moveAt(s, 40090, -80, 0);
+    for (int k = 0; k < 6; k++) moveAt(s, 40100 + k * 15, 80, 0);
+    CHECK(!s.expanded && s.isMouseCaptured, "one reversed frame inside a flick cancels the gesture");
+    // Same travel spread across a second is a drag, not a flick: age caps the stroke.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 10; k++) moveAt(s, 50000 + k * 120, 80, 0);
+    CHECK(!s.expanded && s.isMouseCaptured, "800pt walked slowly is not an arrival");
+    // The stroke-length guard inside the trigger has to be load-bearing, not mirrored by
+    // the trailing reset alone: 720pt at a steady 90ms cadence never breaks the re-steer
+    // gap, so nothing but the age term in the trigger can refuse it. A swipe across the
+    // desk is what this reads as; dropping the term would open the bar under it.
+    s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
+    for (int k = 0; k < 4; k++) moveAt(s, 60000 + k * 90, 180, 0);
+    CHECK(!s.expanded && s.isMouseCaptured, "720pt at a steady 90ms cadence is a swipe, not a flick");
     // And the freed pointer still works: releasing, not flicking, is what makes the tab
     // reachable, so the negative contract above must not have cost the positive one.
     s = fresh(MLFreeMouseExitEdgeRight); s.isRemoteDesktopMode = NO;
@@ -1022,6 +1082,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (void)releaseInputToLocalControlWithCode:', '- (void)resumeInputForExplicitStreamClick:',
         '- (NSPoint)edgeSensorPointForEvent:', '- (void)beginEdgeSensorDwellTimerIfNeededForEdge:',
         '- (void)armEdgeMenuHandleIfStillAtEdge:', '- (BOOL)handleEdgeSensorSummonForEvent:', '- (NSString *)edgeSensorSummonBlocker',
+        '- (BOOL)noteLockedEdgeFlickMotionForEvent:',
         '- (void)summonEdgeMenuDockForEdge:',
         '- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer', '- (void)mouseDown:', '- (void)mouseUp:',
     ]
@@ -1086,7 +1147,10 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('arrival at the edge still grabs the pointer', '    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;', '    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];\n    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;'),
                 ('the tab ignores where the player dragged it', 'return minValue + available * MIN(MAX(self.edgeMenuButtonEdgeRatio, 0.0), 1.0);', 'return minValue + available * 0.5;'),
                 ('the lit tab shrinks under the pointer that is clicking it', '        if (![self edgeSensorPointIsOnVisibleHandle:point]) [self resetEdgeSensorSummonState];', '        if (YES) [self resetEdgeSensorSummonState];'),
-                ('locked motion opens the bar again', '        // here may only ever take a light off the tab.\n        [self resetEdgeSensorSummonState];\n        return NO;', '        // here may only ever take a light off the tab.\n        [self resetEdgeSensorSummonState];\n        [self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"edge-sensor-push"];\n        return NO;'),
+                ('locked flick opens on any motion', 'if (travel >= MLEdgeSensorFlickMinTravel', 'if (travel >= 0.0'),
+                ('locked flick ignores the stroke age', 'if (travel >= MLEdgeSensorFlickMinTravel && now - self.edgeSensorFlickSegmentStartMs <= MLEdgeSensorFlickWindowSeconds * 1000.0', 'if (travel >= MLEdgeSensorFlickMinTravel'),
+                ('locked flick ignores the cooldown', 'if (now < self.edgeSensorFlickCooldownUntilMs) {', 'if (NO) {'),
+                ('locked flick counts a reversed stroke', 'self.edgeSensorFlickTravel = 0;\n        self.edgeSensorFlickDirection = 0;\n        self.edgeSensorFlickSegmentStartMs = 0;\n        return NO;', 'self.edgeSensorFlickDirection = 0;\n        return NO;'),
                 ('the hit rect ignores what the player can see', 'NSRect handle = [self edgeMenuVisibleHandleRectInBounds:self.view.bounds];', 'NSRect handle = [self edgeMenuInteractionRectInBounds:self.view.bounds];'),
                 ('arming is invisible', 'return self.edgeMenuHandleArmed ? MLEdgeMenuHandleArmedThickness : MLEdgeMenuHandleIdleThickness;', 'return MLEdgeMenuHandleIdleThickness;'),
                 ('the click target reads the wrong axis for a horizontal dock', 'BOOL verticalDock = self.edgeMenuDockEdge == MLFreeMouseExitEdgeLeft ||\n                        self.edgeMenuDockEdge == MLFreeMouseExitEdgeRight;', 'BOOL verticalDock = YES;'),
