@@ -375,6 +375,39 @@ def main():
                "window set changed on open (%d new/%d gone) and restored on close: %s"
                % (len(new_wins), len(gone_wins), restored), path_open)
 
+        # Menu open/close/cancel and press-through, judged from the window
+        # set: the expanded panel shifts the handle window 22 pt outward, and
+        # every transition is a window-geometry fact, not a pixel guess.
+        def wins_now():
+            return sorted(run([helper, "wins", str(pid)]).stdout.splitlines())
+        base_w = wins_now()
+        run([helper, "move", str(hp[0]), str(hp[1])])
+        time.sleep(0.4)
+        run([helper, "click", str(hp[0]), str(hp[1])])
+        time.sleep(0.8)
+        opened_w = wins_now()
+        run([helper, "click", str(centre["x"]), str(centre["y"])])
+        time.sleep(0.8)
+        closed_w = wins_now()
+        ok = opened_w != base_w and closed_w == base_w
+        record("menu opens on the handle and cancels outside",
+               "PASS" if ok else "FAIL",
+               "open changed the window set: %s; click-away restored: %s"
+               % (opened_w != base_w, closed_w == base_w))
+        clean = 0
+        for _ in range(5):
+            run([helper, "down", str(centre["x"]), str(centre["y"])])
+            run([helper, "move", str(hp[0]), str(hp[1])])
+            time.sleep(0.3)
+            run([helper, "up", str(hp[0]), str(hp[1])])
+            time.sleep(0.3)
+        clean += wins_now() == base_w
+        record("held-drag across the edge x5 does not summon the menu",
+               "PASS" if clean else "FAIL", "window set stayed at baseline: %s" % bool(clean))
+        # the stream may now hold a stale hover; park the pointer
+        run([helper, "move", str(centre["x"]), str(centre["y"])])
+        time.sleep(0.6)
+
     if mode == "released":
         record("shift+option released the pointer", "PASS",
                "user asserted the released state; the tool took it as the entry condition")
