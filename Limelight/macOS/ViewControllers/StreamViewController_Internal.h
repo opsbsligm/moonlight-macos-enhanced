@@ -130,6 +130,16 @@ static CGFloat const MLEdgeSensorBandWidth = 12.0;
 // edge read as ignored, so the wait is now below the threshold where a hover response feels
 // delayed, while still being a timer so the fire-time revalidation keeps its meaning.
 static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.12;
+// Locked game motion has no local cursor to hover with, and a player who never
+// releases the pointer has no edge to arrive at. The pointer entry for that mode
+// is a flick: one continuous same-direction push at the docked edge, fast enough
+// that aiming cannot fake it. The old slam gesture died because 144pt inside 1.5s
+// is ordinary aim; these thresholds ask for ~2800pt/s of pure one-way travel,
+// a reversed stroke breaks the accumulation, and a second flick waits two seconds.
+static CGFloat const MLEdgeSensorFlickMinTravel = 700.0;
+static NSTimeInterval const MLEdgeSensorFlickWindowSeconds = 0.25;
+static NSTimeInterval const MLEdgeSensorFlickResteerGapSeconds = 0.12;
+static NSTimeInterval const MLEdgeSensorFlickCooldownMs = 2000.0;
 
 // A locked relative-mode pointer has no authoritative position, and the accumulated-motion
 // gesture that used to stand in for arrival is deleted, not retuned: a 48pt flick, a 24pt
@@ -523,6 +533,13 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) BOOL edgeMenuClickConsumedLocally;
 @property (nonatomic) double edgeSensorLastSampleLogMs;
 @property (nonatomic) double edgeSensorLastRefusalLogMs;
+// The flick accumulator is one stroke, not a history: the moment the pointer
+// reverses or pauses, the stroke is over. What survives is only the cooldown.
+@property (nonatomic) double edgeSensorFlickSegmentStartMs;
+@property (nonatomic) double edgeSensorFlickLastEventMs;
+@property (nonatomic) double edgeSensorFlickTravel;
+@property (nonatomic) NSInteger edgeSensorFlickDirection;
+@property (nonatomic) double edgeSensorFlickCooldownUntilMs;
 // The three-way capture mode read from settings, and whether the system's global hotkeys
 // are ours to suppress right now. The second is a claim about the outside world, so it is
 // only written after the call that changes it reported success.
@@ -689,6 +706,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 // call reaches the menu one, so these belong to the capture interface.
 - (NSString *)edgeSensorSummonBlocker;
 - (BOOL)handleEdgeSensorSummonForEvent:(NSEvent *)event;
+- (BOOL)noteLockedEdgeFlickMotionForEvent:(NSEvent *)event;
 - (void)refreshEdgeSensorSummonPreference;
 - (void)resetEdgeSensorSummonState;
 - (void)resetEdgeSensorPointerState;
