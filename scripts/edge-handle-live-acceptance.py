@@ -86,15 +86,17 @@ def band_detect(img, edge="right", scale=1.0):
     w, h = img.size
     def near_white(r, g, b):
         return min(r, g, b) > 195 and (max(r, g, b) - min(r, g, b)) < 45
-    # scan per column along the strip axis
-    strip = int(MAX_DEPTH * scale)
+    # scan per column (left/right edges) or per row (top/bottom edges)
+    strip = int((MAX_DEPTH if edge in ("right", "left") else 100) * scale)
     runs = []
     for depth in range(strip):
         coord = (w - 1 - depth) if edge == "right" else depth
         best = cur = 0
         best_lo = lo = 0
-        for y in range(h):
-            r, g, b = px[coord, y][:3]
+        scan_along = range(h) if edge in ("right", "left") else range(w)
+        for y in scan_along:
+            r, g, b = (px[coord, y][:3] if edge in ("right", "left")
+                       else px[y, (h - 1 - depth) if edge == "bottom" else depth][:3])
             if near_white(r, g, b):
                 if cur == 0:
                     lo = y
@@ -111,17 +113,27 @@ def band_detect(img, edge="right", scale=1.0):
     # app, and failed a perfectly painted handle. Allow a bounded outer gap --
     # but the band must still start within OUTER_GAP px of the screen edge, so
     # mid-strip video content cannot pose as the handle.
-    OUTER_GAP = int(round(4 * scale))
+    # Left/right docks sit flush with the physical edge; a top/bottom dock is
+    # anchored to the VIDEO area, which sits below the menu-bar strip, so the
+    # handle starts ~30 px in there. The gap must cover that anchor offset or
+    # the detector measures its own assumption instead of the app.
+    OUTER_GAP = int(round((4 if edge in ("right", "left") else 60) * scale))
     width_cols = 0
     centre = None
     started = False
+    start_depth = 0
     for depth, length, lo in runs:
         if length >= min_run:
             if not started:
                 if depth > OUTER_GAP:
                     break  # nothing handle-like near the edge
                 started = True
-            width_cols = depth + 1
+                start_depth = depth
+            # Left/right: count from the physical edge, the small start gap is
+            # the capsule's own anti-aliased margin. Top/bottom: measure from
+            # where the band starts -- the dock anchors to the video area and
+            # raw depth would count that offset as handle width.
+            width_cols = depth + 1 - (start_depth if edge in ("top", "bottom") else 0)
             centre = (lo + length / 2.0) / scale
         elif started and runs[depth - 1][1] >= min_run and length >= min_run * 0.5:
             continue  # single-column video gap
@@ -131,10 +143,11 @@ def band_detect(img, edge="right", scale=1.0):
             break
     if width_cols == 0:
         return None
-    return {"width_pt": width_cols / scale, "centre_pt": centre}
+    return {"width_pt": width_cols / scale, "centre_pt": centre,
+            "start_depth_pt": start_depth / scale}
 
 
-def strip_signature(img, edge, handle_c, scale):
+def strip_signature(img, edge, handle_c, scale, start_depth=0.0):
     """Colour signature of the handle neighbourhood, independent of the armed
     look. The earlier rule assumed armed = a wider near-white band; on this
     build the armed handle paints in the accent colour instead, so the white
@@ -143,6 +156,7 @@ def strip_signature(img, edge, handle_c, scale):
     dwells and returns when it leaves -- whatever the armed look is."""
     px = img.load()
     w, h = img.size
+    sig_start_depth = start_depth
     half = int(34 * scale)
     y0 = max(0, int(handle_c * scale) - half)
     y1 = min(h, int(handle_c * scale) + half)
@@ -152,10 +166,12 @@ def strip_signature(img, edge, handle_c, scale):
         x0, x1 = 0, int(30 * scale)
     elif edge == "top":
         x0, x1 = max(0, int(handle_c * scale) - half), min(w, int(handle_c * scale) + half)
-        y0, y1 = 0, int(30 * scale)
+        y0 = min(y0, int(sig_start_depth * scale))
+        y1 = max(y1, int((sig_start_depth + 30) * scale))
     else:
         x0, x1 = max(0, int(handle_c * scale) - half), min(w, int(handle_c * scale) + half)
-        y0, y1 = h - int(30 * scale), h
+        y1 = max(0, h - int(sig_start_depth * scale))
+        y0 = min(y0, h - int((sig_start_depth + 30) * scale))
     white = blue = dark = other = 0
     for x in range(x0, x1):
         for y in range(y0, y1):
@@ -354,8 +370,11 @@ def main():
                "PASS" if base["width_pt"] <= IDLE_MAX else "FAIL",
                "idle band %.1f pt (expect <= %.0f)" % (base["width_pt"], IDLE_MAX), path)
         handle_c = base["centre_pt"] or h / 2.0
+        start_d = base.get("start_depth_pt", 0.0) or 0.0
+        band_start = start_d
         hp = {"right": (w - IDLE_PT / 2.0, handle_c), "left": (IDLE_PT / 2.0, handle_c),
-              "top": (handle_c, IDLE_PT / 2.0), "bottom": (handle_c, h - IDLE_PT / 2.0)}[args.edge]
+              "top": (handle_c, start_d + IDLE_PT / 2.0),
+              "bottom": (handle_c, h - start_d - IDLE_PT / 2.0)}[args.edge]
         if mode in ("free", "released"):
             armed_ok = collapsed_ok = 0
             from PIL import Image
@@ -363,11 +382,11 @@ def main():
                 run([helper, "move", str(centre["x"]), str(centre["y"])])
                 time.sleep(0.3)
                 p_park, _ = shot("loop-%02d-park" % i)
-                park_sig = strip_signature(Image.open(p_park), args.edge, handle_c, scale)
+                park_sig = strip_signature(Image.open(p_park), args.edge, handle_c, scale, band_start)
                 run([helper, "move", str(hp[0]), str(hp[1])])
                 time.sleep(0.35)  # 0.12 s dwell lights it; 0.35 covers shot latency
                 path, _ = shot("loop-%02d-hover" % i)
-                hover_sig = strip_signature(Image.open(path), args.edge, handle_c, scale)
+                hover_sig = strip_signature(Image.open(path), args.edge, handle_c, scale, band_start)
                 # The strip must change while the pointer dwells. Video content
                 # cannot fake this: the pointer's only effect is the bar's own
                 # state, and the same dwell position is parked in the frame
@@ -377,7 +396,7 @@ def main():
                 run([helper, "move", str(centre["x"]), str(centre["y"])])
                 time.sleep(0.8)  # 0.45 s auto-collapse after the pointer leaves
                 path2, _ = shot("loop-%02d-collapse" % i)
-                back_sig = strip_signature(Image.open(path2), args.edge, handle_c, scale)
+                back_sig = strip_signature(Image.open(path2), args.edge, handle_c, scale, band_start)
                 ok2 = sig_distance(park_sig, back_sig) <= 0.05
                 if not ok2:
                     # A late collapse under main-thread jitter is a latency
@@ -385,7 +404,7 @@ def main():
                     # cares about. Give it one bounded second, then judge.
                     time.sleep(1.2)
                     path2, _ = shot("loop-%02d-collapse-retry" % i)
-                    back_sig = strip_signature(Image.open(path2), args.edge, handle_c, scale)
+                    back_sig = strip_signature(Image.open(path2), args.edge, handle_c, scale, band_start)
                     ok2 = sig_distance(park_sig, back_sig) <= 0.05
                 collapsed_ok += ok2
                 if not armed:
@@ -496,11 +515,11 @@ def main():
         run([helper, "move", str(centre["x"]), str(centre["y"])])
         time.sleep(0.4)
         p_focus, _ = shot("focus-park")
-        focus_park = strip_signature(_Img.open(p_focus), args.edge, handle_c, scale)
+        focus_park = strip_signature(_Img.open(p_focus), args.edge, handle_c, scale, band_start)
         run([helper, "move", str(hp[0]), str(hp[1])])
         time.sleep(0.35)
         p_focus2, _ = shot("focus-hover")
-        focus_hover = strip_signature(_Img.open(p_focus2), args.edge, handle_c, scale)
+        focus_hover = strip_signature(_Img.open(p_focus2), args.edge, handle_c, scale, band_start)
         focus_d = sig_distance(focus_park, focus_hover)
         # A park frame without the idle handle means the capture is not looking
         # at the stream's Space at all — that is the tool failing to re-enter,
