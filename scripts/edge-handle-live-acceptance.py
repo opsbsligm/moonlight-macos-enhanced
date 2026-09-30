@@ -195,6 +195,11 @@ def main():
     helper = ensure_helper()
     if run(["pgrep", "-x", "MoonlightEnhanced"]).returncode:
         sys.exit("MoonlightEnhanced is not running; start it and connect to the host first")
+    if run([helper, "locked"]).stdout.strip() == "1":
+        # A locked screen produces black captures with every window still in
+        # place; judging the bar from that would blame the app for the room.
+        # This is an environment gate, not an acceptance result.
+        sys.exit("screen is locked: unlock first (environment gate, not an app failure)")
     screens = [[float(v) for v in line.split()] for line in
                run([helper, "screens"]).stdout.splitlines() if line.strip()]
     if not screens:
