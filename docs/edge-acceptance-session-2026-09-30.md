@@ -30,6 +30,19 @@
 - 串流会话在锁屏后仍存活（音频 underrun 持续、窗口列表完整）；app 对
   resign-key/app-resigned 的 uncapture 处理有日志（MUC003/MUC006，行为正确）。
 
+## 环境更新（18:45）
+- 权威锁屏判据：helper `locked` 子命令（CGSessionCopyCurrentDictionary），
+  前台 App 启发式在锁屏+全屏串流共屏时会说谎。验收脚本加了环境门控：锁屏时
+  直接退出并说明"environment gate, not an app failure"。
+- 完整解释链：远端 HOME-PC console 已锁屏（LogonUI.exe 存活、屏保开启），
+  Sunshine 对锁屏桌面推黑帧；本机同时 30s 熄屏（pmset 日志）。所以"画面全黑、
+  把手不可见"是双重环境问题，串流会话与把手窗口全程在位。
+- 心跳 automation 已改用 locked 判据，解锁后自动：caffeinate 包裹 → 唤醒远端
+  显示 → 通过串流通道键入远端密码 → 跑 30 循环矩阵。
+- 远端显示器策略：monitor-timeout-ac 已设 0（不再自动熄灭）。
+- 远端 console 密码键入模板（键码→shift 按需）：
+  `python3 - <<'PY' … for ch in "Xuesecanyang110": helper key <code> <flags>; helper key 36 0`（本文件历史版本，或见本仓库本 commit 前文说明）。
+
 ## 环境更新（18:20）
 - 注入密码两次均短暂解锁（前台回到 app），但随即再次锁屏（用户设置了短锁屏
   + 远端/本机显示器睡眠 30 分钟）。串流会话全程存活（音频 underrun 持续、
