@@ -62,6 +62,25 @@ case "down":
     let p = CGPoint(x: Double(args[2])!, y: Double(args[3])!)
     CGWarpMouseCursorPosition(p)
     if let d = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: p, mouseButton: .left) { d.post(tap: .cghidEventTap) }
+case "drag":
+    // drag x1 y1 x2 y2: press at x1y1, glide in bounded steps to x2y2, release.
+    // Stepwise moves are what an NSPanGestureRecognizer needs to see Began ->
+    // Changed... -> Ended; a single warp would read as a click.
+    guard args.count == 6 else { die("drag x1 y1 x2 y2") }
+    let p1 = CGPoint(x: Double(args[2])!, y: Double(args[3])!)
+    let p2 = CGPoint(x: Double(args[4])!, y: Double(args[5])!)
+    CGWarpMouseCursorPosition(p1)
+    if let d = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: p1, mouseButton: .left) { d.post(tap: .cghidEventTap) }
+    let steps = 20
+    for i in 1...steps {
+        let t = Double(i) / Double(steps)
+        let p = CGPoint(x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t)
+        CGWarpMouseCursorPosition(p)
+        if let m = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left) { m.post(tap: .cghidEventTap) }
+        usleep(15_000)
+    }
+    usleep(60_000)
+    if let u = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: p2, mouseButton: .left) { u.post(tap: .cghidEventTap) }
 case "up":
     guard args.count == 4 else { die("up x y") }
     let p = CGPoint(x: Double(args[2])!, y: Double(args[3])!)
