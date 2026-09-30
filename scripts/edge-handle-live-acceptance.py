@@ -82,14 +82,28 @@ def band_detect(img, edge="right", scale=1.0):
                 cur = 0
         runs.append((depth, best, best_lo))
     min_run = 0.6 * 48.0 * scale
+    # The handle is a capsule with a shadow: the outermost 0..OUTER_GAP columns
+    # are anti-aliased corner pixels that fail near_white even at full idle.
+    # Demanding a hit in column zero measured the screenshot pipeline, not the
+    # app, and failed a perfectly painted handle. Allow a bounded outer gap --
+    # but the band must still start within OUTER_GAP px of the screen edge, so
+    # mid-strip video content cannot pose as the handle.
+    OUTER_GAP = int(round(4 * scale))
     width_cols = 0
     centre = None
-    for depth, length, lo in runs:  # contiguous from the outermost column
+    started = False
+    for depth, length, lo in runs:
         if length >= min_run:
+            if not started:
+                if depth > OUTER_GAP:
+                    break  # nothing handle-like near the edge
+                started = True
             width_cols = depth + 1
             centre = (lo + length / 2.0) / scale
-        elif depth and runs[depth - 1][1] >= min_run and length >= min_run * 0.5:
+        elif started and runs[depth - 1][1] >= min_run and length >= min_run * 0.5:
             continue  # single-column video gap
+        elif not started and depth <= OUTER_GAP:
+            continue  # anti-aliased capsule margin before the band starts
         else:
             break
     if width_cols == 0:
@@ -132,6 +146,28 @@ def self_test():
     for x in range(800 - 30, 800 - 22):      # armed widening past the wall
         for y in range(0, 600):
             hover.putpixel((x, y), (246, 247, 251))
+    # Regression: the shipped handle is a rounded capsule with a shadow, so on
+    # a real screenshot the first two columns are anti-aliased and dim. A
+    # detector that insists on column zero rejects the handle the app actually
+    # paints (this is exactly how 1720's first live run produced a false FAIL).
+    cap = Image.new("RGB", (800, 600), (38, 42, 48))
+    for x in range(800 - 12, 798):          # 14 pt capsule, 2 px off the edge
+        for y in range(276, 324):
+            cap.putpixel((x, y), (246, 247, 251))
+    got_cap = band_detect(cap, "right")
+    cap_ok = got_cap and 12 <= got_cap["width_pt"] <= IDLE_MAX
+    print("%-4s synthetic capsule-with-margin band: %s" % ("ok" if cap_ok else "FAIL",
+          "none" if not got_cap else "%.1f pt" % got_cap["width_pt"]))
+    fails += 0 if cap_ok else 1
+    # And the gap must stay bounded: a bright block 10 px in is content, not handle.
+    far = Image.new("RGB", (800, 600), (38, 42, 48))
+    for x in range(800 - 24, 800 - 10):
+        for y in range(276, 324):
+            far.putpixel((x, y), (246, 247, 251))
+    far_ok = band_detect(far, "right") is None
+    print("%-4s synthetic mid-strip block rejected: %s" % ("ok" if far_ok else "FAIL",
+          "rejected" if far_ok else "accepted"))
+    fails += 0 if far_ok else 1
     b, hv = band_detect(base, "right"), band_detect(hover, "right")
     bw = b["width_pt"] if b else 0.0
     hw = hv["width_pt"] if hv else 0.0
@@ -183,7 +219,16 @@ def main():
     out = tempfile.mkdtemp(prefix="mle-edge-acceptance-")
     def shot(tag):
         path = os.path.join(out, tag + ".png")
-        run(["screencapture", "-x", "-o", "-R", "0,0,%d,%d" % (int(w), int(h)), path])
+        # -R capture can transiently fail ("could not create image from rect")
+        # while spaces/fullscreen animations run; a full capture + crop cannot
+        # silently drop a frame, and the crop is pixel-identical at origin 0,0.
+        full = path + ".full.png"
+        if run(["screencapture", "-x", "-o", full]).returncode:
+            return path, None
+        from PIL import Image
+        img = Image.open(full)
+        img.crop((0, 0, int(w), int(h))).save(path)
+        os.remove(full)
         try:
             from PIL import Image
             img = Image.open(path)
@@ -245,13 +290,17 @@ def main():
         else:
             record("hover/collapse loops", "N/A", "locked mode has no local hover; entry is the shortcut")
 
-        run([helper, "key", "8", "0x180000"])  # control+option+C, as configured on this host
-        time.sleep(0.5)
+        # The keyDown+flags shortcut cannot be trusted through a pre-set-flags
+        # event; combo injects control down, option down, C with both held —
+        # the same shape a hand produces. 0x180000 was command+option, a typo
+        # that made the shortcut look dead on this host (ctrl+option is 0xC0000).
+        run([helper, "combo", "8"])
+        time.sleep(0.6)
         path, _ = shot("ctrl-opt-c-open")
         record("control+option+C opens the bar", "CHECK",
                "pixel verdict needs the panel geometry; open the shot and confirm", path)
-        run([helper, "key", "8", "0x180000"])
-        time.sleep(0.4)
+        run([helper, "combo", "8"])
+        time.sleep(0.5)
         path, _ = shot("ctrl-opt-c-close")
         record("control+option+C again collapses", "CHECK", "confirm in the screenshot", path)
 
