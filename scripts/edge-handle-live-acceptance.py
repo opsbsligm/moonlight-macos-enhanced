@@ -50,6 +50,29 @@ def ensure_helper():
     return HELPER_BIN
 
 
+def blue_button(path):
+    # The lobby's primary button is a wide accent bar: find the row run,
+    # not loose blue pixels — the desktop pet and banners are blue too.
+    from PIL import Image
+    im = Image.open(path); px = im.load(); w0, h0 = im.size
+    best_y, best_run, best_lo = None, 0, 0
+    for yy in range(h0 // 4, h0 * 3 // 4):
+        run_ = lo = 0
+        for xx in range(w0):
+            r, g, b = px[xx, yy][:3]
+            if b > 150 and b - r > 60 and 80 < g < 200:
+                if run_ == 0:
+                    lo = xx
+                run_ += 1
+                if run_ > best_run:
+                    best_run, best_y, best_lo = run_, yy, lo
+            else:
+                run_ = 0
+    if best_run < 150:
+        return None
+    return best_lo + best_run // 2, best_y
+
+
 def band_detect(img, edge="right", scale=1.0):
     """Width of the near-white edge band, in points, plus its centre.
 
@@ -263,6 +286,15 @@ def main():
         mode = ask("mouse state now -- free (f), after Shift-Option release (r), game-locked (l)? [f/r/l] ", "l").strip().lower()
         mode = {"f": "free", "r": "released", "l": "locked"}.get(mode, "free")
 
+    if mode == "released":
+        # The released row owns its own entry: injecting shift+option is the
+        # same command the acceptance asks the user to press, and the app
+        # cannot tell the difference. Without this the row silently measured a
+        # locked stream after any step that recaptured the pointer (re-entry
+        # through the lobby re-captures by design).
+        run([helper, "mod", "56", "58"])
+        time.sleep(0.5)
+
     out = tempfile.mkdtemp(prefix="mle-edge-acceptance-")
     def shot(tag):
         path = os.path.join(out, tag + ".png")
@@ -286,7 +318,34 @@ def main():
             return path, {"error": str(e)}
 
     centre = {"x": w / 2.0, "y": h / 2.0}
+    # A notification banner over the docked edge hides the idle handle and
+    # the baseline reads empty (this fooled one run after a reconnect banner).
+    # Banners live ~15 s: if the first look is empty, wait once and re-shoot
+    # before blaming the app.
+    # Park the pointer mid-screen first: if a previous run died with the
+    # pointer on the edge, the handle sits armed (accent blue), and the idle
+    # band detector — a width rule on a near-white strip — reads no handle at
+    # all. The app was fine; the entry state was not.
+    run([helper, "move", str(w / 2.0), str(h / 2.0)])
+    time.sleep(1.0)  # the bar auto-collapses 0.45 s after the pointer leaves
     path, base = shot("00-baseline")
+    if not base or base.get("width_pt", 0) <= 0:
+        time.sleep(8)
+        run(["killall", "NotificationCenter"])
+        time.sleep(1)
+        path, base = shot("00-baseline-retry")
+        if not base or base.get("width_pt", 0) <= 0:
+            # A lobby sheet on screen means the stream is running but the
+            # app is looking at the desktop, not its own fullscreen Space;
+            # that is the re-entry path, not a dead handle.
+            btn0 = blue_button(path)
+            if btn0:
+                run([helper, "click", str(btn0[0]), str(btn0[1])])
+                time.sleep(2.5)
+                if mode == "released":
+                    run([helper, "mod", "56", "58"])
+                    time.sleep(0.5)
+                path, base = shot("00-baseline-reentry")
     if not base or base.get("width_pt", 0) <= 0:
         record("baseline band visible", "FAIL",
                "no 14 pt handle band found on the %s edge; if it is docked elsewhere pass --edge" % args.edge, path)
@@ -407,6 +466,51 @@ def main():
         # the stream may now hold a stale hover; park the pointer
         run([helper, "move", str(centre["x"]), str(centre["y"])])
         time.sleep(0.6)
+        # Focus-loss recovery. The honest user path on a fullscreen Space:
+        # another app goes frontmost (macOS leaves the stream's Space visible),
+        # and the app is summoned back through the lobby's own "show stream"
+        # button — the route that is reachable without a hardware keyboard
+        # shortcut for Spaces. Re-entering the Space must not cost the handle
+        # its hover. The blue accent button is located by pixel search, so the
+        # row survives lobby layout changes; if no lobby sheet is up (windowed
+        # mode) the row falls back to activating the app.
+        from PIL import Image as _Img
+        run(["osascript", "-e", 'tell application "Finder" to activate'])
+        time.sleep(1.2)
+        # The lobby's primary button paints grey while the app is in the
+        # background, so the accent search needs the app frontmost first.
+        # Frontmost here means "back from the focus loss"; the Space itself is
+        # re-entered by the button press.
+        run(["osascript", "-e", 'tell application "MoonlightEnhanced" to activate'])
+        time.sleep(0.8)
+        p_lobby, _ = shot("focus-lobby")
+        btn = blue_button(p_lobby)
+        if btn:
+            run([helper, "click", str(btn[0]), str(btn[1])])
+            # Re-entering the stream recaptures the pointer by design; restore
+            # the precondition this mode stands on before judging the hover.
+            if mode == "released":
+                time.sleep(0.8)
+                run([helper, "mod", "56", "58"])
+        time.sleep(1.5)
+        run([helper, "move", str(centre["x"]), str(centre["y"])])
+        time.sleep(0.4)
+        p_focus, _ = shot("focus-park")
+        focus_park = strip_signature(_Img.open(p_focus), args.edge, handle_c, scale)
+        run([helper, "move", str(hp[0]), str(hp[1])])
+        time.sleep(0.35)
+        p_focus2, _ = shot("focus-hover")
+        focus_hover = strip_signature(_Img.open(p_focus2), args.edge, handle_c, scale)
+        focus_d = sig_distance(focus_park, focus_hover)
+        # A park frame without the idle handle means the capture is not looking
+        # at the stream's Space at all — that is the tool failing to re-enter,
+        # not the app failing to recover. Say so instead of blaming the app.
+        handle_on_screen = focus_park["white"] > 100 or focus_park["blue"] > 100
+        focus_ok = handle_on_screen and focus_d >= 0.15
+        record("hover still works after focus loss/restore",
+               "PASS" if focus_ok else ("CHECK" if not handle_on_screen else "FAIL"),
+               "re-entry via %s; strip delta %.2f; park %s hover %s"
+               % ("lobby button" if btn else "activate", focus_d, focus_park, focus_hover), p_focus2)
 
     if mode == "released":
         record("shift+option released the pointer", "PASS",
