@@ -22,6 +22,20 @@ case "locked":
     if let d = CGSessionCopyCurrentDictionary() as? [String: Any] {
         print((d["CGSSessionScreenIsLocked"] as? Int) ?? 0)
     } else { print(0) }
+case "wins":
+    // wins <pid> : one line per window of that pid: number|layer|alpha|x|y|w|h
+    let pid = Int32(args[2])!
+    if let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+        for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid {
+            let num = w[kCGWindowNumber as String] as? Int ?? -1
+            let layer = w[kCGWindowLayer as String] as? Int ?? -999
+            let alpha = w[kCGWindowAlpha as String] as? Double ?? -1
+            let b = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+            let x = b["X"] as? Double ?? 0, y = b["Y"] as? Double ?? 0
+            let ww = b["Width"] as? Double ?? 0, hh = b["Height"] as? Double ?? 0
+            print("\(num)|\(layer)|\(alpha)|\(x)|\(y)|\(ww)|\(hh)")
+        }
+    }
 case "pos":
     let loc = CGEvent(source: nil)?.location ?? .zero
     print("\(loc.x) \(loc.y)")
@@ -60,14 +74,26 @@ case "mod":
     // nothing. Injected, so the acceptance matrix keeps saying injected.
     guard args.count == 4 else { die("mod codeA codeB") }
     let a = CGKeyCode(UInt16(args[2])!), b = CGKeyCode(UInt16(args[3])!)
-    let aFlag = CGEventFlags(rawValue: a == 56 ? 0x20 : (a == 58 ? 0x40 : (a == 59 ? 0x80 : (a == 61 ? 0x800 : 0x100))))
-    if let e = CGEvent(keyboardEventSource: nil, virtualKey: a, keyDown: true) { e.post(tap: .cghidEventTap) }
+    // Same shape as `combo`, which is proven on this host: post a real
+    // down/down/up/up sequence and let the HID layer accumulate the flag
+    // state, exactly like a pair of hands. Overwriting flags by hand broke
+    // this twice -- the legacy Carbon constants first, then a shift bit
+    // mistaken for maskSecondaryFn. The authoritative bits are
+    // shift 0x20000, control 0x40000, option 0x80000, command 0x100000, and
+    // this host's release shortcut is modifierOnly shift+option (0xA0000),
+    // read from the per-host profile, not the global default.
+    func post(_ c: CGKeyCode, _ down: Bool) {
+        if let e = CGEvent(keyboardEventSource: nil, virtualKey: c, keyDown: down) {
+            e.post(tap: .cghidEventTap)
+        }
+    }
+    post(a, true)
     usleep(80_000)
-    if let e = CGEvent(keyboardEventSource: nil, virtualKey: b, keyDown: true) { e.flags = aFlag; e.post(tap: .cghidEventTap) }
-    usleep(120_000)
-    if let e = CGEvent(keyboardEventSource: nil, virtualKey: b, keyDown: false) { e.post(tap: .cghidEventTap) }
+    post(b, true)
+    usleep(250_000)   // the app's modifierOnly settle window is 0.15 s
+    post(b, false)
     usleep(40_000)
-    if let e = CGEvent(keyboardEventSource: nil, virtualKey: a, keyDown: false) { e.post(tap: .cghidEventTap) }
+    post(a, false)
 case "combo":
     // combo <keyCode>: inject control+option+key as a real sequence — modifiers
     // go down first so the HID layer recomputes flags the same way we hold them.
