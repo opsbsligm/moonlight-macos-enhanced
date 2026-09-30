@@ -55,9 +55,16 @@ def millis(name):
 # and nothing opens. A dwell that long makes the tab look broken to a pointer that is
 # already at the edge, which is how "it lit up but nothing happened" started.
 assert float(constant('MLEdgeSensorDwellSeconds')) * 1000.0 <= 150.0, 'arriving at the edge waits too long to answer'
+def ms(name):
+    v = float(constant(name))
+    return ('%.0fs' % (v / 1000.0)) if v >= 1000.0 else ('%dms' % round(v))
 promised = [points('MLEdgeSensorBandWidth'), millis('MLEdgeSensorDwellSeconds'),
             millis('MLEdgeMenuAutoCollapseDelay'), points('MLEdgeMenuButtonWidth'),
-            millis('MLEdgeMenuSummonGraceDelay')]
+            millis('MLEdgeMenuSummonGraceDelay'),
+            # The locked-mode flick is an entry the player must be able to read about,
+            # with the same numbers the code enforces and no promises the code dropped.
+            points('MLEdgeSensorFlickMinTravel'), millis('MLEdgeSensorFlickWindowSeconds'),
+            ms('MLEdgeSensorFlickCooldownMs')]
 for locale, locked_entry in (('en', 'open-control-center'), ('zh-Hans', '控制中心')):
     strings = (root / 'Limelight/macOS' / (locale + '.lproj') / 'Localizable.strings').read_text()
     detail = re.search(r'"Edge Sensor Summon detail" = "(.*?)";\n', strings, re.S).group(1)
@@ -72,6 +79,10 @@ for locale, locked_entry in (('en', 'open-control-center'), ('zh-Hans', '控制�
     else:
         assert '点击' in detail, '%s copy still promises that hovering opens the bar' % locale
         assert '把手亮起' in detail, '%s copy never says what arriving at the edge actually does' % locale
+    if locale == 'en':
+        assert 'flick' in detail.lower(), '%s copy never names the locked-mode gesture' % locale
+    else:
+        assert '甩' in detail, '%s copy never names the locked-mode gesture' % locale
 print('PASS settings copy carries the geometry the code arms and the locked-mode entry')
 
 # Arrival must not be able to open anything, and the click must be aimed at the drawing.
