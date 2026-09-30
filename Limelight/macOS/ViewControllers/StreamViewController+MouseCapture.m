@@ -756,6 +756,12 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 - (void)resetEdgeSensorSummonState {
     [self.edgeSensorDwellTimer invalidate];
     self.edgeSensorDwellTimer = nil;
+    // The flick is one continuous stroke. Whatever ends the sensor's attention —
+    // a button press, a warp, the bar opening — ends the stroke too; the cooldown
+    // lives in its own field and survives here on purpose.
+    self.edgeSensorFlickSegmentStartMs = 0;
+    self.edgeSensorFlickTravel = 0;
+    self.edgeSensorFlickDirection = 0;
     // The tab answers the pointer that is at the edge, and only that pointer. Leaving
     // the band, pressing a button, opening the bar or losing the right to interact all
     // take the answer away; nothing else gets to clear it.
@@ -848,6 +854,75 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         reason, (long)edge, wasCaptured, MLEdgeSensorBandWidth, MLEdgeSensorDwellSeconds * 1000.0);
 }
 
+// The locked-mode edge entry. Locked events carry no trusted position, but they do
+// carry deltas, and a flick is made of deltas: one stroke, one direction toward the
+// docked edge, at least MLEdgeSensorFlickMinTravel points inside
+// MLEdgeSensorFlickWindowSeconds. Every guard is aimed at a real false trigger:
+// a reversed frame ends the stroke (corrective aim), a pause longer than
+// MLEdgeSensorFlickResteerGapSeconds ends it (a drag), and the cooldown keeps the
+// motion trailing a collapse from reopening the bar the player just dismissed. The
+// gesture is deliberately louder than the deleted slam, which armed on 144pt of
+// drift inside 1.5s — ordinary aiming at a moving target.
+- (BOOL)noteLockedEdgeFlickMotionForEvent:(NSEvent *)event {
+    double now = [self nowMs];
+    CGFloat along = 0;
+    switch (self.edgeMenuDockEdge) {
+        case MLFreeMouseExitEdgeLeft:  along = -event.deltaX; break;
+        case MLFreeMouseExitEdgeRight: along = event.deltaX; break;
+        case MLFreeMouseExitEdgeTop:   along = event.deltaY; break;
+        case MLFreeMouseExitEdgeBottom: along = -event.deltaY; break;
+        default: return NO;
+    }
+    NSInteger direction = along > 0 ? 1 : (along < 0 ? -1 : 0);
+    if (direction != 1) {
+        // Away from the dock, or still: the stroke is over. The next toward-edge
+        // event starts a fresh stroke rather than continuing this one.
+        self.edgeSensorFlickTravel = 0;
+        self.edgeSensorFlickDirection = 0;
+        self.edgeSensorFlickSegmentStartMs = 0;
+        return NO;
+    }
+    if (self.edgeSensorFlickSegmentStartMs > 0 &&
+        now - self.edgeSensorFlickLastEventMs > MLEdgeSensorFlickResteerGapSeconds * 1000.0) {
+        self.edgeSensorFlickTravel = 0;
+        self.edgeSensorFlickSegmentStartMs = 0;
+    }
+    if (self.edgeSensorFlickSegmentStartMs == 0) {
+        self.edgeSensorFlickSegmentStartMs = now;
+        self.edgeSensorFlickTravel = 0;
+    }
+    self.edgeSensorFlickLastEventMs = now;
+    self.edgeSensorFlickDirection = 1;
+    self.edgeSensorFlickTravel += fabs(along);
+    CGFloat travel = self.edgeSensorFlickTravel;
+    // Flick-trace probe (INFO, throttled): the stroke lives or dies on this
+    // accumulator, and a curated log that cannot see it turns "the flick never
+    // fired" into guesswork. Remove with the motion probe once acceptance signs off.
+    static double sLastFlickProbeMs = 0;
+    if (now - sLastFlickProbeMs >= 1000.0) {
+        sLastFlickProbeMs = now;
+        Log(LOG_I, @"[diag] Edge flick trace: travel=%.0f along=%.0f age=%.0fms",
+            travel, along, now - self.edgeSensorFlickSegmentStartMs);
+    }
+    if (travel >= MLEdgeSensorFlickMinTravel && now - self.edgeSensorFlickSegmentStartMs <= MLEdgeSensorFlickWindowSeconds * 1000.0) {
+        self.edgeSensorFlickTravel = 0;
+        self.edgeSensorFlickSegmentStartMs = 0;
+        self.edgeSensorFlickDirection = 0;
+        if (now < self.edgeSensorFlickCooldownUntilMs) {
+            return NO;  // a stroke that lands during the cooldown is spent, not queued
+        }
+        [self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"edge-flick"];
+        self.edgeSensorFlickCooldownUntilMs = now + MLEdgeSensorFlickCooldownMs;
+        return self.edgeMenuButtonExpanded;
+    }
+    if (now - self.edgeSensorFlickSegmentStartMs > MLEdgeSensorFlickWindowSeconds * 1000.0) {
+        // Too old to be one stroke any more; the next event starts a new one.
+        self.edgeSensorFlickTravel = 0;
+        self.edgeSensorFlickSegmentStartMs = 0;
+    }
+    return NO;
+}
+
 // Seven conditions decide whether the sensor may act, and they used to bail in silence.
 // The real failure log proves what that costs: a session that never mentions the sensor
 // cannot say which gate stayed shut, so "it stopped working" has no evidence to work from.
@@ -889,15 +964,14 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
             (int)(isfinite(samplePoint.x) && isfinite(samplePoint.y)), samplePoint.x, samplePoint.y);
     }
     if (lockedGameMotion) {
-        // No authoritative cursor exists while locked: hover is impossible by design. The
-        // gesture that used to stand in for arrival is gone, because completing it was not a
-        // deliberate act -- aiming at moving targets completes it many times a minute, and
-        // each completion answered by taking the pointer out of the game and opening a panel
-        // nobody asked for. Locked mode therefore has no pointer entry at all: the configured
-        // control-center shortcut opens the bar, and the configured release shortcut frees the
-        // pointer so the tab can be lit and clicked like arrival at any other edge. Motion
-        // here may only ever take a light off the tab.
-        [self resetEdgeSensorSummonState];
+        // No authoritative cursor exists while locked, so hover is impossible here and
+        // arrival is a gesture instead: one continuous same-direction stroke into the
+        // docked edge, fast enough that aiming cannot produce it (see the flick
+        // constants). The shortcut stays the other entry; motion outside one clean
+        // stroke may only ever take a light off the tab. The flick method owns the
+        // stroke state itself; a blanket reset here would clip every stroke to one
+        // frame and the gesture could never accumulate its travel.
+        if ([self noteLockedEdgeFlickMotionForEvent:event]) return YES;
         return NO;
     }
     NSPoint point = [self edgeSensorPointForEvent:event];
@@ -2850,6 +2924,21 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 }
 
 - (void)handleMouseMotionEvent:(NSEvent *)event {
+    // Motion-entry probe (INFO, throttled to one a second): the locked flick and the
+    // released hover both die silently when a mouseMoved never reaches this method,
+    // and the DEBUG-level sample line does not survive the curated log. Measured
+    // here: injected moves do arrive while locked but the WindowServer folds a
+    // posted stroke into one event, so injection cannot exercise the flick —
+    // this line is what says "the channel is live" without a wrist.
+    static double sLastMotionProbeMs = 0;
+    double probeNow = [self nowMs];
+    if (probeNow - sLastMotionProbeMs >= 1000.0) {
+        sLastMotionProbeMs = probeNow;
+        Log(LOG_I, @"[diag] Motion entry: type=%ld captured=%d locked=%d dx=%.0f dy=%.0f",
+            (long)event.type, self.isMouseCaptured,
+            self.isMouseCaptured && !self.isRemoteDesktopMode,
+            event.deltaX, event.deltaY);
+    }
     NSString *syncReason, *exitCode, *exitReason;
     switch (event.type) {
         case NSEventTypeMouseMoved:
