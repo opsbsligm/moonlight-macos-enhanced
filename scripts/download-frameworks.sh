@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The script is bash: its word-splitting loops decide what counts as prepared. build.sh
+# invoked it through zsh, where an unquoted string does not split, so every bundle read
+# as missing on a machine that held all of them, and a prepared tree still hit the
+# network on every build -- which is how a flaky CDN turned into a failed build. The
+# shebang says bash; honour that even when a caller picks another shell.
+if [[ -z "${BASH_VERSION:-}" ]]; then
+  exec bash "$0" "$@"
+fi
+
 # Download binary frameworks required for building Moonlight.
 # These are gitignored due to size and must be fetched before building.
 #

@@ -60,6 +60,11 @@ fi
 # script because that is the last moment the shipped bytes can still change; asking that
 # script for just this part needs no signing identity and no full release.
 "${SCRIPT_DIR}/codesign-bundle.sh" "$APP_PATH" --install-localizations-only
+# Installing those tables rewrites files the build-time signature already sealed, so the
+# bundle needs a fresh full signature or every later `codesign --verify --deep` fails with
+# "file added". CI re-signs its dist copy the same way; doing it here means the locally
+# built app that gets deployed is the same verified artifact the gates audited.
+"${SCRIPT_DIR}/codesign-bundle.sh" "$APP_PATH"
 
 echo "Build output: $APP_PATH"
 
