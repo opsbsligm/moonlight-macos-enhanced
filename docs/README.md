@@ -23,6 +23,7 @@
 | [`edge-sidebar-locked-entry-2026-09-28.md`](edge-sidebar-locked-entry-2026-09-28.md) | 动边缘控制栏、悬停感应或输入所有权之前必读的人 | 锁定模式为什么没有可悬停的光标、控制栏入口由谁拥有指针、`already-open` 静默拒绝怎么造成「第一次有效后续失效」，以及 30/30 的真机取证与尚未验收清单 |
 | [`release-1720-2026-09-29.md`](release-1720-2026-09-29.md) | 想知道 1720 到底装了什么、验到哪一步、怎么回滚的人 | 发布前后基线与 CI 事实、从配置 blob 实测出的 ⌃⌥C / ⇧⌥ 与全屏锁定路径、把手常量表、4256 项运行时检查与 36 个变异对照、已安装哈希与回滚位置，以及逐项标出的尚未验收 |
 | [`edge-live-acceptance-tool-2026-09-29.md`](edge-live-acceptance-tool-2026-09-29.md) | 要对边缘把手做实机验收、或想知道「尚未验收」怎么变成可核对结果的人 | 一键验收工具的判据（14/30 pt 连续近白列、合成图 3/3 自测）、注入与硬件的边界声明、锁定模式只走 ⌃⌥C 的原因，以及它为什么不进 CI |
+| [`host-connection-incident-2026-09-30.md`](host-connection-incident-2026-09-30.md) | 连不上 HOME-PC、或想知道「客户端还是远端坏了」怎么判的人 | 每个探针的实测结果、Sunshine 半死与配对重置的分层结论、四步恢复路径与恢复判据，以及 1716 回滚包失效的更正 |
 | [`memory-ownership.md`](memory-ownership.md) | 动对象所有权或内存之前必读的人 | 第一次把 `leaks` 跑在设置页路径上的实测：一手代码里的循环引用、它为什么每求值一次就累积一次、为什么不能顺手改 `weak`、做这个改动前必须先有的那条证据，以及 `leak-audit.py` 这道上限门禁的基线口径与「读不到泄漏=绿」的红证 |
 | [`input-mapping-benchmark.md`](input-mapping-benchmark.md) | 想验证「竞争力」这个说法的人 | 键盘/鼠标映射逐项对标 Parsec、UU 远程、Citrix、moonlight-qt 的结论与取证纪律（英文） |
 
