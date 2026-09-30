@@ -301,13 +301,38 @@ def main():
         # that made the shortcut look dead on this host (ctrl+option is 0xC0000).
         run([helper, "combo", "8"])
         time.sleep(0.6)
-        path, _ = shot("ctrl-opt-c-open")
-        record("control+option+C opens the bar", "CHECK",
-               "pixel verdict needs the panel geometry; open the shot and confirm", path)
+        path_open, _ = shot("ctrl-opt-c-open")
         run([helper, "combo", "8"])
         time.sleep(0.5)
-        path, _ = shot("ctrl-opt-c-close")
-        record("control+option+C again collapses", "CHECK", "confirm in the screenshot", path)
+        path_close, _ = shot("ctrl-opt-c-close")
+        # Automated verdict: the open panel paints a light region tens of
+        # points wide along the docked edge; the collapsed bar does not.
+        # Compare the two frames along the edge strip -- the delta cannot be
+        # faked by video content because both frames see the same content.
+        try:
+            from PIL import Image, ImageChops
+            a = Image.open(path_open).convert("RGB")
+            b = Image.open(path_close).convert("RGB")
+            diff = ImageChops.difference(a, b)
+            strip_w = int(min(w, 120) * scale)
+            if args.edge == "right":
+                da = diff.crop((int(w) - strip_w, 0, int(w), int(h)))
+            elif args.edge == "left":
+                da = diff.crop((0, 0, strip_w, int(h)))
+            elif args.edge == "top":
+                da = diff.crop((0, 0, int(w), strip_w))
+            else:
+                da = diff.crop((0, int(h) - strip_w, int(w), int(h)))
+            changed = sum(1 for px in da.getdata() if max(px) > 40)
+            ratio = float(changed) / max(1, da.size[0] * da.size[1])
+            opened = ratio >= 0.02
+            record("control+option+C opens/closes the panel",
+                   "PASS" if opened else "FAIL",
+                   "open/close frame diff along %s edge strip: %.3f changed (>=0.02 means the panel moved)" % (args.edge, ratio),
+                   path_open)
+        except Exception as e:
+            record("control+option+C opens/closes the panel", "CHECK",
+                   "auto-diff failed (%s); confirm in the screenshots" % e, path_open)
 
     if mode == "released":
         record("shift+option released the pointer", "PASS",
