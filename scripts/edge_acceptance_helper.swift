@@ -15,6 +15,9 @@ case "screens":
     for s in NSScreen.screens {
         print("\(s.frame.minX) \(s.frame.minY) \(s.frame.width) \(s.frame.height) \(s.backingScaleFactor)")
     }
+case "pos":
+    let loc = CGEvent(source: nil)?.location ?? .zero
+    print("\(loc.x) \(loc.y)")
 case "idle":
     let t = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .mouseMoved)
     let t2 = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
@@ -48,8 +51,8 @@ case "mod":
     // is the only shape where a modifierOnly rule on A+B can see both flags
     // held together; a single down/up pair never co-occurs and would test
     // nothing. Injected, so the acceptance matrix keeps saying injected.
-    guard args.count == 3 else { die("mod codeA codeB") }
-    let a = CGKeyCode(UInt16(args[1])!), b = CGKeyCode(UInt16(args[2])!)
+    guard args.count == 4 else { die("mod codeA codeB") }
+    let a = CGKeyCode(UInt16(args[2])!), b = CGKeyCode(UInt16(args[3])!)
     let aFlag = CGEventFlags(rawValue: a == 56 ? 0x20 : (a == 58 ? 0x40 : (a == 59 ? 0x80 : (a == 61 ? 0x800 : 0x100))))
     if let e = CGEvent(keyboardEventSource: nil, virtualKey: a, keyDown: true) { e.post(tap: .cghidEventTap) }
     usleep(80_000)
@@ -58,9 +61,31 @@ case "mod":
     if let e = CGEvent(keyboardEventSource: nil, virtualKey: b, keyDown: false) { e.post(tap: .cghidEventTap) }
     usleep(40_000)
     if let e = CGEvent(keyboardEventSource: nil, virtualKey: a, keyDown: false) { e.post(tap: .cghidEventTap) }
+case "combo":
+    // combo <keyCode>: inject control+option+key as a real sequence — modifiers
+    // go down first so the HID layer recomputes flags the same way we hold them.
+    // A keyDown posted with pre-set flags alone cannot be trusted: the event tap
+    // rebuilds flags from the physical keyboard state.
+    guard args.count == 3 else { die("combo keyCode") }
+    let k = CGKeyCode(UInt16(args[2])!)
+    func kd(_ c: CGKeyCode, _ f: CGEventFlags = []) {
+        if let e = CGEvent(keyboardEventSource: nil, virtualKey: c, keyDown: true) { e.flags = f; e.post(tap: .cghidEventTap) }
+        usleep(30_000)
+    }
+    func ku(_ c: CGKeyCode, _ f: CGEventFlags = []) {
+        if let e = CGEvent(keyboardEventSource: nil, virtualKey: c, keyDown: false) { e.flags = f; e.post(tap: .cghidEventTap) }
+        usleep(30_000)
+    }
+    let ctrl: CGEventFlags = .maskControl, alt: CGEventFlags = [.maskControl, .maskAlternate]
+    kd(59, ctrl)                      // control down
+    kd(58, alt)                       // option down while control is held
+    kd(k, alt)                        // the real key with both held
+    ku(k, alt)
+    ku(58, ctrl)                      // option up (control still down)
+    ku(59)                            // control up
 case "key":
     // key <keyCode> <flags> : down then up with the given CGEventFlags mask.
-    // 0x100000 option, 0x80000 control, 0x20000 shift. The pure-modifier release
+    // maskShift 0x20000, maskControl 0x40000, maskAlternate 0x80000, maskCommand 0x100000. The pure-modifier release
     // path uses key <shift-or-option code> with the *other* modifier already in
     // flags; the acceptance script sequences it and labels it injected.
     guard args.count == 4 else { die("key code flags") }
