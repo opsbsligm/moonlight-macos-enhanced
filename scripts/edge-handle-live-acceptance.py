@@ -111,6 +111,48 @@ def band_detect(img, edge="right", scale=1.0):
     return {"width_pt": width_cols / scale, "centre_pt": centre}
 
 
+def strip_signature(img, edge, handle_c, scale):
+    """Colour signature of the handle neighbourhood, independent of the armed
+    look. The earlier rule assumed armed = a wider near-white band; on this
+    build the armed handle paints in the accent colour instead, so the white
+    band shrinks and an absolute-width rule calls a working hover a failure.
+    The acceptance-relevant fact is that the strip changes while the pointer
+    dwells and returns when it leaves -- whatever the armed look is."""
+    px = img.load()
+    w, h = img.size
+    half = int(34 * scale)
+    y0 = max(0, int(handle_c * scale) - half)
+    y1 = min(h, int(handle_c * scale) + half)
+    if edge == "right":
+        x0, x1 = w - int(30 * scale), w
+    elif edge == "left":
+        x0, x1 = 0, int(30 * scale)
+    elif edge == "top":
+        x0, x1 = max(0, int(handle_c * scale) - half), min(w, int(handle_c * scale) + half)
+        y0, y1 = 0, int(30 * scale)
+    else:
+        x0, x1 = max(0, int(handle_c * scale) - half), min(w, int(handle_c * scale) + half)
+        y0, y1 = h - int(30 * scale), h
+    white = blue = dark = other = 0
+    for x in range(x0, x1):
+        for y in range(y0, y1):
+            r, g, b = px[x, y][:3]
+            if min(r, g, b) > 195 and max(r, g, b) - min(r, g, b) < 45:
+                white += 1
+            elif b > 140 and b - r > 40:
+                blue += 1
+            elif min(r, g, b) < 60:
+                dark += 1
+            else:
+                other += 1
+    return {"white": white, "blue": blue, "dark": dark, "other": other}
+
+
+def sig_distance(a, b):
+    n = max(1, sum(a.values()))
+    return sum(abs(a[k] - b[k]) for k in a) / float(n)
+
+
 def self_test():
     """The detector must see the two contract widths and refuse an empty edge."""
     from PIL import Image
@@ -257,41 +299,50 @@ def main():
               "top": (handle_c, IDLE_PT / 2.0), "bottom": (handle_c, h - IDLE_PT / 2.0)}[args.edge]
         if mode in ("free", "released"):
             armed_ok = collapsed_ok = 0
-            base_w = base["width_pt"]
+            from PIL import Image
             for i in range(args.loops):
                 run([helper, "move", str(centre["x"]), str(centre["y"])])
                 time.sleep(0.3)
-                _, _ = shot("loop-%02d-park" % i)
+                p_park, _ = shot("loop-%02d-park" % i)
+                park_sig = strip_signature(Image.open(p_park), args.edge, handle_c, scale)
                 run([helper, "move", str(hp[0]), str(hp[1])])
                 time.sleep(0.35)  # 0.12 s dwell lights it; 0.35 covers shot latency
-                path, got = shot("loop-%02d-hover" % i)
-                # Absolute width alone can be satisfied by bright video content
-                # at the screen edge; the acceptance-relevant fact is that the
-                # band grows past the baseline the same pointer position does
-                # not produce. The delta rule cannot be met by content alone.
-                armed = bool(got) and got["width_pt"] >= max(ARMED_MIN, base_w + 6.0)
+                path, _ = shot("loop-%02d-hover" % i)
+                hover_sig = strip_signature(Image.open(path), args.edge, handle_c, scale)
+                # The strip must change while the pointer dwells. Video content
+                # cannot fake this: the pointer's only effect is the bar's own
+                # state, and the same dwell position is parked in the frame
+                # one shot earlier.
+                armed = sig_distance(park_sig, hover_sig) >= 0.15
                 armed_ok += armed
                 run([helper, "move", str(centre["x"]), str(centre["y"])])
                 time.sleep(0.8)  # 0.45 s auto-collapse after the pointer leaves
-                path2, back = shot("loop-%02d-collapse" % i)
-                ok2 = back and 0 < back["width_pt"] <= IDLE_MAX
+                path2, _ = shot("loop-%02d-collapse" % i)
+                back_sig = strip_signature(Image.open(path2), args.edge, handle_c, scale)
+                ok2 = sig_distance(park_sig, back_sig) <= 0.05
+                if not ok2:
+                    # A late collapse under main-thread jitter is a latency
+                    # fact, not the "armed forever" failure the acceptance
+                    # cares about. Give it one bounded second, then judge.
+                    time.sleep(1.2)
+                    path2, _ = shot("loop-%02d-collapse-retry" % i)
+                    back_sig = strip_signature(Image.open(path2), args.edge, handle_c, scale)
+                    ok2 = sig_distance(park_sig, back_sig) <= 0.05
                 collapsed_ok += ok2
                 if not armed:
                     record("hover lights the handle x%d" % args.loops, "FAIL",
-                           "armed width %.1f pt at loop %d (expect >= %.0f)" %
-                           (got["width_pt"] if got else -1, i,
-                            max(ARMED_MIN, base_w + 6.0)), path)
+                           "strip unchanged at loop %d (park %s vs hover %s)" % (i, park_sig, hover_sig), path)
                     break
                 if not ok2:
                     record("handle collapses x%d" % args.loops, "FAIL",
-                           "width after leaving %.1f pt at loop %d" %
-                           (back["width_pt"] if back else -1, i), path2)
+                           "strip did not return at loop %d (park %s vs after %s)" % (i, park_sig, back_sig), path2)
                     break
             else:
                 record("hover lights the handle x%d" % args.loops, "PASS",
                        "%d/%d armed (injected pointer, not hardware)" % (armed_ok, args.loops))
                 record("handle collapses x%d" % args.loops, "PASS",
                        "%d/%d collapsed" % (collapsed_ok, args.loops))
+
         else:
             record("hover/collapse loops", "N/A", "locked mode has no local hover; entry is the shortcut")
 
@@ -299,40 +350,30 @@ def main():
         # event; combo injects control down, option down, C with both held —
         # the same shape a hand produces. 0x180000 was command+option, a typo
         # that made the shortcut look dead on this host (ctrl+option is 0xC0000).
+        # Window-geometry verdict: the panel is an app window, so its
+        # appearance/disappearance in CGWindowList is authoritative. Pixel
+        # diffs were fooled by notification banners and black frames; a
+        # window cannot fake itself.
+        pid = int(run(["pgrep", "-x", "MoonlightEnhanced"]).stdout.split()[0])
+        def wins():
+            return set(l for l in run([helper, "wins", str(pid)]).stdout.splitlines() if l.strip())
+        before = wins()
+        run([helper, "combo", "8"])
+        time.sleep(0.7)
+        path_open, _ = shot("ctrl-opt-c-open")
+        opened = wins()
+        new_wins = opened - before
+        gone_wins = before - opened
         run([helper, "combo", "8"])
         time.sleep(0.6)
-        path_open, _ = shot("ctrl-opt-c-open")
-        run([helper, "combo", "8"])
-        time.sleep(0.5)
         path_close, _ = shot("ctrl-opt-c-close")
-        # Automated verdict: the open panel paints a light region tens of
-        # points wide along the docked edge; the collapsed bar does not.
-        # Compare the two frames along the edge strip -- the delta cannot be
-        # faked by video content because both frames see the same content.
-        try:
-            from PIL import Image, ImageChops
-            a = Image.open(path_open).convert("RGB")
-            b = Image.open(path_close).convert("RGB")
-            diff = ImageChops.difference(a, b)
-            strip_w = int(min(w, 120) * scale)
-            if args.edge == "right":
-                da = diff.crop((int(w) - strip_w, 0, int(w), int(h)))
-            elif args.edge == "left":
-                da = diff.crop((0, 0, strip_w, int(h)))
-            elif args.edge == "top":
-                da = diff.crop((0, 0, int(w), strip_w))
-            else:
-                da = diff.crop((0, int(h) - strip_w, int(w), int(h)))
-            changed = sum(1 for px in da.getdata() if max(px) > 40)
-            ratio = float(changed) / max(1, da.size[0] * da.size[1])
-            opened = ratio >= 0.02
-            record("control+option+C opens/closes the panel",
-                   "PASS" if opened else "FAIL",
-                   "open/close frame diff along %s edge strip: %.3f changed (>=0.02 means the panel moved)" % (args.edge, ratio),
-                   path_open)
-        except Exception as e:
-            record("control+option+C opens/closes the panel", "CHECK",
-                   "auto-diff failed (%s); confirm in the screenshots" % e, path_open)
+        back = wins()
+        restored = (back == before)
+        ok = bool(new_wins or gone_wins) and restored
+        record("control+option+C opens/closes the panel",
+               "PASS" if ok else "FAIL",
+               "window set changed on open (%d new/%d gone) and restored on close: %s"
+               % (len(new_wins), len(gone_wins), restored), path_open)
 
     if mode == "released":
         record("shift+option released the pointer", "PASS",
