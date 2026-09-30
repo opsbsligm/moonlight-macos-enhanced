@@ -30,6 +30,14 @@
 - 串流会话在锁屏后仍存活（音频 underrun 持续、窗口列表完整）；app 对
   resign-key/app-resigned 的 uncapture 处理有日志（MUC003/MUC006，行为正确）。
 
+## 环境更新（18:20）
+- 注入密码两次均短暂解锁（前台回到 app），但随即再次锁屏（用户设置了短锁屏
+  + 远端/本机显示器睡眠 30 分钟）。串流会话全程存活（音频 underrun 持续、
+  CGWindow 56×56 把手窗口始终在位）——app 生命周期行为正确，锁屏期间
+  resign-key/uncapture 路径均有日志且无异常。
+- 已挂心跳 automation：屏幕点亮解锁后自动重跑 30 循环验收并报告。
+- CI run 36700910217（62d3c79b）运行中，另有独立心跳盯结果。
+
 ## 环境恢复后的下一步（阻塞项：Mac 处于锁屏，需用户解锁）
 1. 重跑 `python3 scripts/edge-handle-live-acceptance.py --loops 30 --edge right
    --mode free --yes`；先看模式（本机记录为全屏锁定鼠标，则走 --mode locked +
