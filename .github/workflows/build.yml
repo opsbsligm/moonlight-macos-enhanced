@@ -670,6 +670,23 @@ jobs:
       # each turn it red.
       run: python3 scripts/interpolation-source-format-tests.py
 
+    - name: Verify the interpolation output pool really builds
+      # The 4:2:0 source was agreed and the engine still never mounted:
+      # the log said "Failed to create VT frame interpolation output pool:
+      # -6682" on every forced stream. The probe proved the attribute step
+      # was the killer -- VTLowLatencyFrameInterpolationConfiguration hands
+      # back destinationPixelBufferAttributes that carry geometry
+      # (Width/Height/ExtendedPixels), CVPixelBufferCreateResolvedAttributesDictionary
+      # refuses that combination with -6660, and the old fallback returned
+      # the bare preferred attributes (no width, no height), so
+      # CVPixelBufferPoolCreate failed with -6682 and the pool never
+      # existed. The real methods are compiled from VideoDecoderRenderer.m
+      # and asked to build a real pool for a real 1920x1080 configuration;
+      # the pre-fix resolver shape is replayed verbatim as a negative
+      # control and must fail, and a merge that drops the geometry must
+      # fail too.
+      run: python3 scripts/interpolation-output-pool-tests.py
+
     - name: Verify the frames interpolation produced are actually counted
       # The app could name the interpolation engine it chose and could
       # not say whether that engine made a single frame. Nothing counted

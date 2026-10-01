@@ -3772,15 +3772,16 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         (id)kCVPixelBufferIOSurfacePropertiesKey: @{},
     };
 
-    CFDictionaryRef resolved = NULL;
-    CVReturn status = CVPixelBufferCreateResolvedAttributesDictionary(kCFAllocatorDefault,
-                                                                      (__bridge CFArrayRef)@[preferredAttributes, baseAttributes ?: @{}],
-                                                                      &resolved);
-    if (status != kCVReturnSuccess || resolved == NULL) {
-        return preferredAttributes;
-    }
-
-    return CFBridgingRelease(resolved);
+    // Merged by hand rather than through CVPixelBufferCreateResolvedAttributesDictionary:
+    // a frame processor's destinationPixelBufferAttributes carry the frame geometry and
+    // extended-pixel edges, and the resolver refuses that combination (-6660 measured on
+    // Apple M2, macOS 26). Its fallback -- the preferred attributes alone -- is a pool with
+    // no width or height, which CVPixelBufferPoolCreate rejects with -6682, so every
+    // interpolation output pool failed to build. A plain dictionary merge keeps the
+    // geometry from the configuration and lets the renderer's pixel-format choice win.
+    NSMutableDictionary *merged = [[NSMutableDictionary alloc] initWithDictionary:baseAttributes ?: @{}];
+    [merged addEntriesFromDictionary:preferredAttributes];
+    return merged;
 }
 
 - (BOOL)shouldUseFrameInterpolationForDisplayRefreshRate:(double)displayRefreshRate
