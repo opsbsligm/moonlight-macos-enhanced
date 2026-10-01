@@ -181,3 +181,38 @@ sha256(Contents/MacOS/MoonlightEnhanced) =
 门控在 VideoDecoderRenderer.m 的 shouldUseFrameInterpolationForDisplayRefreshRate:
 （约 3776 行）与 InterpolationCadencePolicy.h；强制绕过 cadence 门控但不绕过
 Metal/HDR 能力检查；设置页如实呈现风险。验收同流程：测试锁→构建→实机→CI。
+
+---
+
+## 追加（傍晚）：窗口模式标题栏胶囊撤除
+
+### 1. 用户报障
+窗口模式下 132pt 深色标题栏胶囊"融合进标题栏右侧，抽象、丑"，且菜单展开时压住
+胶囊。结论：即便缩小后的徽章，用户仍判为与标题栏融合——"更小"不是解法，撤除才是。
+
+### 2. 改动与所有权设计
+- `ensureMenuTitlebarAccessoryInstalledIfNeeded`：健康流（`currentStreamHealthBadgeText`
+  为空）不挂载；已挂载则卸载。胶囊从此只在流真正异常（Stuck/High packet loss 等）
+  时作为故障提示出现。
+- `updateControlCenterStatus`（0.5s 健康 tick）成为挂载/卸载唯一所有者；
+  `updatingControlCenterStatus` 重入标记覆盖挂载路径内部的二次 update。
+- `preferredControlCenterSourceView`：删除全屏/无边框特判——三种呈现模式下
+  控制中心菜单一律从边缘把手锚定展开，菜单不再从"不存在的胶囊"处展开。
+- 测试锁：`edge-sensor-summon-tests.py` 新增断言（ensure 体内引用健康徽章），
+  负控制验证过（旧代码触发 AssertionError）。4267 runtime edge checks, 0 failures。
+
+### 3. 实机验收（2026-10-01 15:55，桌面串流，窗口模式）
+- 标题栏右侧零装饰：PASS（截图 pillgone-1.png；仅统计条在画面内，正常）。
+- 边缘把手（右缘 x1776..1832）悬停/点击展开/收起：PASS（把手窗口存在并可点）。
+- ⌃⌥C 控制中心自把手锚定展开、不压标题栏：PASS。
+- 异常态徽章的挂载路径（Stuck/Loss 时重新出现并随恢复消失）：本轮无法在实机
+  制造故障，**尚未验收**；移除路径有测试锁与代码走查支撑。
+- 冒烟回归：右缘矩阵 5 轮中 baseline FAIL 一次——截图证实把手仍在原位（x1776），
+  失败发生在鼠标注入被前台 App 切换打断的窗口（用户会话活跃、焦点被 Codex 抢走），
+  属工装/环境干扰，非本改动引入；随后手工悬停+点击+⌃⌥C 三路全部工作正常。
+
+### 4. 门禁与部署
+- `git diff --check` 干净；`local-gates.sh` 76 passed / 0 failed。
+- 已部署二进制 sha256(MacOS/MoonlightEnhanced)=
+  1062c07be05291b352aabfd6732f89f770d0327237d8f827e8782841b6d5ffd0。
+- 回滚位：/Applications/.MoonlightEnhanced-before-pill-gone-20261001-154429.app。
