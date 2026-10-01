@@ -167,8 +167,12 @@ def handle_window(app_pid, edge, helper, screen_w, screen_h):
         # Hugging means the on-screen edge of the window is the screen edge.
         if edge == "right" and not (screen_w - ww <= wx <= screen_w + 4): continue
         if edge == "left" and not (-4 <= wx <= ww): continue
-        if edge == "top" and not (-4 <= wy <= wh): continue
-        if edge == "bottom" and not (screen_h - wh <= wy <= screen_h + 4): continue
+        # A top dock hangs its panel above the seam (the app deliberately opts
+        # out of the AppKit menu-bar clamp), so the panel origin is negative
+        # and only the peek strip shows. Hugging means the visible strip is
+        # the 34 pt peek, not a fully onscreen frame.
+        if edge == "top" and not (-30 <= wy <= 6): continue
+        if edge == "bottom" and not (screen_h - wh - 4 <= wy <= screen_h + 30): continue
         return {"x": wx, "y": wy, "w": ww, "h": wh, "alpha": float(alpha),
                 "layer": int(layer), "number": int(num)}
     return None
@@ -199,7 +203,11 @@ def anchored_band(img, edge, win, scale):
     else:
         ax0 = int(win["x"]) + 10
         ax1 = min(w, int(win["x"] + win["w"]) - 10)
-        ay = (int(win["y"]) - 10) if edge == "top" else int(win["y"] + win["h"] + 10)
+        # The background reference must sit outside the panel. A top dock hangs
+        # above the seam (y=-22), so its outside is below the panel; a bottom
+        # dock hangs below the seam, so its outside is above it. Sampling the
+        # far side instead clamps onto the capsule and poisons the contrast.
+        ay = int(win["y"] + win["h"] + 10) if edge == "top" else int(win["y"]) - 10
         ay = max(0, min(h - 1, ay))
         bg = px[(ax0 + ax1) // 2, ay][:3]
         depth_max = int(win["h"] * scale) + 4
@@ -269,14 +277,18 @@ def strip_signature(img, edge, handle_c, scale, start_depth=0.0):
         x0, x1 = w - int(30 * scale), w
     elif edge == "left":
         x0, x1 = 0, int(30 * scale)
-    elif edge == "top":
-        x0, x1 = max(0, int(handle_c * scale) - half), min(w, int(handle_c * scale) + half)
-        y0 = min(y0, int(sig_start_depth * scale))
-        y1 = max(y1, int((sig_start_depth + 30) * scale))
     else:
+        # Top/bottom: handle_c runs along the edge, so the cross-edge window is
+        # the peek band itself -- not a span centred on the along-edge centre,
+        # which would sample hundreds of rows of remote desktop and dilute the
+        # handle's own colour change into noise.
         x0, x1 = max(0, int(handle_c * scale) - half), min(w, int(handle_c * scale) + half)
-        y1 = max(0, h - int(sig_start_depth * scale))
-        y0 = min(y0, h - int((sig_start_depth + 30) * scale))
+        band = int(34 * scale)
+        if edge == "top":
+            y0, y1 = int(sig_start_depth * scale), int(sig_start_depth * scale) + band
+        else:
+            y1, y0 = h - int(sig_start_depth * scale), h - int(sig_start_depth * scale) - band
+        y0, y1 = max(0, y0), min(h, y1)
     white = blue = dark = other = 0
     for x in range(x0, x1):
         for y in range(y0, y1):
@@ -549,6 +561,16 @@ def main():
                 # state, and the same dwell position is parked in the frame
                 # one shot earlier.
                 armed = sig_distance(park_sig, hover_sig) >= 0.15
+                if not armed:
+                    # One frame can miss the light-up while the capture or the
+                    # main thread is busy (audio underruns run during these
+                    # loops). Reshoot once before calling the hover dead: the
+                    # failure the acceptance cares about is a strip that stays
+                    # unchanged across two looks, one frame of latency is not.
+                    time.sleep(0.4)
+                    path, _ = shot("loop-%02d-hover-retry" % i)
+                    hover_sig = strip_signature(Image.open(path), args.edge, handle_c, scale, band_start)
+                    armed = sig_distance(park_sig, hover_sig) >= 0.15
                 armed_ok += armed
                 run([helper, "move", str(centre["x"]), str(centre["y"])])
                 time.sleep(0.8)  # 0.45 s auto-collapse after the pointer leaves

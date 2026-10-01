@@ -101,3 +101,57 @@ local-gates 76/0；git diff --check 干净；build.sh --no-dmg 成功。
 部署：/Applications/MoonlightEnhanced.app sha256(MacOS/MoonlightEnhanced)=
 0a22ecd7645e46295c47e772261ba92254678ebf97566bebbd541b176bee4d64，与构建产物一致；
 回滚位 /Applications/.MoonlightEnhanced-before-windowed-edge-20261001-120352.app。
+
+---
+
+## 第二轮（午后）：上缘停靠被菜单栏裁切 + 验收工装两处盲区
+
+### 1. 上缘矩阵首跑全 FAIL 的根因（app 缺陷，已修）
+`MLEdgeMenuPanel` 是 borderless NSPanel，AppKit 对非 key 面板统一执行
+`constrainFrameRect:toScreen:`，把帧钳到菜单栏以下（y≥30）。上缘停靠的目标帧是
+(373,-22)，被钳成 y=30 后 56pt 面板只剩 34pt 露出带的一半可见，验收读到"把手消失"。
+
+修复（MLEdgeMenuUI.m）：`MLEdgeMenuPanel` 覆写 `constrainFrameRect:toScreen:` 原帧返回。
+把手自己拥有几何（含上缘跨菜单栏那条缝），不接受这一处钳制。
+测试锁：edge-sensor-summon-tests.py 断言该覆写存在（此修复曾被一次 `git checkout` 误撤销，
+正说明需要锁）。
+
+复核定案：面板高 56、露出 Peek=34，屏幕缝在面板坐标 y=22，idle tab 画在 24..38，
+可见带离缝 2pt——与右缘离缝 2pt 完全对称，是合法设计，不是"绘制不对称"。
+（上一轮曾按错误假设改 Top 分支绘制坐标，反而只剩 10pt，已撤销。）
+
+### 2. 验收工装盲区 A：几何锚点（工装缺陷，已修）
+clamp 修复后面板合法地挂在缝外（top：y=-22；bottom 对称）。工装的
+`handle_window` 贴边判据与 `anchored_band` 背景采样仍以物理屏幕边为锚：
+- 判据 `-4 <= wy <= wh` 拒绝了合法的 y=-22 → 读不到把手窗口 → 基线 FAIL；
+- top 背景样点 `win.y-10` 被 clamp 到 y=0，落在把手自身，对比度归零。
+改为把手缝锚定：top 判据 `-30 <= wy <= 6`，bottom 对称放宽；背景一律向面板
+"爬出屏幕的那一侧"的反方向采样（top 向下、bottom 向上）。
+`strip_signature` 的 top/bottom 窗同样改为"沿边中心×露出带"，此前误用跨边
+中心当纵向中心，采样区 29580px 中把手仅 68×34，被远端壁纸稀释成噪声。
+
+### 3. 验收工装盲区 B：单事件注入被 WindowServer 折叠（工装缺陷，已修）
+上缘 30 轮 loop29、右缘 30 轮 loop6 各出现一次"悬停未点亮"（双帧判据均白）。
+日志显示该循环内 `Motion entry: type=5` 存在，但把手未点亮。
+根因：helper 的 `move` 只发一个 mouseMoved，WindowServer 会把注入的位移折叠成
+一个事件（该事实早已写在 Motion entry 探针注释里，但工装没有吸收它）。
+真实指针到边缘是连续事件流，不存在"单点丢失"。修复：`move` 改为 4 连发脉冲流
+（20ms 间隔、±1px 抖动），与硬件到达模式一致；hover 行同时补一次有界重拍
+（与 collapse 行的既有重试对称），双帧皆白才判 FAIL。
+修复后：上缘 30/30、右缘 30/30 全为**首帧点亮**（无 retry 伪影文件）。
+结论：该间歇失效是工装欠采样，不是产品缺陷；产品代码未因此改动。
+
+### 4. 四缘 + 拖拽重触发矩阵（实机，注入工装，released 态，30 循环）
+| 边缘 | 基线 | 悬停×30 | 收起×30 | ⌃⌥C | 点击展开/点外取消 | 按住拖过边缘 | 失焦恢复 | 结论 |
+|---|---|---|---|---|---|---|---|---|
+| 右缘 | PASS 16pt | PASS 30/30 | PASS 30/30 | PASS | PASS | PASS | PASS | 8/0 |
+| 上缘 | PASS 10pt | PASS 30/30 | PASS 30/30 | PASS | PASS | PASS | PASS | 8/0 |
+| 下缘 | PASS 14pt | PASS 30/30 | PASS 30/30 | PASS | PASS | PASS | PASS | 8/0 |
+（左缘 8/0 为上轮结论，本轮工装改动不触及 left 分支。）
+拖拽重触发行：本轮实测 右缘→上缘（避开中央统计条锚点）→下缘→右缘 四次停靠，
+每次停靠后基线/悬停/收起全部重新 PASS，即"拖动后重新触发"成立。
+矩阵中所有"悬停"均为注入指针，不是真实手甩；真实手甩/纯修饰键/多显示器/
+触摸板仍为 UNVERIFIED。
+
+尚未验收：真实硬件手甩；⇧⌥ 纯修饰键释放（注入 mod 已多次验证生效，但注入不等于硬件）；
+多显示器/非等缩放；触摸板；外置鼠标热拔插。
