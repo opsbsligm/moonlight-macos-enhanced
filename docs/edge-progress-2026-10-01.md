@@ -155,3 +155,23 @@ clamp 修复后面板合法地挂在缝外（top：y=-22；bottom 对称）。�
 
 尚未验收：真实硬件手甩；⇧⌥ 纯修饰键释放（注入 mod 已多次验证生效，但注入不等于硬件）；
 多显示器/非等缩放；触摸板；外置鼠标热拔插。
+
+### 5. 部署（本轮）
+构建：build.sh --no-dmg（Release，签名校验通过）。
+已安装 /Applications/MoonlightEnhanced.app 的
+sha256(Contents/MacOS/MoonlightEnhanced) =
+0bcc5d0cd58575d38dd8cc6820b5a76080fccdb382696bfd4999b10096a92c27，
+与构建产物逐字节一致；codesign --verify --deep --strict 通过。
+流程：暂存 /tmp/mle/stage.app → 签名校验 → 优雅退出旧实例 → mv 原子替换 → 哈希比对。
+回滚位：/Applications/.MoonlightEnhanced-before-edge-matrix-20261001-141627.app
+（其上仍有 before-windowed-edge / before-topdock 两代更早备份）。
+部署后对新二进制复跑右缘矩阵：8 PASS / 0 FAIL，与源码结论一致。
+
+### 6. CI
+- run 36823983446（提交 6f450079）：arm64 ✓，x86_64 ✗，失败步骤
+  "native event-tracking mode does not suspend dwell"。根因是 probe 用单次
+  `runMode:beforeDate:` 等待 dwell：无可处理输入源时该调用提前返回，重载 runner
+  把自己的调度延迟读成"event-tracking 模式挂起 dwell"。修复（0e46b166）：同模式内
+  20×100ms 有界轮询，断言语义不变（模式若真挂起 dwell 依旧 FAIL）。
+- run 36826672525（提交 0e46b166）：全部 job success（audits / x86_64 / arm64 /
+  universal / analyzer / publish）。GitHub 侧 release build 全绿。
