@@ -65,3 +65,39 @@
 - 回滚：~/.Trash/.MoonlightEnhanced-probe-final-*.app（上一版 10ms 节流）、
   .MoonlightEnhanced-before-locked-flick-*.app（正式 1720 无探针）。
 - macOS 自动锁屏打断过一次现场；用 CGEvent 数字键码解锁（loginwindow text field 直读可靠）。
+
+## 追加：窗口模式边缘把手一等化（12:0x，用户新报障）
+
+用户报障：窗口模式下侧边控制栏"融合进窗口标题栏右侧"，与 UU远程式"触边激活、可点击"
+不一致。现场取证（/tmp/mle/windowed-*.png + 日志）确认根因：
+
+- `edgeMenuShouldBeVisible` 在非全屏/非无边框时直接返回 NO —— 窗口模式下贴边把手
+  整体隐藏，唯一入口是标题栏 240pt"控制中心"胶囊，右侧与窗框、统计条叠在一起。
+- 附加观察：退出全屏后面板帧随视图锚点自动重排（1886,512 → 1776,513），无需额外修复。
+
+改动（StreamViewController+MenuUI.m，最小 3 处）：
+1. `edgeMenuShouldBeVisible` 去掉"非全屏即隐藏"分支；把手在窗口/全屏/无边框三种
+   呈现中一致存在（全屏 hideFullscreenControlBall 开关保留）。
+2. 标题栏胶囊 240pt→132pt，内容收缩为 信号+计时；健康流不再显示"控制中心"文字，
+   仅异常（Stuck/High packet loss）时替换计时显示徽章。
+3. 徽章与计时共用文本位，异常时隐藏计时避免叠字。
+
+测试：`edge-sensor-summon-tests.py` 新增窗口模式回归锁（拒绝再隐藏把手、拒绝再宽胶囊、
+拒绝"Control Center"标签回潮），负控制验证两条断言均可被旧实现触发。
+local-gates 76/0；git diff --check 干净；build.sh --no-dmg 成功。
+
+实机验收（本机，窗口模式，注入工装）：
+| 项 | 结果 |
+|---|---|
+| 空闲把手 14pt 常驻（1776,513）| PASS（像素+窗口几何） |
+| 停边 120ms 点亮（白→accent 628w→1116accent）| PASS |
+| 点亮后点击展开（collapsed tab 日志 + 1754,513）| PASS |
+| 离边自动收起 450ms | PASS |
+| ⌃⌥C 窗口模式开/关把手 | PASS |
+| 标题栏胶囊缩窄、不再融合 | PASS（截图目测） |
+| 主动释放⇧⌥后仍可用 | PASS（本次全程处于 released 态） |
+| 上/下缘矩阵 | 未跑完（被本报障打断；把手已停靠上缘时统计条叠加层使 band 判据污染，待定案）|
+
+部署：/Applications/MoonlightEnhanced.app sha256(MacOS/MoonlightEnhanced)=
+0a22ecd7645e46295c47e772261ba92254678ebf97566bebbd541b176bee4d64，与构建产物一致；
+回滚位 /Applications/.MoonlightEnhanced-before-windowed-edge-20261001-120352.app。
