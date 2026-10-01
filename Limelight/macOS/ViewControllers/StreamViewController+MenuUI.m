@@ -51,8 +51,10 @@
 }
 
 - (NSView *)preferredControlCenterSourceView {
-    if (([self isWindowFullscreen] || [self isWindowBorderlessMode]) &&
-        self.edgeMenuPanel.isVisible &&
+    // The edge tab is the entry in all three presentations, so it is also the
+    // anchor the menu opens from whenever it is on screen; the titlebar badge
+    // is only a fault shout and is not a menu anchor while it is away.
+    if (self.edgeMenuPanel.isVisible &&
         self.edgeMenuButton &&
         !self.edgeMenuButton.hidden) {
         return self.edgeMenuButton;
@@ -299,6 +301,19 @@
         [self isWindowFullscreen] ||
         [self isWindowBorderlessMode] ||
         ![self isWindowInCurrentSpace]) {
+        [self removeMenuTitlebarAccessoryFromWindowIfNeeded];
+        return;
+    }
+
+    // A healthy stream shows no titlebar furniture at all. The edge tab is the
+    // entry in every presentation, and the user's verdict on even the shrunken
+    // badge was that it fuses into the titlebar and the open menu lands on top
+    // of it. The accessory exists to shout about a stream that is actually
+    // wrong (currentStreamHealthBadgeText), and mounts only while that is true.
+    if ([self currentStreamHealthBadgeText].length == 0 && !self.menuTitlebarAccessoryInstalled) {
+        return;
+    }
+    if ([self currentStreamHealthBadgeText].length == 0) {
         [self removeMenuTitlebarAccessoryFromWindowIfNeeded];
         return;
     }
@@ -1135,6 +1150,24 @@
     }
     if (!self.controlCenterTimeLabel || !self.controlCenterSignalImageView) {
         return;
+    }
+
+    // The 0.5 s health tick is also the mount decision: the badge appears when
+    // the stream goes wrong and is taken away again the moment it recovers,
+    // with no other owner. The re-entry flag covers the ensure path that
+    // updates the content right after mounting.
+    if (!self.updatingControlCenterStatus) {
+        self.updatingControlCenterStatus = YES;
+        if ([self currentStreamHealthBadgeText].length == 0) {
+            [self removeMenuTitlebarAccessoryFromWindowIfNeeded];
+            self.updatingControlCenterStatus = NO;
+            return;
+        }
+        [self ensureMenuTitlebarAccessoryInstalledIfNeeded];
+        self.updatingControlCenterStatus = NO;
+        if (!self.menuTitlebarAccessoryInstalled) {
+            return;
+        }
     }
 
     NSTimeInterval elapsed = self.streamStartDate ? [[NSDate date] timeIntervalSinceDate:self.streamStartDate] : 0;
