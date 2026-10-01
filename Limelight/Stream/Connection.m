@@ -2570,6 +2570,7 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
     // than a shade of HDR, because the two live in different fields of the stream
     // configuration and only one of them changes how the picture is drawn.
     BOOL enableSdrTenBit = NO;
+    int frameInterpolationMode = 0;
     @try {
         NSString* uuid = config.hostUUID;
         if (uuid == nil && config.host != nil) {
@@ -2581,21 +2582,34 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
         if (settings != nil) {
             enableYuv444 = [settings[@"yuv444"] boolValue];
             enableSdrTenBit = [settings[@"sdr10bit"] boolValue];
+            frameInterpolationMode = [settings[@"frameInterpolationMode"] intValue];
         }
     } @catch (NSException* exception) {
         enableYuv444 = NO;
         enableSdrTenBit = NO;
+        frameInterpolationMode = 0;
     }
+
+    // Forced interpolation needs a 4:2:0 stream (see VideoFormatNegotiation.h): when
+    // the player forced interpolation on, the 4:4:4 preference cannot be honoured by
+    // the interpolator itself, so the negotiation holds the 4:4:4 bits back and says
+    // which of the two switches made that call.
+    const BOOL interpolationForced = config.frameInterpolationForce && frameInterpolationMode != 0;
+    const BOOL yuv444Advertised = enableYuv444 && !interpolationForced;
 
     MLVideoFormatRequest formatRequest = {
         .hevcAvailable = hevcSupported,
         .av1Available = av1Supported,
         .hdrRequested = config.enableHdr,
         .sdrTenBitRequested = enableSdrTenBit,
-        .yuv444Requested = enableYuv444,
+        .yuv444Requested = yuv444Advertised,
+        .interpolationForced = interpolationForced,
     };
     int supportedVideoFormats = MLResolveSupportedVideoFormats(formatRequest);
     _streamConfig.supportedVideoFormats = supportedVideoFormats;
+    if (enableYuv444 && interpolationForced) {
+        Log(LOG_I, @"[diag] YUV444 held back for forced interpolation: the interpolator takes 4:2:0 sources only");
+    }
     Log(LOG_I, @"[diag] Codec preference resolved: pref=%d av1=%d hevc=%d hdr=%d yuv444=%d sdr10bit=%d tenBit=%d formats=0x%X",
         codecPreference,
         av1Supported ? 1 : 0,
