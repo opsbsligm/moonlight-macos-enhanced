@@ -46,3 +46,19 @@
 - **实机尚未验收**：串流中 120 FPS + 强制开关 → 徽章显示"强制插帧"、
   日志出现 forced over cadence、主观流畅度/延迟表现。用户当前占用会话，
   待空闲后补跑并逐项记录。
+
+## 实机验收补记（2026-10-01 20:45，HOME-PC 120FPS 会话）
+- **force 越过 cadence 门：实机 PASS。** 日志多次出现
+  `frame interpolation forced over cadence refusal: display 180.00Hz below 180.00Hz
+  needed for stream 120 FPS`（20:23:41、20:29:39、20:31:37），且设置页
+  profile 确认 `frameInterpolationForce=True`。开关→配置→渲染器链路真实贯通。
+- **实际插帧引擎：本主机环境下未挂载。** 全量日志（含 rotated/curated）中
+  从未出现 `active=VTLowLatency` 的 INFO 上报；取而代之，每次会话均有
+  `VT frame interpolation doesn't support source pixel format 0x34343476`（v444）。
+  根因：当前 HOME-PC 会话使用 YUV444 编码，VT 低延迟插帧不接受 v444 源像素格式。
+  运行时报告走 SourceFormatUnsupported 分支，UI 徽章语义应为"源格式不支持"，
+  与 force 机制无关——这是 force 门控之外的独立限制。
+- 结论：**force 开关机制实机 PASS；"强制后插帧真正运行"在当前 YUV444 配置下
+  实机 FAIL（预期内的独立限制，非本轮引入）。** 要获得插帧实效：视频编码改为
+  H.264/HEVC（4:2:0），或后续轮次实现 4:4:4→4:2:0 转换后再送插帧。
+- 徽章挂载显示与主观流畅度：UNVERIFIED（会话已断开，且引擎本就未挂载）。
