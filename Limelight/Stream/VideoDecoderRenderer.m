@@ -3777,10 +3777,21 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     // extended-pixel edges, and the resolver refuses that combination (-6660 measured on
     // Apple M2, macOS 26). Its fallback -- the preferred attributes alone -- is a pool with
     // no width or height, which CVPixelBufferPoolCreate rejects with -6682, so every
-    // interpolation output pool failed to build. A plain dictionary merge keeps the
-    // geometry from the configuration and lets the renderer's pixel-format choice win.
+    // interpolation output pool failed to build.
+    //
+    // The configuration is also the authority on the output pixel format, so the merge
+    // takes it from the base rather than from the preferred attributes: a low-latency
+    // interpolation destination in any format other than the one the configuration
+    // advertises makes every submit fail with VTFrameProcessorProcessingError (-19740,
+    // underlying -50 measured on Apple M2, macOS 26) -- the pool built, the buffers came
+    // back, and not one interpolated frame was ever produced. The preferred format applies
+    // only where a configuration states none.
     NSMutableDictionary *merged = [[NSMutableDictionary alloc] initWithDictionary:baseAttributes ?: @{}];
-    [merged addEntriesFromDictionary:preferredAttributes];
+    if (merged[(id)kCVPixelBufferPixelFormatTypeKey] == nil) {
+        merged[(id)kCVPixelBufferPixelFormatTypeKey] = preferredAttributes[(id)kCVPixelBufferPixelFormatTypeKey];
+    }
+    merged[(id)kCVPixelBufferMetalCompatibilityKey] = preferredAttributes[(id)kCVPixelBufferMetalCompatibilityKey];
+    merged[(id)kCVPixelBufferIOSurfacePropertiesKey] = preferredAttributes[(id)kCVPixelBufferIOSurfacePropertiesKey];
     return merged;
 }
 

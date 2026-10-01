@@ -90,3 +90,40 @@ VideoDecoderRenderer.m 提取真实 resolver+池方法编译运行：
 
 **验收状态**：池修复后的实机挂载（`active=VTLowLatency` + UI 徽章 +
 主观流畅度）**尚未验收**——需重新构建部署后补跑。
+
+## 第三层根因与修复（2026-10-02 凌晨，池建起来了但每帧提交失败）
+
+池修复部署后实机确认：`-6682` 消除、池存在、缓冲正常发出，但每帧
+`VT frame interpolation failed: VTFrameProcessorErrorDomain Code=-19740
+(NSUnderlyingError=-50)`（VTFrameProcessorProcessingError），且每帧
+prewarm→fail→teardown 循环——一个插帧帧都没产出。
+
+**根因（提交级探针实证）**：`/tmp/mle/fi-submit-probe2.swift` 对同一
+已启动 session 提交三种目的缓冲：
+- 目的=config 原生 attrs（420v）：**processed=ok**
+- 目的=BGRA+extended：**-19740**
+- 目的=BGRA 无 extended：**-19740**
+
+即 **LLFI 目的缓冲的像素格式必须等于 configuration 自带的
+destinationPixelBufferAttributes 格式（420v/0x34323076）**。第二层修复
+让渲染器 preferred（BGRA）覆盖了同名键，池能建、缓冲能发、提交必死。
+像素格式的权威是配置，不是渲染器偏好。
+
+**修复**：合并时像素格式以 base（configuration）为准，preferred 仅在
+配置未声明格式时兜底；Metal 兼容与 IOSurface 键仍由渲染器注入。呈现
+路径本就支持 420v（解码帧即为 420v）。该方法同时被超分路径复用，行为
+一致（本主机 LL SR factors=[]，超分不可用，如实记录）。
+
+**测试升级**：`interpolation-output-pool-tests.py` 不再只看池的形状——
+从生产池取缓冲、经真实 session 真提交并要求回调成功；目的格式断言从
+BGRA 改为配置原生 0x34323076；新增"BGRA 覆盖"植入变异，必须精确复现
+`ok=0 err=-19740`（旧缺陷的活体负控制）。旧 resolver/丢几何负控制保留。
+
+**实机验收（2026-10-02 05:55，HOME-PC Desktop 会话，pid=71921）**：
+- `YUV444 held back for forced interpolation` PASS（第一层保持）
+- `formats=0x101`、解码 `format=0x34323076` PASS
+- 全日志 `-6682`=0、`-19740`=0、prewarm 仅 2 次（无每帧循环）PASS
+- `active=VT Low-Latency Frame Interpolation reason=display 180.00Hz
+  provides cadence headroom over 120 FPS stream` PASS
+- 统计条实机显示 `插帧 +32.3 fps`（绿色增量，帧真的在产出）PASS
+- 主观流畅度：UNVERIFIED（无人为对比基线，自动化无法裁决）

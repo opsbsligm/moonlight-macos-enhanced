@@ -16,13 +16,23 @@ interpolator. The cause is measurable, not folklore:
   answers -6682. Every session, every Mac, silently: the settings page said the
   engine, the runtime said warm, and no interpolated frame was ever made.
 
+The third layer arrived once the pool existed: the merge overrode the configuration's
+own destination format with the renderer's preferred BGRA, the pool built, buffers came
+back, and every submit failed with VTFrameProcessorProcessingError (-19740, underlying
+-50, measured on Apple M2 / macOS 26). A low-latency interpolation destination must use
+the pixel format the configuration advertises -- 420v for a video-range stream -- so the
+configuration is the authority on the format and the preferred value only fills a gap.
+
 The probe lifts the two shipping methods --
 resolvedFrameProcessorAttributesWithPreferredPixelFormat:baseAttributes: and
 ensureFrameInterpolationOutputPoolForConfiguration:sourcePixelFormat: -- straight out
 of VideoDecoderRenderer.m, hands them a real low-latency configuration, and demands a
-usable pool: one that allocates a real 1920x1080 BGRA buffer. The old resolver shape is
-replayed as a planted mutation and must fail the same assertions, so the test is the
-regression and not a photo of today's green.
+usable pool: one that allocates a real 1920x1080 buffer in the configuration's own
+format. It then submits the pool's buffer to a started session and demands the callback
+report success -- a pool that builds but rejects every frame is how -19740 shipped. The
+old resolver shape and a BGRA-overriding merge are replayed as planted mutations, each
+must fail its own assertion, so the test is the regression and not a photo of today's
+green.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -64,7 +74,9 @@ LEGACY_RESOLVER = r"""
 DRIVER = r"""
 #import <Foundation/Foundation.h>
 #import <CoreVideo/CoreVideo.h>
+#import <CoreMedia/CoreMedia.h>
 #import <VideoToolbox/VideoToolbox.h>
+#import <dispatch/dispatch.h>
 
 @interface FakeRenderer : NSObject {
 @public
@@ -99,7 +111,8 @@ int main(void) {
             return 0;
         }
         FakeRenderer *renderer = [[FakeRenderer alloc] init];
-        renderer->_frameInterpolationProcessor = [NSObject new];
+        VTFrameProcessor *session = [[VTFrameProcessor alloc] init];
+        renderer->_frameInterpolationProcessor = session;
         BOOL built = [renderer ensureFrameInterpolationOutputPoolForConfiguration:configuration
                                                                sourcePixelFormat:0x34323076];
         if (!built || renderer->_frameInterpolationOutputPool == NULL) {
@@ -114,10 +127,69 @@ int main(void) {
             printf("scenario pool ready=1 buffer=0\n");
             return 0;
         }
+        CVPixelBufferPoolRef sourcePool = NULL;
+        NSDictionary *sourceAttributes = @{
+            (id)kCVPixelBufferPixelFormatTypeKey: @(0x34323076),
+            (id)kCVPixelBufferWidthKey: @1920,
+            (id)kCVPixelBufferHeightKey: @1080,
+            (id)kCVPixelBufferIOSurfacePropertiesKey: @{},
+        };
+        CVPixelBufferPoolCreate(kCFAllocatorDefault, NULL,
+                                (__bridge CFDictionaryRef)sourceAttributes, &sourcePool);
         printf("scenario pool ready=1 buffer=1 width=%zu height=%zu fmt=0x%X\n",
                CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer),
                (unsigned)CVPixelBufferGetPixelFormatType(buffer));
+
+        // A pool that builds is not a pool that interpolates. Submit the shipping
+        // pool's buffer to a started session and report what the callback says;
+        // -19740 is the number the override bug shipped behind.
+        NSError *sessionError = nil;
+        if (![session startSessionWithConfiguration:configuration error:&sessionError]) {
+            printf("scenario submit ok=0 err=session\n");
+            CVPixelBufferRelease(buffer);
+            return 0;
+        }
+        CVPixelBufferRef source = NULL, previous = NULL;
+        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, sourcePool, &source);
+        CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, sourcePool, &previous);
+        CMTime pts = CMTimeMake(33, 1000);
+        VTFrameProcessorFrame *sourceFrame =
+            [[VTFrameProcessorFrame alloc] initWithBuffer:source presentationTimeStamp:pts];
+        VTFrameProcessorFrame *previousFrame =
+            [[VTFrameProcessorFrame alloc] initWithBuffer:previous presentationTimeStamp:pts];
+        VTFrameProcessorFrame *destinationFrame =
+            [[VTFrameProcessorFrame alloc] initWithBuffer:buffer presentationTimeStamp:pts];
+        VTLowLatencyFrameInterpolationParameters *params =
+            [[VTLowLatencyFrameInterpolationParameters alloc]
+                initWithSourceFrame:sourceFrame
+                      previousFrame:previousFrame
+                   interpolationPhase:@[@(0.5)]
+                    destinationFrames:@[destinationFrame]];
+        if (params == nil) {
+            printf("scenario submit ok=0 err=init\n");
+        } else {
+            dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+            __block NSInteger code = 0;
+            __block BOOL timedOut = YES;
+            [session processWithParameters:params
+                         completionHandler:^(id<VTFrameProcessorParameters> completed, NSError *error) {
+                code = error == nil ? 0 : error.code;
+                timedOut = NO;
+                dispatch_semaphore_signal(semaphore);
+            }];
+            if (dispatch_semaphore_wait(semaphore,
+                    dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) == 0) {
+                timedOut = NO;
+            } else {
+                code = -1;
+            }
+            printf("scenario submit ok=%d err=%ld\n", code == 0 && !timedOut, (long)code);
+        }
+        if (source) CVPixelBufferRelease(source);
+        if (previous) CVPixelBufferRelease(previous);
         CVPixelBufferRelease(buffer);
+        [session endSession];
+        if (sourcePool) CVPixelBufferPoolRelease(sourcePool);
     }
     return 0;
 }
@@ -170,7 +242,7 @@ def compiled(source, name, clang, sdk):
             handle.write(source)
         command = [clang, "-fobjc-arc", "-isysroot", sdk, "-mmacosx-version-min=26.0",
                    "-framework", "Foundation", "-framework", "CoreVideo",
-                   "-framework", "VideoToolbox", path, "-o", os.path.join(work, name)]
+                   "-framework", "CoreMedia", "-framework", "VideoToolbox", path, "-o", os.path.join(work, name)]
         built = subprocess.run(command, capture_output=True, text=True)
         if built.returncode != 0:
             return None, (built.stdout + built.stderr).strip()[-1800:]
@@ -195,14 +267,17 @@ def main():
     pool = definition_span(source, POOL)
 
     # --- shape of the fix, before running it ---------------------------------
-    check("NSMutableDictionary" in resolver and "addEntriesFromDictionary" in resolver,
-          "the attribute step merges the configuration geometry with the renderer "
-          "preference instead of asking the resolver that refuses it")
+    check("NSMutableDictionary" in resolver and "initWithDictionary:baseAttributes" in resolver,
+          "the attribute step starts from the configuration's own attributes, so its "
+          "geometry and pixel format survive instead of asking the resolver that refuses it")
     check("CVPixelBufferCreateResolvedAttributesDictionary" not in strip_objc_comments(resolver),
           "the resolver that returned -6660 on this combination is gone from the merge")
     check("preferredAttributes;" not in strip_objc_comments(resolver),
           "no path returns the bare preferred attributes -- a pool without width "
           "and height is how every interpolation silently died")
+    check("kCVPixelBufferPixelFormatTypeKey] == nil" in strip_objc_comments(resolver),
+          "the preferred pixel format only fills a gap -- the configuration's own "
+          "destination format is the authority, which is what -19740 demanded")
     check("CVPixelBufferPoolCreate" in pool,
           "the pool step still builds a real CVPixelBufferPool")
 
@@ -223,7 +298,8 @@ def main():
         print("     skipped: this host has no low-latency interpolation configuration")
         return finish()
     print("     %s" % out.strip())
-    fields = dict(pair.split("=") for pair in out.split()[2:])
+    lines = [line for line in out.splitlines() if line.startswith("scenario")]
+    fields = dict(pair.split("=") for line in lines for pair in line.split()[2:])
     check(fields.get("ready") == "1",
           "a real 1920x1080 configuration builds an output pool (the pre-fix "
           "code answered -6682 here and interpolation never mounted)")
@@ -231,6 +307,12 @@ def main():
           "the pool hands out a real pixel buffer")
     check(fields.get("width") == "1920" and fields.get("height") == "1080",
           "the buffers carry the configuration's geometry, not an unspecified size")
+    check(fields.get("fmt") == "0x34323076",
+          "the buffers carry the configuration's own video-range 4:2:0 format, "
+          "not the renderer's preferred override")
+    check(fields.get("ok") == "1",
+          "the shipping pool's buffer submits to a started session and the callback "
+          "reports success (a BGRA destination reported -19740 for every frame)")
 
     # --- the old code has to fail these same assertions ----------------------
     legacy, log = compiled(build(source, resolver=LEGACY_RESOLVER), "legacy", clang, sdk)
@@ -255,6 +337,24 @@ def main():
         check("ready=0" in bad,
               "the probe notices an attribute merge that forgets the frame size "
               "(reported %r)" % bad.strip())
+
+    # --- the shipped bug: overriding the format builds a pool that never submits
+    overriding = resolver.replace(
+        "if (merged[(id)kCVPixelBufferPixelFormatTypeKey] == nil) {",
+        "if (YES) {")
+    check(overriding != resolver, "the mutation that reinstates the format override is a real edit")
+    overridden, log = compiled(build(source, resolver=overriding), "override", clang, sdk)
+    check(overridden is not None,
+          "the format-overriding mutation compiles" if overridden is not None
+          else "the format-overriding mutation must compile:" + log)
+    if overridden is not None:
+        print("     %s" % overridden.strip())
+        check("fmt=0x42475241" in overridden,
+              "the mutation really ships BGRA destinations (reported %r)" % overridden.strip())
+        check("ok=0 err=-19740" in overridden,
+              "the probe catches the override bug where it actually hurt: the pool "
+              "builds, the buffers exist, and every submit fails -19740 (reported %r)"
+              % overridden.strip())
 
     return finish()
 
