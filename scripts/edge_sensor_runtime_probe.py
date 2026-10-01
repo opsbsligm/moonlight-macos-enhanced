@@ -514,7 +514,15 @@ int main(void) { @autoreleasepool {
     }
     s=fresh(MLFreeMouseExitEdgeRight); s.systemPoint=NSMakePoint(1918,540);
     move(s,0,0);
-    [[NSRunLoop currentRunLoop] runMode:NSEventTrackingRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
+    // Pump in event-tracking mode until the dwell answers, within a bound. One
+    // runMode: pass is not a fixed 0.3s wait: with no input source ready it
+    // returns early, so a loaded CI runner could report "event tracking mode
+    // suspended the dwell" when it had simply not been given its turn yet. The
+    // contract under test is that the dwell fires while only event-tracking
+    // mode is being pumped, so the pump stays in that mode and the assertion
+    // still fails if the mode really does suspend it.
+    for (int pump = 0; pump < 20 && !s.edgeMenuHandleArmed; pump++)
+        [[NSRunLoop currentRunLoop] runMode:NSEventTrackingRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
     CHECK(s.edgeMenuHandleArmed, "native event-tracking mode does not suspend dwell");
     s=fresh(MLFreeMouseExitEdgeRight); s.systemPoint=NSMakePoint(1918,540); move(s,0,0);
     NSTimer *obsolete=s.edgeSensorDwellTimer;
