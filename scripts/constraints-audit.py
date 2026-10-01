@@ -3334,6 +3334,7 @@ if run_battery:
                           os.path.join("scripts", "frame-interpolation-status-tests.py"),
                           os.path.join("scripts", "interpolated-frame-count-tests.py"),
                           os.path.join("scripts", "interpolation-source-format-tests.py"),
+                          os.path.join("scripts", "interpolation-output-pool-tests.py"),
                           os.path.join("scripts", "scaling-output-evidence-tests.py"),
                           os.path.join("scripts", "liquid-glass-overlay-tests.py"),
                           os.path.join("scripts", "liquid-glass-tab-drag-tests.py"),
