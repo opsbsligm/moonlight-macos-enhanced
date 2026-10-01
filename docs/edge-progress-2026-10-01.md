@@ -175,3 +175,9 @@ sha256(Contents/MacOS/MoonlightEnhanced) =
   20×100ms 有界轮询，断言语义不变（模式若真挂起 dwell 依旧 FAIL）。
 - run 36826672525（提交 0e46b166）：全部 job success（audits / x86_64 / arm64 /
   universal / analyzer / publish）。GitHub 侧 release build 全绿。
+
+### 7. 下一步（排队，勿丢）
+目标 3：插帧/超分"强制开启"开关（用户参照 UU 远程提出的功能请求）。
+门控在 VideoDecoderRenderer.m 的 shouldUseFrameInterpolationForDisplayRefreshRate:
+（约 3776 行）与 InterpolationCadencePolicy.h；强制绕过 cadence 门控但不绕过
+Metal/HDR 能力检查；设置页如实呈现风险。验收同流程：测试锁→构建→实机→CI。
