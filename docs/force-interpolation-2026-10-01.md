@@ -62,3 +62,31 @@
   实机 FAIL（预期内的独立限制，非本轮引入）。** 要获得插帧实效：视频编码改为
   H.264/HEVC（4:2:0），或后续轮次实现 4:4:4→4:2:0 转换后再送插帧。
 - 徽章挂载显示与主观流畅度：UNVERIFIED（会话已断开，且引擎本就未挂载）。
+
+## 第二层根因与修复（2026-10-02，4:2:0 达成后池仍建不起来）
+
+4:4:4 让步部署后实机确认：协商不发 444 位（`formats=0x101`）、解码缓冲
+`format=0x34323076`（v206=4:2:0），源格式拒绝消除。但引擎仍未挂载，日志
+`Failed to create VT frame interpolation output pool: -6682`。
+
+**根因（探针实证，非猜测）**：
+`VTLowLatencyFrameInterpolationConfiguration.destinationPixelBufferAttributes`
+携带几何（Width/Height/ExtendedPixelsWidth 等）。旧代码用
+`CVPixelBufferCreateResolvedAttributesDictionary` 合并该属性集与渲染器
+preferred 属性，该 API 对此组合返回 -6660；fallback 只回 preferred 属性
+（无宽高），`CVPixelBufferPoolCreate` 随即 -6682。结果：输出池永远不存在，
+插帧在源格式问题解决后依然静默失败。
+
+**修复**：`resolvedFrameProcessorAttributesWithPreferredPixelFormat:baseAttributes:`
+改为手动 NSMutableDictionary 合并——base（配置）提供几何，preferred（渲染器）
+的像素格式选择覆盖同名键。不再调用会拒绝该组合的 resolver。
+
+**测试**：`scripts/interpolation-output-pool-tests.py`（已注册 CI）——从
+VideoDecoderRenderer.m 提取真实 resolver+池方法编译运行：
+- 真 1920x1080 配置建池成功（旧代码在此必须失败 ready=0，负控制）；
+- 池实际吐出 1920x1080 BGRA 缓冲；
+- 丢几何变异必须失败。
+本地 EXIT=0。回归：source-format/status/sdr-10bit 全绿，git diff --check 干净。
+
+**验收状态**：池修复后的实机挂载（`active=VTLowLatency` + UI 徽章 +
+主观流畅度）**尚未验收**——需重新构建部署后补跑。
