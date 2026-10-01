@@ -714,7 +714,7 @@
 "Frame Interpolation Metal only detail" = "仅 Metal 渲染器可用。";
 "Frame Interpolation unavailable detail" = "当前这台 Mac 或当前渲染路径暂时无法启用低延迟插帧，会自动继续使用非插帧路径。";
 "Force Frame Interpolation" = "强制开启插帧";
-"Force Frame Interpolation detail" = "即使显示器刷新率相对串流帧率没有节奏余量也运行插帧。额外帧与原始帧抢占上屏时机，画面可能卡顿或撕裂，延迟也可能上升。";
+"Force Frame Interpolation detail" = "即使显示器刷新率相对串流帧率没有节奏余量也运行插帧。额外帧与原始帧抢占上屏时机，画面可能卡顿或撕裂，延迟也可能上升。强制插帧期间 4:4:4 让位为 4:2:0 串流，否则插帧引擎无法挂载。";
 "Force Frame Interpolation no conflict detail" = "当前显示器刷新率对串流帧率已有余量，不强制也会插帧。保留此项可在串流中实测刷新率抖动时跳过该检查。";
 "Reference" = "参考";
 "Dim Room" = "暗室";

@@ -239,6 +239,33 @@ int main(void) {
                .hevcAvailable = YES, .av1Available = YES, .yuv444Requested = YES}),
            MLLegacySupportedVideoFormats(YES, YES, NO, YES));
 
+    // A forced interpolation request holds the 4:4:4 bits back on every codec path,
+    // because the low-latency interpolator takes 4:2:0 sources only. Without that
+    // downshift the player's own switch guarantees its own feature never runs.
+    MLVideoFormatRequest forced444 = {.hevcAvailable = YES, .av1Available = YES,
+                                      .yuv444Requested = YES, .interpolationForced = YES};
+    expectTrue("forced interpolation advertises no 4:4:4",
+               (MLResolveSupportedVideoFormats(forced444) & VIDEO_FORMAT_MASK_YUV444) == 0, YES);
+    expectTrue("forced interpolation still offers the plain codecs",
+               (MLResolveSupportedVideoFormats(forced444) &
+                (VIDEO_FORMAT_H264 | VIDEO_FORMAT_H265 | VIDEO_FORMAT_AV1_MAIN8))
+               == (VIDEO_FORMAT_H264 | VIDEO_FORMAT_H265 | VIDEO_FORMAT_AV1_MAIN8), YES);
+    // Without the force switch, nothing moves: the downshift is the force switch's
+    // own consequence, never a surprise for a player who left interpolation alone.
+    expectTrue("without force, 4:4:4 is still on offer",
+               (MLResolveSupportedVideoFormats((MLVideoFormatRequest){
+                   .hevcAvailable = YES, .av1Available = YES, .yuv444Requested = YES})
+                & VIDEO_FORMAT_MASK_YUV444) != 0, YES);
+    // 10-bit HDR does not need the 4:4:4 profile bits to survive the force; HDR's own
+    // satisfiability answer is unchanged by a held-back preference.
+    MLVideoFormatRequest forcedHdr444 = {.hevcAvailable = YES, .av1Available = YES,
+                                         .hdrRequested = YES, .yuv444Requested = YES,
+                                         .interpolationForced = YES};
+    expectTrue("forced interpolation does not break HDR's 10-bit path",
+               (MLResolveSupportedVideoFormats(forcedHdr444) & VIDEO_FORMAT_MASK_10BIT) != 0, YES);
+    expectTrue("forced interpolation keeps HDR satisfiable",
+               MLVideoFormatRequestIsSatisfiable(forcedHdr444), YES);
+
     printf("%s\n", failures ? "RUN FAILED" : "RUN PASSED");
     return failures ? 1 : 0;
 }
