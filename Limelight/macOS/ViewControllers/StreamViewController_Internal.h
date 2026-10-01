@@ -611,6 +611,10 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) PendingWindowMode pendingWindowMode;
 
 @property (nonatomic) BOOL menuTitlebarAccessoryInstalled;
+// One-shot guard: the health tick drives the badge's mount/unmount, and the
+// mount path itself updates the badge content. Without this the update
+// re-enters its own mount decision.
+@property (nonatomic) BOOL updatingControlCenterStatus;
 
 @property (nonatomic, strong) id localKeyDownMonitor;
 @property (nonatomic, strong) id localMouseClickMonitor;

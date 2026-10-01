@@ -175,6 +175,15 @@ badge = method(menu, '- (NSString *)currentStreamHealthBadgeText')
 assert 'MLString(@"Control Center", nil)' not in badge, \
     'the pill labels itself "Control Center" again, which is the fusion the edge tab replaced'
 
+# The pill's final form: no titlebar furniture at all while the stream is healthy.
+# The user's verdict on even the shrunken 132pt badge was that it still fuses into
+# the titlebar and the open menu lands on top of it; the edge tab is the entry, so
+# the accessory may only mount to shout about a stream that is actually wrong.
+ensure = method(menu, '- (void)ensureMenuTitlebarAccessoryInstalledIfNeeded')
+assert 'currentStreamHealthBadgeText' in ensure, \
+    'the titlebar pill is furniture again: it must mount only while the stream is unhealthy'
+
+
 
 # A top-docked handle has to draw above the menu-bar seam. AppKit clamps
 # borderless panels below the menu bar, which cut the top handle in half (the
