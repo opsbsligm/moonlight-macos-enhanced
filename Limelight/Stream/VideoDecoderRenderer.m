@@ -344,6 +344,10 @@ typedef NS_ENUM(NSInteger, MLActiveVideoFrameInterpolationEngine) {
 // from wording again.
 typedef NS_ENUM(NSInteger, MLVideoFrameInterpolationReport) {
     MLVideoFrameInterpolationReportActive = 0,
+    // The cadence gate would have refused this stream but the player forced
+    // interpolation on. It runs; the extra frames may drop or repeat at scanout,
+    // and the page says so instead of claiming the quiet success.
+    MLVideoFrameInterpolationReportActiveForced,
     MLVideoFrameInterpolationReportWarmup,
     MLVideoFrameInterpolationReportRuntimeUnavailable,
     MLVideoFrameInterpolationReportSourceFormatUnsupported,
@@ -1485,6 +1489,8 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // question has not been asked and answered.
     OSType _frameInterpolationRefusedSourcePixelFormat;
     dispatch_queue_t _vtWarmupQueue;
+    BOOL _frameInterpolationForceAdmission;
+    BOOL _frameInterpolationCadenceForced;
     BOOL _frameInterpolationWarmupInFlight;
     NSUInteger _frameInterpolationWarmupGeneration;
     NSInteger _frameInterpolationWarmupWidth;
@@ -2597,6 +2603,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     switch (report) {
         case MLVideoFrameInterpolationReportActive:
             return @"Video Frame Interpolation Runtime Detail Active";
+        case MLVideoFrameInterpolationReportActiveForced:
+            return @"Video Frame Interpolation Runtime Detail Active Forced";
         case MLVideoFrameInterpolationReportWarmup:
             return @"Video Frame Interpolation Runtime Detail Warmup";
         case MLVideoFrameInterpolationReportRuntimeUnavailable:
@@ -2860,6 +2868,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _requestedFrameInterpolationMode = streamConfig
         ? (MLRequestedVideoFrameInterpolationMode)MAX(0, MIN(streamConfig.frameInterpolationMode, MLRequestedVideoFrameInterpolationModeVTLowLatency))
         : MLRequestedVideoFrameInterpolationModeOff;
+    _frameInterpolationForceAdmission = streamConfig ? streamConfig.frameInterpolationForce : NO;
+    _frameInterpolationCadenceForced = NO;
     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastDisplayRefreshRate = 0.0;
@@ -3823,19 +3833,32 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     // than no warning, because the player has already done what they were told.
     double minimumRefreshRate = MLInterpolationMinimumRefreshForSourceFps((double)self.frameRate);
     if (displayRefreshRate < minimumRefreshRate) {
-        if (reportOut != NULL) {
-            *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;
+        if (!_frameInterpolationForceAdmission) {
+            if (reportOut != NULL) {
+                *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;
+            }
+            if (reasonOut != NULL) {
+                *reasonOut = [NSString stringWithFormat:@"display %.2fHz does not have cadence headroom over stream %d FPS",
+                              displayRefreshRate,
+                              self.frameRate];
+            }
+            return NO;
         }
-        if (reasonOut != NULL) {
-            *reasonOut = [NSString stringWithFormat:@"display %.2fHz does not have cadence headroom over stream %d FPS",
-                          displayRefreshRate,
-                          self.frameRate];
-        }
-        return NO;
+        // Forced admission keeps the refusal visible: the cadence answer stays
+        // logged whenever it would have applied, because the extra frames compete
+        // with source frames for the same scanout slots and a player who forces
+        // interpolation deserves to see what was overridden.
+        _frameInterpolationCadenceForced = YES;
+        Log(LOG_W, @"[video] frame interpolation forced over cadence refusal: display %.2fHz below %.2fHz needed for stream %d FPS",
+            displayRefreshRate, minimumRefreshRate, self.frameRate);
+    } else {
+        _frameInterpolationCadenceForced = NO;
     }
 
     if (reportOut != NULL) {
-        *reportOut = MLVideoFrameInterpolationReportActive;
+        *reportOut = _frameInterpolationCadenceForced
+            ? MLVideoFrameInterpolationReportActiveForced
+            : MLVideoFrameInterpolationReportActive;
     }
     return YES;
 }
@@ -4338,11 +4361,20 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineVTLowLatency;
-    [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
-                                     report:MLVideoFrameInterpolationReportActive
-                                     reason:[NSString stringWithFormat:@"display %.2fHz provides cadence headroom over %d FPS stream",
-                                             displayRefreshRate,
-                                             self.frameRate]];
+    if (_frameInterpolationCadenceForced) {
+        // The engine runs because the player asked for it, not because the cadence
+        // allowed it. Say which of the two it is: collapsing this into the quiet
+        // success sentence is how a forced session would read as an ordinary one.
+        [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                         report:MLVideoFrameInterpolationReportActiveForced
+                                         reason:@"forced interpolation over a cadence refusal; see the forced-over-cadence warning for the measured rates"];
+    } else {
+        [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                         report:MLVideoFrameInterpolationReportActive
+                                         reason:[NSString stringWithFormat:@"display %.2fHz provides cadence headroom over %d FPS stream",
+                                                 displayRefreshRate,
+                                                 self.frameRate]];
+    }
     return YES;
 }
 

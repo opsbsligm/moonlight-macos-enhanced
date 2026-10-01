@@ -651,6 +651,7 @@
 "Video Frame Interpolation Runtime Detail Above Interpolation Ceiling" = "This Mac can interpolate frames, but not at this stream resolution. Lower the stream resolution to within the interpolation engine's limit to use it.";
 "Video Frame Interpolation Runtime Detail Off" = "Frame interpolation is not active for the current stream.";
 "Video Frame Interpolation Runtime Detail Active" = "Shows the actual frame interpolation engine currently in use.";
+"Video Frame Interpolation Runtime Detail Active Forced" = "Frame interpolation is forced on even though the display refresh rate leaves no cadence headroom over the stream frame rate. Interpolated frames compete with source frames for scanout slots, so motion may stutter or tear.";
 "Video Frame Interpolation Runtime Detail Warmup" = "Low-latency frame interpolation is warming up and will engage automatically when ready.";
 "Video Frame Interpolation Runtime Detail Fallback" = "Low-latency frame interpolation isn't active right now. Moonlight is continuing without interpolation.";
 "Video Frame Interpolation Runtime Detail Source Format Unsupported" = "Frame interpolation needs video decoded as 8-bit 4:2:0. This stream is decoded in another format, so interpolation is skipped for it and no extra frames are made.";
@@ -712,6 +713,9 @@
 "Frame Interpolation detail" = "Metal Renderer cadence assist. Uses VideoToolbox low-latency frame interpolation when the display refresh rate has headroom above the stream FPS. This can add up to about one extra display interval of latency.";
 "Frame Interpolation Metal only detail" = "Available only in Metal Renderer.";
 "Frame Interpolation unavailable detail" = "This Mac or the current renderer path can't use low-latency frame interpolation right now. The session will continue without it.";
+"Force Frame Interpolation" = "Force Frame Interpolation";
+"Force Frame Interpolation detail" = "Runs interpolation even when the display refresh rate leaves no cadence headroom over the stream frame rate. Extra frames compete with source frames for scanout slots, so motion may stutter or tear and latency can rise.";
+"Force Frame Interpolation no conflict detail" = "This display already has cadence headroom over the stream frame rate, so interpolation runs without forcing. Keep this on to bypass the check if the measured refresh rate dips during a stream.";
 "Reference" = "Reference";
 "Dim Room" = "Dim Room";
 "Office" = "Office";
