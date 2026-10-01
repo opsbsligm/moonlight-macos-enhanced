@@ -185,7 +185,13 @@
         return;
     }
 
-    const CGFloat containerWidth = 240.0;
+    // The pill used to be 240pt wide and carry the words "Control Center" in it, which
+    // is what made windowed mode look broken: the bar's only entry was a wide pill
+    // fused into the right end of the titlebar, beside the stats overlay, while in the
+    // other two modes the entry is a tab on the edge of the picture. The dock is the
+    // entry everywhere now, so the pill is only a status badge: signal, elapsed time,
+    // and words when something is actually wrong.
+    const CGFloat containerWidth = 132.0;
     const CGFloat containerHeight = 28.0;
 
     NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, containerWidth, containerHeight)];
@@ -208,7 +214,7 @@
     signalImageView.contentTintColor = [NSColor whiteColor];
     [content addSubview:signalImageView];
 
-    NSTextField *timeLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(32.0, 6.0, 70.0, 16.0)];
+    NSTextField *timeLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(32.0, 6.0, 90.0, 16.0)];
     timeLabel.bezeled = NO;
     timeLabel.drawsBackground = NO;
     timeLabel.editable = NO;
@@ -219,16 +225,19 @@
     timeLabel.stringValue = @"00:00";
     [content addSubview:timeLabel];
 
-    NSTextField *titleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(containerWidth - 88.0, 6.0, 78.0, 16.0)];
+    // The badge shares the time label's slot and only speaks for itself when the stream
+    // is actually in trouble; an ordinary session leaves it empty rather than filling the
+    // titlebar with a button label nobody needs to read twice.
+    NSTextField *titleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(32.0, 6.0, 90.0, 16.0)];
     titleLabel.bezeled = NO;
     titleLabel.drawsBackground = NO;
     titleLabel.editable = NO;
     titleLabel.selectable = NO;
-    titleLabel.alignment = NSTextAlignmentRight;
-    titleLabel.font = [NSFont systemFontOfSize:13.0 weight:NSFontWeightSemibold];
+    titleLabel.alignment = NSTextAlignmentLeft;
+    titleLabel.font = [NSFont systemFontOfSize:12.0 weight:NSFontWeightSemibold];
     titleLabel.textColor = [NSColor whiteColor];
     titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-    titleLabel.stringValue = [self currentStreamHealthBadgeText];
+    titleLabel.stringValue = @"";
     [content addSubview:titleLabel];
 
     NSButton *button = [NSButton buttonWithTitle:@"" target:self action:@selector(handleTitlebarControlCenterPressed:)];
@@ -689,9 +698,11 @@
     if (!self.view.window.isVisible || self.view.window.isMiniaturized || ![NSApp isActive] || ![self isWindowInCurrentSpace] ||
         self.stopStreamInProgress || self.reconnectInProgress || self.fullscreenTransitionInProgress ||
         self.spaceTransitionInProgress) return NO;
-    if (![self isWindowFullscreen] && ![self isWindowBorderlessMode]) {
-        return NO;
-    }
+    // Windowed mode once hid the dock entirely and left the 240pt titlebar pill as the
+    // only entry, which is not where the bar lives in the other two modes: the same
+    // gesture (go to an edge, click the tab) worked fullscreen and did nothing windowed,
+    // and the pill merged into the titlebar with the stats overlay. The dock is now the
+    // entry in every presentation; the pill stays only as a status badge and a fallback.
     if ([self isWindowFullscreen] && self.hideFullscreenControlBall) {
         return NO;
     }
@@ -1106,6 +1117,8 @@
     return MAX(1, latency.integerValue);
 }
 
+// Only anomalies produce a badge. Returning the action name here is what widened the
+// titlebar pill into a fake button and pushed the edge tab out of the picture.
 - (NSString *)currentStreamHealthBadgeText {
     if (self.streamHealthNoPayloadStreak > 0) {
         return [NSString stringWithFormat:MLString(@"Stuck %lus", nil), (unsigned long)self.streamHealthNoPayloadStreak];
@@ -1113,7 +1126,7 @@
     if (self.streamHealthHighDropStreak >= 2) {
         return MLString(@"High packet loss", nil);
     }
-    return MLString(@"Control Center", nil);
+    return @"";
 }
 
 - (void)updateControlCenterStatus {
@@ -1152,7 +1165,12 @@
     }
 
     if (self.controlCenterTitleLabel) {
-        self.controlCenterTitleLabel.stringValue = [self currentStreamHealthBadgeText];
+        NSString *badge = [self currentStreamHealthBadgeText];
+        self.controlCenterTitleLabel.stringValue = badge;
+        // The badge and the clock share the pill's text slot; a healthy stream shows the
+        // clock, a stalled one shows what is wrong. Two labels drawn over each other
+        // read as one unreadable label.
+        self.controlCenterTimeLabel.hidden = badge.length > 0;
     }
 }
 

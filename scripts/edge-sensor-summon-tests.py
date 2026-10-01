@@ -157,5 +157,24 @@ if '--self-test' in sys.argv:
     print('PASS negative control: modal menu stacked on the open sidebar')
 print('PASS the control-center shortcut cannot stack a modal menu on the open sidebar')
 
+# Windowed mode is a first-class presentation for the dock, not a mode where the bar
+# "does not exist". It used to refuse the dock outright and leave a 240pt pill fused into
+# the right end of the titlebar as the only entry, which is the report this gate exists to
+# keep fixed: the same edge gesture worked fullscreen and did nothing windowed, and the pill
+# read as the titlebar itself. A future "simplification" that re-adds the presentation
+# refusal or re-widens the pill must fail here rather than reopen the report.
+visible = method(menu, '- (BOOL)edgeMenuShouldBeVisible')
+assert '![self isWindowFullscreen] && ![self isWindowBorderlessMode]' not in visible, \
+    'windowed mode is hidden from the edge dock again: the edge gesture only works in two of three presentations'
+assert 'isWindowFullscreen' in visible and 'hideFullscreenControlBall' in visible, \
+    'the fullscreen opt-out for the on-screen entry was lost'
+pill = re.search(r'const CGFloat containerWidth = ([0-9.]+);', menu)
+assert pill and float(pill.group(1)) <= 160.0, \
+    'the titlebar pill grew back into a wide fake button: %s pt' % pill.group(1)
+badge = method(menu, '- (NSString *)currentStreamHealthBadgeText')
+assert 'MLString(@"Control Center", nil)' not in badge, \
+    'the pill labels itself "Control Center" again, which is the fusion the edge tab replaced'
+
+
 rebuild=method(menu,'- (void)rebuildStreamMenu')
 assert rebuild.index('if (self.edgeMenuMenuVisible) return;') < rebuild.index('[self.streamMenu removeAllItems]'), 'live updates can mutate the tracked menu'
