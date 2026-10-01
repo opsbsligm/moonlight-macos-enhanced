@@ -43,6 +43,17 @@ typedef struct {
     BOOL hdrRequested;
     BOOL sdrTenBitRequested;
     BOOL yuv444Requested;
+
+    // The interpolation switch read at stream start: interpolation mode is not Off
+    // AND the player asked for interpolation to run even past the cadence gate.
+    // A forced request is a stated priority -- the player wants extra frames here --
+    // and the low-latency interpolator refuses every 4:4:4 source (measured: the
+    // configuration's supported pixel-format list only carries 4:2:0). Advertising
+    // 4:4:4 under a forced interpolation request therefore guarantees that neither
+    // thing the player asked for happens: the host picks 4:4:4 and the interpolator
+    // declines it per stream. Under this flag the 4:4:4 profile bits are held back
+    // so the stream arrives in the one format the forced interpolator can take.
+    BOOL interpolationForced;
 } MLVideoFormatRequest;
 
 /*
@@ -70,7 +81,9 @@ static inline int MLResolveSupportedVideoFormats(MLVideoFormatRequest request) {
         }
     }
 
-    if (request.yuv444Requested) {
+    // A forced interpolation request outranks the 4:4:4 preference: the format the
+    // player's own switch cannot interpolate is not a format worth negotiating.
+    if (request.yuv444Requested && !request.interpolationForced) {
         formats |= VIDEO_FORMAT_H264_HIGH8_444;
         if (request.hevcAvailable) {
             formats |= VIDEO_FORMAT_H265_REXT8_444;
@@ -85,7 +98,7 @@ static inline int MLResolveSupportedVideoFormats(MLVideoFormatRequest request) {
         // request has to reach this branch too or it would be answered with 8-bit
         // samples and nothing would say so.
         formats |= wantsTenBit ? VIDEO_FORMAT_AV1_MAIN10 : VIDEO_FORMAT_AV1_MAIN8;
-        if (request.yuv444Requested) {
+        if (request.yuv444Requested && !request.interpolationForced) {
             formats |= VIDEO_FORMAT_AV1_HIGH8_444;
             if (wantsTenBit) {
                 formats |= VIDEO_FORMAT_AV1_HIGH10_444;

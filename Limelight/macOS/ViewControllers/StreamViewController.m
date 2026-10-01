@@ -1119,7 +1119,13 @@ highFreqMotor:(unsigned short)highFreqMotor {
     // Default bitrate (may be overridden by auto-adjust below)
     streamConfig.bitRate = [streamSettings.bitrate intValue];
 
-    BOOL enableYuv444 = prefs ? [prefs[@"yuv444"] boolValue] : NO;
+    // A forced interpolation request wins over the 4:4:4 preference here as well:
+    // the negotiator will hold the 4:4:4 bits back (Connection.m), so the bitrate
+    // baseline and the risk assessment must be sized for the 4:2:0 stream that will
+    // actually arrive, not the one the switches literally describe.
+    const BOOL interpolationForcedForChroma = (prefs ? [prefs[@"frameInterpolationForce"] boolValue] : NO) &&
+                                             ([prefs[@"frameInterpolationMode"] intValue] != 0);
+    BOOL enableYuv444 = (prefs ? [prefs[@"yuv444"] boolValue] : NO) && !interpolationForcedForChroma;
     streamConfig.videoRendererMode = prefs[@"videoRendererMode"] != nil ? [prefs[@"videoRendererMode"] intValue] : 2;
     int modeWidth = streamConfig.width;
     int modeHeight = streamConfig.height;

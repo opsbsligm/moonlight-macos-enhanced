@@ -714,7 +714,7 @@
 "Frame Interpolation Metal only detail" = "Available only in Metal Renderer.";
 "Frame Interpolation unavailable detail" = "This Mac or the current renderer path can't use low-latency frame interpolation right now. The session will continue without it.";
 "Force Frame Interpolation" = "Force Frame Interpolation";
-"Force Frame Interpolation detail" = "Runs interpolation even when the display refresh rate leaves no cadence headroom over the stream frame rate. Extra frames compete with source frames for scanout slots, so motion may stutter or tear and latency can rise.";
+"Force Frame Interpolation detail" = "Runs interpolation even when the display refresh rate leaves no cadence headroom over the stream frame rate. Extra frames compete with source frames for scanout slots, so motion may stutter or tear and latency can rise. While forcing, 4:4:4 color is held back to 4:2:0 because the interpolator cannot take a 4:4:4 source.";
 "Force Frame Interpolation no conflict detail" = "This display already has cadence headroom over the stream frame rate, so interpolation runs without forcing. Keep this on to bypass the check if the measured refresh rate dips during a stream.";
 "Reference" = "Reference";
 "Dim Room" = "Dim Room";
