@@ -227,6 +227,19 @@ struct VideoView: View {
 
           SettingDescriptionRow(textKey: settingsModel.frameInterpolationExplanationKey)
 
+          // The force switch rides on the interpolation picker: without an interpolation
+          // request there is nothing to force, so the row disappears when the picker is Off
+          // or the control is disabled by capability, rather than sitting there inert.
+          if settingsModel.frameInterpolationControlIsEnabled,
+             SettingsModel.frameInterpolationModeRawValue(for: settingsModel.selectedFrameInterpolationMode) != 0
+          {
+            ToggleCell(
+              title: "Force Frame Interpolation",
+              hintKey: settingsModel.frameInterpolationForceHintKey,
+              boolBinding: $settingsModel.frameInterpolationForce
+            )
+          }
+
           // Numbers rather than a second paragraph of prose: a player who is told to lower the
           // frame rate needs the number this display actually accepts, and it changes with the
           // panel, so it is computed from the same policy the stream refuses with.

@@ -657,6 +657,7 @@ extension SettingsModel {
     frameInterpolationModeOptions.map(\.title)
   }
   static let defaultFrameInterpolationMode = 0
+  static let defaultFrameInterpolationForce = false
 
   static func frameInterpolationModeRawValue(for title: String) -> Int {
     frameInterpolationModeOptions.first(where: { $0.title == title })?.value

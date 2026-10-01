@@ -76,5 +76,9 @@
 @property(nonatomic) BOOL gamepadMouseMode;
 @property(nonatomic) int upscalingMode;
 @property(nonatomic) int frameInterpolationMode;
+// Admit frame interpolation even when the measured display refresh rate leaves no
+// cadence headroom over the stream frame rate. The user accepts the jitter this can
+// cause; hardware and renderer capability checks still apply.
+@property(nonatomic) BOOL frameInterpolationForce;
 
 @end

@@ -83,12 +83,23 @@ HEAD = "#import <Foundation/Foundation.h>\n"
 # loudly if the header goes by another name.
 HEAD += "#import " + POLICY_HEADER + "\n"
 
+# The gate logs a warning whenever the force switch overrides its refusal, and the
+# probe has no logging facility, so the macro swallows what it is handed. That the
+# gate calls it at all is covered by the behaviour: an override that stayed silent
+# still reports the forced state, and one that refused anyway fails the admit rows.
+HEAD += "#import <stdio.h>\n#define Log(level, fmt, ...) do { if (0) NSLog((fmt), ##__VA_ARGS__); } while (0)\n#define LOG_W 0\n"
+
 CLASS_HEAD = r"""
-@interface MLVideoDecoderUnderTest : NSObject
+@interface MLVideoDecoderUnderTest : NSObject {
+    // The gate keeps its own answer to the switch as an ivar; the probe gives it the
+    // same one, so the lifted gate body compiles against the same storage it ships with.
+    BOOL _frameInterpolationCadenceForced;
+}
 @property (nonatomic) NSInteger requestedFrameInterpolationMode;
 @property (nonatomic) NSInteger activeRendererMode;
 @property (nonatomic) BOOL enableHdr;
 @property (nonatomic) int frameRate;
+@property (nonatomic) BOOL frameInterpolationForceAdmission;
 @end
 
 @implementation MLVideoDecoderUnderTest
@@ -125,6 +136,9 @@ static MLVideoFrameInterpolationReport const kWaitingReport =
 static NSString *const kWorkingFormat = kWorkingFormat_PLACEHOLDER;
 static MLVideoFrameInterpolationReport const kWorkingReport =
     kWorkingReport_PLACEHOLDER;
+static NSString *const kForcedReason = kForcedReason_PLACEHOLDER;
+static MLVideoFrameInterpolationReport const kForcedReport =
+    kForcedReport_PLACEHOLDER;
 
 static NSUInteger KeySlot(NSString *key) {
     for (NSUInteger index = 0; index < gKeyCount; index++) {
@@ -164,23 +178,44 @@ static void Report(const char *state, MLActiveVideoFrameInterpolationEngine engi
     }
 }
 
-typedef struct { NSString *reason; MLVideoFrameInterpolationReport report; } GateAnswer;
+typedef struct { NSString *reason; MLVideoFrameInterpolationReport report; BOOL forced; } GateAnswer;
+
+static GateAnswer GateRefusalForced(NSInteger mode, NSInteger rendererMode, BOOL hdr,
+                                    int frameRate, double refreshRate, BOOL force);
 
 // Ask the shipping gate rather than typing a refusal out, so both halves of what it
 // answers -- the state it names and the sentence it writes -- are what gets checked.
 static GateAnswer GateRefusal(NSInteger mode, NSInteger rendererMode, BOOL hdr,
                               int frameRate, double refreshRate) {
+    return GateRefusalForced(mode, rendererMode, hdr, frameRate, refreshRate, NO);
+}
+
+// The force switch is an input to the same gate, so the probe asks the shipping
+// gate with it on rather than describing what it should do: an admission that
+// claims to have overridden the cadence refusal without running (or a refusal
+// that the switch failed to override) is answered here, not in a comment.
+static GateAnswer GateRefusalForced(NSInteger mode, NSInteger rendererMode, BOOL hdr,
+                                    int frameRate, double refreshRate, BOOL force) {
     MLVideoDecoderUnderTest *renderer = [[MLVideoDecoderUnderTest alloc] init];
     renderer.requestedFrameInterpolationMode = mode;
     renderer.activeRendererMode = rendererMode;
     renderer.enableHdr = hdr;
     renderer.frameRate = frameRate;
+    renderer.frameInterpolationForceAdmission = force;
     NSString *reason = nil;
     MLVideoFrameInterpolationReport report = MLVideoFrameInterpolationReportActive;
-    [renderer shouldUseFrameInterpolationForDisplayRefreshRate:refreshRate
-                                                        report:&report
-                                                        reason:&reason];
-    GateAnswer answer = { reason, report };
+    BOOL admitted = [renderer shouldUseFrameInterpolationForDisplayRefreshRate:refreshRate
+                                                                       report:&report
+                                                                       reason:&reason];
+    if (force && admitted && report == MLVideoFrameInterpolationReportNoCadenceHeadroom) {
+        // Admitted while still naming the refusal is the collapse the forced state
+        // exists to avoid: the page would say the feature is off underneath a
+        // session that is interpolating.
+        gChecked++;
+        gFailed++;
+        printf("     %-22s admitted the stream but reported the refusal\n", "force admit");
+    }
+    GateAnswer answer = { reason, report, force };
     return answer;
 }
 
@@ -241,6 +276,26 @@ int main(void) {
                kWorkingReport, [NSString stringWithFormat:kWorkingFormat, 144.0, 60],
                @"VT Low-Latency Frame Interpolation",
                @"Video Frame Interpolation Runtime Detail Active");
+        // 120 FPS on 144 Hz: the plain gate refuses (120*1.5 > 144), the forced gate
+        // admits and names the forced state, so the page can carry the risk sentence
+        // instead of the refusal sentence.
+        answer = GateRefusalForced(lowLatency, enhanced, NO, 120, 144.0, YES);
+        if (answer.report != kForcedReport) {
+            gChecked++;
+            gFailed++;
+            printf("     %-22s the gate answers a state the page cannot render\n",
+                   "cadence forced");
+        }
+        Report("cadence forced", MLActiveVideoFrameInterpolationEngineVTLowLatency,
+               answer.report, kForcedReason,
+               @"VT Low-Latency Frame Interpolation",
+               @"Video Frame Interpolation Runtime Detail Active Forced");
+        // Force on a display that already has headroom must not change the answer:
+        // the switch claims nothing extra when nothing was overridden.
+        answer = GateRefusalForced(lowLatency, enhanced, NO, 60, 144.0, YES);
+        Report("force with headroom", MLActiveVideoFrameInterpolationEngineNone,
+               answer.report, [NSString stringWithFormat:kWorkingFormat, 144.0, 60],
+               @"Off", @"Video Frame Interpolation Runtime Detail Active");
 
         printf("%s %lu states of the frame interpolation report checked, %lu failed\n",
                gFailed ? "FAIL" : "ok", (unsigned long)gChecked, (unsigned long)gFailed);
@@ -354,6 +409,38 @@ def literal_after(text, start, where):
     return found.group(0), found.end()
 
 
+def literal_under_report(staging, label):
+    """The reason literal handed to the logger directly under a report label."""
+    match = re.search(r"report:" + label + r"\b", staging)
+    if match is None:
+        raise SystemExit("the staging source no longer reports %s" % label)
+    found = LITERAL.search(staging, match.end())
+    if found is None or staging[match.end():found.start()].count("reason:") != 1:
+        raise SystemExit("no reason text sits under report:%s" % label)
+    return found.group(0)
+
+
+def working_report_literal(staging):
+    """The reason behind the plain active report in the staging method.
+
+    The success report used to be reachable only through a format string. The forced
+    state split the success branch in two, so the shape is now: a literal or format
+    string handed to the logger directly under the active report label. The literal is
+    lifted where it is written either way.
+    """
+    for match in re.finditer(r"report:MLVideoFrameInterpolationReportActive\b", staging):
+        found = LITERAL.search(staging, match.end())
+        if found is None:
+            continue
+        # Only text between the report label and the reason can belong to the reason.
+        if staging[match.end():found.start()].count("reason:") != 1:
+            continue
+        if "stringWithFormat" in staging[match.end():found.start()]:
+            return found.group(0)
+        return found.group(0)
+    raise SystemExit("the working report has no reason text to lift")
+
+
 def lifted_literals(source):
     """The reason texts and the states named beside them, taken from the file.
 
@@ -382,6 +469,9 @@ def lifted_literals(source):
                          % len(waiting_matches))
     waiting = waiting_matches[0]
     texts["kWorkingFormat"] = working
+    texts["kForcedReason"] = literal_under_report(
+        staging, "MLVideoFrameInterpolationReportActiveForced")
+    labels["kForcedReport"] = "MLVideoFrameInterpolationReportActiveForced"
     texts["kWaitingReason"] = waiting
     labels["kWorkingReport"] = label_of(staging, working, "kWorkingFormat")
     labels["kWaitingReport"] = label_of(source, waiting, "kWaitingReason")
@@ -413,6 +503,7 @@ WANT_KEYS = (
     "Video Frame Interpolation Runtime Detail No Interpolation Slots",
     "Video Frame Interpolation Runtime Detail Above Interpolation Ceiling",
     "Video Frame Interpolation Runtime Detail Active",
+    "Video Frame Interpolation Runtime Detail Active Forced",
 )
 
 
@@ -486,10 +577,19 @@ KNOWN_BAD = [
      '            return @"Video Frame Interpolation Runtime Detail Off";',
      "a player who enabled the feature is told no stream asked for it"),
     ("the-frame-never-stops-warming-up",
-     "                                     report:MLVideoFrameInterpolationReportActive",
-     "                                     report:MLVideoFrameInterpolationReportWarmup",
+     "                                     report:MLVideoFrameInterpolationReportActive\n"
+     "                                         reason:[NSString stringWithFormat:",
+     "                                     report:MLVideoFrameInterpolationReportWarmup\n"
+     "                                         reason:[NSString stringWithFormat:",
      "the state that names the report is left behind, so a landed frame still reads as "
      "a pending one"),
+    ("forced-admission-reads-as-ordinary-success",
+     '        case MLVideoFrameInterpolationReportActiveForced:\n'
+     '            return @"Video Frame Interpolation Runtime Detail Active Forced";',
+     '        case MLVideoFrameInterpolationReportActiveForced:\n'
+     '            return @"Video Frame Interpolation Runtime Detail Active";',
+     "a stream interpolating without cadence headroom reads like one that had it, "
+     "so the risk sentence the player accepted disappears"),
     ("two-refusals-share-one-sentence",
      "            *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;",
      "            *reportOut = MLVideoFrameInterpolationReportRefreshRateUnknown;",
