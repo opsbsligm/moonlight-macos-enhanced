@@ -49,7 +49,18 @@ case "move":
     // Warp first so the position sticks, then post the move so the app sees a
     // mouseMoved like any pointer motion would produce.
     CGWarpMouseCursorPosition(p)
-    if let e = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left) { e.post(tap: .cghidEventTap) }
+    // A real pointer arriving at an edge is a stream of move events, not one.
+    // A single posted move can be folded away by the WindowServer (measured:
+    // a posted stroke arrives as one event), and then the app never sees the
+    // arrival that starts its dwell timer -- which reads as "the handle only
+    // lights sometimes". Post a short burst around the target so the app gets
+    // the arrival the way hardware delivers it.
+    for i in 0..<4 {
+        let jitter = CGFloat(i % 2 == 0 ? 0 : -1)
+        let q = CGPoint(x: p.x + jitter, y: p.y + jitter)
+        if let e = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: q, mouseButton: .left) { e.post(tap: .cghidEventTap) }
+        usleep(20_000)
+    }
 case "click":
     guard args.count == 4 else { die("click x y") }
     let p = CGPoint(x: Double(args[2])!, y: Double(args[3])!)

@@ -283,6 +283,13 @@
 
 @implementation MLEdgeMenuPanel
 
+// AppKit clamps borderless panels below the menu bar, which cuts the top-docked
+// handle in half. The edge handle owns its own geometry, including the strip
+// above the menu bar on a top dock, so opt out of that single clamp.
+- (NSRect)constrainFrameRect:(NSRect)frame toScreen:(NSScreen *)screen {
+    return frame;
+}
+
 - (BOOL)canBecomeKeyWindow {
     return NO;
 }
