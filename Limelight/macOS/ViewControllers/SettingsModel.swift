@@ -1022,6 +1022,12 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  @Published var frameInterpolationForce: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var selectedClipboardSyncMode: String {
     didSet {
       guard !isLoading else { return }
@@ -1382,6 +1388,7 @@ class SettingsModel: ObservableObject {
     selectedUpscalingMode = Self.upscalingModeTitle(for: Self.defaultUpscalingMode)
     selectedFrameInterpolationMode = Self.frameInterpolationModeSelection(
       for: Self.defaultFrameInterpolationMode)
+    frameInterpolationForce = Self.defaultFrameInterpolationForce
     selectedClipboardSyncMode = Self.clipboardSyncModeSelection(
       for: Self.defaultClipboardSyncMode)
     selectedConnectionMethod = "Auto"

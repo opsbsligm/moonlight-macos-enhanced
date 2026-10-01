@@ -47,6 +47,22 @@ extension SettingsModel {
   /// because two answers would be a lie on a Mac that has the API but not the
   /// slots, and on a Compatibility renderer the control is off for a different
   /// reason entirely.
+  /// Which sentence the force switch carries. When the display already has cadence
+  /// headroom the switch changes nothing, and the page says so; when it does not, the
+  /// switch is the only way to run interpolation here, and the sentence names the cost.
+  var frameInterpolationForceHintKey: String {
+    let hostId = selectedHost?.id ?? Self.globalHostId
+    let measuredRefresh = SettingsClass.videoCadenceMeasuredRefreshHz(for: hostId)
+    let refreshHz = measuredRefresh > 0 ? measuredRefresh : StreamRiskAssessor.currentDisplayRefreshRateHz()
+    let targetFps = effectiveFpsForBitrate()
+    guard refreshHz > 0, targetFps > 0,
+      !MLInterpolationHasCadenceHeadroom(refreshHz, Int32(targetFps))
+    else {
+      return "Force Frame Interpolation no conflict detail"
+    }
+    return "Force Frame Interpolation detail"
+  }
+
   var frameInterpolationExplanationKey: String {
     if !videoRendererModeIsMetal {
       return "Frame Interpolation Metal only detail"
@@ -82,6 +98,12 @@ extension SettingsModel {
     guard SettingsModel.frameInterpolationModeRawValue(for: selectedFrameInterpolationMode) != 0,
       frameInterpolationControlIsEnabled
     else {
+      return nil
+    }
+    // While the switch forces admission, the advice to change refresh or frame rate
+    // is optional rather than required, and the force row already carries the risk
+    // sentence. Showing both would read as two answers to one question.
+    if frameInterpolationForce {
       return nil
     }
 

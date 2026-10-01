@@ -130,6 +130,7 @@ struct Settings: Encodable, Decodable {
   let streamShortcuts: [String: StreamShortcut]?
   let upscalingMode: Int?
   let frameInterpolationMode: Int?
+  let frameInterpolationForce: Bool?
   let connectionMethod: String?
   let clipboardSyncMode: Int?
   let smoothnessLatencyMode: Int?
@@ -277,6 +278,7 @@ struct Settings: Encodable, Decodable {
       streamShortcuts: streamShortcuts,
       upscalingMode: upscalingMode,
       frameInterpolationMode: frameInterpolationMode,
+      frameInterpolationForce: frameInterpolationForce,
       connectionMethod: nil,
       clipboardSyncMode: clipboardSyncMode,
       smoothnessLatencyMode: smoothnessLatencyMode,
@@ -360,6 +362,7 @@ extension SettingsClass {
     codec: Int? = nil,
     videoRendererMode: Int?? = nil,
     hdr: Bool? = nil,
+    frameInterpolationForce: Bool? = nil,
     connectionMethod: String? = nil,
     mouseMode: Int? = nil,
     volumeLevel: CGFloat? = nil,
@@ -527,6 +530,7 @@ extension SettingsClass {
       streamShortcuts: resolvedStreamShortcuts,
       upscalingMode: settings.upscalingMode,
       frameInterpolationMode: settings.frameInterpolationMode,
+      frameInterpolationForce: frameInterpolationForce ?? settings.frameInterpolationForce,
       connectionMethod: resolvedConnectionMethod,
       clipboardSyncMode: settings.clipboardSyncMode,
       smoothnessLatencyMode: settings.smoothnessLatencyMode,
