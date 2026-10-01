@@ -176,5 +176,14 @@ assert 'MLString(@"Control Center", nil)' not in badge, \
     'the pill labels itself "Control Center" again, which is the fusion the edge tab replaced'
 
 
+# A top-docked handle has to draw above the menu-bar seam. AppKit clamps
+# borderless panels below the menu bar, which cut the top handle in half (the
+# matrix read that as "the handle is gone" while the app still had it). The
+# panel owns its geometry and opts out of that one clamp; a future refactor
+# that drops the opt-out silently re-breaks top docking.
+edgeui=(vc/'MLEdgeMenuUI.m').read_text()
+assert 'constrainFrameRect:(NSRect)frame toScreen:' in edgeui, \
+    'the edge panel lost its menu-bar clamp opt-out: a top-docked handle gets cut in half again'
+
 rebuild=method(menu,'- (void)rebuildStreamMenu')
 assert rebuild.index('if (self.edgeMenuMenuVisible) return;') < rebuild.index('[self.streamMenu removeAllItems]'), 'live updates can mutate the tracked menu'
