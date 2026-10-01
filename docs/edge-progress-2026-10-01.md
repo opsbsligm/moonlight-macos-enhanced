@@ -216,3 +216,6 @@ Metal/HDR 能力检查；设置页如实呈现风险。验收同流程：测试�
 - 已部署二进制 sha256(MacOS/MoonlightEnhanced)=
   1062c07be05291b352aabfd6732f89f770d0327237d8f827e8782841b6d5ffd0。
 - 回滚位：/Applications/.MoonlightEnhanced-before-pill-gone-20261001-154429.app。
+- CI：run 36836450938（提交 586e5fc1，workflow_dispatch）全部 job success。
+  （本次 push 事件未触发 run——GitHub 侧对同分支连续 push 的合批/延迟；已用
+  dispatch 在完全相同的 SHA 上补跑并验证，未改工作流。）
