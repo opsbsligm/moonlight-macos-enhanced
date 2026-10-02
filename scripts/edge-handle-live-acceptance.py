@@ -154,27 +154,61 @@ def handle_window(app_pid, edge, helper, screen_w, screen_h):
     pale Desktop wallpaper, where a colour rule measured the picture behind the
     bar and reported a 40 pt idle band that the app never drew."""
     out = run([helper, "wins", str(app_pid)]).stdout
+    # In windowed mode the dock hugs the stream window's edge, not the
+    # physical screen edge, so the screen-only rule reads "no handle" while
+    # the app is drawing one. Collect the app's large windows (the stream
+    # surface is >= 800x600 in any real session) and accept either anchor.
+    handles, anchors = [], []
     for line in out.splitlines():
         parts = line.split("|")
         if len(parts) != 7:
             continue
         num, layer, alpha, wx, wy, ww, wh = parts
         wx, wy, ww, wh = float(wx), float(wy), float(ww), float(wh)
-        if abs(ww - 56) > 1 or abs(wh - 56) > 1:
+        if abs(ww - 56) <= 1 and abs(wh - 56) <= 1:
+            handles.append((int(num), int(layer), float(alpha), wx, wy, ww, wh))
+        elif ww >= 800 and wh >= 600:
+            anchors.append((wx, wy, ww, wh))
+
+    for num, layer, alpha, wx, wy, ww, wh in handles:
+        # Fullscreen: the dock hugs the physical screen edge (the visible
+        # strip is the capsule, not the 56 pt frame; a top dock hangs above
+        # the menu-bar seam, so its origin is negative).
+        screen_hug = ((edge == "right" and screen_w - ww <= wx <= screen_w + 4) or
+                      (edge == "left" and -4 <= wx <= ww) or
+                      (edge == "top" and -30 <= wy <= 6) or
+                      (edge == "bottom" and screen_h - wh - 4 <= wy <= screen_h + 30))
+        # Windowed mode: the dock hugs the stream window's edge, and the idle
+        # capsule straddles it (its centre sits ~6 pt inside, the panel frame
+        # reaching 22 pt out). A centre-within-one-peek test reads that hug
+        # for all four sides without duplicating the app's frame maths; the
+        # cross-axis span keeps a mid-window panel from posing as a dock.
+        anchor_offset = 0.0
+        window_hug = False
+        for ax, ay, aw, ah in anchors:
+            cx, cy = wx + ww / 2.0, wy + wh / 2.0
+            y_span = ay - 30 <= wy and wy + wh <= ay + ah + 30
+            x_span = ax - 30 <= wx and wx + ww <= ax + aw + 30
+            if edge == "right" and y_span and abs(cx - (ax + aw)) <= 34:
+                window_hug, anchor_offset = True, screen_w - (ax + aw)
+            elif edge == "left" and y_span and abs(cx - ax) <= 34:
+                window_hug, anchor_offset = True, ax
+            elif edge == "top" and x_span and abs(cy - ay) <= 34:
+                window_hug, anchor_offset = True, ay
+            elif edge == "bottom" and x_span and abs(cy - (ay + ah)) <= 34:
+                window_hug, anchor_offset = True, screen_h - (ay + ah)
+        if not (screen_hug or window_hug):
             continue
-        # An idle dock hugs its edge with most of the 56 pt window sitting
-        # outside the screen -- the visible strip is the capsule, not the frame.
-        # Hugging means the on-screen edge of the window is the screen edge.
-        if edge == "right" and not (screen_w - ww <= wx <= screen_w + 4): continue
-        if edge == "left" and not (-4 <= wx <= ww): continue
-        # A top dock hangs its panel above the seam (the app deliberately opts
-        # out of the AppKit menu-bar clamp), so the panel origin is negative
-        # and only the peek strip shows. Hugging means the visible strip is
-        # the 34 pt peek, not a fully onscreen frame.
-        if edge == "top" and not (-30 <= wy <= 6): continue
-        if edge == "bottom" and not (screen_h - wh - 4 <= wy <= screen_h + 30): continue
+        # Band detectors measure depth from the image border. In windowed mode
+        # the anchor is not the screen border, so hand back how far it sits
+        # from there; fullscreen reads zero and keeps the old measurement.
+        off = {"right": (anchor_offset, 0.0), "left": (anchor_offset, 0.0),
+               "top": (0.0, anchor_offset), "bottom": (0.0, anchor_offset)}[edge]
+        if screen_hug and not window_hug:
+            off = (0.0, 0.0)
         return {"x": wx, "y": wy, "w": ww, "h": wh, "alpha": float(alpha),
-                "layer": int(layer), "number": int(num)}
+                "layer": layer, "number": num,
+                "anchor_offset_x": off[0], "anchor_offset_y": off[1]}
     return None
 
 
@@ -239,7 +273,14 @@ def anchored_band(img, edge, win, scale):
     start_i = 0
     # A top/bottom dock anchors to the video area, which sits below the menu-bar
     # strip; the band must still start within a bounded gap of the physical edge.
-    outer_gap = int(round((4 if edge in ("right", "left") else 60) * scale))
+    anchor_gap = float((win or {}).get("anchor_offset_x", 0) or
+                       (win or {}).get("anchor_offset_y", 0) or 0)
+    # A windowed dock hugs the stream window, so the band starts behind the
+    # window's letterbox; the gap must cover that anchor the same way a top
+    # dock's gap covers the menu-bar strip. The frame the caller passes is
+    # already cropped to the anchor, so this only absorbs measurement noise.
+    outer_gap = int(round((max(60.0, anchor_gap + 6.0) if (edge in ("top", "bottom") or anchor_gap)
+                           else 4.0) * scale))
     for i, ratio in enumerate(ratios):
         if ratio > 0.5:
             if not started:
@@ -247,7 +288,7 @@ def anchored_band(img, edge, win, scale):
                     break  # nothing handle-like near the edge
                 started = True
                 start_i = i
-            width = i + 1 - (start_i if edge in ("top", "bottom") else 0)
+            width = i + 1 - start_i
         elif not started and i <= outer_gap:
             continue  # anchor offset or capsule shadow before the band starts
         elif i == 0 and ratio > 0.15:
@@ -419,6 +460,14 @@ def main():
         mode = ask("mouse state now -- free (f), after Shift-Option release (r), game-locked (l)? [f/r/l] ", "l").strip().lower()
         mode = {"f": "free", "r": "released", "l": "locked"}.get(mode, "free")
 
+    # The dock hides itself whenever the app is not active, so every row here
+    # measures an app that owns the foreground. Bring it forward once (never
+    # launch, never kill); a user who is typing into it will notice and can
+    # stop the run.
+    run(["osascript", "-e",
+         'tell application "System Events" to set frontmost of process "MoonlightEnhanced" to true'])
+    time.sleep(0.6)
+
     if mode == "released":
         # The released row owns its own entry: injecting shift+option is the
         # same command the acceptance asks the user to press, and the app
@@ -429,6 +478,18 @@ def main():
         time.sleep(0.5)
 
     out = tempfile.mkdtemp(prefix="mle-edge-acceptance-")
+    anchor = {"x": 0.0, "y": 0.0}
+
+    def crop_to_anchor(img):
+        ax, ay = anchor["x"], anchor["y"]
+        if not ax and not ay:
+            return img
+        box = {"right": (0, 0, int(w - ax), int(h)),
+               "left": (int(ax), 0, int(w), int(h)),
+               "top": (0, int(ay), int(w), int(h)),
+               "bottom": (0, 0, int(w), int(h - ay))}[args.edge]
+        return img.crop(box)
+
     def shot(tag):
         path = os.path.join(out, tag + ".png")
         # -R capture can transiently fail ("could not create image from rect")
@@ -439,7 +500,7 @@ def main():
             return path, None
         from PIL import Image
         img = Image.open(full)
-        img.crop((0, 0, int(w), int(h))).save(path)
+        crop_to_anchor(img.crop((0, 0, int(w), int(h)))).save(path)
         os.remove(full)
         try:
             from PIL import Image
@@ -469,6 +530,9 @@ def main():
             if not win or win["alpha"] < 0.5:
                 return path, {"width_pt": 0.0, "centre_pt": None}
             img = Image.open(path)
+            anchor["x"] = win.get("anchor_offset_x", 0.0)
+            anchor["y"] = win.get("anchor_offset_y", 0.0)
+            img = crop_to_anchor(img)
             det = anchored_band(img, args.edge, win, scale)
             return path, det
         except Exception as e:
@@ -541,9 +605,14 @@ def main():
         handle_c = base["centre_pt"] or h / 2.0
         start_d = base.get("start_depth_pt", 0.0) or 0.0
         band_start = start_d
-        hp = {"right": (w - IDLE_PT / 2.0, handle_c), "left": (IDLE_PT / 2.0, handle_c),
-              "top": (handle_c, start_d + IDLE_PT / 2.0),
-              "bottom": (handle_c, h - start_d - IDLE_PT / 2.0)}[args.edge]
+        # The pointer target is the drawn tab, centred on the dock's anchor
+        # (the screen edge in fullscreen, the stream window's edge when
+        # windowed); offset the anchor-relative point back into global space.
+        ax, ay = anchor["x"], anchor["y"]
+        hp = {"right": (w - ax - IDLE_PT / 2.0, handle_c),
+              "left": (ax + IDLE_PT / 2.0, handle_c),
+              "top": (handle_c, ay + start_d + IDLE_PT / 2.0),
+              "bottom": (handle_c, h - ay - start_d - IDLE_PT / 2.0)}[args.edge]
         if mode in ("free", "released"):
             armed_ok = collapsed_ok = 0
             from PIL import Image
