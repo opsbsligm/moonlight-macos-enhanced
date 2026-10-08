@@ -143,7 +143,7 @@ def load_highlights(version: str, previous_tag: str | None) -> str:
 
 def build_body(version: str) -> str:
     previous_tag = get_previous_tag(version)
-    repo = os.environ.get("GITHUB_REPOSITORY", "skyhua0224/moonlight-macos-enhanced")
+    repo = os.environ.get("GITHUB_REPOSITORY", "opsbsligm/moonlight-macos-enhanced")
     compare_url = f"https://github.com/{repo}/compare/{previous_tag}...{version}" if previous_tag else f"https://github.com/{repo}/releases/tag/{version}"
     highlights = load_highlights(version, previous_tag)
 

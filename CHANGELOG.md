@@ -6085,8 +6085,8 @@ workflow rules stay at 25.
 - Clipboard sync support.
 - Physical wheel scroll modes (automatic / notched / high-precision).
 
-[Unreleased]: https://github.com/skyhua/Moonlight-macOS/compare/v1.3.9-build19...HEAD
-[1.3.9-build19]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9-build19
-[1.3.9]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.9
-[1.3.8]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.8
-[1.3.7]: https://github.com/skyhua/Moonlight-macOS/releases/tag/v1.3.7
+[Unreleased]: https://github.com/opsbsligm/moonlight-macos-enhanced/compare/v1.3.9-build19...HEAD
+[1.3.9-build19]: https://github.com/opsbsligm/moonlight-macos-enhanced/releases/tag/v1.3.9-build19
+[1.3.9]: https://github.com/opsbsligm/moonlight-macos-enhanced/releases/tag/v1.3.9
+[1.3.8]: https://github.com/opsbsligm/moonlight-macos-enhanced/releases/tag/v1.3.8
+[1.3.7]: https://github.com/opsbsligm/moonlight-macos-enhanced/releases/tag/v1.3.7

@@ -3,9 +3,9 @@
 [![Release](https://img.shields.io/github/v/release/opsbsligm/moonlight-macos-enhanced?label=release&color=blue)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey)](https://developer.apple.com/macos/)
-[![Upstream](https://img.shields.io/badge/fork%20from-skyhua0224%2Fmoonlight--macos--enhanced-blue)](https://github.com/skyhua0224/moonlight-macos-enhanced)
+[![Standalone](https://img.shields.io/badge/status-independent%20project-green)](https://github.com/opsbsligm/moonlight-macos-enhanced)
 
-一个 fork 自 [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) 的增强版，该项目本身衍生自 [Moonlight Game Streaming Project](https://github.com/moonlight-stream)。本仓库专注于低延迟串流体验与工业标准键盘映射。
+Moonlight macOS 客户端的独立增强实现，衍生自 [Moonlight Game Streaming Project](https://github.com/moonlight-stream)，历史起点为 [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced)。本仓库自 2026-10 起是完全独立的主仓库，不再与任何上游同步。本仓库专注于低延迟串流体验与工业标准键盘映射。
 
 **与上游原版的差异，一句话**：把键盘/鼠标输入做成与 Parsec、UU 远程、Steam Link 同一套工业标准映射并让它可测试、可诊断，其余能力（编解码、HDR、音频、手柄）沿用上游。
 映射表、设计原则与已修复问题的根因见 [`docs/input-mapping-design.md`](docs/input-mapping-design.md)，逐项对标结论见 [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md)。
@@ -96,6 +96,6 @@ Fork → 特性分支 → 遵循 [Conventional Commits](https://www.conventional
 ## 致谢
 
 - [Moonlight Game Streaming Project](https://github.com/moonlight-stream) — 原始上游项目
-- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — 直接 fork 来源原作者
+- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — 本项目的历史起点（已独立，不再同步）
 - [Parsec](https://parsec.app) — 键盘映射最佳实践参考
 - 所有贡献者与测试用户
