@@ -1104,6 +1104,9 @@ extension SettingsModel {
   static let defaultIgnoreAspectRatio = false
   static let defaultShowLocalCursor = false
   static let defaultEdgeSensorSummon = true
+  // UU-style arrival summoning: the dwell opens the bar outright. Off restores the
+  // two-step light-then-click protocol, kept as the behavior anchor for that design.
+  static let defaultEdgeSensorSummonOnArrival = true
 
   // Which moments the app takes the system's global hotkeys for the stream. The raw values
   // are the numbers the stream's own enum uses, so the bridge is a pass-through.

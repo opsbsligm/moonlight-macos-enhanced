@@ -459,6 +459,17 @@ class SettingsModel: ObservableObject {
     didSet {
       guard !isLoading else { return }
       saveSettings()
+      postMouseSettingsChanged("edgeSensorSummon")
+    }
+  }
+
+  // Opening the dock the moment the dwell completes at the edge, instead of only
+  // lighting the tab. The stream re-reads it with its other edge-sensor preferences.
+  @Published var edgeSensorSummonOnArrival: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+      postMouseSettingsChanged("edgeSensorSummon")
     }
   }
 
@@ -1310,6 +1321,7 @@ class SettingsModel: ObservableObject {
     ignoreAspectRatio = Self.defaultIgnoreAspectRatio
     showLocalCursor = Self.defaultShowLocalCursor
     edgeSensorSummon = Self.defaultEdgeSensorSummon
+    edgeSensorSummonOnArrival = Self.defaultEdgeSensorSummonOnArrival
     systemKeyboardShortcutCapture = Self.defaultSystemKeyboardShortcutCapture
     enableMicrophone = Self.defaultEnableMicrophone
     streamResolutionScale = Self.defaultStreamResolutionScale

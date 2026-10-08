@@ -91,6 +91,14 @@ print('PASS settings copy carries the geometry the code arms and the locked-mode
 arm = method(mouse, '- (void)armEdgeMenuHandleIfStillAtEdge:')
 for banned in ('summonEdgeMenuDock', 'uncaptureMouse', 'activateEdgeMenuDock'):
     assert banned not in arm, 'arriving at the edge still %s' % banned
+# Arrival-opening exists, and only the preference decides it: the dwell timer is the
+# one place allowed to open from arrival, and it must ask edgeSensorSummonOnArrival
+# first so the two-step protocol stays reachable. An ungated open here is the old
+# "sidebar fires on its own" bug wearing today's clothes.
+dwell = method(mouse, '- (void)beginEdgeSensorDwellTimerIfNeededForEdge:')
+assert 'summonEdgeMenuDockForEdge' in dwell, 'arrival can no longer open the dock at all'
+assert 'edgeSensorSummonOnArrival' in dwell, 'the dwell opens the dock without asking the preference'
+assert 'edgeMenuHandleArmed' in dwell, 'a dwell that lost its arm still opens the dock'
 click = method(mouse, '- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer')
 assert 'edgeMenuVisibleHandleRectInBounds' in click, 'the click is aimed at something other than the drawn tab'
 assert 'edgeMenuInteractionRectInBounds' not in click, 'the invisible expanded box still decides which clicks open the bar'

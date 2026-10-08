@@ -748,6 +748,9 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     // A settings dictionary from before this key existed has no entry at all. That is
     // the same state as a fresh install, and both mean the band is armed.
     self.edgeSensorSummonEnabled = value ? [value boolValue] : YES;
+    id arrival = prefs ? prefs[@"edgeSensorSummonOnArrival"] : nil;
+    // A dictionary from before this key existed means the shipped default: arrival opens.
+    self.edgeSensorSummonOnArrival = arrival ? [arrival boolValue] : YES;
     if (!self.edgeSensorSummonEnabled) {
         [self resetEdgeSensorSummonState];
     }
@@ -801,6 +804,14 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         strongSelf.edgeSensorDwellTimer = nil;
         if (token != strongSelf.edgeMenuLifecycleToken || !NSEqualRects(bounds, strongSelf.view.bounds)) return;
         [strongSelf armEdgeMenuHandleIfStillAtEdge:edge];
+        // UU-style arrival: the dwell that lit the tab is also the request to open.
+        // Arming stays a light show on its own; the opening lives here, in the one
+        // place that already re-checked the pointer, the lifecycle token and the
+        // geometry, so the two-step protocol remains intact when the preference is off.
+        if (strongSelf.edgeSensorSummonOnArrival && strongSelf.edgeMenuHandleArmed &&
+            !strongSelf.edgeMenuButtonExpanded) {
+            [strongSelf summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-arrival"];
+        }
     }];
     [[NSRunLoop mainRunLoop] addTimer:self.edgeSensorDwellTimer forMode:NSRunLoopCommonModes];
 }
@@ -2230,6 +2241,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         return;
     }
 
+    [self refreshEdgeSensorSummonPreference];
     self.pendingHybridRemoteCursorSync = self.isRemoteDesktopMode &&
                                          [SettingsClass shouldUseHybridFreeMouseMotionFor:self.app.host.uuid];
     [self.hidSupport refreshMouseInputConfiguration];
