@@ -113,7 +113,7 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 @property double lastOptionUncaptureAtMs;
 @property NSInteger pendingFreeMouseReentryEdge;
 @property double pendingFreeMouseReentryAtMs;
-@property BOOL isRemoteDesktopMode, isMouseCaptured, edgeSensorSummonEnabled;
+@property BOOL isRemoteDesktopMode, isMouseCaptured, edgeSensorSummonEnabled, edgeSensorSummonOnArrival;
 @property BOOL edgeMenuTemporaryReleaseActive;
 @property MLEdgeMenuPhase edgeMenuPhase;
 @property NSUInteger edgeMenuLifecycleToken;
@@ -242,6 +242,9 @@ static Sensor *fresh(MLFreeMouseExitEdge edge) {
     s.edgeMenuPanel = [Panel new]; s.edgeMenuButton = [ProbeHandle new];
     s.view.bounds = NSMakeRect(0, 0, 1920, 1080);
     s.visible = s.isMouseCaptured = s.edgeSensorSummonEnabled = s.isRemoteDesktopMode = YES;
+    // The probe exercises the two-step protocol first; the arrival-opening scenario
+    // turns the preference on where it says so.
+    s.edgeSensorSummonOnArrival = NO;
     [s transitionEdgeMenuToPhase:MLEdgeMenuPhaseCollapsed];
     s.edgeMenuDockEdge = edge; s.edgeMenuButtonEdgeRatio = 0.5;
     return s;
@@ -319,6 +322,35 @@ int main(void) { @autoreleasepool {
         CHECK(idleDepth >= MLEdgeMenuHandleIdleThickness && idleDepth <= MLEdgeMenuButtonVisiblePeek + 2.0,
               "the idle tab is visible at the dock without reaching into the game");
     }
+    // UU-style arrival: the dwell that lights the tab opens the bar outright, the
+    // pointer moves to the bar, and a collapse must not reopen it in place. Thirty
+    // cycles, because the report this replaces was "the first arrival worked".
+    for (int edge = 1; edge <= 4; edge++) for (int cycle = 0; cycle < 30; cycle++) {
+        s = fresh(edge); s.edgeSensorSummonOnArrival = YES; s.wire = [NSMutableArray array];
+        NSRect region = [s edgeSensorActivationRectInBounds:s.view.bounds];
+        s.systemPoint = NSMakePoint(NSMidX(region),NSMidY(region));
+        s.edgeSensorIgnoreMotionUntilMs = 0;
+        move(s,0,0);
+        CHECK(s.edgeSensorDwellTimer.isValid, "arrival starts the dwell with opening enabled");
+        [ProbeLog reset];
+        fire(s.edgeSensorDwellTimer);
+        CHECK(s.expanded, "arrival at the edge opens the dock without a click");
+        CHECK(!s.isMouseCaptured && !s.edgeMenuHandleArmed,
+              "an arrival opening hands the pointer to the bar instead of the game");
+        CHECK([ProbeLog countMatching:@"Edge controls opened"] == 1, "one arrival opens exactly one dock");
+        CHECK([s.wire count] == 0, "an arrival sends no button bytes to the host");
+        // Leaving the expanded area collapses; the collapse must demand a real departure
+        // before another arrival can fire, or the dismissal chases the pointer.
+        s.systemPoint = NSMakePoint(edge == MLFreeMouseExitEdgeLeft ? NSMaxX(s.view.bounds)-1 : NSMinX(s.view.bounds)+1,
+                                    edge == MLFreeMouseExitEdgeBottom ? NSMaxY(s.view.bounds)-1 : NSMinY(s.view.bounds)+1);
+        [s updateEdgeMenuPointerInsideForPoint:s.systemPoint];
+        [s deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:NO];
+        CHECK(!s.expanded && s.edgeSensorMustLeaveHoverRegion, "a collapsed arrival bar waits for the pointer to leave");
+        s.systemPoint = NSMakePoint(NSMidX(region),NSMidY(region));
+        move(s,0,0);
+        CHECK(!s.edgeSensorDwellTimer && !s.expanded, "staying put after a collapse cannot reopen the dock in place");
+    }
+
     // The click is what asks for the bar, and it is aimed at the tab the player was
     // shown. Repeated on every docked edge, because the first open used to work and the
     // ones after it did not.

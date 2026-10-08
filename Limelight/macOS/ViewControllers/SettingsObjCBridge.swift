@@ -118,6 +118,9 @@ class SettingsClass: NSObject {
         // The key the stream reads before arming the edge summon band. Absent and true
         // mean the same thing to it, and both mean armed.
         "edgeSensorSummon": settings.edgeSensorSummon ?? true,
+        // Whether that band opens the dock on arrival or only lights the tab first.
+        // Absent means the UU-style arrival behavior, the shipped default.
+        "edgeSensorSummonOnArrival": settings.edgeSensorSummonOnArrival ?? true,
         // The stream reads this to decide when the system's global hotkeys are its own.
         // Anything it does not recognise is read back as "follow fullscreen".
         "systemKeyboardShortcutCapture": settings.systemKeyboardShortcutCapture ?? 0,
@@ -336,6 +339,7 @@ class SettingsClass: NSObject {
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
       edgeSensorSummon: settings.edgeSensorSummon,
+      edgeSensorSummonOnArrival: settings.edgeSensorSummonOnArrival,
       systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,
@@ -450,6 +454,7 @@ class SettingsClass: NSObject {
         ignoreAspectRatio: updated.ignoreAspectRatio,
         showLocalCursor: updated.showLocalCursor,
         edgeSensorSummon: updated.edgeSensorSummon,
+        edgeSensorSummonOnArrival: updated.edgeSensorSummonOnArrival,
         systemKeyboardShortcutCapture: updated.systemKeyboardShortcutCapture,
         enableMicrophone: updated.enableMicrophone,
         streamResolutionScale: updated.streamResolutionScale,
@@ -560,6 +565,7 @@ class SettingsClass: NSObject {
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
       edgeSensorSummon: settings.edgeSensorSummon,
+      edgeSensorSummonOnArrival: settings.edgeSensorSummonOnArrival,
       systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,

@@ -285,6 +285,14 @@ struct InputView: View {
         boolBinding: $settingsModel.edgeSensorSummon
       )
 
+      if settingsModel.edgeSensorSummon {
+        ToggleCell(
+          title: "Summon On Arrival",
+          hintKey: "Summon On Arrival detail",
+          boolBinding: $settingsModel.edgeSensorSummonOnArrival
+        )
+      }
+
       Divider()
 
       PickerSettingRow(
