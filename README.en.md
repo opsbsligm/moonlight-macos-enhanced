@@ -6,9 +6,9 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey)](https://developer.apple.com/macos/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 
-A fork of [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced), which itself derives from the [Moonlight Game Streaming Project](https://github.com/moonlight-stream).
+A standalone enhanced macOS client derived from the [Moonlight Game Streaming Project](https://github.com/moonlight-stream), historically originating from [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced). Since October 2026 this repository is the independent mainline and no longer syncs with any upstream.
 
-**What differs from upstream, in one line**: keyboard and mouse input follow the same industrial-standard mapping used by Parsec, UU Remote and Steam Link, and that mapping is testable and diagnosable. Everything else — codecs, HDR, audio, controllers — comes from upstream. The mapping table, the design rules and the root causes behind the fixed issues are in [`docs/input-mapping-design.md`](docs/input-mapping-design.md); the head-to-head comparison is in [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md).
+**What differs from the original, in one line**: keyboard and mouse input follow the same industrial-standard mapping used by Parsec, UU Remote and Steam Link, and that mapping is testable and diagnosable. Everything else — codecs, HDR, audio, controllers — comes from upstream. The mapping table, the design rules and the root causes behind the fixed issues are in [`docs/input-mapping-design.md`](docs/input-mapping-design.md); the head-to-head comparison is in [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md).
 
 ## What it does
 
@@ -93,15 +93,15 @@ Fork → feature branch → commit in [Conventional Commits](https://www.convent
 
 ## Contact
 
-- 📧 Email: [dev@sky-hua.xyz](mailto:dev@sky-hua.xyz)
-- 💬 Telegram: [@skyhua](https://t.me/skyhua)
-- 🐧 QQ: 2110591491
-- 🐙 Issues: [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced/issues)
+- 🐙 Issues: [opsbsligm/moonlight-macos-enhanced](https://github.com/opsbsligm/moonlight-macos-enhanced/issues) — please attach a diagnostic report, see [How to report](README.md).
+
+This project is maintained independently; the contact details of the original author it
+originated from are no longer the channel for this codebase.
 
 ## Acknowledgements
 
 - [Moonlight Game Streaming Project](https://github.com/moonlight-stream) — the original upstream
-- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — the author this fork came from
+- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — the origin this project started from (now independent)
 - [Parsec](https://parsec.app) — reference for keyboard-mapping practice
 - Every contributor and test player
 
