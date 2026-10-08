@@ -522,6 +522,9 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 // change made in the settings page lands without restarting the stream; the off state
 // is what the regression anchor compares against.
 @property (nonatomic) BOOL edgeSensorSummonEnabled;
+// Whether a completed dwell opens the dock outright (UU-style arrival) or only lights
+// the tab and waits for a click. Read with the other edge-sensor preferences.
+@property (nonatomic) BOOL edgeSensorSummonOnArrival;
 @property (nonatomic, strong) NSTimer *edgeSensorDwellTimer;
 @property (nonatomic) double edgeSensorIgnoreMotionUntilMs;
 @property (nonatomic) BOOL edgeSensorMustLeaveHoverRegion;

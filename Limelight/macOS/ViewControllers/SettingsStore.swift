@@ -31,6 +31,7 @@ struct Settings: Encodable, Decodable {
   let ignoreAspectRatio: Bool?
   let showLocalCursor: Bool?
   let edgeSensorSummon: Bool?
+  let edgeSensorSummonOnArrival: Bool?
   let systemKeyboardShortcutCapture: Int?
   let enableMicrophone: Bool?
   let streamResolutionScale: Bool?
@@ -194,6 +195,7 @@ struct Settings: Encodable, Decodable {
       ignoreAspectRatio: ignoreAspectRatio,
       showLocalCursor: showLocalCursor,
       edgeSensorSummon: edgeSensorSummon,
+      edgeSensorSummonOnArrival: edgeSensorSummonOnArrival,
       systemKeyboardShortcutCapture: systemKeyboardShortcutCapture,
       enableMicrophone: enableMicrophone,
       streamResolutionScale: streamResolutionScale,
@@ -440,6 +442,7 @@ extension SettingsClass {
       ignoreAspectRatio: settings.ignoreAspectRatio,
       showLocalCursor: settings.showLocalCursor,
       edgeSensorSummon: settings.edgeSensorSummon,
+      edgeSensorSummonOnArrival: settings.edgeSensorSummonOnArrival,
       systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: resolvedStreamResolutionScale,
