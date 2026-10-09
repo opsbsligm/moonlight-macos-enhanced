@@ -688,6 +688,8 @@
 "HDR Manual Luminance detail" = "These luminance values feed Metal Renderer’s local HDR profile and its SDR tone-mapping fallback.";
 "Upscaling detail" = "Upscaling rebuilds the decoded stream itself into a larger picture -- it does not enlarge the interface. It runs only on the Metal renderer, and only while the window is larger than the stream; when the two sizes match there is nothing to rebuild. Every frame is invented one more time, which costs a little latency and power.";
 "Upscaling needs newer system hint" = "VideoToolbox super resolution needs macOS 26 or newer. On an older system Moonlight uses MetalFX or basic scaling instead, and the runtime line below names the path that is running.";
+"Upscaling source has no factors hint" = "VideoToolbox super resolution has no scale factor for the stream resolution you selected, so it will not run for this stream however you resize the window; Moonlight falls back to MetalFX or basic scaling. Lowering the stream resolution below this size makes the option usable again.";
+"Upscaling no factors anywhere hint" = "VideoToolbox super resolution has no scale factor for any resolution this stream can use on this Mac, so the VT options will not run for any of them; Moonlight falls back to MetalFX or basic scaling. On an Apple silicon Mac without ProMotion-class scaler support this is expected for 1080p and larger sources.";
 "Upscaling Metal only detail" = "Available only in Metal Renderer.";
 "Optical Output Scale" = "Optical Output Scale";
 "Optical Output Scale detail" = "Adjusts the working HDR intensity before Metal Renderer performs EDR presentation or SDR tone mapping.";

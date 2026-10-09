@@ -688,6 +688,8 @@
 "HDR Manual Luminance detail" = "这些亮度值会作为 Metal 渲染器的本机 HDR 配置，并影响 SDR 回退时的色调映射。";
 "Upscaling detail" = "超分重建的是解码后的串流画面本身：把它放大到更大的窗口尺寸，而不是把整个界面变大。它只在 Metal 渲染器上运行，且只有当窗口大于串流分辨率时才会启用；两者一样大时无事可做。每一帧都要多重建一次，因此会多花一点延迟和功耗。";
 "Upscaling needs newer system hint" = "VideoToolbox 超分需要 macOS 26 或更新系统。系统不满足时会自动改用 MetalFX 或基础缩放，下方运行时读数会写明当前用的是哪条链路。";
+"Upscaling source has no factors hint" = "VideoToolbox 超分在你选定的串流分辨率下没有任何可用倍率，这条链路对这个流不会生效，窗口怎么调也一样；Moonlight 会自动改用 MetalFX 或基础缩放。把串流分辨率调低一档，这个选项就会重新可用。";
+"Upscaling no factors anywhere hint" = "VideoToolbox 超分在这台 Mac 上对本流可选的任何分辨率都没有可用倍率，选哪个 VT 档位都不会生效；Moonlight 会自动改用 MetalFX 或基础缩放。在没有相应超分硬件支持的 Apple 硅上，1080p 及以上的源出现这个结果是正常的。";
 "Upscaling Metal only detail" = "仅 Metal 渲染器可用。";
 "Optical Output Scale" = "光学输出倍率";
 "Optical Output Scale detail" = "调整 Metal 渲染器在 EDR 呈现或 SDR 映射前的 HDR 工作强度。";
