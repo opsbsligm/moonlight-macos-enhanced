@@ -57,11 +57,13 @@ READOUT_KEYS = ("Frame Interpolation Cadence Idle",
                 "Frame Interpolation Cadence Advice",
                 "Frame Interpolation Cadence No Headroom")
 
-# refresh Hz -> the frame rate the policy will recommend, 0 meaning "not on this panel"
-# 45 Hz answers 30 rather than nothing: 45 is exactly 1.5x 30, and the shipped comparison refuses
-# only a refresh strictly below the minimum, so the boundary carries the slowest rate on offer.
-# 44 is the first refresh that cannot carry any of them.
-EXPECTED_SUGGESTIONS = ((180.0, 120), (179.0, 90), (140.0, 90), (100.0, 60),
+# refresh Hz -> the frame rate the policy will recommend, 0 meaning "not on this panel".
+# The cadence must be a whole multiple of twice the stream rate, so 180 recommends 90 (one
+# interpolated frame per scan) and not 120 -- 120 was the pairing that played as viscous jitter
+# on a real 180 Hz panel. 179 is still 180 measured: within the tolerance it carries the same
+# cadence. 59.94 is a 60 Hz mode carrying 30. A 100 Hz panel has no even pairing for any rate
+# the page offers, so nothing is on the table there without forcing.
+EXPECTED_SUGGESTIONS = ((180.0, 90), (179.0, 90), (140.0, 0), (100.0, 0),
                         (59.94, 30), (44.0, 0), (0.0, 0))
 
 failures = []

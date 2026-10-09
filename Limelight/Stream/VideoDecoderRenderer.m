@@ -3850,9 +3850,10 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                 *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;
             }
             if (reasonOut != NULL) {
-                *reasonOut = [NSString stringWithFormat:@"display %.2fHz does not have cadence headroom over stream %d FPS",
+                *reasonOut = [NSString stringWithFormat:@"display %.2fHz matches no whole multiple of stream %d FPS doubled (%.2f Hz per displayed frame)",
                               displayRefreshRate,
-                              self.frameRate];
+                              self.frameRate,
+                              minimumRefreshRate];
             }
             return NO;
         }
@@ -3861,7 +3862,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         // with source frames for the same scanout slots and a player who forces
         // interpolation deserves to see what was overridden.
         _frameInterpolationCadenceForced = YES;
-        Log(LOG_W, @"[video] frame interpolation forced over cadence refusal: display %.2fHz below %.2fHz needed for stream %d FPS",
+        Log(LOG_W, @"[video] frame interpolation forced over cadence refusal: display %.2fHz carries no whole multiple of the %.2fHz cadence stream %d FPS needs",
             displayRefreshRate, minimumRefreshRate, self.frameRate);
     } else {
         _frameInterpolationCadenceForced = NO;
@@ -4383,7 +4384,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     } else {
         [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
                                          report:MLVideoFrameInterpolationReportActive
-                                         reason:[NSString stringWithFormat:@"display %.2fHz provides cadence headroom over %d FPS stream",
+                                         reason:[NSString stringWithFormat:@"display %.2fHz carries %d FPS doubled on whole refreshes",
                                                  displayRefreshRate,
                                                  self.frameRate]];
     }

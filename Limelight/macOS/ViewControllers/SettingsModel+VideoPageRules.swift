@@ -89,9 +89,9 @@ extension SettingsModel {
   /// out from. While a stream runs the renderer's measured answer wins: it comes from the display
   /// link and it is the number the admission itself refused against. Before a stream there is
   /// nothing measured, so the display mode is asked, and the row says which of the two it heard,
-  /// because a 179.82 Hz measured period and a 180 Hz mode name are not the same input to
-  /// 1.5x arithmetic -- that difference is the whole reason 120 FPS can be recommended by a page
-  /// and then refused by the stream.
+  /// because a 179.82 Hz measured period and a 180 Hz mode name are not the same input to the
+  /// whole-multiple test -- the policy's tolerance exists so a 90 FPS stream on that panel is
+  /// neither refused for a rounding error nor admitted on a cadence that would stutter.
   var frameInterpolationCadenceAdviceText: String? {
     // The raw value rather than the displayed title: a rename in the option list must not be
     // able to silence a warning by making the comparison stop matching.

@@ -273,12 +273,12 @@ int main(void) {
                @(MLInterpolationSlotReason(MLInterpolationSlotVerdictStreamAboveCeiling)),
                @"Off", @"Video Frame Interpolation Runtime Detail Above Interpolation Ceiling");
         Report("interpolating", MLActiveVideoFrameInterpolationEngineVTLowLatency,
-               kWorkingReport, [NSString stringWithFormat:kWorkingFormat, 144.0, 60],
+               kWorkingReport, [NSString stringWithFormat:kWorkingFormat, 240.0, 60],
                @"VT Low-Latency Frame Interpolation",
                @"Video Frame Interpolation Runtime Detail Active");
-        // 120 FPS on 144 Hz: the plain gate refuses (120*1.5 > 144), the forced gate
-        // admits and names the forced state, so the page can carry the risk sentence
-        // instead of the refusal sentence.
+        // 120 FPS on 144 Hz: the plain gate refuses (144 is no whole multiple of the
+        // 240 frames the stream would show), the forced gate admits and names the
+        // forced state, so the page carries the risk sentence instead of the refusal.
         answer = GateRefusalForced(lowLatency, enhanced, NO, 120, 144.0, YES);
         if (answer.report != kForcedReport) {
             gChecked++;
@@ -290,11 +290,11 @@ int main(void) {
                answer.report, kForcedReason,
                @"VT Low-Latency Frame Interpolation",
                @"Video Frame Interpolation Runtime Detail Active Forced");
-        // Force on a display that already has headroom must not change the answer:
+        // Force on a display that already carries the cadence must not change it:
         // the switch claims nothing extra when nothing was overridden.
-        answer = GateRefusalForced(lowLatency, enhanced, NO, 60, 144.0, YES);
+        answer = GateRefusalForced(lowLatency, enhanced, NO, 60, 240.0, YES);
         Report("force with headroom", MLActiveVideoFrameInterpolationEngineNone,
-               answer.report, [NSString stringWithFormat:kWorkingFormat, 144.0, 60],
+               answer.report, [NSString stringWithFormat:kWorkingFormat, 240.0, 60],
                @"Off", @"Video Frame Interpolation Runtime Detail Active");
 
         printf("%s %lu states of the frame interpolation report checked, %lu failed\n",
