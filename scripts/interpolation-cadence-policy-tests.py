@@ -2,7 +2,8 @@
 """Prove the one cadence answer stays one answer, and that it answers correctly.
 
 Whether a display can carry frame interpolation at a given stream frame rate is a single
-arithmetic fact -- refresh at least 1.5x the stream rate and at least 12 Hz above it -- but two
+arithmetic fact -- the display refresh must be a whole multiple (within a few percent) of twice
+the stream rate, so every interpolated frame lands on a whole refresh -- but two
 places have to act on it: the renderer, which refuses to build an interpolating engine, and the
 settings page, which has to warn a player before the stream starts and name a frame rate that
 would work. The moment those two are separate copies of the formula, a player can be told to pick
@@ -12,10 +13,10 @@ file is what keeps it single and right.
 
 Three things are checked:
 
-  * the shipped C functions are compiled as-is and driven: the minimum refresh per frame rate,
-    the exact boundary (180 Hz carrying 120 FPS, 179 not), unknown and negative refresh refused,
-    the recommendation snapped to a frame rate the settings page actually offers, and the frame
-    rate list itself;
+  * the shipped C functions are compiled as-is and driven: the minimum (one-times-cadence)
+    refresh per frame rate, the exact boundaries (180 Hz carrying 90 FPS and refusing 120 FPS
+    -- the pairing that read as honey on a real panel --, 179 still carrying 90 within tolerance, 174 refused, unknown and negative refresh refused), the recommendation snapped to a frame rate the
+    settings page actually offers, and the frame rate list itself;
   * the wiring, read out of the shipping sources: the renderer imports the header, its admission
     calls the shared function, the duplicated arithmetic is gone rather than still living beside
     it, and the recommendation cannot name a frame rate the page cannot select;
@@ -33,7 +34,7 @@ RENDERER = os.path.join(ROOT, "Limelight", "Stream", "VideoDecoderRenderer.m")
 DERIVED = os.path.join(ROOT, "Limelight", "macOS", "ViewControllers",
                        "SettingsModel+DerivedValues.swift")
 
-MIN_BEHAVIOUR = 25
+MIN_BEHAVIOUR = 55
 PRESETS = [30, 60, 90, 120, 144]
 
 DRIVER = r'''
@@ -61,6 +62,21 @@ int main(void) {
            MLInterpolationHasCadenceHeadroom(180.0, 144),
            MLInterpolationHasCadenceHeadroom(90.0, 60),
            MLInterpolationHasCadenceHeadroom(36.0, 24));
+    printf("edge180_90=%d edge17982_90=%d edge174_90=%d edge360_120=%d\n",
+           MLInterpolationHasCadenceHeadroom(180.0, 90),
+           MLInterpolationHasCadenceHeadroom(179.82, 90),
+           MLInterpolationHasCadenceHeadroom(174.0, 90),
+           MLInterpolationHasCadenceHeadroom(360.0, 120));
+    printf("edge60_30=%d edge120_30=%d edge121_60=%d edge61_30=%d\n",
+           MLInterpolationHasCadenceHeadroom(60.0, 30),
+           MLInterpolationHasCadenceHeadroom(120.0, 30),
+           MLInterpolationHasCadenceHeadroom(121.0, 60),
+           MLInterpolationHasCadenceHeadroom(61.0, 30));
+    printf("edge240_60=%d edge120_60=%d edge300_60=%d edge175_60=%d\n",
+           MLInterpolationHasCadenceHeadroom(240.0, 60),
+           MLInterpolationHasCadenceHeadroom(120.0, 60),
+           MLInterpolationHasCadenceHeadroom(300.0, 60),
+           MLInterpolationHasCadenceHeadroom(175.0, 60));
     printf("unknownrefresh=%d negrefresh=%d zerofps=%d\n",
            MLInterpolationHasCadenceHeadroom(0.0, 60),
            MLInterpolationHasCadenceHeadroom(-5.0, 60),
@@ -80,18 +96,24 @@ int main(void) {
 '''
 
 # What the answers have to be. Every one of these is a claim about the shipped rule, not about
-# this file: 180 Hz carrying exactly 120 FPS is the pairing a 180 Hz player must choose, and the
+# this file: 180 Hz refusing 120 FPS and carrying 90 is the pairing a 180 Hz player has to
+# choose -- 120 on that panel was admitted by the old 1.5x headroom floor and measured as
+# viscous jitter, because 240 output frames cannot land evenly on 180 scans. 179.82 carrying
+# 90 is the same panel measured honestly; 174 is a different cadence and stays refused. The
 # recommendation being a selectable rate is what makes the settings page's advice actionable.
 EXPECTED = {
-    "min12": "24.0", "min20": "32.0", "min23": "35.0", "min24": "36.0",
-    "min30": "45.0", "min60": "90.0", "min120": "180.0", "min144": "216.0",
-    "edge32_20": "1", "edge31_20": "0", "edge45_30": "1", "edge44_30": "0",
-    "edge180_120": "1", "edge179_120": "0", "edge180_144": "0", "edge90_60": "1",
-    "edge24_36": "1", "unknownrefresh": "0", "negrefresh": "0", "zerofps": "0",
-    "cap180": "120", "cap179": "119", "cap165": "110", "cap144": "96", "cap120": "80",
-    "cap90": "60", "cap60": "40", "cap45": "30", "cap30": "0", "cap0": "0", "cap-8": "0",
-    "sug180": "120", "sug179": "90", "sug165": "90", "sug144": "90", "sug120": "60",
-    "sug90": "60", "sug60": "30", "sug45": "30", "sug30": "0", "sug0": "0", "sug-8": "0",
+    "min12": "24.0", "min20": "40.0", "min23": "46.0", "min24": "48.0",
+    "min30": "60.0", "min60": "120.0", "min120": "240.0", "min144": "288.0",
+    "edge32_20": "0", "edge31_20": "0", "edge45_30": "0", "edge44_30": "0",
+    "edge180_120": "0", "edge179_120": "0", "edge180_144": "0", "edge90_60": "0",
+    "edge24_36": "0", "unknownrefresh": "0", "negrefresh": "0", "zerofps": "0",
+    "edge180_90": "1", "edge17982_90": "1", "edge174_90": "0", "edge360_120": "0",
+    "edge60_30": "1", "edge120_30": "1", "edge121_60": "1", "edge61_30": "1",
+    "edge240_60": "1", "edge120_60": "1", "edge300_60": "0", "edge175_60": "0",
+    "cap180": "90", "cap179": "90", "cap165": "0", "cap144": "0", "cap120": "60",
+    "cap90": "0", "cap60": "30", "cap45": "0", "cap30": "0", "cap0": "0", "cap-8": "0",
+    "sug180": "90", "sug179": "90", "sug165": "0", "sug144": "0", "sug120": "60",
+    "sug90": "0", "sug60": "30", "sug45": "0", "sug30": "0", "sug0": "0", "sug-8": "0",
     "count": "5", "preset0": "30", "preset1": "60", "preset2": "90", "preset3": "120",
     "preset4": "144", "oob": "0",
 }
@@ -186,10 +208,17 @@ def red_proofs():
     rc = 0
     policy, renderer, swift = read(POLICY), read(RENDERER), read(DERIVED)
 
-    loosened = policy.replace("sourceFps + 12.0", "sourceFps + 2.0", 1)
+    # Putting the pre-divisibility headroom rule back must go red: under it 120 FPS is
+    # admitted on a 180 Hz panel (the pairing that measured as viscous jitter), which is
+    # exactly the reading this file's edge180_120 names as a refusal.
+    loosened = policy.replace("    return sourceFps * 2.0;",
+                              "    double byRatio = sourceFps * 1.5;"
+                              " double byHeadroom = sourceFps + 12.0;"
+                              " return byRatio > byHeadroom ? byRatio : byHeadroom;", 1)
     answers, _ = drive(loosened)
     wrong = behaviour(answers) if answers else ["the mutated policy did not build"]
-    hit = any("min60" in problem or "cap180" in problem or "edge" in problem for problem in wrong)
+    hit = any("min60" in problem or "edge180_120" in problem or "sug180" in problem
+            for problem in wrong)
     print("%-4s loosening the rule by ten hertz is refused (%d readings wrong)"
           % ("ok" if hit else "FAIL", len(wrong)))
     rc |= 0 if hit else 1
