@@ -132,8 +132,12 @@ def drive(policy_text):
         with open(os.path.join(work, "driver.c"), "w", encoding="utf-8") as handle:
             handle.write(DRIVER)
         binary = os.path.join(work, "driver")
+        # -lm because the policy calls round(), and the audits runner is Linux: gcc keeps
+        # libm separate, where Apple folds it into libSystem. Without this the gate compiles
+        # on every laptop and fails to link on every CI image -- an ld error, not a wrong
+        # reading, and the loudest thing a arithmetic gate can get wrong.
         build = subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-I", work,
-                                os.path.join(work, "driver.c"), "-o", binary],
+                                os.path.join(work, "driver.c"), "-lm", "-o", binary],
                                capture_output=True, text=True)
         if build.returncode != 0:
             return None, (build.stdout + build.stderr).strip()
