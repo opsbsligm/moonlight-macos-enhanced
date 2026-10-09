@@ -60,6 +60,14 @@ Each check below corresponds to a defect that shipped at some point:
     showed that answer, while the same configuration reported zero interpolation
     slots and no supported scale factor at the stream's size, so the settings page
     advertised enhancements the GPU could not run.
+  * an admitted doubled cadence presented every frame with a bare presentDrawable:, so the
+    window server chose how long each frame stayed on screen. The cadence policy had just
+    decided every frame owns k whole refreshes, and the present that ignored its own decision
+    is the mechanism behind the "viscous as honey" report: the arithmetic said 2x, the panel
+    showed whatever the compositor felt like. The enhanced path now has to route an
+    interpolating present through the hold computed from the same policy and the measured
+    refresh rate, and a refused or absent pairing has to present unpaced rather than invent
+    a hold for a cadence the admission already refused.
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
@@ -1457,6 +1465,42 @@ check(bool(named_states) and answered_states == named_states,
       "frame interpolation states with no wording: %s"
       % ", ".join(sorted(set(named_states) - set(answered_states)) or
                   "none; extra: " + ", ".join(sorted(set(answered_states) - set(named_states)))))
+
+
+# An admitted doubled cadence is a promise about how long each frame owns the panel, and a
+# bare presentDrawable: does not keep that promise -- it lets the window server decide. The
+# honey report was that gap: the admission arithmetic and the present ignored each other.
+# The hold has to come from the same policy the admission used, so the answer is computed in
+# one method and the enhanced present is only allowed through it.
+presentation_hold = method_body(renderer, "- (BOOL)presentationCadenceForInterpolationHold:(CFTimeInterval *)holdSecondsOut")
+check("MLInterpolationHasCadenceHeadroom(" in presentation_hold
+      and "_lastDisplayRefreshRate" in presentation_hold,
+      "the present hold is computed from the cadence policy and the measured refresh rate"
+      if "MLInterpolationHasCadenceHeadroom(" in presentation_hold
+      and "_lastDisplayRefreshRate" in presentation_hold
+      else "the presentation hold stopped consulting the policy or the measured refresh, so "
+           "it can hold frames to a cadence nobody admitted")
+check("MLRequestedVideoFrameInterpolationModeOff" in presentation_hold
+      and "MLActiveVideoFrameInterpolationEngineVTLowLatency" in presentation_hold,
+      "a stream that is not interpolating presents without a hold"
+      if "MLRequestedVideoFrameInterpolationModeOff" in presentation_hold
+      and "MLActiveVideoFrameInterpolationEngineVTLowLatency" in presentation_hold
+      else "the hold no longer short-circuits on an absent interpolator, so a plain stream "
+           "acquires a hold invented for a doubled cadence it never asked for")
+enhanced_present = method_body(renderer, "- (void)drawInMTKView:(MTKView *)view")
+check("presentDrawable:drawable afterMinimumDuration:" in enhanced_present
+      and re.search(r"presentationCadenceForInterpolationHold:&", enhanced_present),
+      "the enhanced present routes an interpolating frame through the cadence hold"
+      if "presentDrawable:drawable afterMinimumDuration:" in enhanced_present
+      and re.search(r"presentationCadenceForInterpolationHold:&", enhanced_present)
+      else "the enhanced draw presents every frame unpaced again, which is the honey defect")
+check(enhanced_present.count("presentDrawable:drawable") == 2
+      and re.search(r"afterMinimumDuration:presentationHoldSeconds\];\s*\n\s*\} else \{\s*\n\s*"
+                    r"\[commandBuffer presentDrawable:drawable\];", enhanced_present),
+      "the non-interpolating enhanced frame still presents unpaced beside the paced branch"
+      if enhanced_present.count("presentDrawable:drawable") == 2
+      else "the paced/unpaced pair collapsed into one present, so one of the two states lost "
+           "its presentation path")
 
 
 # A texture cache either outlives the frame that used it or it does not: a CVMetalTexture
