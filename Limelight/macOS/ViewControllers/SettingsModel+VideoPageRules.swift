@@ -19,6 +19,7 @@
 //
 
 import Foundation
+import VideoToolbox
 
 extension SettingsModel {
   /// The renderer mode as the rest of the app normalises it, without each caller
@@ -83,6 +84,84 @@ extension SettingsModel {
   var videoToolboxSuperResolutionIsAvailable: Bool {
     ProcessInfo.processInfo.isOperatingSystemAtLeast(
       OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0))
+  }
+
+  /// Whether the VT low-latency scaler has a factor for the frame size this stream would send.
+  /// `isSupported` is not the question, and neither is the OS version once the OS is new enough:
+  /// measured on an Apple M2 (macOS 27.2), `supportedScaleFactorsForFrameWidth` answers empty for
+  /// both 1920x1080 and 2560x1440 sources, so on this host the scaler can rebuild a 720p story
+  /// and nothing else -- a player who picks the option with a 1080p stream will get the fallback
+  /// however they resize the window, and the page has to say that before the stream starts
+  /// rather than let the runtime line discover it. The probe below is the same question the
+  /// capability matrix asks the configuration API; this one aims it at the resolution the
+  /// player actually selected, which is the only shape the matrix's any-size answer cannot give.
+  var vtLowLatencySuperResolutionIsUsableForSelectedSource: Bool {
+    guard videoToolboxSuperResolutionIsAvailable else {
+      return false
+    }
+    guard #available(macOS 26.0, *) else {
+      return false
+    }
+    guard VTLowLatencySuperResolutionScalerConfiguration.isSupported else {
+      return false
+    }
+    let source = effectiveResolutionForBitrate()
+    guard source.width > 0, source.height > 0 else {
+      return false
+    }
+    let factors = VTLowLatencySuperResolutionScalerConfiguration
+      .__supportedScaleFactors(forFrameWidth: Int(source.width),
+                               frameHeight: Int(source.height))
+    return !factors.isEmpty
+  }
+
+  /// Which source shapes the VT scalers can work on, as the page states it before a stream.
+  /// Three answers, because "your Mac is too old", "your stream size has no factors at all",
+  /// and "the factors exist for smaller sources only" are three different things a player
+  /// could act on -- resize the window forever for a refusal no resize can fix is the failure
+  /// this row exists to prevent. Nil when there is nothing to warn about: the OS is new, and
+  /// the selected source itself has factors, so the option on screen can be honoured.
+  var superResolutionSourceHonestHintKey: String? {
+    if !videoRendererModeIsMetal {
+      return nil
+    }
+    if !videoToolboxSuperResolutionIsAvailable {
+      return nil  // the macOS 26 hint row already carries that sentence
+    }
+    let requested = SettingsModel.upscalingModeRawValue(for: selectedUpscalingMode)
+    // The two VT modes (3, 4) and Auto (6) are the requests this refusal can intercept;
+    // MetalFX and Basic Scaling never touch the VT scaler lists, so a warning about them
+    // would name a path the player did not choose.
+    guard requested == 3 || requested == 4 || requested == 6 else {
+      return nil
+    }
+    guard #available(macOS 26.0, *) else {
+      return nil
+    }
+    let source = effectiveResolutionForBitrate()
+    guard source.width > 0, source.height > 0 else {
+      return nil
+    }
+    let factors = VTLowLatencySuperResolutionScalerConfiguration
+      .__supportedScaleFactors(forFrameWidth: Int(source.width),
+                               frameHeight: Int(source.height))
+    if !factors.isEmpty {
+      return nil
+    }
+    // The refusal can still be escapable: if any smaller offered resolution has factors, the
+    // player can lower the stream resolution and the option becomes honoured rather than
+    // overridden. When no offered size has factors at all, nothing the player picks changes
+    // the answer, and the page says so plainly.
+    let anyOfferedShapeWorks = SettingsModel.resolutions.contains { candidate in
+      candidate == SettingsModel.matchDisplayResolutionSentinel
+        ? false
+        : !VTLowLatencySuperResolutionScalerConfiguration
+            .__supportedScaleFactors(forFrameWidth: Int(candidate.width),
+                                     frameHeight: Int(candidate.height)).isEmpty
+    }
+    return anyOfferedShapeWorks
+      ? "Upscaling source has no factors hint"
+      : "Upscaling no factors anywhere hint"
   }
 
   /// The frame rate this display can actually interpolate at, and the refresh rate it was worked

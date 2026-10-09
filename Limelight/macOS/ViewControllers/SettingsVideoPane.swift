@@ -201,6 +201,12 @@ struct VideoView: View {
           if !settingsModel.videoToolboxSuperResolutionIsAvailable {
             SettingDescriptionRow(textKey: "Upscaling needs newer system hint", color: .orange)
           }
+          // Same shape as the interpolation advice: the refusal is about the source the player
+          // selected, it is orange because it changes what will actually run, and the sentence
+          // comes from the model so the probe can compare the page against one copy of the rule.
+          if let srSourceHint = settingsModel.superResolutionSourceHonestHintKey {
+            SettingDescriptionRow(textKey: srSourceHint, color: .orange)
+          }
           SettingDescriptionRow(textKey: "AI enhancement recommended hint")
           SettingDescriptionRow(textKey: "Scale vs Upscaling hint")
 
