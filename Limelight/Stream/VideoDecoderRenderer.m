@@ -1505,6 +1505,12 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     BOOL _pendingInterpolatedPresented;
     uint64_t _deferredCurrentSourceSequence;
     double _lastDisplayRefreshRate;
+    // The hold the last present asked the window server for, in nanoseconds, and the frame
+    // rate it was computed for. Both exist so the answer is logged when it changes and not
+    // once per frame: a cadence claim that never appears in the log is a claim nobody can
+    // check against a subjective report of a real session.
+    int64_t _lastLoggedPresentationHoldNs;
+    NSInteger _lastLoggedPresentationHoldFps;
 
     // Stats helpers
     uint64_t _lastFrameReceiveTimeMs;
@@ -2873,6 +2879,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastDisplayRefreshRate = 0.0;
+    _lastLoggedPresentationHoldNs = -1;
+    _lastLoggedPresentationHoldFps = 0;
     _frameInterpolationNoSlotWidth = 0;
     _frameInterpolationNoSlotHeight = 0;
     [self teardownFrameInterpolationProcessor];
@@ -4391,6 +4399,63 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     return YES;
 }
 
+// The hold, in seconds, that an interpolated present should ask the window server for, and
+// the output frame rate that hold is the mirror of. Zero answers "no hold": a stream that
+// does not interpolate gets its frames on the host's cadence and any hold added this side is
+// latency nobody asked for, and a stream whose pairing the cadence policy refuses must not
+// get a hold invented here -- the refusal already says this pairing cannot be smooth, and
+// holding each frame for one refresh of a cadence that cannot carry it is how a wrong number
+// gets dressed up as a fix. When the policy admits the pairing, the answer is exact: the
+// doubled cadence is only smooth when every frame -- source and interpolated alike -- owns
+// exactly k whole refreshes, so the hold is k measured refresh periods, which is the frame's
+// own share of the panel and nothing else. This is the minimal answer to the presentation
+// gap the honey feel pointed at: before it, every present went out unpaced and the window
+// server decided how long each frame lasted, which is exactly the decision the panel must
+// not be left to make on its own.
+- (BOOL)presentationCadenceForInterpolationHold:(CFTimeInterval *)holdSecondsOut
+                                     outputFps:(NSInteger *)outputFpsOut
+{
+    if (holdSecondsOut != NULL) {
+        *holdSecondsOut = 0.0;
+    }
+    if (outputFpsOut != NULL) {
+        *outputFpsOut = 0;
+    }
+    if (_requestedFrameInterpolationMode == MLRequestedVideoFrameInterpolationModeOff ||
+        _activeFrameInterpolationEngine != MLActiveVideoFrameInterpolationEngineVTLowLatency ||
+        _lastDisplayRefreshRate <= 0.0 ||
+        self.frameRate <= 0) {
+        return NO;
+    }
+    if (!MLInterpolationHasCadenceHeadroom(_lastDisplayRefreshRate, self.frameRate)) {
+        return NO;
+    }
+    const double ratio = _lastDisplayRefreshRate / ((double)self.frameRate * 2.0);
+    const long long refreshesPerFrame = llround(ratio);
+    if (refreshesPerFrame < 1) {
+        return NO;
+    }
+    const CFTimeInterval hold = (CFTimeInterval)refreshesPerFrame / _lastDisplayRefreshRate;
+    if (holdSecondsOut != NULL) {
+        *holdSecondsOut = hold;
+    }
+    if (outputFpsOut != NULL) {
+        *outputFpsOut = (NSInteger)llround(_lastDisplayRefreshRate / (double)refreshesPerFrame);
+    }
+
+    const int64_t holdNs = (int64_t)llround(hold * 1e9);
+    const NSInteger fps = outputFpsOut != NULL ? *outputFpsOut : 0;
+    if (_lastLoggedPresentationHoldNs != holdNs || _lastLoggedPresentationHoldFps != fps) {
+        _lastLoggedPresentationHoldNs = holdNs;
+        _lastLoggedPresentationHoldFps = fps;
+        Log(LOG_I, @"[video] Presentation cadence bound: each frame held %.3fms on %.2fHz display at %d FPS output",
+            hold * 1000.0,
+            _lastDisplayRefreshRate,
+            (int)fps);
+    }
+    return YES;
+}
+
 - (void)cachePresentedInterpolationSourceFrame:(CVImageBufferRef)sourceFrame
 {
     if (sourceFrame == NULL) {
@@ -5266,7 +5331,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             }
         }
 
-        [commandBuffer presentDrawable:drawable];
+        CFTimeInterval presentationHoldSeconds = 0.0;
+        if ([self presentationCadenceForInterpolationHold:&presentationHoldSeconds outputFps:NULL]) {
+            [commandBuffer presentDrawable:drawable afterMinimumDuration:presentationHoldSeconds];
+        } else {
+            [commandBuffer presentDrawable:drawable];
+        }
         [commandBuffer commit];
 
         if (presentingInterpolatedFrame) {
