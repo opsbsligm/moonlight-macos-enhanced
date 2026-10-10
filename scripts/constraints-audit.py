@@ -1526,6 +1526,38 @@ check(enhanced_present.count("presentDrawable:drawable") == 2
            "its presentation path")
 
 
+# The Metal path takes its cadence from the CVDisplayLink callback, not from MTKView's own
+# timer: `setupMetalRenderer` parks the view (`paused = YES`, `enableSetNeedsDisplay = NO`)
+# and every frame reaches the panel through `requestEnhancedDraw` -> `-[MTKView draw]`, which
+# the display-link callback calls. The three facts are one mechanism, and the load-bearing one
+# is the paused guard inside `requestEnhancedDraw` -- if someone un-parks the view to "let
+# MTKView drive it" the guard starts returning early, the manual trigger silently stops firing,
+# and the panel goes black while the build stays green. `preferredFramesPerSecond` is set but
+# never drives rendering under `paused`, so this rule deliberately says nothing about it.
+metal_setup = method_body(renderer, "- (BOOL)setupMetalRenderer")
+renderer_request_draw = method_body(renderer, "- (void)requestEnhancedDraw")
+renderer_start = method_body(renderer, "- (void)start")
+check("_metalView.paused = YES;" in metal_setup
+      and "_metalView.enableSetNeedsDisplay = NO;" in metal_setup,
+      "the enhanced Metal view stays parked so nothing but the display link drives a draw"
+      if "_metalView.paused = YES;" in metal_setup
+      and "_metalView.enableSetNeedsDisplay = NO;" in metal_setup
+      else "the enhanced Metal view is no longer parked, so MTKView's own timer races the "
+           "display link over when a frame reaches the panel")
+check("if (!_metalView.isPaused)" in renderer_request_draw
+      and "[self->_metalView draw]" in renderer_request_draw,
+      "the manual draw trigger fires only while the view is parked, matching how it is set up"
+      if "if (!_metalView.isPaused)" in renderer_request_draw
+      and "[self->_metalView draw]" in renderer_request_draw
+      else "requestEnhancedDraw stopped asserting the view is parked before drawing it, so a "
+           "setup change can flip the guard and silently kill every manual draw")
+check("CVDisplayLinkSetOutputCallback(self->_displayLink, displayLinkCallback" in renderer_start,
+      "the display-link callback is the driver that fires the manual draw"
+      if "CVDisplayLinkSetOutputCallback(self->_displayLink, displayLinkCallback" in renderer_start
+      else "the display link no longer wires displayLinkCallback, so the enhanced path has no "
+           "timer and every draw depends on somebody else calling requestEnhancedDraw")
+
+
 # A texture cache either outlives the frame that used it or it does not: a CVMetalTexture
 # finalizes against the cache that created it, so freeing the cache while a draw is in flight is
 # a dead pointer inside CoreVideo, not a crash at one of our call sites. The tree shipped that
