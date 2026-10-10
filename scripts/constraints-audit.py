@@ -1438,6 +1438,29 @@ check("settingsModel.frameInterpolationExplanationKey" in video_page
       and "settingsModel.upscalingExplanationKey" in video_page,
       "the video page shows the explanation its own rules chose")
 
+# "Not available" has to be the picker's own answer, not a footnote: the VT super-resolution
+# rows are offered-in-name-only whenever the scaler's per-size list refuses the selected
+# source, and a page that kept selecting them open while the hint below said they will not
+# run is the dishonesty the player reported. The grey-out and the hint must come from the one
+# evaluator, and the raw numbers the VT modes answer to may not leak back into the page --
+# that copy is what let a wording bug flip a refusal into a green light once before.
+check("settingsModel.upscalingOptionIsUnusableForSelectedSource(" in video_page,
+      "the upscaling picker greys an option on the model's answer"
+      if "settingsModel.upscalingOptionIsUnusableForSelectedSource(" in video_page
+      else "the upscaling picker stopped asking the model which options are hollow, so the "
+           "rows can stay selectable while the page says they will not run")
+check(" == 3" not in video_page and " == 4" not in video_page,
+      "the VT raw numbers stay inside the model"
+      if " == 3" not in video_page and " == 4" not in video_page
+      else "the video page compares raw upscaling numbers itself, a second copy of the rule "
+           "the probe cannot compare against the page")
+sr_eval = method_body(video_rules, "var vtSuperResolutionOptionsAreUnusableForSelectedSource: Bool")
+check("vtLowLatencySuperResolutionIsUsableForSelectedSource" in sr_eval,
+      "the refusal the page greys on is the refusal the hint warns about"
+      if "vtLowLatencySuperResolutionIsUsableForSelectedSource" in sr_eval
+      else "the unusability evaluator probes the factor list a second time, so the grey-out "
+           "and the hint sentence can disagree about the same refusal")
+
 # What the settings page says about frame interpolation used to be chosen by searching
 # the reason for a phrase, and the phrasing was the bug twice over: "provides cadence
 # headroom over" and "does not have cadence headroom over" share the phrase, so the
