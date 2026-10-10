@@ -91,6 +91,10 @@ static void check_case(BOOL ok, const char *message) {
 @property(nonatomic, readonly, copy) NSString *lastIdentifier;
 @property(nonatomic, readonly) BOOL delegateWasSet;
 @property(nonatomic, readonly) BOOL queueWasGiven;
+// Non-zero makes submit message the delegate's didFailWithError before submit returns, which is
+// the edge Apple's activationRequestForExtension documentation allows. A controller that records
+// its ask after submit would silently roll that answer back.
+@property(nonatomic) NSInteger failSyncCode;
 @end
 
 @implementation FakePort
@@ -101,6 +105,13 @@ static void check_case(BOOL ok, const char *message) {
     _lastIdentifier = [identifier copy];
     _delegateWasSet = delegate != nil;
     _queueWasGiven = queue != nil;
+    if (_failSyncCode != 0) {
+        [(id<OSSystemExtensionRequestDelegate>)delegate
+            request:(OSSystemExtensionRequest *)[[NSObject alloc] init]
+            didFailWithError:[NSError errorWithDomain:OSSystemExtensionErrorDomain
+                                                 code:_failSyncCode
+                                             userInfo:nil]];
+    }
 }
 @end
 
@@ -312,6 +323,25 @@ static MLDriverExtensionOutcome *fail(MLDriverLifecycle *lifecycle, NSInteger co
         check_case(held_port.submissions == 0,
                    "a session held back by a signing gap does not ask Apple again");
 
+        // 12b. A port that answers inside submit must not be overwritten by it. Apple documents
+        // that the delegate may be messaged synchronously, so the ask has to be on the books
+        // before submit; an ask recorded after submit lets a synchronous signing refusal be
+        // erased by the assignment that follows, hiding the exact gap stage 3 exists to report.
+        FakePort *sync_port = [[FakePort alloc] init];
+        sync_port.failSyncCode = OSSystemExtensionErrorMissingEntitlement;
+        MLDriverExtensionActivationController *synced =
+            [[MLDriverExtensionActivationController alloc] initWithExtensionIdentifier:
+                                          @"std.skyhua.MoonlightMac2.StagingExtension"
+                                                                           crashBudget:3
+                                                                                    port:sync_port];
+        [synced askForActivation];
+        check_case(sync_port.submissions == 1,
+                   "the synchronous answer arrives through the same single submission");
+        check_case(synced.lifecycle.phase == MLDriverExtensionPhaseHeldBack,
+                   "a failure that arrives inside submit survives the rest of askForActivation");
+        check_case([synced.lastReasonName isEqualToString:@"missing-entitlement"],
+                   "the signing gap is the last thing the controller reports");
+
         // 13. The delegate callbacks themselves, driven with the request object AppKit owns.
         FakePort *third_port = [[FakePort alloc] init];
         MLDriverExtensionActivationController *listener =
@@ -500,6 +530,20 @@ def main():
 
     def with_lifecycle(label, before, after):
         run_sources(label, staged_sources(None, mutate(lifecycle, label, before, after)), cc, sdk)
+
+    with_staged("a request submitted before the ask is recorded erases a synchronous answer",
+                "    self.lifecycle = [before lifecycleByRequestingInstall];\n"
+                "    self.lastReasonName = outcome.reasonName;\n"
+                "    [self.port submitActivationForExtension:self.extensionIdentifier\n"
+                "                                    delegate:self\n"
+                "                                       queue:dispatch_get_main_queue()];\n"
+                "    return outcome;",
+                "    [self.port submitActivationForExtension:self.extensionIdentifier\n"
+                "                                    delegate:self\n"
+                "                                       queue:dispatch_get_main_queue()];\n"
+                "    self.lifecycle = [before lifecycleByRequestingInstall];\n"
+                "    self.lastReasonName = outcome.reasonName;\n"
+                "    return outcome;")
 
     with_staged("a reboot becomes a running driver",
                 "            return [MLDriverExtensionOutcome outcomeWithLifecycle:lifecycle\n"

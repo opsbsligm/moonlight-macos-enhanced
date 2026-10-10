@@ -205,17 +205,21 @@ MLDriverExtensionOutcome *MLDriverExtensionApplyCallback(MLDriverLifecycle *life
                                                    reasonName:@"attempt-refused-by-lifecycle"
                                          playerActionRequired:NO];
     }
+    // The state change is recorded before the port is touched, on purpose. Apple's own
+    // activationRequestForExtension documentation warns that the delegate may be messaged
+    // synchronously; a recordCallback run inside submit would compute its answer from the stale
+    // pre-request lifecycle, and the assignment after submit would then overwrite the answer with
+    // that snapshot -- erasing a Failed that arrived before submit returned, and with it the
+    // signing gap the whole stage-3 audit exists to report. Needs-user-approval is not assumed to
+    // be the first callback -- it is the state any outstanding request is in for the caller's
+    // purposes, and a later callback replaces it the moment it arrives.
     MLDriverExtensionOutcome *outcome =
         [self recordCallback:MLDriverExtensionCallbackNeedsUserApproval error:nil];
-    // The request goes out under the phase it is about to be recorded with, so an answer that
-    // arrives on another thread cannot find a lifecycle that has not asked yet. Needs-user-approval
-    // is not assumed to be the first callback -- it is the state any outstanding request is in for
-    // the caller's purposes, and Completed replaces it the moment it arrives.
+    self.lifecycle = [before lifecycleByRequestingInstall];
+    self.lastReasonName = outcome.reasonName;
     [self.port submitActivationForExtension:self.extensionIdentifier
                                     delegate:self
                                        queue:dispatch_get_main_queue()];
-    self.lifecycle = [before lifecycleByRequestingInstall];
-    self.lastReasonName = outcome.reasonName;
     return outcome;
 }
 
