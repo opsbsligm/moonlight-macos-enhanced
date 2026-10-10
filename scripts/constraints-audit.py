@@ -2742,6 +2742,12 @@ DRIVEN_BY = {
     # first part of this feature a player touches, so it is the first place where four independent
     # preconditions have to be checked together rather than one at a time -- and the gate rides a
     # driver that runs on every macOS build rather than waiting for a step nobody can add.
+    # The seam every layer gate could not see: the bytes a Sunshine-shaped host writes, through
+    # the shipped parse, the panel's own trim and uuid compare, the session, the policy, and the
+    # audit line -- over a real socket, compiled by the macOS job's clang. The same two reasons
+    # as the gates above: the toolchain lives here, and a step of its own would need the
+    # `workflow` scope this credential does not carry.
+    "usb-host-loopback-tests.py": "scaling-output-evidence-tests.py",
     "device-redirection-panel-model-tests.py": "scaling-output-evidence-tests.py",
     # Reads the committed file list and the workflow text, so no toolchain is missing here; the
     # missing thing is a CI step, and a step needs the `workflow` scope this credential lacks.

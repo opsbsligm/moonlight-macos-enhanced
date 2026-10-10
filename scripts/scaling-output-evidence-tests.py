@@ -713,6 +713,26 @@ def run_usb_bus_snapshot():
           " (%s)" % " | ".join(tail))
 
 
+def run_usb_host_loopback():
+    """The whole host chain over a real socket, with the app's own parser on the other end.
+
+    Every layer gate above tests one object in its own memory; none of them could claim the
+    joins survive: Sunshine-shaped bytes through HttpResponse.m's libxml parse, the panel's
+    own trim and uuid compare, the session's sequencing, the policy's verdict, the audit line.
+    The driver fetches over a BSD socket so the answer really travelled a kernel. Objective-C
+    against the macOS SDK, and no `workflow` scope on this credential for a step of its own --
+    the same two reasons as the gates above, written into constraints-audit.py's DRIVEN_BY.
+    """
+    ran = subprocess.run([sys.executable, "scripts/usb-host-loopback-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    tail = (ran.stdout + ran.stderr).strip().splitlines()[-3:]
+    check(ran.returncode == 0,
+          "an offering host stays offering from the wire to the verdict, and a stranger never"
+          " becomes one"
+          if ran.returncode == 0 else
+          "the usb host loopback gate failed:\n" + chr(10).join(tail))
+
+
 def run_code_signature_profile():
     """What this build may claim about its own signature, which is what the panel may show.
 
@@ -942,6 +962,7 @@ def finish():
     run_driver_lifecycle()
     run_driver_extension_activation()
     run_usb_bus_snapshot()
+    run_usb_host_loopback()
     run_code_signature_profile()
     run_device_redirection_panel_model()
     run_driver_extension_signing()
