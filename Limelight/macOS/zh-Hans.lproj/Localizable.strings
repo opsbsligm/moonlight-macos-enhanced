@@ -1292,8 +1292,30 @@
 "Bus not scanned" = "尚未扫描总线";
 "Scan the bus" = "扫描总线";
 "No devices on the bus detail" = "总线被成功读取但没有任何设备应答，或者总线根本读取失败。上面的状态会说明是哪一种，因为这是两个不同的答案。";
-"Devices panel privacy detail" = "设备只以标识、接口类别，以及序列号的短摘要列出。产品名称和完整序列号既不会出现在本页，也不会进入日志。";
+"Devices panel privacy detail" = "设备自身的名称可能显示在本页，方便你分辨手头的设备。日志从不记录产品名称和完整序列号，只记录标识、接口类别和序列号的短摘要——也就是每张卡片「技术细节」里的那几行。";
 "Use this device" = "使用此设备";
+"Device ready to redirect" = "可立即重定向";
+"Device not ready yet" = "尚未就绪";
+"Device stays with this Mac" = "只能留在本机";
+"Technical details" = "技术细节";
+"USB class device specific" = "USB 设备特定类（0x00）";
+"USB class hub" = "USB 集线器（0x09）";
+"USB class communications data" = "USB 通信数据类（0x0A）";
+"USB class smart card" = "USB 智能卡（0x0B）";
+"USB class content security" = "USB 内容安全类（0x0D）";
+"USB class diagnostic" = "USB 诊断接口（0xDC）";
+"USB class wireless controller" = "USB 无线控制器（0xE0）";
+"USB class vendor specific" = "USB 厂商自定义类（0xFF）";
+"usb reason none" = "这个设备没有任何拦路条件。";
+"usb reason feature disabled" = "本页面里的设备转发总开关是关的，所以现在任何设备都不能移动。";
+"usb reason host unpaired" = "这台 Mac 还没有与任何主机配对，设备无处可去。";
+"usb reason host unsupported" = "你查询的主机不提供设备转发能力。请先核对上面查询的是哪台主机，再怀疑设备本身。";
+"usb reason identity incomplete" = "这个设备没有报告本构建能读取的标识，因此任何规则都无法指名它。重新插拔通常能解决。";
+"usb reason class reserved" = "这个设备上有一个任何规则都不能转发的接口，因此整机都留在本地。上面写出的类别就是原因。";
+"usb reason local input reserved" = "键盘和鼠标在本开关打开前留在本机，因为能驱动它们的主机可能代替你输入。";
+"usb reason class not allowed" = "这个设备的接口类别还没有加入上面的允许列表。";
+"usb reason rule disabled" = "已有一条匹配这个设备的规则，但它处于关闭状态；开关就在那条规则那一行。";
+"usb reason no rule" = "白名单里没有任何规则能匹配这个设备。下面的按钮会把它的标识填进规则编辑器，你不必手抄。";
 
 "Click stream to resume input" = "单击串流画面恢复控制";
 

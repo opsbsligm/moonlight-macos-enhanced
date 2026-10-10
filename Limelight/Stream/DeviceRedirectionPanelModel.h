@@ -55,12 +55,40 @@ typedef NS_ENUM(NSInteger, MLDeviceRedirectionHostClaim) {
 };
 
 /// One device on the bus, with the reading taken of it and the decision that would follow.
+///
+/// A row carries two shapes of the same facts: the machine-shaped lines (`identityLine`,
+/// `decisionLine`) that are spelled exactly like the log, and the human-shaped fields that a
+/// device card is built from. The human fields exist because a player staring at
+/// `vid=046d pid=c52b classes=0e` cannot tell which of their gadgets that is; they are derived
+/// here, and not inside a view, so a gate can pin what a card is allowed to claim.
 @interface MLDeviceRedirectionPanelRow : NSObject
 /// `vid=… pid=… classes=… token=…`. Identifiers this build could not read appear as `unread`,
 /// and a product name or serial number never appears at all.
 @property(nonatomic, readonly, copy) NSString *identityLine;
 /// `allowed` or `refused: <reason>`, in the one spelling the log uses for the same refusal.
 @property(nonatomic, readonly, copy) NSString *decisionLine;
+/// The device's own name, sanitized by the enumerator, for a screen and never a log. Nil when
+/// the registry said nothing usable -- a card then falls back to `categoryNameKey` rather than
+/// printing an empty headline.
+@property(nonatomic, readonly, copy, nullable) NSString *displayName;
+/// `VID 046d · PID c52b`, unread halves spelled `unread`. A separate line from `identityLine`
+/// on purpose: the card shows the identifiers a player might type into a rule, without
+/// dragging the digest and class list back into the headline.
+@property(nonatomic, readonly, copy) NSString *identifiersLine;
+/// A translation key naming the device's dominant interface class in the player's language
+/// ("USB class mass storage" and friends), or nil when no class the table knows is present.
+/// The dominant class is the reserved face when there is one -- it is the face that decides
+/// the refusal, so it is the face the card should name -- and otherwise the first class the
+/// registry reported.
+@property(nonatomic, readonly, copy, nullable) NSString *categoryNameKey;
+/// An icon name for the same dominant class, from the table below. Never nil: an unnamed
+/// class still gets an icon, because a card with no picture next to it reads as a bug.
+@property(nonatomic, readonly, copy) NSString *categorySymbolName;
+/// A translation key holding one sentence that explains the verdict in the player's language.
+/// Every denial has exactly one -- the table is pinned against the denial enum by a gate --
+/// and it sits beside `decisionLine` rather than replacing it, so a screenshot and a log line
+/// still describe the same obstacle in words a support thread can match.
+@property(nonatomic, readonly, copy) NSString *humanReasonKey;
 /// The device this row was built from, so that a page can offer the identifiers back to the rule
 /// editor instead of asking a player to retype hexadecimal digits they can already see. The line
 /// above is what a player reads; this is what a page acts on, and neither is derived from the other.
@@ -68,6 +96,19 @@ typedef NS_ENUM(NSInteger, MLDeviceRedirectionHostClaim) {
 @property(nonatomic, readonly) BOOL allowed;
 @property(nonatomic, readonly) BOOL identityIsReadable;
 @property(nonatomic, readonly) BOOL hasReservedInterface;
+
+/// Rows in the order a card list should show them: devices that could move today first, then
+/// the ones a rule can never reach, then everything else; each group in name order with the
+/// machine line as the tiebreak, so the order is stable across scans and languages. A view
+/// that sorted in its `body` would be deciding what a player notices first in a place no gate
+/// can reach.
++ (NSArray<MLDeviceRedirectionPanelRow *> *)displayOrderedRows:(NSArray<MLDeviceRedirectionPanelRow *> *)rows
+    NS_SWIFT_NAME(displayOrderedRows(_:));
+
+/// The icon table the rows read from, exposed so a card can render a class it computed itself
+/// without a second copy of the mapping drifting somewhere in a view.
++ (NSString *)categorySymbolNameForInterfaceClass:(NSUInteger)majorClass
+    NS_SWIFT_NAME(categorySymbolName(forClass:));
 @end
 
 @interface MLDeviceRedirectionPanelModel : NSObject
