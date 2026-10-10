@@ -115,6 +115,39 @@ extension SettingsModel {
     return !factors.isEmpty
   }
 
+  /// Whether the two VT upscaling options are hollow for the resolution this stream would
+  /// send, evaluated independently of which option happens to be selected -- an option that
+  /// is selectable but cannot run is the dishonesty this answers, and a disable that flickers
+  /// with the selection would hide that from the player who needs to see it. Three gates,
+  /// all of them facts about this Mac and this source rather than opinions: the renderer has
+  /// to be Metal (the only renderer that runs VT scaling), the OS and hardware have to offer
+  /// the scaler at all (the macOS 26 hint owns that sentence), and the scaler's own
+  /// per-size list has to refuse the selected source shape.
+  var vtSuperResolutionOptionsAreUnusableForSelectedSource: Bool {
+    guard videoRendererModeIsMetal, videoToolboxSuperResolutionIsAvailable else {
+      return false  // the macOS 26 hint row already carries that sentence
+    }
+    let source = effectiveResolutionForBitrate()
+    guard source.width > 0, source.height > 0 else {
+      return false
+    }
+    // The factor list is asked in exactly one place, and this is the answer the page reads:
+    // inverting the usable-ness property rather than probing again is what keeps the picker's
+    // grey-outs and the hint sentence from ever disagreeing about the same refusal.
+    return !vtLowLatencySuperResolutionIsUsableForSelectedSource
+  }
+
+  /// Whether one named upscaling option would be hollow for the source this stream would
+  /// send. The page asks per row so the raw numbers the VT scalers answer to stay in one
+  /// file; Auto and the fallbacks answer false because they genuinely still run.
+  func upscalingOptionIsUnusableForSelectedSource(_ title: String) -> Bool {
+    guard vtSuperResolutionOptionsAreUnusableForSelectedSource else {
+      return false
+    }
+    let requested = SettingsModel.upscalingModeRawValue(for: title)
+    return requested == 3 || requested == 4
+  }
+
   /// Which source shapes the VT scalers can work on, as the page states it before a stream.
   /// Three answers, because "your Mac is too old", "your stream size has no factors at all",
   /// and "the factors exist for smaller sources only" are three different things a player
@@ -122,30 +155,14 @@ extension SettingsModel {
   /// this row exists to prevent. Nil when there is nothing to warn about: the OS is new, and
   /// the selected source itself has factors, so the option on screen can be honoured.
   var superResolutionSourceHonestHintKey: String? {
-    if !videoRendererModeIsMetal {
+    guard vtSuperResolutionOptionsAreUnusableForSelectedSource else {
       return nil
-    }
-    if !videoToolboxSuperResolutionIsAvailable {
-      return nil  // the macOS 26 hint row already carries that sentence
     }
     let requested = SettingsModel.upscalingModeRawValue(for: selectedUpscalingMode)
     // The two VT modes (3, 4) and Auto (6) are the requests this refusal can intercept;
     // MetalFX and Basic Scaling never touch the VT scaler lists, so a warning about them
     // would name a path the player did not choose.
     guard requested == 3 || requested == 4 || requested == 6 else {
-      return nil
-    }
-    guard #available(macOS 26.0, *) else {
-      return nil
-    }
-    let source = effectiveResolutionForBitrate()
-    guard source.width > 0, source.height > 0 else {
-      return nil
-    }
-    let factors = VTLowLatencySuperResolutionScalerConfiguration
-      .__supportedScaleFactors(forFrameWidth: Int(source.width),
-                               frameHeight: Int(source.height))
-    if !factors.isEmpty {
       return nil
     }
     // The refusal can still be escapable: if any smaller offered resolution has factors, the

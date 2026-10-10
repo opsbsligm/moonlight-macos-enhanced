@@ -189,7 +189,16 @@ struct VideoView: View {
             content: {
               Picker("", selection: $settingsModel.selectedUpscalingMode) {
                 ForEach(SettingsModel.upscalingModes, id: \.self) { mode in
+                  // "Not available" has to be the picker's answer, not a footnote under it:
+                  // when the scaler's own per-size list refuses this source shape, the two
+                  // VT options are offered-in-name-only, and leaving them selectable lets a
+                  // player pick a setting that will be quietly overridden the moment the
+                  // stream starts. The unusability is evaluated from the source shape alone,
+                  // never from which row is selected, so both VT rows grey out together and
+                  // neither flickers as the selection moves. Auto and the fallbacks keep
+                  // their names: they still run, and the hint row below says what runs.
                   Text(languageManager.localize(mode))
+                    .disabled(settingsModel.upscalingOptionIsUnusableForSelectedSource(mode))
                 }
               }
               .labelsHidden()
