@@ -1292,8 +1292,30 @@
 "Bus not scanned" = "Bus not scanned";
 "Scan the bus" = "Scan the bus";
 "No devices on the bus detail" = "The bus was read and nothing answered, or it could not be read at all. The status above says which of the two it was, because those are different answers.";
-"Devices panel privacy detail" = "Devices are listed by identifier, interface class, and a short digest of the serial number. A product name and a serial number never appear on this page or in the log.";
+"Devices panel privacy detail" = "A device's own name may appear on this page so you can tell your gadgets apart. The log never carries a product name or a serial number: it carries identifiers, interface classes, and a short digest of the serial, which is also what the Technical details of a card show.";
 "Use this device" = "Use this device";
+"Device ready to redirect" = "Ready to redirect";
+"Device not ready yet" = "Not ready yet";
+"Device stays with this Mac" = "Stays with this Mac";
+"Technical details" = "Technical details";
+"USB class device specific" = "USB device-specific class (0x00)";
+"USB class hub" = "USB hub (0x09)";
+"USB class communications data" = "USB communications data class (0x0A)";
+"USB class smart card" = "USB smart card (0x0B)";
+"USB class content security" = "USB content security class (0x0D)";
+"USB class diagnostic" = "USB diagnostic interface (0xDC)";
+"USB class wireless controller" = "USB wireless controller (0xE0)";
+"USB class vendor specific" = "USB vendor-specific class (0xFF)";
+"usb reason none" = "Nothing stands in the way of this device.";
+"usb reason feature disabled" = "Device redirection is switched off on this page, so no device can move yet.";
+"usb reason host unpaired" = "This Mac is not paired with a host, so there is nowhere to send a device.";
+"usb reason host unsupported" = "The host you asked does not offer device redirection. Check the host asked about above before blaming this device.";
+"usb reason identity incomplete" = "This device did not report identifiers this build can read, so no rule can name it. Replugging it usually helps.";
+"usb reason class reserved" = "This device has an interface a rule can never redirect, so the whole device stays here. The class named above is the reason.";
+"usb reason local input reserved" = "Keyboard and mouse devices stay with this Mac until the local input switch is on, because a host that drives them can type as you.";
+"usb reason class not allowed" = "The interface class of this device is not on the allowed list above yet.";
+"usb reason rule disabled" = "A rule for this device exists but is switched off; the switch is on its rule row.";
+"usb reason no rule" = "Nothing on the allow list matches this device. The button below offers its identifiers to the rule editor so you do not have to retype them.";
 
 "Click stream to resume input" = "Click the stream to resume input";
 

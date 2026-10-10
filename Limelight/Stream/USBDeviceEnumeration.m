@@ -24,6 +24,13 @@ static NSArray<NSString *> *MLSerialKeys(void) {
     return @[ @"USB Serial Number", @"kUSBSerialNumberString" ];
 }
 
+// The product name is read for the screen only (see the header's revised speech rule). It
+// gets candidate key names like every other field, because the registry has shipped it under
+// both spellings and a page that read one of them would show half the bus as unnamed.
+static NSArray<NSString *> *MLProductNameKeys(void) {
+    return @[ @"USB Product Name", @"kUSBProductNameString" ];
+}
+
 static NSArray<NSString *> *MLInterfaceClassKeys(void) {
     return @[ @"bInterfaceClass", @"interfaceClasses" ];
 }
@@ -73,6 +80,73 @@ static NSNumber *MLIdentifierFromKeys(NSDictionary<NSString *, id> *properties,
         NSNumber *value = MLIdentifierFromProperty(properties[key]);
         if (value != nil) {
             return value;
+        }
+    }
+    return nil;
+}
+
+/// A product name is text a device chose, so it is treated as hostile input: a driver that
+/// publishes a kilobyte, a control-character soup or a fake log line must not be able to make
+/// the settings page print one of the three. Printable characters keep their order; control
+/// characters (including the CR/LF that would let a device forge a second line in a screenshot
+/// description) go; whitespace runs collapse; the survivors are trimmed and capped. What is
+/// left with nothing printable becomes nil, which is the page's cue to name the device by its
+/// class instead of showing a blank card.
+NSString *MLUSBDeviceDisplayNameFromProperty(id value) {
+    const NSUInteger kMLDisplayNameCharacterLimit = 64;
+    if (![value isKindOfClass:[NSString class]]) {
+        return nil;
+    }
+    NSString *raw = (NSString *)value;
+    NSMutableString *clean = [NSMutableString stringWithCapacity:raw.length];
+    unichar previous = 0;
+    for (NSUInteger index = 0; index < raw.length; index++) {
+        const unichar character = [raw characterAtIndex:index];
+        const BOOL whitespace = character == ' ' || character == '\t' || character == '\n' ||
+                                character == '\r' || character == 0x0b || character == 0x0c;
+        if (whitespace) {
+            // Any run of whitespace -- including the control characters that mean a line
+            // break -- becomes one space, and never two spaces in a row.
+            if (clean.length > 0 && previous != ' ') {
+                [clean appendString:@" "];
+                previous = ' ';
+            }
+            continue;
+        }
+        if (character < 0x20 || (character >= 0x7f && character <= 0x9f)) {
+            continue;
+        }
+        if (character == 0xfffd) {
+            // The replacement character means the bytes were not text in any encoding the
+            // registry could name; a name made of them describes no device.
+            continue;
+        }
+        [clean appendFormat:@"%C", character];
+        previous = character;
+        if (clean.length > kMLDisplayNameCharacterLimit) {
+            break;
+        }
+    }
+    while (clean.length > 0 && [clean hasSuffix:@" "]) {
+        [clean deleteCharactersInRange:NSMakeRange(clean.length - 1, 1)];
+    }
+    if ([clean hasPrefix:@" "]) {
+        [clean deleteCharactersInRange:NSMakeRange(0, 1)];
+    }
+    if (clean.length == 0) {
+        return nil;
+    }
+    if (clean.length > kMLDisplayNameCharacterLimit) {
+        return [clean substringToIndex:kMLDisplayNameCharacterLimit];
+    }
+    return [clean copy];
+}
+
+static NSString *MLProductNameFromProperties(NSDictionary<NSString *, id> *properties) {
+    for (NSString *key in MLProductNameKeys()) {
+        NSString *candidate = MLUSBDeviceDisplayNameFromProperty(properties[key]);
+        if (candidate != nil) {
+            return candidate;
         }
     }
     return nil;
@@ -135,13 +209,17 @@ static NSArray<MLUSBInterfaceDescriptor *> *MLInterfacesFromProperties(
 - (instancetype)initWithVendorID:(NSNumber *)vendorID
                        productID:(NSNumber *)productID
                       interfaces:(NSArray<MLUSBInterfaceDescriptor *> *)interfaces
-                      auditToken:(NSString *)auditToken {
+                      auditToken:(NSString *)auditToken
+                     displayName:(NSString *)displayName {
     self = [super init];
     if (self) {
         _vendorID = [vendorID copy];
         _productID = [productID copy];
         _interfaces = [interfaces copy] ?: @[];
         _auditToken = [auditToken copy] ?: @"none";
+        // Already sanitized by the reader; copying here keeps the object immutable the way
+        // every other field on this class is.
+        _displayName = [displayName copy];
         // No serial, in a property a caller could hand to something that logs its argument.
         _descriptor = [MLUSBDeviceDescriptor descriptorWithVendorID:_vendorID
                                                          productID:_productID
@@ -183,6 +261,7 @@ MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryNodes(
     NSNumber *vendorID = nil;
     NSNumber *productID = nil;
     NSString *serialNumber = nil;
+    NSString *displayName = nil;
     NSMutableArray<MLUSBInterfaceDescriptor *> *interfaces = [NSMutableArray array];
 
     for (NSDictionary<NSString *, id> *node in nodes) {
@@ -199,6 +278,12 @@ MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryNodes(
         if (serialNumber == nil) {
             serialNumber = MLSerialNumberFromProperties(node);
         }
+        // The measured bus publishes the product name on every node, so "the first node that
+        // spells it" is the same answer wherever the walk starts -- the same rule the
+        // identifiers follow, for the same reason.
+        if (displayName == nil) {
+            displayName = MLProductNameFromProperties(node);
+        }
         // The union, in the order the registry gave, duplicates included. This is where a
         // composite device stops being two devices: the storage face and the smart-card face
         // end up on one descriptor, so the reserved-class gate sees the smart card and refuses
@@ -211,7 +296,8 @@ MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryNodes(
     return [[MLUSBDeviceIdentity alloc] initWithVendorID:vendorID
                                                productID:productID
                                               interfaces:interfaces
-                                              auditToken:MLUSBDeviceAuditToken(serialNumber)];
+                                              auditToken:MLUSBDeviceAuditToken(serialNumber)
+                                             displayName:displayName];
 }
 
 MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryProperties(NSDictionary<NSString *, id> *properties) {
