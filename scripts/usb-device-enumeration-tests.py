@@ -193,6 +193,26 @@ int main(void) {
                         device(@[ @0x28de ], @0x2202, nil, @0x03, nil, nil),
                         0, NO, 0x2202, YES);
 
+        // The name a screen may be given, and the hostile inputs a device can invent for it.
+        check([[MLUSBDeviceIdentityFromRegistryProperties(
+                    device(@0x046d, @0xc52b, nil, @0x03, nil, @"Logitech Webcam C52b"))
+                    displayName] isEqual:@"Logitech Webcam C52b"],
+              "a well-behaved product name arrives on the identity untouched");
+        check([MLUSBDeviceIdentityFromRegistryProperties(
+                   device(@0x046d, @0xc52b, nil, @0x03, nil, nil)) displayName] == nil,
+              "a device that published no name has no name, so the page falls back by class");
+        check(MLUSBDeviceDisplayNameFromProperty(@"\a") == nil,
+              "a name made only of control characters is no name");
+        check([MLUSBDeviceDisplayNameFromProperty(@"  HD \r\n Webcam \t  ")
+               isEqual:@"HD Webcam"],
+              "line breaks inside a name become one space, so no device forges a second row");
+        check(MLUSBDeviceDisplayNameFromProperty([@"x" stringByPaddingToLength:4096
+                                        withString:@"x" startingAtIndex:0]).length == 64,
+              "a 4 kB product name is capped instead of stretching a card across the page");
+        check(MLUSBDeviceDisplayNameFromProperty(@42) == nil &&
+                  MLUSBDeviceDisplayNameFromProperty(nil) == nil,
+              "a name that is not text, and no name at all, both read as no name");
+
         MLUSBDeviceIdentity *shortNamed = MLUSBDeviceIdentityFromRegistryProperties(
             @{@"idVendor": @"046d", @"idProduct": @"c52b"});
         check(shortNamed.vendorID.unsignedShortValue == 0x046d &&
@@ -379,8 +399,23 @@ def main():
 
     check("NSLog(" not in impl and "printf(" not in impl,
           "the enumeration has no path to the log of its own")
-    check("Product Name" not in impl.split("@end")[-1],
-          "nothing on the read path even looks at a product name")
+    # Revised 2026-10-11 with the speech rule it pins: the first version of this gate banned
+    # even *reading* a product name, which put a log's privacy boundary on the player's screen
+    # and left the panel describing a webcam as four hexadecimal digits. The boundary moved to
+    # where the name may go: the read path may look at a product name, into displayName and
+    # nowhere else, and the line the log gets still carries none of it. The behavioral half of
+    # that promise lives in the compiled driver (the name stays out of the line, the sanitizer
+    # refuses hostile names); these static checks keep the promise from being widened in a
+    # later edit that nobody thinks about.
+    check("USB Product Name" in impl,
+          "the read path reads the product name, because a screen has to name the device")
+    check("MLProductNameFromProperties(node)" in impl.split("@implementation MLUSBDeviceIdentity")[-1],
+          "the name is collected in the same node walk as every other field, not a second path")
+    read_path = impl.split("@implementation MLUSBDeviceIdentity")[-1]
+    line_body = read_path[read_path.index("- (NSString *)diagnosticLineForVerdict"):]
+    line_body = line_body[:line_body.index("@end")]
+    check("displayName" not in line_body and "Product" not in line_body,
+          "the body of the log line mentions no product name, by property or by key")
     entitlements = read("Moonlight.entitlements")
     check("usb" not in entitlements.lower(),
           "reading the bus needed no new entitlement, and none was added")

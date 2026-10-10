@@ -317,6 +317,10 @@ struct DevicesView: View {
 
   // MARK: - The bus
 
+  // The cards are the Citrix-style contract: a player sees one card per device, recognises the
+  // device by its own name, sees what kind of thing it is, and sees in one glance whether it could
+  // move and, when it cannot, one sentence saying why. Every word on a card is a field the model
+  // produced and the panel gate exercised; the only decisions left here are which colour a chip is.
   private var busSection: some View {
     FormSection(title: "Devices on this Mac") {
       VStack(alignment: .leading, spacing: 10) {
@@ -335,27 +339,107 @@ struct DevicesView: View {
         if panel.busHasBeenScanned && rows.isEmpty {
           SettingDescriptionRow(textKey: "No devices on the bus detail")
         }
-        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-          HStack(alignment: .firstTextBaseline, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-              Text(row.identityLine)
-                .font(.system(.caption, design: .monospaced))
-              Text(row.decisionLine)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundColor(row.allowed ? .green : .secondary)
-            }
-            Spacer()
-            // The identifiers come off the device the row was built from, not out of the line above
-            // it. A page that recovered them from its own text would be parsing what it printed, and
-            // would keep working -- wrongly -- the moment the wording changed.
-            Button(languageManager.localize("Use this device")) { prefill(ruleEditor: row) }
-              .disabled(row.identity?.vendorID == nil)
-          }
+        // The order is the model's, not the view's: what could move today leads, what a rule can
+        // never reach comes next, and a player who sorts by anything else is sorting a list that
+        // already answers "which of these should I care about first?".
+        ForEach(Array(MLDeviceRedirectionPanelRow.displayOrderedRows(rows).enumerated()), id: \.offset) { _, row in
+          deviceCard(row)
         }
         SettingDescriptionRow(textKey: "Devices panel privacy detail")
       }
       .padding(6)
     }
+  }
+
+  /// One device, one card: picture, name, what it is, whether it can move, and why not -- in that
+  /// order, because that is the order the questions arrive in a player's head.
+  private func deviceCard(_ row: MLDeviceRedirectionPanelRow) -> some View {
+    let cardIsBlocked = !row.allowed
+    return VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .firstTextBaseline, spacing: 12) {
+        Image(systemName: row.categorySymbolName)
+          .font(.title2)
+          .foregroundColor(row.allowed ? .accentColor : .secondary)
+          .frame(width: 26, alignment: .center)
+          .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 3) {
+          // A device that named itself gets its own name; one that did not is introduced by its
+          // class, because an empty headline reads as a bug and not as an absent string.
+          Text(row.displayName ?? languageManager.localize(row.categoryNameKey ?? "USB class vendor specific"))
+            .font(.body.weight(.medium))
+          Text(row.identifiersLine)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundColor(.secondary)
+            .textSelection(.enabled)
+        }
+        Spacer(minLength: 8)
+        VStack(alignment: .trailing, spacing: 6) {
+          verdictChip(row)
+          // The identifiers come off the device the row was built from, not out of the text on the
+          // card. A page that recovered them from its own rendering would be parsing what it
+          // printed, and would keep working -- wrongly -- the moment the wording changed.
+          Button(languageManager.localize("Use this device")) { prefill(ruleEditor: row) }
+            .disabled(row.identity?.vendorID == nil)
+        }
+      }
+      HStack(spacing: 6) {
+        chip(languageManager.localize(row.categoryNameKey ?? "USB class vendor specific"),
+             colour: .blue)
+        if row.hasReservedInterface {
+          chip(languageManager.localize("Device stays with this Mac"), colour: .secondary)
+        }
+      }
+      // The sentence and the machine line describe the same obstacle; the sentence is for the
+      // player, the line is for the support thread that has the log open beside the screenshot.
+      Text(languageManager.localize(row.humanReasonKey))
+        .font(.callout)
+        .foregroundColor(cardIsBlocked ? .secondary : .green)
+      DisclosureGroup(languageManager.localize("Technical details")) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text(row.identityLine)
+            .font(.system(.caption, design: .monospaced))
+            .textSelection(.enabled)
+          Text(row.decisionLine)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundColor(row.allowed ? .green : .secondary)
+            .textSelection(.enabled)
+        }
+        .padding(.top, 4)
+      }
+      .font(.caption)
+    }
+    .padding(10)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+      RoundedRectangle(cornerRadius: 8)
+        .fill(Color(nsColor: .controlBackgroundColor))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 8)
+        .stroke(cardIsBlocked ? Color.secondary.opacity(0.25) : Color.accentColor.opacity(0.4),
+                lineWidth: 1)
+    )
+  }
+
+  /// Red means "could move the moment you press something", grey means "stays here no matter what
+  /// you press", orange means "a switch or a rule would change this". A card that only said yes or
+  /// no would merge the two no's, and they send a player to different parts of the page.
+  private func verdictChip(_ row: MLDeviceRedirectionPanelRow) -> some View {
+    let textKey = row.allowed
+      ? "Device ready to redirect"
+      : (row.hasReservedInterface ? "Device stays with this Mac" : "Device not ready yet")
+    let colour: Color = row.allowed ? .green : (row.hasReservedInterface ? .secondary : .orange)
+    return chip(languageManager.localize(textKey), colour: colour)
+  }
+
+  private func chip(_ text: String, colour: Color) -> some View {
+    Text(text)
+      .font(.caption2.weight(.semibold))
+      .padding(.horizontal, 8)
+      .padding(.vertical, 3)
+      .background(Capsule().fill(colour.opacity(0.15)))
+      .foregroundColor(colour)
+      .overlay(Capsule().stroke(colour.opacity(0.45), lineWidth: 1))
   }
 
   // MARK: - Actions

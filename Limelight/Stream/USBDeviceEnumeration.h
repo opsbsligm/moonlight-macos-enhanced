@@ -8,10 +8,15 @@
 //  Seeing the bus needs no driver extension and no new entitlement -- an iterator from
 //  IOServiceGetMatchingServices is available to any process, which is why nothing in this
 //  header links IOKit. The risk this stage carries is therefore not capability but speech.
-//  A product name and a serial number are personal data; an enumeration feature that writes
-//  them to a log has assembled a device fingerprint out of two fields nobody thought about.
-//  So there is no accessor here that returns a product name at all, and a serial number is
-//  digested the moment it is read rather than the moment something is written.
+//  The speech rule was revised on 2026-10-11, because the first version of it put a log's
+//  privacy boundary on a player's screen as well: a panel that listed a device as
+//  `vid=046d pid=c52b` told a human nothing about which of their four webcams would move.
+//  The boundary that actually protects the player is *where the name goes*, not whether it
+//  exists: a log line is collected, shipped, indexed and read by strangers, while a settings
+//  page is looked at by the person the device belongs to. So a product name may now reach a
+//  screen -- sanitized, length-capped, through `displayName` alone -- and still never reaches
+//  a log: `diagnosticLineForVerdict` and the audit token keep ignoring it, and a serial number
+//  is still digested the moment it is read rather than the moment something is written.
 //
 
 #import <Foundation/Foundation.h>
@@ -30,10 +35,17 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) NSArray<MLUSBInterfaceDescriptor *> *interfaces;
 /// Safe to write down: a digest of the serial number, or "none".
 @property(nonatomic, readonly, copy) NSString *auditToken;
+/// The registry's product name, sanitized for a screen and nothing else: control characters
+/// and stray newlines removed, whitespace trimmed, length capped, and nil when the registry
+/// said nothing usable -- a page then falls back to the device's category rather than printing
+/// an empty card. Never hand this to a log: the log line below is the boundary, and it ignores
+/// this property on purpose.
+@property(nonatomic, readonly, copy, nullable) NSString *displayName;
 /// The device with no serial in it. That is the shape the policy needs, and the only shape
 /// that can be passed around without somebody having to remember not to log it.
 @property(nonatomic, readonly, strong) MLUSBDeviceDescriptor *descriptor;
-/// This device and the decision taken about it, in the one line that is safe to log.
+/// This device and the decision taken about it, in the one line that is safe to log:
+/// identifiers, classes, the digest, the verdict. Never `displayName`, never a serial.
 - (NSString *)diagnosticLineForVerdict:(nullable MLDeviceRedirectionVerdict *)verdict;
 @end
 
@@ -68,5 +80,11 @@ FOUNDATION_EXPORT MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryProperties
 /// device attached published a serial number at all.
 FOUNDATION_EXPORT MLUSBDeviceIdentity *MLUSBDeviceIdentityFromRegistryNodes(
     NSArray<NSDictionary<NSString *, id> *> *nodes);
+
+/// The sanitizer `displayName` goes through, exported so a gate can hand it the strings a
+/// device could invent -- a product name is device-controlled text, and a device is allowed to
+/// publish 4 kB of it, or a terminal bell, or a fake log line. Returns nil when nothing
+/// printable survives, which is what makes the page's fallback reachable.
+FOUNDATION_EXPORT NSString *_Nullable MLUSBDeviceDisplayNameFromProperty(id _Nullable value);
 
 NS_ASSUME_NONNULL_END

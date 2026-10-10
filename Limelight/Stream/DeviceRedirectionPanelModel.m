@@ -77,6 +77,103 @@ NSString *MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaim claim) {
     return @"host-not-asked";
 }
 
+//
+//  The tables a device card is rendered from. They live here, beside the row that carries
+//  them, for the reason everything else in this file lives here: a mapping a view owns is a
+//  mapping no gate checks, and the two failures it makes are both silent -- a class with no
+//  entry gets the fallback icon forever, and a denial with no entry gets a key that renders
+//  as its own key. A gate pins both tables against their enums below.
+//
+
+/// Human names for the interface classes a card may have to name. Deliberately keyed by the
+/// raw class number rather than reusing the panel's switch list: the panel offers nine
+/// classes for a switch, but a device can report any of them plus classes nobody offered --
+/// a hub (0x09), a CCID smart card (0x0b), a keyboard dock's diagnostic face (0xdc) -- and a
+/// card that could only name the offered nine would answer "what is this?" with nothing for
+/// exactly the devices a player is most likely to wonder about.
+static NSDictionary<NSNumber *, NSString *> *MLInterfaceClassNameKeys(void) {
+    return @{ @(0x00) : @"USB class device specific",
+              @(0x01) : @"USB class audio",
+              @(0x02) : @"USB class communications",
+              @(0x03) : @"USB class human interface",
+              @(0x05) : @"USB class physical",
+              @(0x06) : @"USB class image",
+              @(0x07) : @"USB class printer",
+              @(0x08) : @"USB class mass storage",
+              @(0x09) : @"USB class hub",
+              @(0x0A) : @"USB class communications data",
+              @(0x0B) : @"USB class smart card",
+              @(0x0D) : @"USB class content security",
+              @(0x0E) : @"USB class video",
+              @(0xDC) : @"USB class diagnostic",
+              @(0xE0) : @"USB class wireless controller",
+              @(0xE1) : @"USB class miscellaneous",
+              @(0xEF) : @"USB class miscellaneous",
+              @(0xFF) : @"USB class vendor specific" };
+}
+
+/// One icon per entry of the name table, plus one more entry (0x0E is video in both). A card
+/// with no picture reads as a broken row, so this table answers for every class the name
+/// table knows, and the fallback below answers for every class it does not.
+static NSDictionary<NSNumber *, NSString *> *MLInterfaceClassSymbolNames(void) {
+    return @{ @(0x00) : @"circle",
+              @(0x01) : @"speaker.wave.2",
+              @(0x02) : @"network",
+              @(0x03) : @"keyboard",
+              @(0x05) : @"gamecontroller",
+              @(0x06) : @"camera",
+              @(0x07) : @"printer",
+              @(0x08) : @"internaldrive",
+              @(0x09) : @"hub",
+              @(0x0A) : @"cable.connector",
+              @(0x0B) : @"creditcard",
+              @(0x0D) : @"lock.shield",
+              @(0x0E) : @"web.camera",
+              @(0xDC) : @"stethoscope",
+              @(0xE0) : @"antenna.radiowaves.left.and.right",
+              @(0xE1) : @"puzzlepiece.extension",
+              @(0xEF) : @"square.stack.3d.up",
+              @(0xFF) : @"wrench.and.screwdriver" };
+}
+
+/// One sentence per refusal, in the player's language, next to the machine spelling the log
+/// keeps. Pinned against the whole denial enum by a gate: a row whose verdict has no sentence
+/// here would render a raw key, which is the same "not allowed is not something a player can
+/// act on" that the enum exists to answer.
+static NSDictionary<NSNumber *, NSString *> *MLDeviceRedirectionDenialReasonKeys(void) {
+    return @{ @(MLDeviceRedirectionDenialNone) : @"usb reason none",
+              @(MLDeviceRedirectionDenialFeatureDisabled) : @"usb reason feature disabled",
+              @(MLDeviceRedirectionDenialHostUnpaired) : @"usb reason host unpaired",
+              @(MLDeviceRedirectionDenialHostUnsupported) : @"usb reason host unsupported",
+              @(MLDeviceRedirectionDenialIdentityIncomplete) : @"usb reason identity incomplete",
+              @(MLDeviceRedirectionDenialClassReserved) : @"usb reason class reserved",
+              @(MLDeviceRedirectionDenialLocalInputReserved) : @"usb reason local input reserved",
+              @(MLDeviceRedirectionDenialClassNotAllowed) : @"usb reason class not allowed",
+              @(MLDeviceRedirectionDenialRuleDisabled) : @"usb reason rule disabled",
+              @(MLDeviceRedirectionDenialNoRule) : @"usb reason no rule" };
+}
+
+/// The class a card leads with. The reserved face wins when there is one: it is the face that
+/// decided the refusal -- class-reserved outranks every rule -- so a card that named the
+/// storage half of a smart-card dock would describe the half that was not decided about.
+/// Otherwise the first class the registry reported, which is the first face of the device as
+/// the machine described it.
+static NSUInteger MLDominantInterfaceClass(NSArray<MLUSBInterfaceDescriptor *> *interfaces,
+                                          BOOL *isReserved) {
+    for (MLUSBInterfaceDescriptor *interface in interfaces) {
+        if ([MLDeviceRedirectionPolicy isReservedInterfaceClass:interface.majorClass]) {
+            if (isReserved) {
+                *isReserved = YES;
+            }
+            return interface.majorClass;
+        }
+    }
+    if (isReserved) {
+        *isReserved = NO;
+    }
+    return interfaces.firstObject ? interfaces.firstObject.majorClass : 0xFF;
+}
+
 @implementation MLDeviceRedirectionPanelRow
 
 - (instancetype)initWithIdentity:(MLUSBDeviceIdentity *)identity
@@ -85,6 +182,10 @@ NSString *MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaim claim) {
     if (self) {
         _identity = identity;
         _identityLine = [identity diagnosticLineForVerdict:nil];
+        _displayName = [identity.displayName copy];
+        _identifiersLine = [NSString stringWithFormat:@"VID %@ \u00b7 PID %@",
+                                                      MLUSBIdentityName(identity.vendorID),
+                                                      MLUSBIdentityName(identity.productID)];
         _allowed = verdict.isAllowed;
         _identityIsReadable = identity.vendorID != nil && identity.productID != nil &&
                               identity.interfaces.count > 0;
@@ -96,12 +197,52 @@ NSString *MLDeviceRedirectionHostClaimName(MLDeviceRedirectionHostClaim claim) {
             }
         }
         _hasReservedInterface = reserved;
+        BOOL dominantIsReserved = NO;
+        const NSUInteger dominant = MLDominantInterfaceClass(identity.interfaces,
+                                                            &dominantIsReserved);
+        _categoryNameKey = MLInterfaceClassNameKeys()[@(dominant)] ?:
+                           MLInterfaceClassNameKeys()[@(0xFF)];
+        // The class the card leads with decides the icon, so a dock with a smart-card face
+        // shows the credit card -- the thing about it that matters -- and not a disk.
+        (void)dominantIsReserved;
+        _categorySymbolName = MLInterfaceClassSymbolNames()[@(dominant)] ?: @"questionmark.circle";
+        _humanReasonKey = MLDeviceRedirectionDenialReasonKeys()[@(verdict.denial)] ?:
+                          MLDeviceRedirectionDenialReasonKeys()[@(MLDeviceRedirectionDenialNone)];
         _decisionLine = verdict.isAllowed
             ? @"allowed"
             : [NSString stringWithFormat:@"refused: %@",
                                          MLDeviceRedirectionDenialName(verdict.denial)];
     }
     return self;
+}
+
++ (NSArray<MLDeviceRedirectionPanelRow *> *)displayOrderedRows:(NSArray<MLDeviceRedirectionPanelRow *> *)rows {
+    // Three groups, in the order a player reads them: what could move right now, what no rule
+    // can ever move, and everything else -- which is a refusal with a fix. Inside a group, by
+    // the name the card shows, with the machine line as the tiebreak so two devices the same
+    // name does not decide shuffle between scans.
+    NSMutableArray<MLDeviceRedirectionPanelRow *> *sorted = [rows mutableCopy];
+    [sorted sortUsingComparator:^NSComparisonResult(MLDeviceRedirectionPanelRow *first,
+                                                    MLDeviceRedirectionPanelRow *second) {
+        const NSInteger firstGroup = first.allowed ? 0 : (first.hasReservedInterface ? 1 : 2);
+        const NSInteger secondGroup = second.allowed ? 0 : (second.hasReservedInterface ? 1 : 2);
+        if (firstGroup != secondGroup) {
+            return firstGroup < secondGroup ? NSOrderedAscending : NSOrderedDescending;
+        }
+        NSString *firstKey = first.displayName ?: first.identityLine;
+        NSString *secondKey = second.displayName ?: second.identityLine;
+        const NSComparisonResult byName =
+            [firstKey localizedStandardCompare:secondKey];
+        if (byName != NSOrderedSame) {
+            return byName;
+        }
+        return [first.identityLine compare:second.identityLine];
+    }];
+    return [sorted copy];
+}
+
++ (NSString *)categorySymbolNameForInterfaceClass:(NSUInteger)majorClass {
+    return MLInterfaceClassSymbolNames()[@(majorClass & 0xFF)] ?: @"questionmark.circle";
 }
 
 @end

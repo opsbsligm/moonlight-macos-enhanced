@@ -523,6 +523,37 @@ int main(void) {
               "no row arrives without its device: a page could only show it and not act on it");
         CHECK(NeverSays(shown.auditLine, @"Example Webcam"),
               "the panel's own line names no device either");
+        CHECK(NeverSays(shown.auditLine, @"SN-SECRET-1"),
+              "and the panel's line carries no digest input either: the serial stays digested");
+
+        // What a card may show. The human fields are the screen's whole vocabulary about a
+        // device, so each one is pinned: the name that may appear, the identifiers spelled for
+        // typing back into a rule, the class the card leads with, and the sentence that
+        // explains the verdict. The line the log shares stays name-free above; this is the
+        // other half of the same boundary.
+        CHECK(Says(rows[0].displayName, @"Example Webcam"),
+              "the card gets the sanitized name the registry published");
+        CHECK(Says(rows[0].identifiersLine, @"VID 1234") &&
+                  Says(rows[0].identifiersLine, @"PID 5678"),
+              "the identifiers a player might type into a rule are spelled out, in hex");
+        CHECK([rows[0].categoryNameKey isEqualToString:@"USB class video"],
+              "a single-face device is named by its one class");
+        CHECK([rows[1].categoryNameKey isEqualToString:@"USB class smart card"],
+              "a composite device is named by the reserved face, because that face decided its refusal");
+        CHECK(rows[0].categorySymbolName.length > 0 && rows[1].categorySymbolName.length > 0,
+              "every card gets an icon, including the dock named by its smart-card face");
+        CHECK([rows[1].categorySymbolName
+               isEqualToString:[MLDeviceRedirectionPanelRow
+                                   categorySymbolNameForInterfaceClass:0x0B]],
+              "the icon the row carries is the class table's own answer, not a second mapping");
+        CHECK([rows[1].humanReasonKey isEqualToString:@"usb reason class reserved"],
+              "a reserved face explains itself with the sentence written for that refusal");
+        CHECK([rows[0].humanReasonKey isEqualToString:@"usb reason none"],
+              "a device with nothing wrong with it is explained by the sentence that says so");
+        NSArray<MLDeviceRedirectionPanelRow *> *bare_rows =
+            [unruled rowsForDevices:@[ webcam ] hostIsPaired:YES];
+        CHECK([bare_rows[0].humanReasonKey isEqualToString:@"usb reason no rule"],
+              "and a refusal that has a fix says which fix, not just which refusal");
 
         CHECK([MLDeviceRedirectionPanelModel interfaceClassesNoRuleCanReach].count == 2 &&
                   [[MLDeviceRedirectionPanelModel interfaceClassesNoRuleCanReach]
@@ -530,6 +561,32 @@ int main(void) {
                   [[MLDeviceRedirectionPanelModel interfaceClassesNoRuleCanReach]
                       containsObject:@0xDC],
               "the classes no rule can reach are the smart-card and diagnostic ones, named before a rule is typed");
+
+        // The order a player reads the list in: what could move, what never can, what has a
+        // fix. The fixture is the dock (reserved, allowed by nothing), the webcam refused for
+        // no rule, and a second camera the armed model actually allows -- and the call is
+        // made with them handed over in the wrong order on purpose.
+        MLDeviceRedirectionPanelModel *ordered =
+            [[MLDeviceRedirectionPanelModel alloc] initWithDefaults:FreshDefaults("ordered")
+                                                   signatureProfile:identity];
+        [ordered setFeatureEnabled:YES];
+        [ordered noteServerInfoValue:@"1"];
+        [ordered setInterfaceClassAllowed:YES forClass:14];
+        [ordered addRuleForVendorID:0x1234 productID:0x5678 family:NO];
+        MLUSBDeviceIdentity *allowed_cam =
+            DeviceWithFaces(0x1234, 0x5678, @[ @14 ]);
+        MLUSBDeviceIdentity *unruled_cam =
+            DeviceWithFaces(0x9999, 0x0001, @[ @14 ]);
+        NSArray<MLDeviceRedirectionPanelRow *> *shuffled =
+            [ordered rowsForDevices:@[ dock, unruled_cam, allowed_cam ] hostIsPaired:YES];
+        NSArray<MLDeviceRedirectionPanelRow *> *orderedRows =
+            [MLDeviceRedirectionPanelRow displayOrderedRows:shuffled];
+        CHECK(orderedRows.count == 3, "ordering neither loses nor invents a device");
+        CHECK(orderedRows[0].allowed && !orderedRows[1].allowed && !orderedRows[2].allowed,
+              "a device that could move today leads the list");
+        CHECK(orderedRows[1].hasReservedInterface,
+              "the device no rule can ever reach keeps its own group, between the ready one and "
+              "the refusals that have a fix");
 
         // Looking at the real bus. Read-only, and explicit: this is the one case that reaches the
         // machine the tests run on, and it is here because the property it sets is the one the page
@@ -708,6 +765,31 @@ def main():
           if not unanswered else "the devices pane asks for keys nobody can answer: "
           + ", ".join(unanswered))
 
+    # The human tables a card renders from. A row falls back quietly when a table lacks its
+    # entry -- the same icon forever, a key that renders as its own key -- so completeness is
+    # pinned here rather than trusted to a fallback nobody notices.
+    denial_keys = re.findall(r'@\((MLDeviceRedirectionDenial\w+)\)\s*:\s*@"(usb reason [^"]+)"', impl)
+    spelled = set(re.findall(r'case (MLDeviceRedirectionDenial\w+):',
+                             read(STREAM + "DeviceRedirectionPolicy.m")))
+    check({name for name, _ in denial_keys} == spelled,
+          "every denial the policy can name has exactly one human sentence of its own")
+    check(len({key for _, key in denial_keys}) == len(denial_keys),
+          "and no two refusals share one sentence, or the explanation stops distinguishing them")
+    category_values = set(re.findall(r'@"(USB class [^"]+)"', impl))
+    check(len(category_values) >= 15,
+          "the card can name at least fifteen interface classes, so a hub or a smart card is "
+          "never introduced to the player as nothing at all")
+    missing_localized = sorted(value for value in category_values | {key for _, key in denial_keys}
+                               if ('"%s" = "' % value) not in en or
+                                  ('"%s" = "' % value) not in zh)
+    check(not missing_localized,
+          "both language tables answer every card sentence and class name"
+          if not missing_localized
+          else "the card tables ask for keys nobody can answer: " + ", ".join(missing_localized))
+    check("localizedStandardCompare" in impl,
+          "the card order uses the player's collation, so a localized list sorts the way the "
+          "player reads instead of by code unit")
+
     run_rules("the identity is not asked about",
               mutated(rules, "the first precondition",
                       "    return self.signatureProfile.mayAttemptDriverExtension &&\n           self.featureEnabled &&",
@@ -799,6 +881,21 @@ def main():
               mutated(rules, "the row's line",
                       "        _identityLine = [identity diagnosticLineForVerdict:nil];",
                       "        _identityLine = [NSString stringWithFormat:@\"%@ %@\", [identity diagnosticLineForVerdict:nil], identity.descriptor.serialNumber ?: @\"Example Webcam\"];"),
+              cc, sdk)
+    run_rules("the card names the first face, not the deciding one",
+              mutated(rules, "the card names the first face, not the deciding one",
+                      "        _categoryNameKey = MLInterfaceClassNameKeys()[@(dominant)] ?:\n                           MLInterfaceClassNameKeys()[@(0xFF)];",
+                      "        _categoryNameKey = MLInterfaceClassNameKeys()[(identity.interfaces.firstObject ? @(identity.interfaces.firstObject.majorClass) : @(0xFF))] ?:\n                           MLInterfaceClassNameKeys()[@(0xFF)];"),
+              cc, sdk)
+    run_rules("the reserved group trades places with the fixable group",
+              mutated(rules, "the reserved group trades places with the fixable group",
+                      "        const NSInteger firstGroup = first.allowed ? 0 : (first.hasReservedInterface ? 1 : 2);\n        const NSInteger secondGroup = second.allowed ? 0 : (second.hasReservedInterface ? 1 : 2);",
+                      "        const NSInteger firstGroup = first.allowed ? 0 : (first.hasReservedInterface ? 2 : 1);\n        const NSInteger secondGroup = second.allowed ? 0 : (second.hasReservedInterface ? 2 : 1);"),
+              cc, sdk)
+    run_rules("an unmapped denial renders an invented key",
+              mutated(rules, "an unmapped denial renders an invented key",
+                      "        _humanReasonKey = MLDeviceRedirectionDenialReasonKeys()[@(verdict.denial)] ?:\n                          MLDeviceRedirectionDenialReasonKeys()[@(MLDeviceRedirectionDenialNone)];",
+                      "        _humanReasonKey = MLDeviceRedirectionDenialReasonKeys()[@(MLDeviceRedirectionDenialNone)] ?:\n                          MLDeviceRedirectionDenialReasonKeys()[@(verdict.denial)];"),
               cc, sdk)
 
     PANEL = original
