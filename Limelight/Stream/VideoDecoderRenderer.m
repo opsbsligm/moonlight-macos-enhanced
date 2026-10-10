@@ -4439,19 +4439,23 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     if (holdSecondsOut != NULL) {
         *holdSecondsOut = hold;
     }
+    // The log names the output rate whether or not the caller asked for it. The enhanced
+    // present only needs the hold and passes NULL for the rate; reading the answer back
+    // through the caller's pointer printed "0 FPS output" on every admitted frame, which
+    // is a log line that contradicts the admission it is supposed to document.
+    const NSInteger outputFps = (NSInteger)llround(_lastDisplayRefreshRate / (double)refreshesPerFrame);
     if (outputFpsOut != NULL) {
-        *outputFpsOut = (NSInteger)llround(_lastDisplayRefreshRate / (double)refreshesPerFrame);
+        *outputFpsOut = outputFps;
     }
 
     const int64_t holdNs = (int64_t)llround(hold * 1e9);
-    const NSInteger fps = outputFpsOut != NULL ? *outputFpsOut : 0;
-    if (_lastLoggedPresentationHoldNs != holdNs || _lastLoggedPresentationHoldFps != fps) {
+    if (_lastLoggedPresentationHoldNs != holdNs || _lastLoggedPresentationHoldFps != outputFps) {
         _lastLoggedPresentationHoldNs = holdNs;
-        _lastLoggedPresentationHoldFps = fps;
+        _lastLoggedPresentationHoldFps = outputFps;
         Log(LOG_I, @"[video] Presentation cadence bound: each frame held %.3fms on %.2fHz display at %d FPS output",
             hold * 1000.0,
             _lastDisplayRefreshRate,
-            (int)fps);
+            (int)outputFps);
     }
     return YES;
 }
