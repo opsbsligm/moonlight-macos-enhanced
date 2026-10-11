@@ -1377,3 +1377,5 @@
 "USB hubs grouping detail" = "USB hubs are grouped here to keep peripherals easy to find. Expanding this section reveals every hub; this grouping does not change device permissions.";
 
 "Video Frame Interpolation Runtime Detail Processing Paused" = "Frame interpolation is paused after a processing failure or overload. Source frames continue normally. Change the stream configuration or reconnect to retry.";
+
+"Video Enhancement Runtime Detail Processing Paused" = "VideoToolbox super resolution is paused after a processing failure or overload. Spatial scaling continues. Reconnect or change the upscaling configuration to retry.";

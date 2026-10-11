@@ -199,7 +199,7 @@ assert 'presentationTimeStamp:framePresentationTimeStamp' in draw and 'if (waitF
 assert teardown.index('dispatch_async(_vtEnhancementQueue') < teardown.index('[retiredProcessor endSession]'), 'stop ends the processing session concurrently'
 assert '_enhancementProcessGeneration += 1;' in teardown and '_enhancementProcessInFlight = NO;' not in teardown, 'stop releases a slot still owned by old work'
 assert '!enhancementWarmupPending && !enhancementProcessingPending' in draw, 'temporary fallback tears down an in-use processor'
-assert 'report:enhancementProcessingPending' in draw and 'MLVideoEnhancementReportProcessingBudget' in draw, 'CPU pressure is mislabeled as model warmup'
+assert 'report:enhancementProcessingPending' in draw and 'MLVideoEnhancementProcessingReport(enhancementSuspended)' in draw and 'enhancementSuspended = _enhancementSuspended;' in draw, 'CPU pressure/pause is mislabeled or disconnected from the circuit breaker'
 assert 'framePresentationTimeStamp = _pendingInterpolatedPresentationTimeStamp;' in draw and 'outputTimeStamp:&interpolatedTimeStamp' in stage, 'midpoint timestamp is not carried with its output'
 assert 'if (processedFrame != NULL)' in draw and 'if (resolvedEngine != MLActiveVideoEnhancementEngineVTLowLatencySuperResolution' in draw, 'VT is marked active merely from selection'
 observation = section('- (void)recordActualDrawableTime:', '- (void)recordRenderedFrameSampleAtTimeMs:')
