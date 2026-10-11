@@ -124,7 +124,7 @@ struct DevicesView: View {
       busScanGeneration &+= 1
       scanBus()
     }
-    .onChange(of: settingsModel.selectedHost?.id) { _ in
+    .onChange(of: settingsModel.selectedHost?.id) { _, _ in
       hostCheckGeneration &+= 1
       panel.clearHostClaim()
       rows = panel.rows(for: rows.compactMap { $0.identity }, hostIsPaired: hostIsPaired)
