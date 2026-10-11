@@ -391,12 +391,30 @@ def personal_strings_on_this_bus():
     return found
 
 
+def invalidation_replay(rules, cc, sdk):
+    template=read("scripts/fixtures/usb-snapshot-invalidation.m")
+    cases=[("control", rules, True),
+           ("device iterator invalidation ignored", rules.replace("if (!IOIteratorIsValid(devices)) complete = NO;", "(void)IOIteratorIsValid(devices);"), False),
+           ("interface iterator invalidation ignored", rules.replace("if (!IOIteratorIsValid(children)) complete = NO;", "(void)IOIteratorIsValid(children);"), False),
+           ("parent iterator invalidation ignored", rules.replace("return valid && seen == 1 ? parentID : nil;", "return (valid || !valid) && seen == 1 ? parentID : nil;"), False),
+           ("partial data published", rules.replace("if (!complete) return @[];", "if (!complete) complete = YES;"), False)]
+    for label,body,positive in cases:
+        if not positive:check(body!=rules,label+" has a real mutation anchor")
+        with tempfile.TemporaryDirectory(prefix="ml-usb-invalidation-") as work:
+            ran,out=compiled(template.replace("@@RULES@@",body),work,"probe",cc,sdk)
+            check(ran is not None,label+" compiles before snapshot behavior is judged")
+            if ran is None:print((out or "")[-1800:]);continue
+            check((ran.returncode==0)==positive,label+" actual shipping snapshot verdict")
+            if positive:print(out.strip())
+
+
 def main():
     rules, impl, header = shipping_rules()
     print("-- which nodes belong to which device, and what may be said about them --")
 
     cc, sdk = apple_toolchain.clang_and_sdk("usb bus snapshot")
     out = run_rules("the shipping snapshot", rules, cc, sdk, expect_pass=True)
+    invalidation_replay(rules,cc,sdk)
 
     # The bus is read, never touched. Each of these would let the snapshot change what it is
     # looking at, which is the point a read-only view of a device has to keep.
