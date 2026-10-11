@@ -1516,6 +1516,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     uint64_t _enhancementTaskSequence;
     uint64_t _enhancementTaskStartedAtMs;
     uint64_t _enhancementFailedSequence;
+    uint64_t _enhancementFailedInterpolatedSequence;
     uint32_t _enhancementOverloadStrikes;
     BOOL _enhancementSuspended;
     CVImageBufferRef _enhancementResultFrame;
@@ -1985,6 +1986,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         _enhancementResultSourceFrame = NULL;
         _enhancementResultSequence = 0;
         _enhancementFailedSequence = 0;
+        _enhancementFailedInterpolatedSequence = 0;
         _enhancementOverloadStrikes = 0;
         _enhancementSuspended = NO;
         // Do not clear the single-flight slot here. Its old task still owns it
@@ -4954,8 +4956,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             _enhancementResultSequence == frameSequence) {
             return CVBufferRetain(_enhancementResultFrame);
         }
-        if (_enhancementFailedSequence == frameSequence) {
-            // An expired/failed source must fall back without requeueing it or
+        if ((isInterpolated ? _enhancementFailedInterpolatedSequence : _enhancementFailedSequence) == frameSequence) {
+            // The source and generated midpoint share a sequence, not a failure.
+            // An expired/failed input must fall back without requeueing it or
             // retiring the session and resetting its overload history.
             if (processingPending) *processingPending = YES;
             return NULL;
@@ -5083,7 +5086,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                         } else if (eligible) {
                             // Queue delay and processing share one presentation budget.
                             // Do not retry this source, even if VT was skipped entirely.
-                            self->_enhancementFailedSequence = frameSequence;
+                            if (isInterpolated) self->_enhancementFailedInterpolatedSequence = frameSequence;
+                            else self->_enhancementFailedSequence = frameSequence;
                             if (currentTask && !processed) Log(LOG_W, @"[video] Asynchronous VT enhancement failed: %@", error);
                             retryDraw = YES;
                         }
