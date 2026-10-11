@@ -272,4 +272,8 @@ if native_toolchain is not None:
     fi_native_replay(fi_methods.replace('dispatch_async(_vtInterpolationQueue, ^{','MLTestRunInline(^{',1),'FI-end-session-during-process',False)
     fi_native_replay(fi_methods.replace('_interpolationProcessInFlight ||','(_interpolationProcessInFlight && false) ||',1),'FI-overlapping-tasks',False)
     fi_native_replay(fi_methods.replace('!MLEnhancementShouldWait(true, _interpolationStagingStartedAtMs,','!MLEnhancementShouldWait(true, LiGetMillis(),',1),'FI-unbounded-staging',False)
+# Hardware is opt-in, but its report contract is verified on every normal gate run.
+spec=importlib.util.spec_from_file_location('vt_hardware_probe', ROOT/'scripts/vt-enhancement-probe.py')
+vt_probe=importlib.util.module_from_spec(spec);spec.loader.exec_module(vt_probe)
+assert vt_probe.self_test()==0
 print('ok: presentation + asynchronous enhancement replay, 17 policy mutations caught, renderer wiring checks, 3 cache anchors')

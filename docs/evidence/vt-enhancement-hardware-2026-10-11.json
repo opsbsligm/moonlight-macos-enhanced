@@ -1,0 +1,107 @@
+{
+  "streamingValidated": false,
+  "syntheticInput": true,
+  "os": "Version 27.2 (Build 26B5101f)",
+  "realVTBackend": true,
+  "schema": 1,
+  "cases": [
+    {
+      "measuredFrames": 12,
+      "scale": 1.5,
+      "maxProcessMs": 3.2789166681468487,
+      "completedFrames": 16,
+      "distinctOutputSignatures": 16,
+      "engine": "vt_low_latency_sr",
+      "sourceWidth": 1280,
+      "outputWidth": 1920,
+      "p50ProcessMs": 3.118749998509884,
+      "startSessionMs": 34.645375000312924,
+      "outputHeight": 1080,
+      "p95ProcessMs": 3.2789166681468487,
+      "status": "backend_validated",
+      "sourceHeight": 720
+    },
+    {
+      "measuredFrames": 12,
+      "scale": 1,
+      "maxProcessMs": 4.838166667148471,
+      "completedFrames": 16,
+      "distinctOutputSignatures": 16,
+      "engine": "vt_low_latency_fi",
+      "sourceWidth": 1280,
+      "outputWidth": 1280,
+      "p50ProcessMs": 4.5210833344608545,
+      "startSessionMs": 23.273958334699273,
+      "outputHeight": 720,
+      "p95ProcessMs": 4.838166667148471,
+      "status": "backend_validated",
+      "sourceHeight": 720
+    },
+    {
+      "status": "unsupported",
+      "engine": "vt_low_latency_sr",
+      "sourceWidth": 1920,
+      "factors": [],
+      "sourceHeight": 1080
+    },
+    {
+      "measuredFrames": 12,
+      "scale": 1,
+      "maxProcessMs": 16.281999999657273,
+      "completedFrames": 16,
+      "distinctOutputSignatures": 16,
+      "engine": "vt_low_latency_fi",
+      "sourceWidth": 1920,
+      "outputWidth": 1920,
+      "p50ProcessMs": 15.570583332329988,
+      "startSessionMs": 67.92741666547954,
+      "outputHeight": 1080,
+      "p95ProcessMs": 16.281999999657273,
+      "status": "backend_validated",
+      "sourceHeight": 1080
+    },
+    {
+      "status": "unsupported",
+      "engine": "vt_low_latency_sr",
+      "sourceWidth": 2560,
+      "factors": [],
+      "sourceHeight": 1440
+    },
+    {
+      "measuredFrames": 0,
+      "scale": 1,
+      "completedFrames": 0,
+      "error": {
+        "code": -19730,
+        "domain": "VTFrameProcessorErrorDomain"
+      },
+      "distinctOutputSignatures": 0,
+      "engine": "vt_low_latency_fi",
+      "sourceWidth": 2560,
+      "outputWidth": 2560,
+      "startSessionMs": 0.17791666649281979,
+      "outputHeight": 1440,
+      "status": "failed",
+      "sourceHeight": 1440
+    },
+    {
+      "measuredFrames": 12,
+      "scale": 4,
+      "maxProcessMs": 813.6249999981374,
+      "completedFrames": 16,
+      "distinctOutputSignatures": 16,
+      "engine": "vt_quality_sr",
+      "sourceWidth": 1280,
+      "outputWidth": 5120,
+      "p50ProcessMs": 798.6284583322704,
+      "startSessionMs": 375.19558333419263,
+      "outputHeight": 2880,
+      "p95ProcessMs": 813.6249999981374,
+      "status": "backend_validated",
+      "sourceHeight": 720
+    }
+  ],
+  "probeSourceSha256": "682f6c18262e5ec49354b6ce55941b43917d81e3af2939656f2f148676707fc7",
+  "latencyScope": "synchronous_process_call_only",
+  "qualityValidated": false
+}
