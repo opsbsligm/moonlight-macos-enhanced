@@ -98,35 +98,40 @@ NSString *MLUSBDeviceDisplayNameFromProperty(id value) {
         return nil;
     }
     NSString *raw = (NSString *)value;
-    NSMutableString *clean = [NSMutableString stringWithCapacity:raw.length];
-    unichar previous = 0;
-    for (NSUInteger index = 0; index < raw.length; index++) {
-        const unichar character = [raw characterAtIndex:index];
-        const BOOL whitespace = character == ' ' || character == '\t' || character == '\n' ||
-                                character == '\r' || character == 0x0b || character == 0x0c;
-        if (whitespace) {
-            // Any run of whitespace -- including the control characters that mean a line
-            // break -- becomes one space, and never two spaces in a row.
-            if (clean.length > 0 && previous != ' ') {
-                [clean appendString:@" "];
-                previous = ' ';
+    NSMutableString *clean = [NSMutableString stringWithCapacity:kMLDisplayNameCharacterLimit];
+    __block unichar previous = 0;
+    NSCharacterSet *whitespace = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    [raw enumerateSubstringsInRange:NSMakeRange(0, raw.length)
+                           options:NSStringEnumerationByComposedCharacterSequences
+                        usingBlock:^(NSString *substring, NSRange substringRange, NSRange enclosingRange, BOOL *stop) {
+        (void)substringRange;
+        (void)enclosingRange;
+        // Append only complete composed sequences: a UTF-16 cap must not split
+        // an emoji pair, combining accent or joined emoji into a different name.
+        NSMutableString *piece = [NSMutableString stringWithCapacity:MIN(substring.length, kMLDisplayNameCharacterLimit)];
+        for (NSUInteger index = 0; index < substring.length; index++) {
+            const unichar character = [substring characterAtIndex:index];
+            if ([whitespace characterIsMember:character]) {
+                if (clean.length + piece.length > 0 && previous != ' ') {
+                    [piece appendString:@" "];
+                    previous = ' ';
+                }
+                continue;
             }
-            continue;
+            const BOOL directionControl = character == 0x061c || character == 0x200e || character == 0x200f ||
+                (character >= 0x202a && character <= 0x202e) ||
+                (character >= 0x2066 && character <= 0x2069) || character == 0xfeff;
+            if (directionControl || character < 0x20 || (character >= 0x7f && character <= 0x9f) || character == 0xfffd) continue;
+            [piece appendFormat:@"%C", character];
+            previous = character;
+            if (piece.length > kMLDisplayNameCharacterLimit) break;
         }
-        if (character < 0x20 || (character >= 0x7f && character <= 0x9f)) {
-            continue;
+        if (clean.length + piece.length > kMLDisplayNameCharacterLimit) {
+            *stop = YES;
+            return;
         }
-        if (character == 0xfffd) {
-            // The replacement character means the bytes were not text in any encoding the
-            // registry could name; a name made of them describes no device.
-            continue;
-        }
-        [clean appendFormat:@"%C", character];
-        previous = character;
-        if (clean.length > kMLDisplayNameCharacterLimit) {
-            break;
-        }
-    }
+        [clean appendString:piece];
+    }];
     while (clean.length > 0 && [clean hasSuffix:@" "]) {
         [clean deleteCharactersInRange:NSMakeRange(clean.length - 1, 1)];
     }
@@ -135,9 +140,6 @@ NSString *MLUSBDeviceDisplayNameFromProperty(id value) {
     }
     if (clean.length == 0) {
         return nil;
-    }
-    if (clean.length > kMLDisplayNameCharacterLimit) {
-        return [clean substringToIndex:kMLDisplayNameCharacterLimit];
     }
     return [clean copy];
 }
