@@ -793,8 +793,52 @@ int main(void) {
           "the sidebar distinguishes old session, unreadable bus and initial scan from emptiness")
 
 
+def usb_host_completion_tests():
+    pane = read("Limelight/macOS/ViewControllers/SettingsDevicesPane.swift")
+    note = pane.split("  private func note(advertised:", 1)[1].split("  /// Reading the bus", 1)[0]
+    note = "  private func note(advertised:" + note
+    paired = pane.split("  private func pairedTemporaryHost()", 1)[1].split("  private var hostIsPaired:", 1)[0]
+    paired = "  private func pairedTemporaryHost()" + paired
+    template = read("scripts/fixtures/usb-host-check-lifecycle.swift")
+    compiler, sdk = apple_toolchain.swiftc_and_sdk("USB host lifecycle replay")
+    def replay(note_body, paired_body, label, expected):
+        with tempfile.TemporaryDirectory(prefix="ml-usb-host-") as d:
+            source = os.path.join(d, "probe.swift")
+            with open(source, "w") as f:
+                f.write(template.replace("@@NOTE@@", note_body).replace("@@PAIRED@@", paired_body))
+            policy = os.path.join(d, "USBScanPolicy.h")
+            with open(policy, "w") as f: f.write(read(STREAM + "USBScanPolicy.h"))
+            binary = os.path.join(d, "probe")
+            built = subprocess.run([compiler, "-swift-version", "5", "-sdk", sdk,
+                                    "-import-objc-header", policy, source, "-o", binary],
+                                   capture_output=True, text=True)
+            check(built.returncode == 0, "USB host %s compiles before behavior is judged" % label)
+            if built.returncode:
+                print(built.stderr[:1500]); return
+            result = subprocess.run([binary],capture_output=True,text=True,timeout=15)
+            check((result.returncode == 0) == expected, "USB host %s actual Swift completion verdict" % label)
+            if expected: print(result.stdout.strip())
+    replay(note, paired, "control", True)
+    for label, old, new in [
+        ("ignore old visit", "generation, hostCheckGeneration, sameHost", "hostCheckGeneration, hostCheckGeneration, sameHost"),
+        ("ignore selected host", "hostCheckGeneration, sameHost", "hostCheckGeneration, true"),
+        ("publish after leaving", "!pageIsVisible, generation", "false, generation"),
+    ]:
+        check(note.count(old)==1, "USB host %s has one mutation anchor" % label)
+        if note.count(old)==1: replay(note.replace(old,new),paired,label,False)
+    old=" && $0.pairState == .paired"
+    check(paired.count(old)==1,"USB host pairing mutation has one anchor")
+    if paired.count(old)==1: replay(note,paired.replace(old,""),"credit unpaired host",False)
+    check(".onChange(of: settingsModel.selectedHost?.id)" in pane and
+          "rows = panel.rows(for:" in pane and "hostCheckGeneration &+= 1" in pane,
+          "selected host changes invalidate capabilities and reassess rows without scanning the bus")
+    check("guard pageIsVisible && !isCheckingHost" in pane,
+          "host checks reject hidden pages and overlapping requests")
+
+
 def main():
     usb_scan_policy_tests()
+    usb_host_completion_tests()
     if failures:
         return 1
     rules, impl, header = shipping_rules()

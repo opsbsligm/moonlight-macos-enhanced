@@ -75,6 +75,7 @@ struct DevicesView: View {
 
   @SwiftUI.State private var rows: [MLDeviceRedirectionPanelRow] = []
   @SwiftUI.State private var isCheckingHost = false
+  @SwiftUI.State private var hostCheckGeneration: UInt64 = 0
   @SwiftUI.State private var busScanInFlight = false
   @SwiftUI.State private var busScanGeneration: UInt64 = 0
   @SwiftUI.State private var pageIsVisible = false
@@ -117,11 +118,23 @@ struct DevicesView: View {
     }
     .onAppear {
       pageIsVisible = true
+      hostCheckGeneration &+= 1
+      panel.clearHostClaim()
+      panelRevision += 1
       busScanGeneration &+= 1
       scanBus()
     }
+    .onChange(of: settingsModel.selectedHost?.id) { _ in
+      hostCheckGeneration &+= 1
+      panel.clearHostClaim()
+      rows = panel.rows(for: rows.compactMap { $0.identity }, hostIsPaired: hostIsPaired)
+      panelRevision += 1
+      // Keep the old request's single-flight slot until its completion. Its
+      // answer is invalidated, but selecting hosts must not spawn a request FIFO.
+    }
     .onDisappear {
       pageIsVisible = false
+      hostCheckGeneration &+= 1
       busScanGeneration &+= 1
     }
   }
@@ -457,6 +470,7 @@ struct DevicesView: View {
   /// host saying no, and the page has to be able to say so: a player told their host refuses will go
   /// fiddling with its settings, while the thing to check was the network.
   private func checkHost() {
+    guard pageIsVisible && !isCheckingHost else { return }
     guard let host = pairedTemporaryHost() else {
       // Nothing was asked, so nothing may be shown about what was heard -- including whatever the
       // host that used to be selected had said.
@@ -470,6 +484,9 @@ struct DevicesView: View {
       return
     }
     isCheckingHost = true
+    hostCheckGeneration &+= 1
+    let generation = hostCheckGeneration
+    let serverCertificate = host.serverCert
     // Trimmed, because `ServerInfoResponse` stores a trimmed uuid, and an empty one is not a
     // match: a host whose identifier this app never learned cannot be credited with an answer
     // it did not sign, and comparing two missing identifiers optional-to-optional would do
@@ -479,7 +496,7 @@ struct DevicesView: View {
     DispatchQueue.global(qos: .userInitiated).async {
       let serverInfo = ServerInfoResponse()
       if let http = HttpManager(
-        host: address, uniqueId: IdManager.getUniqueId(), serverCert: host.serverCert)
+        host: address, uniqueId: IdManager.getUniqueId(), serverCert: serverCertificate)
       {
         let request = HttpRequest(
           for: serverInfo,
@@ -499,7 +516,8 @@ struct DevicesView: View {
       let answered = serverInfo.isStatusOk()
         && !expectedUuid.isEmpty
         && answeredUuid == expectedUuid
-      note(advertised: advertisedTag, hostAnswered: answered)
+      note(advertised: advertisedTag, hostAnswered: answered,
+           generation: generation, expectedUuid: expectedUuid)
     }
   }
 
@@ -507,9 +525,14 @@ struct DevicesView: View {
   /// Folding the two together was the original bug: the panel would print a refusal it had never
   /// been given, and the one number the player needed -- whether to touch the PC or the cable --
   /// was the number it got wrong.
-  private func note(advertised: String?, hostAnswered: Bool) {
+  private func note(advertised: String?, hostAnswered: Bool,
+                    generation: UInt64, expectedUuid: String) {
     DispatchQueue.main.async {
       isCheckingHost = false
+      let sameHost = !expectedUuid.isEmpty && pairedTemporaryHost()?.uuid == expectedUuid
+      guard MLUSBScanMayPublish(!pageIsVisible, generation, hostCheckGeneration, sameHost) else {
+        return
+      }
       if hostAnswered {
         panel.noteServerInfoValue(advertised)
       } else {
@@ -608,7 +631,7 @@ struct DevicesView: View {
     guard let hosts = DataManager().getHosts() as? [TemporaryHost] else {
       return nil
     }
-    return hosts.first(where: { !$0.uuid.isEmpty && $0.uuid == hostId })
+    return hosts.first(where: { !$0.uuid.isEmpty && $0.uuid == hostId && $0.pairState == .paired })
   }
 
   private var hostIsPaired: Bool {
