@@ -85,6 +85,12 @@ final class DebugProbeExpectations: NSObject {
       "expectedFrameInterpolationEnabled": model.frameInterpolationControlIsEnabled,
       "expectedUpscalingEnabled": model.upscalingControlIsEnabled,
       "videoStrings": videoStrings,
+      // Static permission/connection scope copy shared with the actual USB page.
+      // No synthetic devices or permission writes are needed to check this contract.
+      "devicePermissionStrings": [
+        "USB permissions", "USB permissions scope", "USB device redirection",
+        "Devices on this Mac", "USB refresh devices",
+      ].map { localize($0) },
       // Which row a control belongs to is decided by the label beside it, so the
       // checker needs the titles the page itself would show, not copies of them.
       "controlTitles": [

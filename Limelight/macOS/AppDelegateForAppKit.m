@@ -469,6 +469,8 @@ static NSString *const MLProbeAdvancedSectionCollapsedKey
 static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *output,
                                NSInteger pane, NSString *name, NSMutableDictionary *report) {
     NSView *content = window.contentView;
+    NSUserDefaults *paneDefaults = [NSUserDefaults standardUserDefaults];
+    id previousPane = [paneDefaults objectForKey:@"selected-settings-pane"];
     [[NSUserDefaults standardUserDefaults] setInteger:pane forKey:@"selected-settings-pane"];
     [[NSUserDefaults standardUserDefaults] synchronize];
 
@@ -538,6 +540,12 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     result[@"viewsAdded"] = @(added.count);
     NSView *overlay = added.firstObject;
     if (overlay == nil) {
+        if (previousPane) {
+            [paneDefaults setObject:previousPane forKey:@"selected-settings-pane"];
+        } else {
+            [paneDefaults removeObjectForKey:@"selected-settings-pane"];
+        }
+        [paneDefaults synchronize];
         report[name] = result;
         return;
     }
@@ -583,6 +591,14 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     result[@"forcedTheSectionShut"] = @(forcedTheSectionShut);
     result[@"disclosuresPressed"] = @(trianglesPressed);
     result[@"readableContentExpanded"] = MLProbeReadableNodes(overlay);
+
+    // Capture the initial fold independently: the final capture below is taken
+    // after scrolling and cannot show whether the page header is readable.
+    NSBitmapImageRep *initialRep = [overlay bitmapImageRepForCachingDisplayInRect:overlay.bounds];
+    [overlay cacheDisplayInRect:overlay.bounds toBitmapImageRep:initialRep];
+    NSString *initialPNG = [NSString stringWithFormat:@"09-%@-page-top.png", name];
+    result[@"initialPixels"] = MLProbePixels([output stringByAppendingPathComponent:initialPNG], initialRep);
+    result[@"initialCapture"] = initialPNG;
 
     // Read the rest of the page. The enhancement controls and the capability matrix
     // are below the fold, and a ScrollView that has not been scrolled has no such
@@ -644,6 +660,15 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
         [probeDefaults removeObjectForKey:MLProbeAdvancedSectionCollapsedKey];
     }
     [probeDefaults synchronize];
+    if (previousPane) {
+        [paneDefaults setObject:previousPane forKey:@"selected-settings-pane"];
+    } else {
+        [paneDefaults removeObjectForKey:@"selected-settings-pane"];
+    }
+    [paneDefaults synchronize];
+    id restoredPane = [paneDefaults objectForKey:@"selected-settings-pane"];
+    result[@"panePreferenceRestored"] = @((BOOL)((previousPane == nil && restoredPane == nil)
+                                         || [previousPane isEqual:restoredPane]));
     report[name] = result;
 }
 
@@ -1974,13 +1999,14 @@ static void MLFinishRenderProbeIfArmed(void) {
     // someone typed into a test.
 
 
-    // Three panes of the same page. The video pane holds the enhancement controls
+    // Four panes of the same page. The video pane holds the enhancement controls
     // and the readout of what the decoder is really doing; the App pane holds the
     // capability matrix that says whether Video Toolbox and MetalFX can work here.
     // Both used to be claims nobody could check without a human looking.
     MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 0, @"streamPane", report);
     MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 1, @"videoPane", report);
     MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 3, @"appPane", report);
+    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 6, @"devicesPane", report);
 
     report[@"failures"] = failures;
     NSData *json = [NSJSONSerialization dataWithJSONObject:report

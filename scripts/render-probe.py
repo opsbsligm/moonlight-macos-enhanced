@@ -97,7 +97,7 @@ def verify_panes(report, refusals, out_dir):
 
     captures = {}
     seen_texts = {}
-    for name in ("streamPane", "videoPane", "appPane"):
+    for name in ("streamPane", "videoPane", "appPane", "devicesPane"):
         pane = report.get(name)
         if not isinstance(pane, dict):
             refusals.append("the probe reported no %s pass at all" % name)
@@ -114,6 +114,8 @@ def verify_panes(report, refusals, out_dir):
                % (name, pane.get("requestedPane"), pane.get("storedPane")))
         expect(pane.get("presentedAfterDismiss") is False, "%s was left presented after dismiss" % name)
         expect(pane.get("stillMountedAfterDismiss") is False, "%s was left mounted after dismiss" % name)
+        expect(pane.get("panePreferenceRestored") is True,
+               "%s left the user's saved pane selection changed" % name)
         if pane.get("capture"):
             captures[name] = pane["capture"]
 
@@ -128,6 +130,22 @@ def verify_panes(report, refusals, out_dir):
         expect(expectation.get("expectationsFromPageModel") is True,
                "%s was measured against a stand-in model, not the page's own" % name)
         texts = readable_texts(pane)
+
+        if name == "devicesPane":
+            initial = pane.get("initialCapture")
+            expect(bool(initial), "USB permission page supplied no initial-fold capture")
+            if initial:
+                initial_path = initial if os.path.isabs(initial) else os.path.join(out_dir or ".", initial)
+                expect(os.path.isfile(initial_path), "USB initial-fold capture is missing")
+            pixels = pane.get("initialPixels") or {}
+            variation = pixels.get("stddev")
+            expect(isinstance(variation, (int, float)) and variation >= 0.02,
+                   "USB permission page initially drew a flat surface")
+            required = expectation.get("devicePermissionStrings")
+            expect(isinstance(required, list) and len(required) >= 5,
+                   "USB pane supplied no permission scope expectations")
+            for expected in required or []:
+                expect(expected in texts, "USB permissions page does not display %r" % expected)
 
         if name == "videoPane":
             for expected in expectation.get("videoStrings") or []:
@@ -189,16 +207,17 @@ def verify_panes(report, refusals, out_dir):
 
         seen_texts[name] = texts
     # Selecting a pane has to change what is on the page, not merely what is stored.
-    # The three panes are expected to read differently; if two of them vend the same
+    # The four panes are expected to read differently; if two of them vend the same
     # text, the selection never reached the content the user is looking at.
-    names = [name for name in ("streamPane", "videoPane", "appPane") if seen_texts.get(name)]
+    names = [name for name in ("streamPane", "videoPane", "appPane", "devicesPane") if seen_texts.get(name)]
     for index in range(len(names)):
         for other in names[index + 1:]:
             expect(seen_texts[names[index]] != seen_texts[other],
                    "%s and %s vend exactly the same text, so switching panes changed nothing "
                    "a reader can see" % (names[index], other))
 
-    if len(captures) == 3:
+    expect(len(captures) == 4, "the four panes did not all supply final captures")
+    if len(captures) == 4:
         digests = {}
         for name, capture in captures.items():
             path = capture if os.path.isabs(capture) else os.path.join(out_dir or ".", capture)
@@ -207,9 +226,9 @@ def verify_panes(report, refusals, out_dir):
                 continue
             with open(path, "rb") as handle:
                 digests[name] = hashlib.sha256(handle.read()).hexdigest()
-        if len(digests) == 3:
-            expect(len(set(digests.values())) == 3,
-                   "the three panes drew the same pixels (%r), so the pane selection never reached "
+        if len(digests) == 4:
+            expect(len(set(digests.values())) == 4,
+                   "the four panes drew the same pixels (%r), so the pane selection never reached "
                    "the render" % {k: v[:8] for k, v in digests.items()})
 
 
@@ -288,7 +307,7 @@ def verify(report, out_dir=None):
 # it. One read builds one graph per host in the library (DataManager.m:205 builds a fresh
 # TemporaryHost per row every call), so a read added to a cell binding is a graph added per
 # host per visit -- which is the leak, measured before it reaches the byte count.
-HOST_READS_WHEN_OPENED = {"videoPane": 1, "appPane": 1, "streamPane": 3}
+HOST_READS_WHEN_OPENED = {"videoPane": 1, "appPane": 1, "streamPane": 3, "devicesPane": 1}
 
 
 def verify_host_reads(report, refusals):
@@ -431,13 +450,15 @@ def sample_panes():
     # count is the one this tree measures, and `verify_host_reads` insists on it.
     PANE_READS = {0: HOST_READS_WHEN_OPENED["streamPane"],
                   1: HOST_READS_WHEN_OPENED["videoPane"],
-                  3: HOST_READS_WHEN_OPENED["appPane"]}
+                  3: HOST_READS_WHEN_OPENED["appPane"],
+                  6: HOST_READS_WHEN_OPENED["devicesPane"]}
 
     def pane(pane_id, nodes, expectation, capture, reads=None, **extra):
         reads = PANE_READS[pane_id] if reads is None else reads
         report = {"requestedPane": pane_id, "storedPane": pane_id, "windowsAdded": [],
                 "windowsAddedHostingSettings": [], "viewsAdded": 1,
                 "presentedAfterDismiss": False, "stillMountedAfterDismiss": False,
+                "panePreferenceRestored": True,
                 "readableContent": nodes, "expectations": expectation, "capture": capture,
                 # The read counts are part of what a report has to answer, so the fixture
                 # answers them. It did not used to, which left the fixture itself the one
@@ -473,6 +494,13 @@ def sample_panes():
         {"role": "AXStaticText", "text": "no slots on this Mac", "x": 300, "y": 180},
     ]
     return {
+        "devicesPane": pane(6,
+            [{"role": "AXStaticText", "text": value} for value in
+             ("USB permissions", "permission only", "USB switch", "local devices", "refresh")],
+            {"expectationsFromPageModel": True, "devicePermissionStrings":
+             ["USB permissions", "permission only", "USB switch", "local devices", "refresh"]},
+            SAMPLE_CAPTURES[3], initialCapture=SAMPLE_CAPTURES[3],
+            initialPixels={"stddev": 0.21, "distinctColours": 77}),
         "streamPane": pane(0, stream_nodes, stream_expectation, SAMPLE_CAPTURES[0]),
         "videoPane": pane(1, video_nodes, video_expectation, SAMPLE_CAPTURES[1]),
         "appPane": pane(3, app_nodes, app_expectation, SAMPLE_CAPTURES[2],
@@ -482,11 +510,11 @@ def sample_panes():
     }
 
 
-SAMPLE_CAPTURES = ["probe-fixture-stream.png", "probe-fixture-video.png", "probe-fixture-app.png"]
+SAMPLE_CAPTURES = ["probe-fixture-stream.png", "probe-fixture-video.png", "probe-fixture-app.png", "probe-fixture-devices.png"]
 
 
 def write_fixture_captures(out_dir):
-    """Three captures that differ, because three identical ones would fail the rule."""
+    """Four captures that differ, because identical panes must fail the rule."""
     paths = []
     for index, name in enumerate(SAMPLE_CAPTURES):
         path = os.path.join(out_dir, name)
@@ -546,8 +574,18 @@ def self_test():
                     {"settingsPagePixels": {"stddev": 0.012, "distinctColours": 44}})),
                 ("no material is composited", lambda report: report.update({"materialLayers": []})),
                 ("the report is empty", lambda report: report.update({"windowsAddedByPresentingSettings": None})),
+                ("USB initial fold is flat", lambda report: report["devicesPane"].update(
+                    {"initialPixels": {"stddev": 0.001}})),
+                ("USB initial fold capture missing", lambda report: report["devicesPane"].update(
+                    {"initialCapture": "missing-initial.png"})),
+                ("USB page missing entirely", lambda report: report.pop("devicesPane")),
+                ("USB page hides permission-only scope", lambda report: report["devicesPane"].update(
+                    {"readableContent": [node for node in report["devicesPane"]["readableContent"]
+                                         if node["text"] != "permission only"]})),
+                ("probe leaves selected pane changed", lambda report: report["devicesPane"].update(
+                    {"panePreferenceRestored": False})),
                 ("no panes were probed at all", lambda report: [report.pop(name, None) for name in
-                                                         ("streamPane", "videoPane", "appPane")]),
+                                                         ("streamPane", "videoPane", "appPane", "devicesPane")]),
                 ("a pane vends nothing readable", lambda report: report["videoPane"].update({"readableContent": []})),
                 ("a pane was measured against a stand-in model",
                  lambda report: report["videoPane"]["expectations"].update({"expectationsFromPageModel": False})),
@@ -648,7 +686,7 @@ def main():
     print("materials composited: %r" % report.get("materialLayers"))
     print("page pixels: %s" % report.get("settingsPagePixels"))
     print("backdrop read-through: %r" % report.get("readThroughPageWhere"))
-    for name in ("streamPane", "videoPane", "appPane"):
+    for name in ("streamPane", "videoPane", "appPane", "devicesPane"):
         pane = report.get(name) or {}
         expectation = pane.get("expectations") or {}
         print("%-10s readable rows: %3d | measured against the page's own model: %r | %r"
