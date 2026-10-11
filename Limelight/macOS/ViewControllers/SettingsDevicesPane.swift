@@ -75,6 +75,9 @@ struct DevicesView: View {
 
   @SwiftUI.State private var rows: [MLDeviceRedirectionPanelRow] = []
   @SwiftUI.State private var isCheckingHost = false
+  @SwiftUI.State private var busScanInFlight = false
+  @SwiftUI.State private var busScanGeneration: UInt64 = 0
+  @SwiftUI.State private var pageIsVisible = false
   @SwiftUI.State private var vendorText = ""
   @SwiftUI.State private var productText = ""
   @SwiftUI.State private var wholeVendorFamily = false
@@ -112,7 +115,15 @@ struct DevicesView: View {
       }
       .padding()
     }
-    .onAppear(perform: scanBus)
+    .onAppear {
+      pageIsVisible = true
+      busScanGeneration &+= 1
+      scanBus()
+    }
+    .onDisappear {
+      pageIsVisible = false
+      busScanGeneration &+= 1
+    }
   }
 
   // MARK: - What has to be true first
@@ -322,15 +333,18 @@ struct DevicesView: View {
           // Before the first scan there is no status to print: `busStatus` holds the enumeration's
           // zero value, which is the same value a readable bus gets.
           Text(
-            panel.busHasBeenScanned
-              ? languageManager.localize(panel.busStatus == .read ? "USB devices available" : "USB device scan failed")
-              : languageManager.localize("Bus not scanned"))
+            busScanInFlight ? languageManager.localize("USB scanning devices")
+              : (panel.busHasBeenScanned
+                ? languageManager.localize(panel.busStatus == .read ? "USB devices available" : "USB device scan failed")
+                : languageManager.localize("Bus not scanned")))
             .font(.system(.body, design: .monospaced))
-            .foregroundColor(panel.busHasBeenScanned && panel.busStatus == .read ? .green : .orange)
+            .foregroundColor(!busScanInFlight && panel.busHasBeenScanned && panel.busStatus == .read ? .green : .orange)
           Spacer()
+          if busScanInFlight { ProgressView().controlSize(.small) }
           Button(languageManager.localize("USB refresh devices"), action: scanBus)
+            .disabled(busScanInFlight)
         }
-        if panel.busHasBeenScanned && rows.isEmpty {
+        if !busScanInFlight && panel.busHasBeenScanned && panel.busStatus == .read && rows.isEmpty {
           SettingDescriptionRow(textKey: "No devices on the bus detail")
         }
         // The order is the model's, not the view's: what could move today leads, what a rule can
@@ -489,8 +503,25 @@ struct DevicesView: View {
   /// Reading the bus iterates the registry, so it happens when the button is pressed and not while
   /// the page draws itself.
   private func scanBus() {
-    rows = panel.rowsByScanningBus(hostPaired: hostIsPaired)
-    panelRevision += 1
+    // Settings refreshes are explicit/first visits, not timed cache reuse.
+    guard MLUSBScanShouldStart(busScanInFlight, !pageIsVisible, true, false,
+                              0, busScanGeneration, 0, 0) else { return }
+    busScanInFlight = true
+    let generation = busScanGeneration
+    DispatchQueue.global(qos: .utility).async {
+      var status = MLUSBBusSnapshotStatus.busUnreadable
+      let devices = MLUSBBusSnapshotCopyDeviceIdentities(&status)
+      DispatchQueue.main.async {
+        busScanInFlight = false
+        guard MLUSBScanMayPublish(!pageIsVisible, generation, busScanGeneration, true) else {
+          // A revisit while an old scan ran needs a fresh read, not the old visit's result.
+          if pageIsVisible { scanBus() }
+          return
+        }
+        rows = panel.acceptBusSnapshot(devices, status: status, hostIsPaired: hostIsPaired)
+        panelRevision += 1
+      }
+    }
   }
 
   /// Puts a device a scan found into the rule editor. Nothing is stored: a player still presses Add,
