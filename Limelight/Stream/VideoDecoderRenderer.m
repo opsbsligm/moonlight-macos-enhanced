@@ -10,6 +10,7 @@
 #include "Limelight-internal.h"
 #import "RendererLayerContainer.h"
 #import "InterpolationCadencePolicy.h"
+#include "EnhancedPresentationPolicy.h"
 
 #include "Limelight.h"
 #include <math.h>
@@ -1504,6 +1505,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     uint64_t _pendingInterpolatedForSourceSequence;
     BOOL _pendingInterpolatedPresented;
     uint64_t _deferredCurrentSourceSequence;
+    uint64_t _interpolationStagingSequence;
     double _lastDisplayRefreshRate;
     // The hold the last present asked the window server for, in nanoseconds, and the frame
     // rate it was computed for. Both exist so the answer is logged when it changes and not
@@ -1796,6 +1798,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         _currentFrameSequence = 0;
         _lastPresentedFrameSequence = 0;
         _deferredCurrentSourceSequence = 0;
+        _interpolationStagingSequence = 0;
         _pendingInterpolatedPresented = NO;
         _pendingInterpolatedForSourceSequence = 0;
         _pendingInterpolatedEnqueueTimeMs = 0;
@@ -1868,6 +1871,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         _pendingInterpolatedEnqueueTimeMs = 0;
         _pendingInterpolatedFrameNumber = 0;
         _deferredCurrentSourceSequence = 0;
+        _interpolationStagingSequence = 0;
     }
 }
 
@@ -3418,6 +3422,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         _pendingInterpolatedEnqueueTimeMs = 0;
         _pendingInterpolatedFrameNumber = 0;
         _deferredCurrentSourceSequence = 0;
+        _interpolationStagingSequence = 0;
         if (_previousInterpolationSourceFrame) {
             previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
         }
@@ -3427,6 +3432,10 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         _currentFrameNumber = frameContext != NULL ? frameContext->frameNumber : 0;
         _currentFrameSequence += 1;
         sourceSequence = _currentFrameSequence;
+        if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff &&
+            previousInterpolationSourceFrame != NULL) {
+            _interpolationStagingSequence = sourceSequence;
+        }
     }
 
     if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff &&
@@ -3437,6 +3446,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                          enqueueTimeMs:(frameContext != NULL ? frameContext->enqueueTimeMs : 0)
                                           frameNumber:(frameContext != NULL ? frameContext->frameNumber : 0)
                                     displayRefreshRate:_lastDisplayRefreshRate];
+        @synchronized(self) {
+            if (_interpolationStagingSequence == sourceSequence) {
+                _interpolationStagingSequence = 0;
+            }
+        }
         CVBufferRelease(previousInterpolationSourceFrame);
     } else if (previousInterpolationSourceFrame != NULL) {
         CVBufferRelease(previousInterpolationSourceFrame);
@@ -4370,6 +4384,14 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     @synchronized(self) {
+        // VT may finish after another decode or a stop. Never attach an old midpoint
+        // to a new source, or insert a midpoint after its source already went out.
+        if (_currentFrame != sourceFrame ||
+            !MLInterpolationResultIsCurrent(_currentFrameSequence, sourceSequence,
+                                             _lastPresentedFrameSequence)) {
+            CVBufferRelease(interpolatedFrame);
+            return NO;
+        }
         if (_pendingInterpolatedFrame) {
             CVBufferRelease(_pendingInterpolatedFrame);
         }
@@ -4987,6 +5009,14 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     uint64_t frameSequence = 0;
     BOOL presentingInterpolatedFrame = NO;
     @synchronized(self) {
+        // A refresh retry must not run SR/MetalFX again on an already submitted
+        // source. Wait for staging so the source cannot overtake its midpoint.
+        if (!MLPresentationNeedsDraw(_currentFrameSequence, _interpolationStagingSequence,
+                                     _lastPresentedFrameSequence,
+                                     _pendingInterpolatedForSourceSequence,
+                                     _pendingInterpolatedPresented)) {
+            return;
+        }
         if (_currentFrame) {
             frame = CVBufferRetain(_currentFrame);
             frameEnqueueTimeMs = _currentFrameEnqueueTimeMs;
@@ -5009,206 +5039,231 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         return;
     }
 
-    // Lazy init pipeline
-    if (!_computePipelineState) {
-        [self setupMetalPipeline];
-    }
-    // stop() tears the texture cache down from another thread. Take our own reference under
-    // the lock stop() has to take, and keep it for the whole method: a CVMetalTexture made
-    // here finalizes against the cache that made it, and a cache freed first leaves CoreVideo
-    // dereferencing a dead pointer (the 2026-09-26 SIGSEGV: CVMetalTexture::finalize ->
-    // CFArrayAppendValue -> __CF_IS_OBJC). ARC drops the snapshot on every exit path.
-    CVMetalTextureCacheRef cacheSnapshot = NULL;
-    @synchronized(self) {
-        if (_textureCache) {
-            cacheSnapshot = (CVMetalTextureCacheRef)CFRetain(_textureCache);
+    dispatch_semaphore_t inflightSemaphore = _metalInflightSemaphore;
+    if (inflightSemaphore != nil &&
+        dispatch_semaphore_wait(inflightSemaphore, DISPATCH_TIME_NOW) != 0) {
+        _inflightBackpressureCount += 1;
+        uint64_t nowMs = LiGetMillis();
+        if (_lastInflightBackpressureLogMs == 0 || nowMs - _lastInflightBackpressureLogMs >= 1000) {
+            Log(LOG_W, @"[video] Enhanced inflight backpressure count=%lu depth=%lu (before enhancement)",
+                (unsigned long)_inflightBackpressureCount, (unsigned long)_metalInflightLimit);
+            _lastInflightBackpressureLogMs = nowMs;
+            _inflightBackpressureCount = 0;
         }
-    }
-    id textureCacheLifetime = (__bridge_transfer id)cacheSnapshot;
-    if (!_computePipelineState || textureCacheLifetime == nil) {
-        if (interpolatedFrame) {
-            CVBufferRelease(interpolatedFrame);
-        }
-        if (frame) {
-            CVBufferRelease(frame);
-        }
+        if (interpolatedFrame) CVBufferRelease(interpolatedFrame);
+        if (frame) CVBufferRelease(frame);
         return;
     }
-    CVMetalTextureCacheRef textureCache = (__bridge CVMetalTextureCacheRef)textureCacheLifetime;
-
-    const NSUInteger sourceWidth = CVPixelBufferGetWidth(presentationFrame);
-    const NSUInteger sourceHeight = CVPixelBufferGetHeight(presentationFrame);
-    const NSUInteger drawableWidth = MAX((NSUInteger)1, (NSUInteger)llround(view.drawableSize.width));
-    const NSUInteger drawableHeight = MAX((NSUInteger)1, (NSUInteger)llround(view.drawableSize.height));
-    // Every question about this frame that involves a size is asked about the rectangle
-    // the picture will occupy, not the rectangle the window occupies: a super
-    // resolution processor handed the drawable builds pixels that are already out of
-    // shape, and an enhancement decision made against the drawable can promise a
-    // scaler that the letterbox then makes pointless.
-    const MLContentRect contentRect = MLContentRectForSource(sourceWidth, sourceHeight,
-                                                             drawableWidth, drawableHeight);
-    const NSUInteger targetWidth = contentRect.width;
-    const NSUInteger targetHeight = contentRect.height;
-    float resolvedScaleFactor = 1.0f;
-    NSString *enhancementReason = nil;
-    MLVideoEnhancementReport enhancementReport = MLVideoEnhancementReportActive;
-    MLActiveVideoEnhancementEngine resolvedEngine =
-        [self resolveEnhancementEngineForSourceWidth:sourceWidth
-                                        sourceHeight:sourceHeight
-                                         targetWidth:targetWidth
-                                        targetHeight:targetHeight
-                                         scaleFactor:&resolvedScaleFactor
-                                              reason:&enhancementReason
-                                              report:&enhancementReport];
-    _activeEnhancementEngine = resolvedEngine;
-    [self logActiveEnhancementEngine:_activeEnhancementEngine
-                              reason:enhancementReason
-                              report:enhancementReport];
-
-    BOOL enhancementWarmupPending = NO;
-    CVImageBufferRef processedFrame = [self copyFrameUsingFrameProcessorIfNeeded:presentationFrame
-                                                               activeEnhancement:_activeEnhancementEngine
-                                                                    scaleFactor:resolvedScaleFactor
-                                                                  warmupPending:&enhancementWarmupPending];
-    if (processedFrame == NULL &&
-        (_activeEnhancementEngine == MLActiveVideoEnhancementEngineVTLowLatencySuperResolution ||
-         _activeEnhancementEngine == MLActiveVideoEnhancementEngineVTQualitySuperResolution)) {
-        if (!enhancementWarmupPending) {
-            [self teardownEnhancementProcessor];
+    BOOL submittedCommandBuffer = NO;
+    @try {
+        // Lazy init pipeline
+        if (!_computePipelineState) {
+            [self setupMetalPipeline];
         }
-        _activeEnhancementEngine = MLMetalFXIsSupported(_device)
-            ? MLActiveVideoEnhancementEngineMetalFXQuality
-            : MLActiveVideoEnhancementEngineBasicScaling;
-        [self logActiveEnhancementEngine:_activeEnhancementEngine
-                                  reason:enhancementWarmupPending
-            ? (_activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXQuality
-                ? @"VT enhancement warmup in progress; temporarily using MetalFX"
-                : @"VT enhancement warmup in progress; temporarily using basic scaling")
-            : @"VT enhancement unavailable at runtime; fell back"
-                                  report:enhancementWarmupPending
-            ? MLVideoEnhancementReportWarmup
-            : MLVideoEnhancementReportFellBack];
-    }
-
-    CVImageBufferRef workingFrame = processedFrame != NULL ? processedFrame : presentationFrame;
-    const OSType pixelFormat = CVPixelBufferGetPixelFormatType(workingFrame);
-    const size_t workingWidth = CVPixelBufferGetWidth(workingFrame);
-    const size_t workingHeight = CVPixelBufferGetHeight(workingFrame);
-    const size_t planeCount = CVPixelBufferGetPlaneCount(workingFrame);
-
-    id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
-    if (commandBuffer == nil) {
-        if (processedFrame) {
-            CVBufferRelease(processedFrame);
-        }
-        if (interpolatedFrame) {
-            CVBufferRelease(interpolatedFrame);
-        }
-        if (frame) {
-            CVBufferRelease(frame);
-        }
-        return;
-    }
-
-    id<MTLTexture> sourceRGBTexture = nil;
-    CVMetalTextureRef primaryTextureRef = NULL;
-    CVMetalTextureRef secondaryTextureRef = NULL;
-
-    if (planeCount >= 2) {
-        const size_t lumaWidth = CVPixelBufferGetWidthOfPlane(workingFrame, 0);
-        const size_t lumaHeight = CVPixelBufferGetHeightOfPlane(workingFrame, 0);
-        const size_t chromaWidth = CVPixelBufferGetWidthOfPlane(workingFrame, 1);
-        const size_t chromaHeight = CVPixelBufferGetHeightOfPlane(workingFrame, 1);
-        CVReturn yStatus = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-                                                                     textureCache,
-                                                                     workingFrame,
-                                                                     nil,
-                                                                     [self metalLumaPlaneFormatForPixelBuffer:workingFrame],
-                                                                     lumaWidth,
-                                                                     lumaHeight,
-                                                                     0,
-                                                                     &primaryTextureRef);
-        CVReturn uvStatus = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-                                                                      textureCache,
-                                                                      workingFrame,
-                                                                      nil,
-                                                                      [self metalChromaPlaneFormatForPixelBuffer:workingFrame],
-                                                                      chromaWidth,
-                                                                      chromaHeight,
-                                                                      1,
-                                                                      &secondaryTextureRef);
-        if (yStatus == kCVReturnSuccess && uvStatus == kCVReturnSuccess && primaryTextureRef != NULL && secondaryTextureRef != NULL) {
-            id<MTLTexture> yTexture = CVMetalTextureGetTexture(primaryTextureRef);
-            id<MTLTexture> uvTexture = CVMetalTextureGetTexture(secondaryTextureRef);
-            MLYCbCrConversionParameters conversionParams =
-                MLYCbCrConversionParametersForPixelFormat(pixelFormat,
-                                                         _hdrTransferMode,
-                                                         _hdrToneMapToSDR ? -_hdrOpticalOutputScale : _hdrOpticalOutputScale,
-                                                         _hdrOutputUsesEDR,
-                                                         _hdrToneMapToSDR,
-                                                         _hdrToneMappingPolicy,
-                                                         _hdrMinLuminance,
-                                                         _hdrMaxLuminance,
-                                                         _hdrMaxAverageLuminance);
-            MTLPixelFormat intermediatePixelFormat = MTLPixelFormatBGRA8Unorm;
-            if (_enableHdr && _hdrOutputUsesEDR) {
-                intermediatePixelFormat = MTLPixelFormatRGBA16Float;
-            } else if (_enableHdr && !_hdrToneMapToSDR) {
-                intermediatePixelFormat = MTLPixelFormatBGR10A2Unorm;
+        // stop() tears the texture cache down from another thread. Take our own reference under
+        // the lock stop() has to take, and keep it for the whole method: a CVMetalTexture made
+        // here finalizes against the cache that made it, and a cache freed first leaves CoreVideo
+        // dereferencing a dead pointer (the 2026-09-26 SIGSEGV: CVMetalTexture::finalize ->
+        // CFArrayAppendValue -> __CF_IS_OBJC). ARC drops the snapshot on every exit path.
+        CVMetalTextureCacheRef cacheSnapshot = NULL;
+        @synchronized(self) {
+            if (_textureCache) {
+                cacheSnapshot = (CVMetalTextureCacheRef)CFRetain(_textureCache);
             }
-            id<MTLTexture> intermediateTexture = [self intermediateTextureForWidth:workingWidth
-                                                                            height:workingHeight
-                                                                       pixelFormat:intermediatePixelFormat];
-
-            id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
-            [computeEncoder setComputePipelineState:_computePipelineState];
-            [computeEncoder setTexture:yTexture atIndex:0];
-            [computeEncoder setTexture:uvTexture atIndex:1];
-            [computeEncoder setTexture:intermediateTexture atIndex:2];
-            [computeEncoder setBytes:&conversionParams length:sizeof(conversionParams) atIndex:0];
-
-            NSUInteger w = _computePipelineState.threadExecutionWidth;
-            NSUInteger h = MAX((NSUInteger)1, _computePipelineState.maxTotalThreadsPerThreadgroup / w);
-            MTLSize threadsPerThreadgroup = MTLSizeMake(w, h, 1);
-            MTLSize threadgroups = MTLSizeMake((workingWidth + w - 1) / w, (workingHeight + h - 1) / h, 1);
-            [computeEncoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
-            [computeEncoder endEncoding];
-            sourceRGBTexture = intermediateTexture;
         }
-    } else if (pixelFormat == kCVPixelFormatType_32BGRA) {
-        CVReturn textureStatus = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-                                                                           textureCache,
-                                                                           workingFrame,
-                                                                           nil,
-                                                                           MTLPixelFormatBGRA8Unorm,
-                                                                           workingWidth,
-                                                                           workingHeight,
-                                                                           0,
-                                                                           &primaryTextureRef);
-        if (textureStatus == kCVReturnSuccess && primaryTextureRef != NULL) {
-            sourceRGBTexture = CVMetalTextureGetTexture(primaryTextureRef);
+        id textureCacheLifetime = (__bridge_transfer id)cacheSnapshot;
+        if (!_computePipelineState || textureCacheLifetime == nil) {
+            if (interpolatedFrame) {
+                CVBufferRelease(interpolatedFrame);
+            }
+            if (frame) {
+                CVBufferRelease(frame);
+            }
+            return;
         }
-    } else {
-        Log(LOG_W, @"[video] Unsupported enhanced pixel format: 0x%X planes=%zu", (unsigned int)pixelFormat, planeCount);
-    }
+        CVMetalTextureCacheRef textureCache = (__bridge CVMetalTextureCacheRef)textureCacheLifetime;
 
-    if (sourceRGBTexture != nil) {
-        CAMetalLayer *metalLayer = (CAMetalLayer *)view.layer;
-        if ([metalLayer isKindOfClass:[CAMetalLayer class]]) {
-            [self applyHDRPresentationStateToMetalLayer:metalLayer];
+        const NSUInteger sourceWidth = CVPixelBufferGetWidth(presentationFrame);
+        const NSUInteger sourceHeight = CVPixelBufferGetHeight(presentationFrame);
+        const NSUInteger drawableWidth = MAX((NSUInteger)1, (NSUInteger)llround(view.drawableSize.width));
+        const NSUInteger drawableHeight = MAX((NSUInteger)1, (NSUInteger)llround(view.drawableSize.height));
+        // Every question about this frame that involves a size is asked about the rectangle
+        // the picture will occupy, not the rectangle the window occupies: a super
+        // resolution processor handed the drawable builds pixels that are already out of
+        // shape, and an enhancement decision made against the drawable can promise a
+        // scaler that the letterbox then makes pointless.
+        const MLContentRect contentRect = MLContentRectForSource(sourceWidth, sourceHeight,
+                                                                 drawableWidth, drawableHeight);
+        const NSUInteger targetWidth = contentRect.width;
+        const NSUInteger targetHeight = contentRect.height;
+        float resolvedScaleFactor = 1.0f;
+        NSString *enhancementReason = nil;
+        MLVideoEnhancementReport enhancementReport = MLVideoEnhancementReportActive;
+        MLActiveVideoEnhancementEngine resolvedEngine =
+            [self resolveEnhancementEngineForSourceWidth:sourceWidth
+                                            sourceHeight:sourceHeight
+                                             targetWidth:targetWidth
+                                            targetHeight:targetHeight
+                                             scaleFactor:&resolvedScaleFactor
+                                                  reason:&enhancementReason
+                                                  report:&enhancementReport];
+        _activeEnhancementEngine = resolvedEngine;
+        [self logActiveEnhancementEngine:_activeEnhancementEngine
+                                  reason:enhancementReason
+                                  report:enhancementReport];
+
+        BOOL enhancementWarmupPending = NO;
+        CVImageBufferRef processedFrame = [self copyFrameUsingFrameProcessorIfNeeded:presentationFrame
+                                                                   activeEnhancement:_activeEnhancementEngine
+                                                                        scaleFactor:resolvedScaleFactor
+                                                                      warmupPending:&enhancementWarmupPending];
+        if (processedFrame == NULL &&
+            (_activeEnhancementEngine == MLActiveVideoEnhancementEngineVTLowLatencySuperResolution ||
+             _activeEnhancementEngine == MLActiveVideoEnhancementEngineVTQualitySuperResolution)) {
+            if (!enhancementWarmupPending) {
+                [self teardownEnhancementProcessor];
+            }
+            _activeEnhancementEngine = MLMetalFXIsSupported(_device)
+                ? MLActiveVideoEnhancementEngineMetalFXQuality
+                : MLActiveVideoEnhancementEngineBasicScaling;
+            [self logActiveEnhancementEngine:_activeEnhancementEngine
+                                      reason:enhancementWarmupPending
+                ? (_activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXQuality
+                    ? @"VT enhancement warmup in progress; temporarily using MetalFX"
+                    : @"VT enhancement warmup in progress; temporarily using basic scaling")
+                : @"VT enhancement unavailable at runtime; fell back"
+                                      report:enhancementWarmupPending
+                ? MLVideoEnhancementReportWarmup
+                : MLVideoEnhancementReportFellBack];
         }
 
-        BOOL acquiredInflightSlot = NO;
-        if (_metalInflightSemaphore != nil) {
-            if (dispatch_semaphore_wait(_metalInflightSemaphore, DISPATCH_TIME_NOW) != 0) {
-                _inflightBackpressureCount += 1;
+        CVImageBufferRef workingFrame = processedFrame != NULL ? processedFrame : presentationFrame;
+        const OSType pixelFormat = CVPixelBufferGetPixelFormatType(workingFrame);
+        const size_t workingWidth = CVPixelBufferGetWidth(workingFrame);
+        const size_t workingHeight = CVPixelBufferGetHeight(workingFrame);
+        const size_t planeCount = CVPixelBufferGetPlaneCount(workingFrame);
+
+        id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
+        if (commandBuffer == nil) {
+            if (processedFrame) {
+                CVBufferRelease(processedFrame);
+            }
+            if (interpolatedFrame) {
+                CVBufferRelease(interpolatedFrame);
+            }
+            if (frame) {
+                CVBufferRelease(frame);
+            }
+            return;
+        }
+
+        id<MTLTexture> sourceRGBTexture = nil;
+        CVMetalTextureRef primaryTextureRef = NULL;
+        CVMetalTextureRef secondaryTextureRef = NULL;
+
+        if (planeCount >= 2) {
+            const size_t lumaWidth = CVPixelBufferGetWidthOfPlane(workingFrame, 0);
+            const size_t lumaHeight = CVPixelBufferGetHeightOfPlane(workingFrame, 0);
+            const size_t chromaWidth = CVPixelBufferGetWidthOfPlane(workingFrame, 1);
+            const size_t chromaHeight = CVPixelBufferGetHeightOfPlane(workingFrame, 1);
+            CVReturn yStatus = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+                                                                         textureCache,
+                                                                         workingFrame,
+                                                                         nil,
+                                                                         [self metalLumaPlaneFormatForPixelBuffer:workingFrame],
+                                                                         lumaWidth,
+                                                                         lumaHeight,
+                                                                         0,
+                                                                         &primaryTextureRef);
+            CVReturn uvStatus = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+                                                                          textureCache,
+                                                                          workingFrame,
+                                                                          nil,
+                                                                          [self metalChromaPlaneFormatForPixelBuffer:workingFrame],
+                                                                          chromaWidth,
+                                                                          chromaHeight,
+                                                                          1,
+                                                                          &secondaryTextureRef);
+            if (yStatus == kCVReturnSuccess && uvStatus == kCVReturnSuccess && primaryTextureRef != NULL && secondaryTextureRef != NULL) {
+                id<MTLTexture> yTexture = CVMetalTextureGetTexture(primaryTextureRef);
+                id<MTLTexture> uvTexture = CVMetalTextureGetTexture(secondaryTextureRef);
+                MLYCbCrConversionParameters conversionParams =
+                    MLYCbCrConversionParametersForPixelFormat(pixelFormat,
+                                                             _hdrTransferMode,
+                                                             _hdrToneMapToSDR ? -_hdrOpticalOutputScale : _hdrOpticalOutputScale,
+                                                             _hdrOutputUsesEDR,
+                                                             _hdrToneMapToSDR,
+                                                             _hdrToneMappingPolicy,
+                                                             _hdrMinLuminance,
+                                                             _hdrMaxLuminance,
+                                                             _hdrMaxAverageLuminance);
+                MTLPixelFormat intermediatePixelFormat = MTLPixelFormatBGRA8Unorm;
+                if (_enableHdr && _hdrOutputUsesEDR) {
+                    intermediatePixelFormat = MTLPixelFormatRGBA16Float;
+                } else if (_enableHdr && !_hdrToneMapToSDR) {
+                    intermediatePixelFormat = MTLPixelFormatBGR10A2Unorm;
+                }
+                id<MTLTexture> intermediateTexture = [self intermediateTextureForWidth:workingWidth
+                                                                                height:workingHeight
+                                                                           pixelFormat:intermediatePixelFormat];
+
+                id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
+                [computeEncoder setComputePipelineState:_computePipelineState];
+                [computeEncoder setTexture:yTexture atIndex:0];
+                [computeEncoder setTexture:uvTexture atIndex:1];
+                [computeEncoder setTexture:intermediateTexture atIndex:2];
+                [computeEncoder setBytes:&conversionParams length:sizeof(conversionParams) atIndex:0];
+
+                NSUInteger w = _computePipelineState.threadExecutionWidth;
+                NSUInteger h = MAX((NSUInteger)1, _computePipelineState.maxTotalThreadsPerThreadgroup / w);
+                MTLSize threadsPerThreadgroup = MTLSizeMake(w, h, 1);
+                MTLSize threadgroups = MTLSizeMake((workingWidth + w - 1) / w, (workingHeight + h - 1) / h, 1);
+                [computeEncoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+                [computeEncoder endEncoding];
+                sourceRGBTexture = intermediateTexture;
+            }
+        } else if (pixelFormat == kCVPixelFormatType_32BGRA) {
+            CVReturn textureStatus = CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+                                                                               textureCache,
+                                                                               workingFrame,
+                                                                               nil,
+                                                                               MTLPixelFormatBGRA8Unorm,
+                                                                               workingWidth,
+                                                                               workingHeight,
+                                                                               0,
+                                                                               &primaryTextureRef);
+            if (textureStatus == kCVReturnSuccess && primaryTextureRef != NULL) {
+                sourceRGBTexture = CVMetalTextureGetTexture(primaryTextureRef);
+            }
+        } else {
+            Log(LOG_W, @"[video] Unsupported enhanced pixel format: 0x%X planes=%zu", (unsigned int)pixelFormat, planeCount);
+        }
+
+        if (sourceRGBTexture != nil) {
+            CAMetalLayer *metalLayer = (CAMetalLayer *)view.layer;
+            if ([metalLayer isKindOfClass:[CAMetalLayer class]]) {
+                [self applyHDRPresentationStateToMetalLayer:metalLayer];
+            }
+
+            if (inflightSemaphore != nil) {
+                [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _) {
+                    // Signal the exact semaphore reserved for this draw, even if stop
+                    // replaces the renderer's semaphore before GPU completion.
+                    dispatch_semaphore_signal(inflightSemaphore);
+                }];
+            }
+
+            id<CAMetalDrawable> drawable = view.currentDrawable;
+            if (drawable == nil) {
+                _drawableUnavailableCount += 1;
                 uint64_t nowMs = LiGetMillis();
-                if (_lastInflightBackpressureLogMs == 0 || nowMs - _lastInflightBackpressureLogMs >= 1000) {
-                    Log(LOG_W, @"[video] Enhanced inflight backpressure count=%lu depth=%lu",
-                        (unsigned long)_inflightBackpressureCount,
-                        (unsigned long)_metalInflightLimit);
-                    _lastInflightBackpressureLogMs = nowMs;
-                    _inflightBackpressureCount = 0;
+                if (_lastDrawableUnavailableLogMs == 0 || nowMs - _lastDrawableUnavailableLogMs >= 1000) {
+                    Log(LOG_W, @"[video] Enhanced drawable unavailable count=%lu windowVisible=%d occluded=%d",
+                        (unsigned long)_drawableUnavailableCount,
+                        (_view.window != nil && _view.window.isVisible) ? 1 : 0,
+                        (_view.window != nil && ((_view.window.occlusionState & NSWindowOcclusionStateVisible) != 0)) ? 0 : 1);
+                    _lastDrawableUnavailableLogMs = nowMs;
+                    _drawableUnavailableCount = 0;
                 }
                 if (primaryTextureRef) CFRelease(primaryTextureRef);
                 if (secondaryTextureRef) CFRelease(secondaryTextureRef);
@@ -5223,184 +5278,157 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                 }
                 return;
             }
-            acquiredInflightSlot = YES;
-            [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _) {
-                dispatch_semaphore_signal(self->_metalInflightSemaphore);
-            }];
-        }
 
-        id<CAMetalDrawable> drawable = view.currentDrawable;
-        if (drawable == nil) {
-            _drawableUnavailableCount += 1;
-            uint64_t nowMs = LiGetMillis();
-            if (_lastDrawableUnavailableLogMs == 0 || nowMs - _lastDrawableUnavailableLogMs >= 1000) {
-                Log(LOG_W, @"[video] Enhanced drawable unavailable count=%lu windowVisible=%d occluded=%d",
-                    (unsigned long)_drawableUnavailableCount,
-                    (_view.window != nil && _view.window.isVisible) ? 1 : 0,
-                    (_view.window != nil && ((_view.window.occlusionState & NSWindowOcclusionStateVisible) != 0)) ? 0 : 1);
-                _lastDrawableUnavailableLogMs = nowMs;
-                _drawableUnavailableCount = 0;
+            BOOL usedMetalFX = NO;
+            if (_activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXQuality ||
+                _activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXPerformance) {
+                usedMetalFX = [self encodeMetalFXScalingFromTexture:sourceRGBTexture
+                                                             engine:_activeEnhancementEngine
+                                                             toView:view
+                                                       commandBuffer:commandBuffer
+                                                           drawable:drawable];
+                if (!usedMetalFX) {
+                    _activeEnhancementEngine = MLActiveVideoEnhancementEngineBasicScaling;
+                    [self logActiveEnhancementEngine:_activeEnhancementEngine
+                                              reason:@"MetalFX unavailable at runtime; fell back to basic scaling"
+                                              report:MLVideoEnhancementReportFellBack];
+                }
             }
-            if (acquiredInflightSlot) {
-                dispatch_semaphore_signal(_metalInflightSemaphore);
-            }
-            if (primaryTextureRef) CFRelease(primaryTextureRef);
-            if (secondaryTextureRef) CFRelease(secondaryTextureRef);
-            if (processedFrame) {
-                CVBufferRelease(processedFrame);
-            }
-            if (interpolatedFrame) {
-                CVBufferRelease(interpolatedFrame);
-            }
-            if (frame) {
-                CVBufferRelease(frame);
-            }
-            return;
-        }
 
-        BOOL usedMetalFX = NO;
-        if (_activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXQuality ||
-            _activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXPerformance) {
-            usedMetalFX = [self encodeMetalFXScalingFromTexture:sourceRGBTexture
-                                                         engine:_activeEnhancementEngine
-                                                         toView:view
-                                                   commandBuffer:commandBuffer
-                                                       drawable:drawable];
             if (!usedMetalFX) {
-                _activeEnhancementEngine = MLActiveVideoEnhancementEngineBasicScaling;
-                [self logActiveEnhancementEngine:_activeEnhancementEngine
-                                          reason:@"MetalFX unavailable at runtime; fell back to basic scaling"
-                                          report:MLVideoEnhancementReportFellBack];
+                [self encodePresentFromTexture:sourceRGBTexture
+                                    toDrawable:drawable
+                                  commandBuffer:commandBuffer];
             }
-        }
 
-        if (!usedMetalFX) {
-            [self encodePresentFromTexture:sourceRGBTexture
-                                toDrawable:drawable
-                              commandBuffer:commandBuffer];
-        }
-
-        // What the scalers made of this frame, charged where their pixels are drawn.
-        //
-        // MetalFX reports its own success, so it is asked. VideoToolbox super
-        // resolution says nothing at this point; it announces itself by having handed
-        // back an enlarged buffer, which is the only thing here that can tell its
-        // output from the decoder's, because the processor returns NULL for every
-        // other engine. The two are mutually exclusive by construction: an engine is
-        // one of them, and a frame processor that gave up on VideoToolbox has already
-        // moved the engine off it.
-        MLScalerKind scalerKindForPresent = MLScalerKindNone;
-        uint32_t scaledInputWidth = 0;
-        uint32_t scaledInputHeight = 0;
-        uint32_t scaledOutputWidth = 0;
-        uint32_t scaledOutputHeight = 0;
-        if (usedMetalFX) {
-            scalerKindForPresent = MLScalerKindMetalFX;
-            scaledInputWidth = (uint32_t)workingWidth;
-            scaledInputHeight = (uint32_t)workingHeight;
-            // The rectangle the picture occupies, not the rectangle the window
-            // occupies. A scaler that wrote 1600x900 inside a 1600x1000 drawable made
-            // 1600x900 of pixels, and the overlay has to print the number a player
-            // could measure off the letterboxed picture.
-            scaledOutputWidth = (uint32_t)contentRect.width;
-            scaledOutputHeight = (uint32_t)contentRect.height;
-        } else if (processedFrame != NULL) {
-            scalerKindForPresent = MLScalerKindVideoToolbox;
-            scaledInputWidth = (uint32_t)sourceWidth;
-            scaledInputHeight = (uint32_t)sourceHeight;
-            scaledOutputWidth = (uint32_t)workingWidth;
-            scaledOutputHeight = (uint32_t)workingHeight;
-        }
-
-        MLScaledFrameEvidence scalingEvidence =
-            MLHardwareScaledEvidenceForPresentedFrame(scalerKindForPresent,
-                                                      scaledInputWidth,
-                                                      scaledInputHeight,
-                                                      scaledOutputWidth,
-                                                      scaledOutputHeight);
-        if (scalingEvidence.reachedDisplay) {
-            _activeWndVideoStats.scaledFrames += 1;
-            _activeWndVideoStats.scaledOutputWidth = scalingEvidence.outputWidth;
-            _activeWndVideoStats.scaledOutputHeight = scalingEvidence.outputHeight;
-        }
-
-        NSUInteger presentedCount = 0;
-        if (!presentingInterpolatedFrame && frameSequence != 0) {
-            @synchronized(self) {
-                if (frameSequence != _lastPresentedFrameSequence) {
-                    _lastPresentedFrameSequence = frameSequence;
-                    _enhancedStartupPresentedFrameCount += 1;
-                    presentedCount = _enhancedStartupPresentedFrameCount;
-                }
+            // What the scalers made of this frame, charged where their pixels are drawn.
+            //
+            // MetalFX reports its own success, so it is asked. VideoToolbox super
+            // resolution says nothing at this point; it announces itself by having handed
+            // back an enlarged buffer, which is the only thing here that can tell its
+            // output from the decoder's, because the processor returns NULL for every
+            // other engine. The two are mutually exclusive by construction: an engine is
+            // one of them, and a frame processor that gave up on VideoToolbox has already
+            // moved the engine off it.
+            MLScalerKind scalerKindForPresent = MLScalerKindNone;
+            uint32_t scaledInputWidth = 0;
+            uint32_t scaledInputHeight = 0;
+            uint32_t scaledOutputWidth = 0;
+            uint32_t scaledOutputHeight = 0;
+            if (usedMetalFX) {
+                scalerKindForPresent = MLScalerKindMetalFX;
+                scaledInputWidth = (uint32_t)workingWidth;
+                scaledInputHeight = (uint32_t)workingHeight;
+                // The rectangle the picture occupies, not the rectangle the window
+                // occupies. A scaler that wrote 1600x900 inside a 1600x1000 drawable made
+                // 1600x900 of pixels, and the overlay has to print the number a player
+                // could measure off the letterboxed picture.
+                scaledOutputWidth = (uint32_t)contentRect.width;
+                scaledOutputHeight = (uint32_t)contentRect.height;
+            } else if (processedFrame != NULL) {
+                scalerKindForPresent = MLScalerKindVideoToolbox;
+                scaledInputWidth = (uint32_t)sourceWidth;
+                scaledInputHeight = (uint32_t)sourceHeight;
+                scaledOutputWidth = (uint32_t)workingWidth;
+                scaledOutputHeight = (uint32_t)workingHeight;
             }
-        }
 
-        CFTimeInterval presentationHoldSeconds = 0.0;
-        if ([self presentationCadenceForInterpolationHold:&presentationHoldSeconds outputFps:NULL]) {
-            [commandBuffer presentDrawable:drawable afterMinimumDuration:presentationHoldSeconds];
-        } else {
-            [commandBuffer presentDrawable:drawable];
-        }
-        [commandBuffer commit];
-
-        if (presentingInterpolatedFrame) {
-            @synchronized(self) {
-                if (_pendingInterpolatedForSourceSequence == frameSequence) {
-                    _pendingInterpolatedPresented = YES;
-                }
+            MLScaledFrameEvidence scalingEvidence =
+                MLHardwareScaledEvidenceForPresentedFrame(scalerKindForPresent,
+                                                          scaledInputWidth,
+                                                          scaledInputHeight,
+                                                          scaledOutputWidth,
+                                                          scaledOutputHeight);
+            if (scalingEvidence.reachedDisplay) {
+                _activeWndVideoStats.scaledFrames += 1;
+                _activeWndVideoStats.scaledOutputWidth = scalingEvidence.outputWidth;
+                _activeWndVideoStats.scaledOutputHeight = scalingEvidence.outputHeight;
             }
-        } else if (frame != NULL) {
-            [self cachePresentedInterpolationSourceFrame:frame];
-            @synchronized(self) {
-                if (_deferredCurrentSourceSequence == frameSequence) {
-                    _deferredCurrentSourceSequence = 0;
-                    if (_pendingInterpolatedFrame) {
-                        CVBufferRelease(_pendingInterpolatedFrame);
-                        _pendingInterpolatedFrame = NULL;
+
+            NSUInteger presentedCount = 0;
+            if (!presentingInterpolatedFrame && frameSequence != 0) {
+                @synchronized(self) {
+                    if (frameSequence != _lastPresentedFrameSequence) {
+                        _lastPresentedFrameSequence = frameSequence;
+                        _enhancedStartupPresentedFrameCount += 1;
+                        presentedCount = _enhancedStartupPresentedFrameCount;
                     }
-                    _pendingInterpolatedPresented = NO;
-                    _pendingInterpolatedForSourceSequence = 0;
-                    _pendingInterpolatedEnqueueTimeMs = 0;
-                    _pendingInterpolatedFrameNumber = 0;
+                }
+            }
+
+            CFTimeInterval presentationHoldSeconds = 0.0;
+            if ([self presentationCadenceForInterpolationHold:&presentationHoldSeconds outputFps:NULL]) {
+                [commandBuffer presentDrawable:drawable afterMinimumDuration:presentationHoldSeconds];
+            } else {
+                [commandBuffer presentDrawable:drawable];
+            }
+            [commandBuffer commit];
+            submittedCommandBuffer = YES;
+
+            if (presentingInterpolatedFrame) {
+                @synchronized(self) {
+                    if (_pendingInterpolatedForSourceSequence == frameSequence) {
+                        _pendingInterpolatedPresented = YES;
+                    }
+                }
+            } else if (frame != NULL) {
+                [self cachePresentedInterpolationSourceFrame:frame];
+                @synchronized(self) {
+                    if (_deferredCurrentSourceSequence == frameSequence) {
+                        _deferredCurrentSourceSequence = 0;
+                        if (_pendingInterpolatedFrame) {
+                            CVBufferRelease(_pendingInterpolatedFrame);
+                            _pendingInterpolatedFrame = NULL;
+                        }
+                        _pendingInterpolatedPresented = NO;
+                        _pendingInterpolatedForSourceSequence = 0;
+                        _pendingInterpolatedEnqueueTimeMs = 0;
+                        _pendingInterpolatedFrameNumber = 0;
+                    }
+                }
+            }
+
+            MLPresentedFrameAccounting accounting =
+                MLAccountingForPresentedFrame(presentingInterpolatedFrame, presentedCount > 0);
+
+            if (accounting & MLPresentedFrameAccountingInterpolated) {
+                _activeWndVideoStats.interpolatedFrames++;
+            }
+
+            if (accounting & MLPresentedFrameAccountingRendered) {
+                uint64_t presentMs = LiGetMillis();
+                [self recordRenderedFrameSampleAtTimeMs:presentMs enqueueTimeMs:frameEnqueueTimeMs];
+                if (presentedCount == 1) {
+                    unsigned long long startupMs = (_rendererStartTimeMs != 0 && presentMs >= _rendererStartTimeMs)
+                        ? (unsigned long long)(presentMs - _rendererStartTimeMs)
+                        : 0;
+                    unsigned long long queueAgeMs = (frameEnqueueTimeMs != 0 && presentMs >= frameEnqueueTimeMs)
+                        ? (unsigned long long)(presentMs - frameEnqueueTimeMs)
+                        : 0;
+                    Log(LOG_I, @"[video] Enhanced first present startup=%llums queueAge=%llums frame=%u",
+                        startupMs,
+                        queueAgeMs,
+                        (unsigned int)frameNumber);
                 }
             }
         }
 
-        MLPresentedFrameAccounting accounting =
-            MLAccountingForPresentedFrame(presentingInterpolatedFrame, presentedCount > 0);
-
-        if (accounting & MLPresentedFrameAccountingInterpolated) {
-            _activeWndVideoStats.interpolatedFrames++;
+        if (primaryTextureRef) CFRelease(primaryTextureRef);
+        if (secondaryTextureRef) CFRelease(secondaryTextureRef);
+        if (processedFrame) {
+            CVBufferRelease(processedFrame);
         }
-
-        if (accounting & MLPresentedFrameAccountingRendered) {
-            uint64_t presentMs = LiGetMillis();
-            [self recordRenderedFrameSampleAtTimeMs:presentMs enqueueTimeMs:frameEnqueueTimeMs];
-            if (presentedCount == 1) {
-                unsigned long long startupMs = (_rendererStartTimeMs != 0 && presentMs >= _rendererStartTimeMs)
-                    ? (unsigned long long)(presentMs - _rendererStartTimeMs)
-                    : 0;
-                unsigned long long queueAgeMs = (frameEnqueueTimeMs != 0 && presentMs >= frameEnqueueTimeMs)
-                    ? (unsigned long long)(presentMs - frameEnqueueTimeMs)
-                    : 0;
-                Log(LOG_I, @"[video] Enhanced first present startup=%llums queueAge=%llums frame=%u",
-                    startupMs,
-                    queueAgeMs,
-                    (unsigned int)frameNumber);
-            }
+        if (interpolatedFrame) {
+            CVBufferRelease(interpolatedFrame);
         }
-    }
-
-    if (primaryTextureRef) CFRelease(primaryTextureRef);
-    if (secondaryTextureRef) CFRelease(secondaryTextureRef);
-    if (processedFrame) {
-        CVBufferRelease(processedFrame);
-    }
-    if (interpolatedFrame) {
-        CVBufferRelease(interpolatedFrame);
-    }
-    if (frame) {
-        CVBufferRelease(frame);
+        if (frame) {
+            CVBufferRelease(frame);
+        }
+    } @finally {
+        // No command buffer owns the permit on any pre-commit exit.
+        if (inflightSemaphore != nil && !submittedCommandBuffer) {
+            dispatch_semaphore_signal(inflightSemaphore);
+        }
     }
 }
 
@@ -5658,12 +5686,15 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
         }
     }
 
-    BOOL shouldPresentDeferredSourceFrame = NO;
+    BOOL shouldRetryEnhancedFrame = NO;
     @synchronized(self) {
-        shouldPresentDeferredSourceFrame =
-            (self->_deferredCurrentSourceSequence != 0 && self->_pendingInterpolatedPresented);
+        // Both halves can fail submission under GPU/drawable pressure. Retry on
+        // the next refresh even when no new decode arrives; never queue a backlog.
+        shouldRetryEnhancedFrame = MLPresentationNeedsDraw(self->_currentFrameSequence,
+            self->_interpolationStagingSequence, self->_lastPresentedFrameSequence,
+            self->_pendingInterpolatedForSourceSequence, self->_pendingInterpolatedPresented);
     }
-    if (shouldPresentDeferredSourceFrame) {
+    if (shouldRetryEnhancedFrame) {
         [self requestEnhancedDraw];
     }
 
