@@ -510,6 +510,14 @@ WANT_KEYS = (
 def build(source, known_bad=None):
     if known_bad:
         name, anchor, replacement, _why = known_bad
+        if name == "the-frame-never-stops-warming-up":
+            # Async completion adds nesting; match the same semantic report/format
+            # pair rather than fixing the number of spaces in the renderer.
+            matches = re.findall(r'report:MLVideoFrameInterpolationReportActive\n\s+reason:\[NSString stringWithFormat:', source)
+            if len(matches) != 1:
+                raise SystemExit("active completion report mutation must have one anchor")
+            anchor = matches[0]
+            replacement = anchor.replace("ReportActive", "ReportWarmup")
         if source.count(anchor) != 1:
             raise SystemExit("the anchor for %s is not there exactly once (%d times)"
                              % (name, source.count(anchor)))
