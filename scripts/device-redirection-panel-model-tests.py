@@ -661,7 +661,97 @@ def mutated(rules, label, before, after):
     return rules.replace(before, after, 1)
 
 
+def usb_scan_policy_tests():
+    """Execute shipping scan decisions even when the Apple SDK is unavailable."""
+    import shutil
+    policy = read(STREAM + "USBScanPolicy.h")
+    driver = r'''
+#include "USBScanPolicy.h"
+#include <assert.h>
+int main(void) {
+    assert(MLUSBScanShouldStart(false,false,false,false,0,4,0,10));
+    assert(!MLUSBScanShouldStart(true,false,true,false,0,4,0,10));
+    assert(!MLUSBScanShouldStart(false,true,true,false,0,4,0,10));
+    assert(!MLUSBScanShouldStart(false,false,false,true,4,4,10,11.99));
+    assert(MLUSBScanShouldStart(false,false,false,true,4,4,10,12));
+    assert(MLUSBScanShouldStart(false,false,true,true,4,4,10,10.01));
+    assert(MLUSBScanShouldStart(false,false,false,true,3,4,10,10.01));
+    assert(MLUSBScanShouldStart(false,false,false,true,4,4,10,9));
+    assert(MLUSBScanMayPublish(false,4,4,true));
+    assert(!MLUSBScanMayPublish(true,4,4,true));
+    assert(!MLUSBScanMayPublish(false,3,4,true));
+    assert(!MLUSBScanMayPublish(false,4,4,false));
+    // Reconnect while a read is running: do not overlap it; reject the old
+    // completion, then allow the current generation to request a fresh snapshot.
+    assert(!MLUSBScanShouldStart(true,false,false,true,3,4,10,13));
+    assert(!MLUSBScanMayPublish(false,3,4,true));
+    assert(MLUSBScanShouldStart(false,false,false,true,3,4,10,13));
+    return 0;
+}
+'''
+    compiler = shutil.which("cc") or shutil.which("clang")
+    check(compiler is not None, "USB scan replay has a C compiler; absence is not a pass")
+    if compiler is None:
+        return
+
+    def replay(text, name):
+        with tempfile.TemporaryDirectory(prefix="ml-usb-scan-") as d:
+            with open(os.path.join(d, "USBScanPolicy.h"), "w") as f:
+                f.write(text)
+            with open(os.path.join(d, "replay.c"), "w") as f:
+                f.write(driver)
+            exe = os.path.join(d, "replay")
+            built = subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                                    os.path.join(d, "replay.c"), "-o", exe], capture_output=True)
+            check(built.returncode == 0, "USB scan %s compiles before its behavior is judged" % name)
+            if built.returncode:
+                print(built.stderr.decode(errors="replace")[:1200])
+                return None
+            return subprocess.run([exe], capture_output=True).returncode
+
+    check(replay(policy, "control") == 0,
+          "USB scan replay covers single flight, freshness, force, stop, host and reconnect")
+    mutations = [
+        ("overlap reads", "pending || stopping", "(pending || !pending) && stopping"),
+        ("scan during stop", "pending || stopping", "pending && (stopping || !stopping)"),
+        ("ignore reconnect", "snapshotGeneration != currentGeneration", "snapshotGeneration == currentGeneration"),
+        ("accept old generation", "requestedGeneration == currentGeneration", "requestedGeneration <= currentGeneration"),
+        ("accept other host", "&& sameHost;", "&& (sameHost || !sameHost);"),
+        ("publish after stop", "return !stopping &&", "return (stopping || !stopping) &&"),
+    ]
+    for name, before, after in mutations:
+        check(policy.count(before) == 1, "USB scan %s mutation has one exact anchor" % name)
+        if policy.count(before) != 1:
+            continue
+        result = replay(policy.replace(before, after), name)
+        check(result is not None and result != 0, "USB scan replay rejects %s" % name)
+
+    menu = read("Limelight/macOS/ViewControllers/StreamViewController+MenuUI.m")
+    worker = menu.split("- (void)refreshUSBMenuSnapshotForced:", 1)[1].split("- (void)refreshUSBDevicesFromMenu:", 1)[0]
+    rebuild = menu.split("- (void)rebuildStreamMenu {", 1)[1].split("- (void)updateBitrate", 1)[0]
+    check("rowsByScanningBusWithHostPaired:" not in rebuild and
+          "MLUSBBusSnapshotCopyDeviceIdentities" not in rebuild,
+          "rebuilding a stream menu never enumerates the USB registry on the main thread")
+    check(worker.index("dispatch_get_global_queue(QOS_CLASS_UTILITY") <
+          worker.index("MLUSBBusSnapshotCopyDeviceIdentities") <
+          worker.index("dispatch_get_main_queue()"),
+          "the actual IOKit read is dispatched to utility and published back to main")
+    check("MLUSBScanShouldStart(" in worker and "MLUSBScanMayPublish(" in worker and
+          "sameHost" in worker and "activeStreamGeneration" in worker,
+          "stream callbacks consult the same decisions the replay executes")
+    check("weakSelf" in worker and "edgeMenuLifecycleToken" not in worker,
+          "a scan neither retains its controller nor expires merely because the dock opened")
+    check("if (!strongSelf.edgeMenuMenuVisible)" in worker,
+          "scan completion cannot rebuild the menu while a user is tracking it")
+    check("usbMenuSnapshotGeneration == self.activeStreamGeneration" in rebuild and
+          '"USB device scan failed"' in rebuild and '"USB scanning devices"' in rebuild,
+          "the sidebar distinguishes old session, unreadable bus and initial scan from emptiness")
+
+
 def main():
+    usb_scan_policy_tests()
+    if failures:
+        return 1
     rules, impl, header = shipping_rules()
     print("-- what the devices panel may claim, and about what --")
 

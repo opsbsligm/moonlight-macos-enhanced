@@ -1361,3 +1361,7 @@
 "USB configure permissions in settings" = "Manage allowed devices in Settings → Devices";
 "USB refresh devices" = "Refresh devices";
 "USB manual permission rule" = "Add a model by vendor and product ID";
+
+/* Asynchronous USB enumeration */
+"USB scanning devices" = "Reading USB devices…";
+"USB refreshing devices" = "Refreshing USB devices…";

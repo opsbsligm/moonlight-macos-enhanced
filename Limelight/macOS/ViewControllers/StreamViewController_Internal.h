@@ -22,6 +22,7 @@
 #import "HIDSupport.h"
 #import "Moonlight-Swift.h"
 #import "LogBuffer.h"
+#import "USBBusSnapshot.h"
 
 #import <IOKit/pwr_mgt/IOPMLib.h>
 #import <Carbon/Carbon.h>
@@ -509,6 +510,13 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) BOOL edgeMenuTemporaryReleaseActive;
 
 @property (nonatomic, strong) NSMenu *streamMenu;
+// Main-thread-owned, immutable enumeration result; never a claim of device attachment.
+@property (nonatomic, copy) NSArray<MLUSBDeviceIdentity *> *usbMenuDeviceSnapshot;
+@property (nonatomic) MLUSBBusSnapshotStatus usbMenuBusStatus;
+@property (nonatomic) BOOL usbMenuScanInFlight;
+@property (nonatomic) NSUInteger usbMenuSnapshotGeneration;
+@property (nonatomic) NSTimeInterval usbMenuScannedAt;
+
 
 @property (nonatomic, strong) GlassOverlayContainer *controlCenterPill;
 @property (nonatomic, strong) NSImageView *controlCenterSignalImageView;

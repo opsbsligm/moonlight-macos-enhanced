@@ -1361,3 +1361,7 @@
 "USB configure permissions in settings" = "在设置 → 设备中管理许可";
 "USB refresh devices" = "刷新设备";
 "USB manual permission rule" = "按厂商与产品编号添加型号";
+
+/* Asynchronous USB enumeration */
+"USB scanning devices" = "正在读取 USB 设备…";
+"USB refreshing devices" = "正在刷新 USB 设备…";
