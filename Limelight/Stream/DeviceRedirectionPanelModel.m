@@ -189,6 +189,11 @@ static NSUInteger MLDominantInterfaceClass(NSArray<MLUSBInterfaceDescriptor *> *
         _allowed = verdict.isAllowed;
         _identityIsReadable = identity.vendorID != nil && identity.productID != nil &&
                               identity.interfaces.count > 0;
+        BOOL pureHub = _identityIsReadable;
+        for (MLUSBInterfaceDescriptor *interface in identity.interfaces) {
+            if (interface.majorClass != 0x09) pureHub = NO;
+        }
+        _isInfrastructureDevice = pureHub;
         BOOL reserved = NO;
         for (MLUSBInterfaceDescriptor *interface in identity.interfaces) {
             if ([MLDeviceRedirectionPolicy isReservedInterfaceClass:interface.majorClass]) {

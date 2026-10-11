@@ -588,6 +588,23 @@ int main(void) {
               "the device no rule can ever reach keeps its own group, between the ready one and "
               "the refusals that have a fix");
 
+        // Only pure readable hubs move to a presentation group. A dock's other
+        // face must not disappear merely because one interface is a hub.
+        NSArray *groupRows = [clean rowsForDevices:@[
+            DeviceWithFaces(0x1234, 0x1000, @[@9]),
+            DeviceWithFaces(0x1234, 0x1001, @[@9, @8]),
+            DeviceWithFaces(0x1234, 0x1002, @[@9, @11]),
+            DeviceWithFaces(0x1234, 0x1003, @[]),
+            DeviceWithFaces(0x1234, 0x1004, @[@255]),
+            DeviceWithFaces(0x1234, 0x1005, @[@9, @9])
+        ] hostIsPaired:NO];
+        CHECK([groupRows[0] isInfrastructureDevice] && [groupRows[5] isInfrastructureDevice],
+              "pure hubs remain visible through the collapsed infrastructure group");
+        CHECK(![groupRows[1] isInfrastructureDevice] && ![groupRows[2] isInfrastructureDevice],
+              "composite and reserved devices are never hidden behind their hub face");
+        CHECK(![groupRows[3] isInfrastructureDevice] && ![groupRows[4] isInfrastructureDevice],
+              "empty and unknown interface identities stay in the main list");
+
         // Background readers hand over an immutable result. A failed read must not
         // advertise partial identities; an empty successful read is a different state.
         NSArray *snapshotDevices = @[DeviceWithFaces(0x1234, 0x5678, @[@8])];
@@ -815,6 +832,10 @@ def main():
     pane = read("Limelight/macOS/ViewControllers/SettingsDevicesPane.swift")
     check("UNLOCK(stage3)" in pane,
           "the devices pane still says out loud which half of stage 3 it is waiting on")
+    check('ordered.filter { !$0.isInfrastructureDevice }' in pane and
+          'ordered.filter { $0.isInfrastructureDevice }' in pane and
+          'ForEach(Array(hubs.enumerated())' in pane and 'USB hubs grouping detail' in pane,
+          "settings partitions the same complete row list without changing permission policy")
     check("MLDeviceRedirectionPanelModel" in pane,
           "and the pane really is the consumer of this model rather than a second copy of its rules")
     check("DeviceRedirectionPanelModel.h" in read("Limelight/Moonlight-Bridging-Header.h"),
@@ -995,6 +1016,11 @@ def main():
               mutated(rules, "the switch\'s own row addressing",
                       "    NSMutableArray<NSNumber *> *positions = [NSMutableArray array];\n    [self collectRules:nil storageIndices:positions];\n    if (index >= positions.count) {\n        return NO;\n    }\n    const NSUInteger storageIndex = [positions[index] unsignedIntegerValue];\n    NSArray *records = [self storedRules];\n    if (storageIndex >= records.count) {\n        return NO;\n    }\n    id record = records[storageIndex];",
                       "    const NSUInteger storageIndex = index;\n    NSArray *records = [self storedRules];\n    if (storageIndex >= records.count) {\n        return NO;\n    }\n    id record = records[storageIndex];"),
+              cc, sdk)
+    run_rules("composite dock is hidden as a hub",
+              mutated(rules, "all faces determine grouping",
+                      "if (interface.majorClass != 0x09) pureHub = NO;",
+                      "if (interface.majorClass == 0x09) pureHub = YES;"),
               cc, sdk)
     run_rules("failed bus snapshot exposes partial devices",
               mutated(rules, "snapshot failure suppresses devices",

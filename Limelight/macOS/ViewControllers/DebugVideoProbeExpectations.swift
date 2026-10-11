@@ -87,6 +87,8 @@ final class DebugProbeExpectations: NSObject {
       "videoStrings": videoStrings,
       // Static permission/connection scope copy shared with the actual USB page.
       // No synthetic devices or permission writes are needed to check this contract.
+      "deviceHubsSectionTitle": localize("USB hubs"),
+      "deviceHubsSectionDetail": localize("USB hubs grouping detail"),
       "devicePermissionStrings": [
         "USB permissions", "USB permissions scope", "USB device redirection",
         "Devices on this Mac", "USB refresh devices",
