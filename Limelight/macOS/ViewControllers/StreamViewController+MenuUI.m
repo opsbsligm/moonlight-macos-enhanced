@@ -4,6 +4,7 @@
 //
 
 #import "StreamViewController_Internal.h"
+#import "DeviceRedirectionPanelModel.h"
 
 @implementation StreamViewController (MenuUI)
 
@@ -1928,6 +1929,55 @@
 
     audioItem.submenu = audioMenu;
     [self.streamMenu addItem:audioItem];
+
+    // Session operations live in the stream dock, never in permission settings.
+    NSMenuItem *usbItem = [[NSMenuItem alloc] initWithTitle:MLString(@"USB devices", nil) action:nil keyEquivalent:@""];
+    setSymbol(usbItem, @"cable.connector");
+    NSMenu *usbMenu = [[NSMenu alloc] initWithTitle:usbItem.title];
+    usbMenu.autoenablesItems = NO;
+    MLDeviceRedirectionPanelModel *usbPermissions = [[MLDeviceRedirectionPanelModel alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
+    // No host capability is inferred from a video connection. UNLOCK(stage3):
+    // until a real host channel and loadable driver exist, no menu action may claim connection.
+    NSMenuItem *usbStatus = [[NSMenuItem alloc] initWithTitle:MLString(@"USB session unavailable", nil) action:nil keyEquivalent:@""];
+    usbStatus.enabled = NO;
+    [usbMenu addItem:usbStatus];
+    NSArray<MLDeviceRedirectionPanelRow *> *usbRows = [MLDeviceRedirectionPanelRow displayOrderedRows:
+        [usbPermissions rowsByScanningBusWithHostPaired:self.app.host.pairState == PairStatePaired]];
+    [usbMenu addItem:[NSMenuItem separatorItem]];
+    for (MLDeviceRedirectionPanelRow *row in usbRows) {
+        NSString *name = row.displayName ?: MLString(row.categoryNameKey ?: @"USB class vendor specific", nil);
+        NSMenuItem *deviceItem = [[NSMenuItem alloc] initWithTitle:name action:nil keyEquivalent:@""];
+        setSymbol(deviceItem, row.categorySymbolName);
+        NSMenu *deviceMenu = [[NSMenu alloc] initWithTitle:name];
+        deviceMenu.autoenablesItems = NO;
+        NSMenuItem *identity = [[NSMenuItem alloc] initWithTitle:
+            [NSString stringWithFormat:@"%@ · %@", MLString(row.categoryNameKey ?: @"USB class vendor specific", nil), row.identifiersLine]
+            action:nil keyEquivalent:@""];
+        identity.enabled = NO;
+        [deviceMenu addItem:identity];
+        NSMenuItem *connect = [[NSMenuItem alloc] initWithTitle:MLString(@"USB connect to this session", nil) action:nil keyEquivalent:@""];
+        connect.enabled = NO;
+        [deviceMenu addItem:connect];
+        NSMenuItem *reason = [[NSMenuItem alloc] initWithTitle:
+            MLString(row.hasReservedInterface ? @"Device stays with this Mac" :
+                (!usbPermissions.featureEnabled ? @"USB permissions disabled" : @"USB runtime required"), nil)
+            action:nil keyEquivalent:@""];
+        reason.enabled = NO;
+        [deviceMenu addItem:reason];
+        deviceItem.submenu = deviceMenu;
+        [usbMenu addItem:deviceItem];
+    }
+    if (usbRows.count == 0) {
+        NSMenuItem *empty = [[NSMenuItem alloc] initWithTitle:MLString(@"USB no devices found", nil) action:nil keyEquivalent:@""];
+        empty.enabled = NO;
+        [usbMenu addItem:empty];
+    }
+    NSMenuItem *scope = [[NSMenuItem alloc] initWithTitle:MLString(@"USB configure permissions in settings", nil) action:nil keyEquivalent:@""];
+    scope.enabled = NO;
+    [usbMenu addItem:[NSMenuItem separatorItem]];
+    [usbMenu addItem:scope];
+    usbItem.submenu = usbMenu;
+    [self.streamMenu addItem:usbItem];
 
     // 二级：网络（连接方式）
     NSMenuItem *networkItem = [[NSMenuItem alloc] initWithTitle:MLString(@"Network", nil) action:nil keyEquivalent:@""];
