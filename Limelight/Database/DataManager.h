@@ -11,6 +11,8 @@
 #import "TemporaryApp.h"
 #import "TemporarySettings.h"
 
+// Legacy methods retain unspecified nullability; the new metadata API alone
+// explicitly promises a nonnull UUID and a nullable lookup result.
 @interface DataManager : NSObject
 
 - (void) saveSettingsWithBitrate:(NSInteger)bitrate
@@ -26,18 +28,18 @@
                        enableHdr:(BOOL)enableHdr
                   btMouseSupport:(BOOL)btMouseSupport;
 
-- (NSArray*) getHosts;
+- (NSArray * _Null_unspecified) getHosts;
 /// Reads one connection descriptor without constructing any TemporaryApp graph.
-- (nullable TemporaryHost *)hostMetadataForUUID:(NSString *)uuid NS_SWIFT_NAME(hostMetadata(forUUID:));
+- (nullable TemporaryHost *)hostMetadataForUUID:(NSString * _Nonnull)uuid NS_SWIFT_NAME(hostMetadata(forUUID:));
 - (void) removeHostsWithEmptyUuid;
-- (void) updateHost:(TemporaryHost*)host;
-- (void) updateAppsForExistingHost:(TemporaryHost *)host;
-- (void) removeHost:(TemporaryHost*)host;
-- (void) removeApp:(TemporaryApp*)app;
+- (void) updateHost:(TemporaryHost * _Null_unspecified)host;
+- (void) updateAppsForExistingHost:(TemporaryHost * _Null_unspecified)host;
+- (void) removeHost:(TemporaryHost * _Null_unspecified)host;
+- (void) removeApp:(TemporaryApp * _Null_unspecified)app;
 
-- (TemporarySettings*) getSettings;
+- (TemporarySettings * _Null_unspecified) getSettings;
 
-- (void) updateUniqueId:(NSString*)uniqueId;
-- (NSString*) getUniqueId;
+- (void) updateUniqueId:(NSString * _Null_unspecified)uniqueId;
+- (NSString * _Null_unspecified) getUniqueId;
 
 @end
