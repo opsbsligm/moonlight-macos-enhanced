@@ -181,6 +181,11 @@ struct DevicesView: View {
     HStack(spacing: 10) {
       Text(languageManager.localize("The host offers it"))
       Spacer()
+      if !hostIsPaired {
+        Text(languageManager.localize("Check host needs a paired host"))
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
       Text(MLDeviceRedirectionHostClaimName(panel.hostClaim))
         .font(.system(.body, design: .monospaced))
         .foregroundColor(hostClaimColour)
@@ -191,10 +196,16 @@ struct DevicesView: View {
           Text(languageManager.localize("Check host"))
         }
       }
-      .disabled(isCheckingHost)
-      .help(languageManager.localize(
-        panel.hostClaim == .unreachable ? "Host unreachable detail" : "Check host detail"))
+      .disabled(!hostIsPaired || isCheckingHost)
+      .help(languageManager.localize(hostHelpKey))
     }
+  }
+
+  /// The tooltip has to name the real obstacle: an unreachable host is a network
+  /// problem, and a page with nothing selected is not the host refusing anything.
+  private var hostHelpKey: String {
+    if !hostIsPaired { return "Check host needs a paired host detail" }
+    return panel.hostClaim == .unreachable ? "Host unreachable detail" : "Check host detail"
   }
 
   // MARK: - Switches
