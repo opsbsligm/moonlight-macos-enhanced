@@ -71,6 +71,7 @@ def shipping_rules():
 
 DRIVER = r"""
 #import <Foundation/Foundation.h>
+#include <math.h>
 
 @@RULES@@
 
@@ -354,6 +355,30 @@ int main(void) {
                    the_advertised_host().mayUploadDeviceDescriptor == NO,
                    "no step of a session that never heard about room authorises an upload");
 
+        NSArray *numericAnswers=@[@1.01,@1.9,@0.99,@(-1),@(NAN),@(INFINITY),@(-INFINITY),
+            [NSDecimalNumber decimalNumberWithString:@"1.00000000000000000000001"],@YES,@1.0,[NSDecimalNumber one]];
+        for(NSUInteger index=0;index<numericAnswers.count;index++) {
+            NSNumber *value=numericAnswers[index];
+            BOOL yes=index>=8; // explicit fixture verdict, independent of production comparison
+
+            expect_state("numeric serverinfo must be exactly one",
+                advertised(@[FIELD(@"usbRedirection",value)]),
+                yes?MLDeviceRedirectionPhaseIdle:MLDeviceRedirectionPhaseClosed,
+                yes?MLDeviceRedirectionStopNone:MLDeviceRedirectionStopHostNotAdvertised,
+                MLDeviceRedirectionSlotsUnknown,yes,NO,NO);
+            expect_state("numeric bind must be exactly one",
+                answered(ask(the_advertised_host(),MLDeviceRedirectionChannelBind),MLDeviceRedirectionChannelBind,
+                    @[FIELD(@"usbRedirectionBound",value)]),
+                yes?MLDeviceRedirectionPhaseBound:MLDeviceRedirectionPhaseClosed,
+                yes?MLDeviceRedirectionStopNone:MLDeviceRedirectionStopBindRefused,
+                MLDeviceRedirectionSlotsUnknown,NO,yes,NO);
+            expect_state("numeric upload acknowledgment must be exactly one",
+                answered(ask(ready(the_advertised_host(),2),MLDeviceRedirectionChannelItem),MLDeviceRedirectionChannelItem,
+                    @[FIELD(@"usbRedirectionAccepted",value)]),
+                yes?MLDeviceRedirectionPhaseReady:MLDeviceRedirectionPhaseClosed,
+                yes?MLDeviceRedirectionStopNone:MLDeviceRedirectionStopItemRefused,
+                yes?1:2,NO,NO,yes);
+        }
         // What a line about the session is allowed to say.
         check_case([the_advertised_host().auditLine rangeOfString:@"slots=unknown"].location
                    != NSNotFound,
@@ -418,6 +443,12 @@ def main():
 
     cc, sdk = apple_toolchain.clang_and_sdk("device redirection session")
     run_rules("the shipping session", rules, cc, sdk, expect_pass=True)
+    run_rules("decimal yes loses precision against an ordinary NSNumber", rules.replace(
+        "return [(NSNumber *)value compare:[NSDecimalNumber one]] == NSOrderedSame;",
+        "return [(NSNumber *)value isEqualToNumber:@1];"), cc, sdk)
+    run_rules("fractional yes is truncated", rules.replace(
+        "return [(NSNumber *)value compare:[NSDecimalNumber one]] == NSOrderedSame;", "return [(NSNumber *)value integerValue] == 1;"), cc, sdk)
+
 
     check("NSLog(" not in impl and "printf(" not in impl,
           "the session has no path to the log of its own")
@@ -433,7 +464,7 @@ def main():
 
     run_rules("a host that answers 2 is taken as support",
               mutated(rules, "only one is yes",
-                      "return [(NSNumber *)value integerValue] == 1;",
+                      "return [(NSNumber *)value compare:[NSDecimalNumber one]] == NSOrderedSame;",
                       "return [(NSNumber *)value integerValue] != 0;"),
               cc, sdk)
     run_rules("an unknown channel is skipped instead of ending the session",
