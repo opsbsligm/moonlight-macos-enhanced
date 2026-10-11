@@ -2589,6 +2589,11 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     self.overlayLabel.drawsBackground = NO;
     self.overlayLabel.editable = NO;
     self.overlayLabel.selectable = NO;
+    self.overlayLabel.cell.wraps = YES;
+    self.overlayLabel.cell.scrollable = NO;
+    self.overlayLabel.cell.usesSingleLineMode = NO;
+    self.overlayLabel.cell.lineBreakMode = NSLineBreakByWordWrapping;
+    self.overlayLabel.toolTip = MLString(@"Actual Display Metrics Detail", nil);
     self.overlayLabel.font = [NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightRegular];
     
     [self.overlayContainer.contentView addSubview:self.overlayLabel];
@@ -2777,6 +2782,22 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
         append(@"--", valueAttrs);
     }
     
+    NSDictionary<NSString *, NSNumber *> *actualPresent = [self.streamMan.connection.renderer actualPresentationMetrics];
+    append(@"\n", labelAttrs);
+    append(MLString(@"Actual Display", nil), labelAttrs);
+    append(@" ", labelAttrs);
+    if ([actualPresent[@"available"] boolValue]) {
+        append([NSString stringWithFormat:@"%.1f fps · P95 %.2f ms", [actualPresent[@"fps"] doubleValue],
+                [actualPresent[@"frameP95Ms"] doubleValue]], valueAttrs);
+        if ([actualPresent[@"waitAvailable"] boolValue]) {
+            append(@" · ", labelAttrs);
+            append(MLString(@"Present Wait", nil), labelAttrs);
+            append([NSString stringWithFormat:@" %.2f ms", [actualPresent[@"waitP95Ms"] doubleValue]], valueAttrs);
+        }
+    } else {
+        append(@"--", valueAttrs);
+    }
+
     // Network
     append(@"  ", labelAttrs);
     append(MLString(@"Stream Latency", nil), labelAttrs);
@@ -2823,11 +2844,14 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     }
 
     self.overlayLabel.attributedStringValue = attrString;
-    [self.overlayLabel sizeToFit];
-    
-    // Layout
+    // Keep metrics readable in a small streaming window instead of extending
+    // a single line past both screen edges as more diagnostics are added.
     CGFloat padding = 10.0;
-    NSRect labelFrame = self.overlayLabel.frame;
+    CGFloat maxLabelWidth = MAX(1.0, self.view.bounds.size.width - 40.0 - padding * 2);
+    NSRect textBounds = [attrString boundingRectWithSize:NSMakeSize(maxLabelWidth, CGFLOAT_MAX)
+                                               options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading];
+    NSRect labelFrame = NSMakeRect(0, 0, MIN(maxLabelWidth, ceil(textBounds.size.width)), ceil(textBounds.size.height));
+    // Layout
     NSRect containerFrame = NSMakeRect(0, 0, labelFrame.size.width + padding * 2, labelFrame.size.height + padding * 2);
     
     // Center top

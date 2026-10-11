@@ -78,6 +78,9 @@ typedef struct {
 @property(nonatomic, assign) void *depacketizerContext;
 
 @property(nonatomic, readonly) VideoStats videoStats;
+/// Independent Metal drawable observations; available=NO means no fresh measured FPS.
+/// Present wait is client submission-to-display time, not input-to-photon latency.
+- (NSDictionary<NSString *, NSNumber *> *)actualPresentationMetrics;
 @property(nonatomic, readonly) int videoFormat;
 
 - (id)initWithView:(OSView *)view;
