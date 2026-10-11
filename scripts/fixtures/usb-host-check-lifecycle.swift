@@ -16,7 +16,7 @@ final class SettingsModel {
 }
 final class DataManager {
   static var hosts: [TemporaryHost] = [TemporaryHost("A"),TemporaryHost("B")]
-  func getHosts() -> Any { Self.hosts }
+  func hostMetadata(forUUID uuid: String) -> TemporaryHost? { Self.hosts.first { $0.uuid == uuid } }
 }
 final class Panel {
   var offered=0, unreachable=0

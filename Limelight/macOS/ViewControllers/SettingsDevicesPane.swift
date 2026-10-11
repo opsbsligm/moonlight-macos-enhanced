@@ -621,17 +621,16 @@ struct DevicesView: View {
 
   /// The host this page is configuring, when it is one of the paired ones.
   ///
-  /// `DataManager` is read here on the main thread, the way the settings model already reads it when
-  /// the page opens. Nothing streams while a settings page is open, and a panel that cached the host
-  /// list would be showing a machine that was unpaired an hour ago.
+  /// Read only the selected host's detached connection metadata on the main thread.
+  /// Building its application graph just to ask about pairing pins an unnecessary
+  /// strong back-reference cycle; caching the answer would instead miss unpairing.
   private func pairedTemporaryHost() -> TemporaryHost? {
     guard let hostId = settingsModel.selectedHost?.id, hostId != SettingsModel.globalHostId else {
       return nil
     }
-    guard let hosts = DataManager().getHosts() as? [TemporaryHost] else {
-      return nil
-    }
-    return hosts.first(where: { !$0.uuid.isEmpty && $0.uuid == hostId && $0.pairState == .paired })
+    guard let host = DataManager().hostMetadata(forUUID: hostId),
+          host.pairState == .paired else { return nil }
+    return host
   }
 
   private var hostIsPaired: Bool {

@@ -793,6 +793,31 @@ int main(void) {
           "the sidebar distinguishes old session, unreadable bus and initial scan from emptiness")
 
 
+def usb_host_metadata_tests():
+    host = read("Limelight/Database/TemporaryHost.m")
+    constructors = host.split("- (id) init {",1)[1].split("- (void) propagateChangesToParent:",1)[0]
+    constructors = "- (id) init {" + constructors
+    dm = read("Limelight/Database/DataManager.m")
+    fetch = "- (TemporaryHost *)hostMetadataForUUID:" + dm.split("- (TemporaryHost *)hostMetadataForUUID:",1)[1].split("- (NSArray*) getHosts",1)[0]
+    template=read("scripts/fixtures/usb-host-metadata.m")
+    cc,sdk=apple_toolchain.clang_and_sdk("USB host metadata lifetime")
+    for label,body,expected in [("control",fetch,True),
+                               ("rebuild application graph",fetch.replace("initMetadataFromHost:","initFromHost:"),False)]:
+        with tempfile.TemporaryDirectory(prefix="ml-usb-metadata-") as d:
+            path=os.path.join(d,"probe.m"); exe=os.path.join(d,"probe")
+            with open(path,"w") as f:f.write(template.replace("@@CONSTRUCTORS@@",constructors).replace("@@FETCH@@",body))
+            built=subprocess.run([cc,"-isysroot",sdk,"-fobjc-arc","-fblocks","-Wall","-Werror",
+                                  "-framework","Foundation","-framework","CoreData",path,"-o",exe],capture_output=True,text=True)
+            check(built.returncode==0,"USB metadata %s compiles before lifetime judgment" % label)
+            if built.returncode:print(built.stderr[:1800]);continue
+            ran=subprocess.run([exe],capture_output=True,text=True,timeout=15)
+            check((ran.returncode==0)==expected,"USB metadata %s lifetime verdict" % label)
+            if expected:print(ran.stdout.strip())
+    pane=read("Limelight/macOS/ViewControllers/SettingsDevicesPane.swift")
+    check("DataManager().getHosts()" not in pane and "hostMetadata(forUUID:" in pane,
+          "USB permission/host-check path never constructs the full cyclic application library")
+
+
 def usb_host_completion_tests():
     pane = read("Limelight/macOS/ViewControllers/SettingsDevicesPane.swift")
     note = pane.split("  private func note(advertised:", 1)[1].split("  /// Reading the bus", 1)[0]
@@ -826,9 +851,9 @@ def usb_host_completion_tests():
     ]:
         check(note.count(old)==1, "USB host %s has one mutation anchor" % label)
         if note.count(old)==1: replay(note.replace(old,new),paired,label,False)
-    old=" && $0.pairState == .paired"
+    old="host.pairState == .paired"
     check(paired.count(old)==1,"USB host pairing mutation has one anchor")
-    if paired.count(old)==1: replay(note,paired.replace(old,""),"credit unpaired host",False)
+    if paired.count(old)==1: replay(note,paired.replace(old,"true"),"credit unpaired host",False)
     check(".onChange(of: settingsModel.selectedHost?.id)" in pane and
           "rows = panel.rows(for:" in pane and "hostCheckGeneration &+= 1" in pane,
           "selected host changes invalidate capabilities and reassess rows without scanning the bus")
@@ -841,6 +866,7 @@ def usb_host_completion_tests():
 def main():
     usb_scan_policy_tests()
     usb_host_completion_tests()
+    usb_host_metadata_tests()
     if failures:
         return 1
     rules, impl, header = shipping_rules()
