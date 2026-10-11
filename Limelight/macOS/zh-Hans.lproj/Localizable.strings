@@ -1341,3 +1341,23 @@
 
 "Summon On Arrival" = "抵达即展开";
 "Summon On Arrival detail" = "开启（默认）：光标停留抵达边缘感应带时控制栏直接展开，指针随之交给控制栏，离开后自动收起。关闭：抵达只点亮把手，需再点击亮起的把手才展开——旧版两步操作，作为行为回退保留。";
+
+/* USB permission and session separation */
+"USB permissions" = "USB 重定向许可";
+"USB permissions scope" = "配置允许重定向的设备型号。串流后在侧边控制栏选择连接；添加许可不会接管设备。";
+"USB permission switch detail" = "允许在主机与驱动支持时使用 USB 重定向。未在串流侧栏连接前，设备仍由本机使用。";
+"USB advanced permissions" = "高级许可规则";
+"USB allowed models" = "已配置的设备型号";
+"USB permission already listed" = "规则已添加";
+"USB allow this model" = "允许此型号";
+"USB devices available" = "本机设备";
+"USB device scan failed" = "无法读取 USB 设备";
+"USB devices" = "USB 设备";
+"USB session unavailable" = "当前版本无法接管 USB 设备";
+"USB connect to this session" = "连接到当前串流";
+"USB permissions disabled" = "请先在设置中开启 USB 重定向许可";
+"USB runtime required" = "需要兼容的主机通道和 USB 驱动";
+"USB no devices found" = "未发现 USB 设备";
+"USB configure permissions in settings" = "在设置 → 设备中管理许可";
+"USB refresh devices" = "刷新设备";
+"USB manual permission rule" = "按厂商与产品编号添加型号";
