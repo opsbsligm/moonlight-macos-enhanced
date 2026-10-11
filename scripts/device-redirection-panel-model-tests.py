@@ -802,6 +802,8 @@ int main(void) {
     check("MLUSBScanShouldStart(" in worker and "MLUSBScanMayPublish(" in worker and
           "sameHost" in worker and "activeStreamGeneration" in worker,
           "stream callbacks consult the same decisions the replay executes")
+    check("usbMenuDeviceSnapshot = status == MLUSBBusSnapshotStatusRead ? devices : @[];" in worker,
+          "stream sidebar discards partial payloads on an unreadable snapshot")
     check("weakSelf" in worker and "edgeMenuLifecycleToken" not in worker,
           "a scan neither retains its controller nor expires merely because the dock opened")
     check("if (!strongSelf.edgeMenuMenuVisible)" in worker,

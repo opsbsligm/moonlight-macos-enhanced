@@ -146,8 +146,9 @@ static NSString *MLUSBBusSoleParentID(io_registry_entry_t entry) {
         }
         IOObjectRelease(parent);
     }
+    BOOL valid = IOIteratorIsValid(parents);
     IOObjectRelease(parents);
-    return seen == 1 ? parentID : nil;
+    return valid && seen == 1 ? parentID : nil;
 }
 
 NSArray<MLUSBDeviceIdentity *> *MLUSBBusSnapshotCopyDeviceIdentities(
@@ -173,19 +174,26 @@ NSArray<MLUSBDeviceIdentity *> *MLUSBBusSnapshotCopyDeviceIdentities(
     NSMutableArray<NSString *> *interfaceParentIDs = [NSMutableArray array];
     NSMutableSet<NSString *> *interfacesAlreadyCollected = [NSMutableSet set];
 
+    BOOL complete = YES;
     io_service_t device = IO_OBJECT_NULL;
     while ((device = IOIteratorNext(devices)) != IO_OBJECT_NULL) {
         NSDictionary *deviceProperties = MLUSBBusNodeProperties(device);
         if (deviceProperties != nil) {
+            NSString *deviceID = MLUSBBusEntryID(device);
+            if (deviceID == nil) complete = NO;
             [deviceNodes addObject:deviceProperties];
-            [deviceIDs addObject:MLUSBBusEntryID(device) ?: @""];
+            [deviceIDs addObject:deviceID ?: @""];
+        } else {
+            complete = NO;
         }
 
         io_iterator_t children = IO_OBJECT_NULL;
-        if (IORegistryEntryGetChildIterator(device, kIOServicePlane, &children) == KERN_SUCCESS) {
+        if (IORegistryEntryGetChildIterator(device, kIOServicePlane, &children) == KERN_SUCCESS &&
+            children != IO_OBJECT_NULL) {
             io_registry_entry_t child = IO_OBJECT_NULL;
             while ((child = IOIteratorNext(children)) != IO_OBJECT_NULL) {
                 NSDictionary *childProperties = MLUSBBusNodeProperties(child);
+                if (childProperties == nil) complete = NO;
                 if (childProperties == nil ||
                     MLUSBBusNodeRoleForPropertyKeys([NSSet setWithArray:
                         [childProperties allKeys]]) != MLUSBBusNodeRoleInterface) {
@@ -194,6 +202,7 @@ NSArray<MLUSBDeviceIdentity *> *MLUSBBusSnapshotCopyDeviceIdentities(
                     continue;
                 }
                 NSString *childID = MLUSBBusEntryID(child);
+                if (childID == nil) complete = NO;
                 if (childID == nil ||
                     [interfacesAlreadyCollected containsObject:childID]) {
                     // Collected under the device that named it first. The registry was not
@@ -204,14 +213,23 @@ NSArray<MLUSBDeviceIdentity *> *MLUSBBusSnapshotCopyDeviceIdentities(
                 }
                 [interfacesAlreadyCollected addObject:childID];
                 [interfaceNodes addObject:childProperties];
-                [interfaceParentIDs addObject:MLUSBBusSoleParentID(child) ?: @""];
+                NSString *parentID = MLUSBBusSoleParentID(child);
+                if (parentID == nil) complete = NO;
+                [interfaceParentIDs addObject:parentID ?: @""];
                 IOObjectRelease(child);
             }
+            if (!IOIteratorIsValid(children)) complete = NO;
             IOObjectRelease(children);
+        } else {
+            complete = NO;
         }
         IOObjectRelease(device);
     }
+    if (!IOIteratorIsValid(devices)) complete = NO;
     IOObjectRelease(devices);
+    // A hot-plug invalidation is not exhaustion. Never publish a partial device
+    // or a composite device missing its reserved/input faces as a complete read.
+    if (!complete) return @[];
 
     NSArray<NSArray<NSDictionary *> *> *groups = MLUSBBusGroupNodes(
         deviceNodes, deviceIDs, interfaceNodes, interfaceParentIDs);
