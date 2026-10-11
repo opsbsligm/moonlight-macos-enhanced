@@ -1514,7 +1514,7 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
                 BOOL sameHost = hostUUID.length > 0 && [hostUUID isEqualToString:strongSelf.app.host.uuid];
                 if (!MLUSBScanMayPublish(strongSelf.stopStreamInProgress, generation,
                                          strongSelf.activeStreamGeneration, sameHost)) return;
-                strongSelf.usbMenuDeviceSnapshot = devices;
+                strongSelf.usbMenuDeviceSnapshot = status == MLUSBBusSnapshotStatusRead ? devices : @[];
                 strongSelf.usbMenuBusStatus = status;
                 strongSelf.usbMenuSnapshotGeneration = generation;
                 strongSelf.usbMenuScannedAt = NSProcessInfo.processInfo.systemUptime;

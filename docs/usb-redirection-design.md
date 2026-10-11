@@ -430,3 +430,28 @@ A→D 的顺序由风险决定：A 让后面几批的取证前提不会悄悄过
 边界：原生组件/模型测试不是操作者 GUI 与真实 USB 到远端验收。cp23本地
 提交仍未推送，本轮也不取消正在执行的cp22 CI；新提交在其终态后推送。
 回滚只需 revert 本轮提交，不改变已保存的许可规则或主机数据。
+
+## cp25：热插拔中的完整快照边界（2026-10-11）
+
+`IOIteratorNext` 的0既可能是耗尽，也可能是结构变化后的失效；Apple要求在
+返回0后调用 `IOIteratorIsValid`：
+https://developer.apple.com/documentation/iokit/1514556-ioiteratorisvalid 。
+旧设备/子接口/父节点循环未检查它，可能将部分读取标成Read，尤其不能把漏掉
+保留/键鼠接口的复合设备当成可匹配的完整设备。
+
+现在3层迭代都检查有效性；设备属性/标识、子迭代器、接口属性/标识和唯一父关联
+无法完整读出时，该轮返回BusUnreadable与空数组。拒绝前仍释放所有获得的
+IOKit对象与迭代器；不reset循环重试，不打开/接管设备。串流侧栏在失败状态下
+也丢弃任何部分payload，不能把错误当成“没有插设备”或当前可选设备。
+正常空总线仍Read+空数组，后续刷新仍可重试；旧session/host守卫不变。
+
+验证：生产snapshot代码+真实Foundation/CoreFoundation+确定性IOKit API double
+执行11个场景：完整、成功空、devices/children/parents失效、子读取失败、
+属性读取失败、标识读取失败、matching失败；不完整读无payload、所有已获取
+handle引用归零。去掉3层valid检查、发布部分payload的4个反例先成功编译，
+再由行为拒绝。原live总线/组装/隐私40检查通过，门禁exit0。
+报告 `/tmp/ml-cp25-snapshot2.log`；Debug构建 `/tmp/ml-cp25-build.log` 成功。
+
+边界：double故障注入不是物理拔插实测，也不是USB重定向到远端。正常总线
+读取确实在本机执行，真实DriverKit/主机通道与交互到屏仍未验收。本轮不取消
+live的cp22 CI；提交在其终态后统一推送。回滚单独revert本轮即可，不改变规则。
