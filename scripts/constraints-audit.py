@@ -3747,6 +3747,32 @@ preparer = open(os.path.join(root, "scripts", "prepare-release.py"), encoding="u
 check('"rev-list"' not in preparer and "build-number.sh" in preparer,
       "the release tag takes its build number from the one script that owns it")
 
+# The same number has to reach the binary a developer builds by hand. Command-line
+# xcodebuild ignores the scheme PreAction and the xcconfig include, so a local build
+# silently shipped whatever baseline Version.xcconfig happened to carry: build 1720,
+# while CI stamped commit 1810 on the same bytes the developer was testing. The
+# developer entry point must ask the owning script and inject the answer, exactly as
+# CI does, or it must say out loud that it fell back.
+def local_build_version_problems(script):
+    bad = []
+    if "build-number.sh" not in script:
+        bad.append("never asks the script that owns BUILD_NUMBER")
+    if not re.search(r"BUILD_NUMBER=\$\{?RESOLVED_BUILD_NUMBER", script):
+        bad.append("does not pass BUILD_NUMBER on the xcodebuild command line")
+    if not re.search(r"warning:.*baseline", script):
+        bad.append("falls back to the baseline without saying so")
+    return bad
+
+local_builder = open(os.path.join(root, "scripts", "build.sh"), encoding="utf-8").read()
+local_builder_problems = local_build_version_problems(local_builder)
+check(not local_builder_problems,
+      "the local build injects the same build number CI injects"
+      if not local_builder_problems
+      else "scripts/build.sh " + "; ".join(local_builder_problems))
+check(bool(local_build_version_problems(
+        local_builder.replace("RESOLVED_BUILD_NUMBER", "RESOLVED_UNUSED"))),
+      "the local build-number guard notices a build script that stops asking the script")
+
 if run_battery:
     # An assertion that stops failing on a regression is worse than no assertion,
     # because it reads as coverage. The battery plants regressions in the real
