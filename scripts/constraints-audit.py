@@ -2675,6 +2675,8 @@ check(not parity_problems,
 # driver is itself named by a step, so the gates that lean on that are written out
 # with their driver instead of absorbed into a rule that would prove nothing.
 DRIVEN_BY = {
+    # Compiled shipping store/DataManager replay, driven on both macOS builds.
+    "database-open-preservation-tests.py": "scaling-output-evidence-tests.py",
     # Hardware collection is opt-in; its report verifier runs inside this gate.
     "vt-enhancement-probe.py": "scaling-output-evidence-tests.py",
     "enhanced-presentation-tests.py": "constraints-audit.py",
