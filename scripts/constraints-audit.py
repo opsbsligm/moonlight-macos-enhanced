@@ -3719,6 +3719,30 @@ check(len(guards) == 1 and "--print" in guards[0][0]
       and re.search(r"\bexit\s+[1-9]", guards[0][1]) is not None,
       "the build number refuses a history it cannot count completely")
 
+# Product navigation targets this independent repository; attribution is unchanged.
+def repository_link_problems(about, welcome):
+    expected = "https://github.com/opsbsligm/moonlight-macos-enhanced"
+    bad = []
+    for symbol, url in (("MoonlightEnhancedRepositoryURL", expected),
+                        ("MoonlightEnhancedReadmeURL", expected + "#readme")):
+        found = re.search(symbol + r'\s*=\s*@"([^"\n]+)"', about)
+        if found is None or found.group(1) != url:
+            bad.append(symbol)
+    body = welcome.split("private var githubURL", 1)[-1].split("@ViewBuilder", 1)[0]
+    found = re.search(r'URL\(string: "([^"\n]+)"\)', body)
+    if found is None or found.group(1) != expected:
+        bad.append("welcome repository")
+    return bad
+
+about_links = open(os.path.join(root, "Limelight/macOS/ViewControllers/AboutViewController.m"), encoding="utf-8").read()
+welcome_links = open(os.path.join(root, "Limelight/macOS/ViewControllers/SettingsHostingController.swift"), encoding="utf-8").read()
+check(not repository_link_problems(about_links, welcome_links),
+      "welcome and About links target the independent repository, with branch-independent README")
+wrong_repo = "https://github.com/other/other"
+check(bool(repository_link_problems(about_links.replace("https://github.com/opsbsligm/moonlight-macos-enhanced", wrong_repo), welcome_links))
+      and bool(repository_link_problems(about_links, welcome_links.replace("https://github.com/opsbsligm/moonlight-macos-enhanced", wrong_repo))),
+      "repository link guard refuses both stale About and stale welcome links")
+
 preparer = open(os.path.join(root, "scripts", "prepare-release.py"), encoding="utf-8").read()
 check('"rev-list"' not in preparer and "build-number.sh" in preparer,
       "the release tag takes its build number from the one script that owns it")
