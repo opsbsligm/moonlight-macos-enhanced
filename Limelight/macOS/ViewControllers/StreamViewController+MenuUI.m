@@ -447,9 +447,12 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
     self.edgeMenuLifecycleToken += 1;
     [self resetEdgeSensorSummonState];
     [self cancelEdgeMenuAutoCollapse];
-    // Collapsed geometry is only a hint; it must not steal game clicks in a
-    // transparent 56pt panel or use native enter events to bypass the sensor.
-    self.edgeMenuPanel.ignoresMouseEvents = phase == MLEdgeMenuPhaseCollapsed || phase == MLEdgeMenuPhaseHidden;
+    // Whether the stream sees a mouse event at all is decided here and nowhere else:
+    // a hitTest that returns nil only hands the event to the panel's content view, it does
+    // not push the click through to the window below. Collapsed therefore stays clickable,
+    // and it is MLEdgeMenuHandleView's narrowed compact hit rect - the drawn strip plus its
+    // own slop, nothing more - that keeps the rest of the 56pt panel transparent to the game.
+    self.edgeMenuPanel.ignoresMouseEvents = phase == MLEdgeMenuPhaseHidden;
     if (phase == MLEdgeMenuPhaseHidden) {
         self.edgeMenuTemporaryReleaseActive = NO;
         self.edgeMenuPointerInside = NO;
@@ -1269,6 +1272,18 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
     self.edgeMenuButton.activationHandler = ^(NSEvent *event) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) {
+            return;
+        }
+        // One tab, two meanings, and the phase says which. From collapsed, a press asks to be
+        // let out of the game: it uncaptures and pulls the bar out, exactly like the edge
+        // sensor or the Control Center shortcut, and stops there - opening the bar and the
+        // menu in one gesture would give the pointer away and the menu at the same time, so
+        // the first thing the player sees would already be a menu covering their own controls.
+        // Once the bar is out, the same press is the menu button it has always been.
+        if (!strongSelf.edgeMenuButtonExpanded && !strongSelf.edgeMenuTemporaryReleaseActive &&
+            !strongSelf.edgeMenuDragging && !strongSelf.edgeMenuMenuVisible) {
+            [strongSelf ensureStreamWindowKeyIfPossible];
+            [strongSelf summonEdgeMenuDockForEdge:strongSelf.edgeMenuDockEdge reason:@"handle-click"];
             return;
         }
         [strongSelf handleStreamMenuButtonPressed:strongSelf.edgeMenuButton event:event];

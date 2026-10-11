@@ -14,6 +14,7 @@
     CALayer *_plateShadowLayer;
     CALayer *_plateLayer;
     CALayer *_plateInnerLayer;
+    NSRect _compactHitRect;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -55,10 +56,19 @@
 }
 
 - (NSView *)hitTest:(NSPoint)point {
+    NSPoint localPoint = [self convertPoint:point fromView:self.superview];
+    if (self.hidden) return nil;
+    // The collapsed tab is a strip, not a 56pt switch. Anything outside the drawn
+    // strip plus its own hit slop has to return nil so the panel below — the stream —
+    // keeps the click; a collapsed dock must never be able to swallow a game click
+    // in an area the player was never shown.
+    if (self.compactAppearance) {
+        if (NSIsEmptyRect(_compactHitRect)) return nil;
+        return NSPointInRect(localPoint, _compactHitRect) ? self : nil;
+    }
     CGFloat radius = MIN(self.bounds.size.width, self.bounds.size.height) * 0.33;
     NSBezierPath *hitPath = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:radius yRadius:radius];
-    NSPoint localPoint = [self convertPoint:point fromView:self.superview];
-    return !self.hidden && [hitPath containsPoint:localPoint] ? self : nil;
+    return [hitPath containsPoint:localPoint] ? self : nil;
 }
 
 - (void)setActiveAppearance:(BOOL)activeAppearance {
@@ -91,6 +101,10 @@
 - (void)layout {
     [super layout];
 
+    // Recomputed every pass: the strip moves with the dock edge and with arming, and
+    // the hit-test has to follow the drawing rather than the panel that carries it.
+    _compactHitRect = NSZeroRect;
+
     CGFloat cornerRadius = MIN(self.bounds.size.width, self.bounds.size.height) * 0.33;
     self.layer.cornerRadius = cornerRadius;
     CGPathRef shadowPath = CGPathCreateWithRoundedRect(NSRectToCGRect(self.bounds), cornerRadius, cornerRadius, NULL);
@@ -117,6 +131,8 @@
                                      iconSize);
         return;
     }
+    // Compact: remember the strip that was just laid out, widened only by the
+    // tab's own slop, as the one region allowed to take a click.
 
     // The compact tab. Only the strip between the docked screen edge and
     // MLEdgeMenuButtonVisiblePeek is on screen at all, so every measurement below
@@ -160,6 +176,7 @@
                                  NSMinY(plateFrame) + (NSHeight(plateFrame) - tabIcon) / 2.0,
                                  tabIcon,
                                  tabIcon);
+    _compactHitRect = NSInsetRect(plateFrame, -MLEdgeMenuHandleHitSlop, -MLEdgeMenuHandleHitSlop);
 }
 
 - (void)updateTrackingAreas {
