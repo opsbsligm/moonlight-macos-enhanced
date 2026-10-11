@@ -42,11 +42,30 @@ fi
 
 # Step 2: Build
 echo "=== Step 2: Build (${CONFIGURATION}) ==="
+
+# The bundle version is `git rev-list --count HEAD`, and the only channel proven to
+# reach a command-line xcodebuild is a setting on its own command line: scheme
+# PreActions do not run there, and the #include? in Version.xcconfig cannot resolve
+# $(DERIVED_FILE_DIR) at parse time. CI resolves the number and injects it; without
+# the same step here, a local build of a commit stamped 1810 shipped the stale
+# baseline in Version.xcconfig and announced itself as build 1720 in the About pane.
+# build-number.sh --print refuses a shallow clone, so the fallback below is the
+# intended degrade for a source tarball, not a swallowed error.
+BUILD_NUMBER_ARGS=()
+RESOLVED_BUILD_NUMBER="$(sh "${PROJECT_DIR}/Limelight/build-number.sh" --print 2>/dev/null || true)"
+if [[ "$RESOLVED_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "resolved BUILD_NUMBER=${RESOLVED_BUILD_NUMBER}"
+  BUILD_NUMBER_ARGS=("BUILD_NUMBER=${RESOLVED_BUILD_NUMBER}")
+else
+  echo "warning: BUILD_NUMBER unresolved (no complete git history); using the Version.xcconfig baseline" >&2
+fi
+
 xcodebuild \
   -project "${PROJECT_DIR}/Moonlight.xcodeproj" \
   -scheme "Moonlight for macOS" \
   -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED_DATA_DIR" \
+  ${BUILD_NUMBER_ARGS[@]+"${BUILD_NUMBER_ARGS[@]}"} \
   build
 
 if [[ ! -d "$APP_PATH" ]]; then
