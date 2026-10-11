@@ -798,11 +798,16 @@ def usb_host_metadata_tests():
     constructors = host.split("- (id) init {",1)[1].split("- (void) propagateChangesToParent:",1)[0]
     constructors = "- (id) init {" + constructors
     dm = read("Limelight/Database/DataManager.m")
-    fetch = "- (TemporaryHost *)hostMetadataForUUID:" + dm.split("- (TemporaryHost *)hostMetadataForUUID:",1)[1].split("- (NSArray*) getHosts",1)[0]
+    fetch = "- (TemporaryHost *)hostMetadataForUUID:" + dm.split("- (TemporaryHost *)hostMetadataForUUID:",1)[1].split("- (NSArray<TemporaryHost *> *)getHostMetadata",1)[0]
+    bulk = "- (NSArray<TemporaryHost *> *)getHostMetadata" + dm.split("- (NSArray<TemporaryHost *> *)getHostMetadata",1)[1].split("- (NSArray*) getHosts",1)[0]
+    single = fetch
+    fetch += bulk
     template=read("scripts/fixtures/usb-host-metadata.m")
     cc,sdk=apple_toolchain.clang_and_sdk("USB host metadata lifetime")
     for label,body,expected in [("control",fetch,True),
-                               ("rebuild application graph",fetch.replace("initMetadataFromHost:","initFromHost:"),False)]:
+                               ("single rebuild application graph",single.replace("initMetadataFromHost:","initFromHost:")+bulk,False),
+                               ("bulk rebuild application graph",single+bulk.replace("initMetadataFromHost:","initFromHost:"),False),
+                               ("bulk failure becomes empty success",single+bulk.replace("if (error != nil || hosts == nil) return;", "if (error != nil || hosts == nil) { metadata = @[]; return; }"),False)]:
         with tempfile.TemporaryDirectory(prefix="ml-usb-metadata-") as d:
             path=os.path.join(d,"probe.m"); exe=os.path.join(d,"probe")
             with open(path,"w") as f:f.write(template.replace("@@CONSTRUCTORS@@",constructors).replace("@@FETCH@@",body))
@@ -816,6 +821,15 @@ def usb_host_metadata_tests():
     pane=read("Limelight/macOS/ViewControllers/SettingsDevicesPane.swift")
     check("DataManager().getHosts()" not in pane and "hostMetadata(forUUID:" in pane,
           "USB permission/host-check path never constructs the full cyclic application library")
+
+
+    for relative in ["SettingsModel.swift", "SettingsModel+RiskAssessment.swift",
+                     "SettingsModel+DerivedValues.swift", "SettingsObjCBridge.swift",
+                     "SettingsAppPane.swift", "SettingsStreamPane.swift"]:
+        check(".getHosts()" not in read("Limelight/macOS/ViewControllers/" + relative),
+              relative + " uses metadata instead of cyclic application library")
+    check("MLRecordHostRead" not in bulk,
+          "metadata fetch does not inflate the full-library read counter")
 
 
 def usb_host_completion_tests():
