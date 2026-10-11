@@ -953,7 +953,15 @@ def run_diagnostics_report():
 
 
 
+def run_vt_probe_report_contract():
+    ran = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "vt-enhancement-probe.py"), "--self-test"],
+                         capture_output=True, text=True)
+    check(ran.returncode == 0, "the real VT probe report rejects incomplete or unsupported evidence"
+          if ran.returncode == 0 else "VT probe report verifier failed: " + ran.stdout + ran.stderr)
+
+
 def finish():
+    run_vt_probe_report_contract()
     run_aspect_fit()
     run_device_redirection_policy()
     run_pointer_entry_policy()
