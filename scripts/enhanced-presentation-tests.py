@@ -265,8 +265,10 @@ else:
         assert processor.count(publication) == 1
         native_replay(methods.replace(publication, 'BOOL publish = eligible;'), 'SR-publishes-expired-output', False)
         native_replay(methods.replace('} else if (eligible) {', '} else if (eligible && processed) {', 1), 'SR-requeues-expired-source', False)
-        expired = 'if (_enhancementFailedSequence == frameSequence) {'
+        expired = 'if ((isInterpolated ? _enhancementFailedInterpolatedSequence : _enhancementFailedSequence) == frameSequence) {'
         assert processor.count(expired) == 1
+        native_replay(methods.replace(expired, 'if (_enhancementFailedSequence == frameSequence) {'), 'SR-failure-crosses-source-midpoint', False)
+        native_replay(methods.replace('if (isInterpolated) self->_enhancementFailedInterpolatedSequence = frameSequence;', 'if (isInterpolated) self->_enhancementFailedSequence = frameSequence;'), 'SR-failure-loses-input-kind', False)
         start = methods.index(expired)
         end = methods.index('return NULL;', start)
         broken = methods[:start] + methods[start:end].replace('if (processingPending) *processingPending = YES;', 'if (processingPending) *processingPending = NO;') + methods[end:]

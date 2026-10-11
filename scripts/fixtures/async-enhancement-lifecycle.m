@@ -77,6 +77,7 @@ static NSString *MLVideoEnhancementEngineName(MLActiveVideoEnhancementEngine e) 
     uint64_t _enhancementTaskSequence, _enhancementTaskStartedAtMs, _enhancementFailedSequence;
     uint64_t _enhancementResultSequence, _currentFrameSequence, _pendingInterpolatedForSourceSequence, _lastPresentedFrameSequence;
     BOOL _pendingInterpolatedPresented;
+    uint64_t _enhancementFailedInterpolatedSequence;
     uint32_t _enhancementOverloadStrikes;
     BOOL _enhancementSuspended;
     CMTime _previousEnhancedPresentationTimeStamp;
@@ -150,7 +151,7 @@ int main(void) { @autoreleasepool {
         testTimeMs=timing==0?105:(timing==1?106:99);
         dispatch_semaphore_signal(release); dispatch_sync(r->_vtEnhancementQueue,^{});
         assert(p.calls==0 && !r->_enhancementProcessInFlight && !r->_enhancementResultFrame);
-        assert(r->_enhancementFailedSequence==7 && !r->_enhancementSuspended && r->_enhancementOverloadStrikes==0);
+        assert((inputKind?r->_enhancementFailedInterpolatedSequence:r->_enhancementFailedSequence)==7 && !r->_enhancementSuspended && r->_enhancementOverloadStrikes==0);
         for(int refresh=0;refresh<20;refresh++) {
             CVImageBufferRef result=[r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:engine scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:inputKind warmupPending:&w processingPending:&pending waitForOutput:&wait];
             assert(!result && pending && !wait && p.calls==0 && !r->_enhancementProcessInFlight);
@@ -176,7 +177,7 @@ int main(void) { @autoreleasepool {
         assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
         dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
         assert(p.calls==1 && !r->_enhancementResultFrame && !r->_previousEnhancedOutputFrame && !r->_previousEnhancedSourceFrame);
-        assert(r->_enhancementFailedSequence==7 && r->_enhancementOverloadStrikes==1 && !r->_enhancementSuspended);
+        assert((inputKind?r->_enhancementFailedInterpolatedSequence:r->_enhancementFailedSequence)==7 && r->_enhancementOverloadStrikes==1 && !r->_enhancementSuspended);
         CVImageBufferRef result=[r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:engine scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:inputKind warmupPending:&w processingPending:&pending waitForOutput:&wait];
         assert(!result && pending && !wait && p.calls==1 && !r->_enhancementProcessInFlight);
         [r teardownEnhancementProcessor];dispatch_sync(r->_vtEnhancementQueue,^{});
@@ -184,6 +185,44 @@ int main(void) { @autoreleasepool {
         CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;
     }
     puts("ok: 20 total-deadline scenarios (source and interpolated inputs), queue expiry skips VT, late output discarded, no retry loop or history contamination");
+    // A failed midpoint cannot suppress its source (or the reverse). They
+    // deliberately share sequence 7, but have different real CV buffers.
+    for(int engineIndex=0;engineIndex<2;engineIndex++) for(int firstKind=0;firstKind<2;firstKind++) for(int lateSecond=0;lateSecond<2;lateSecond++) {
+        testTimeMs=100;
+        Probe *r=freshProbe(); VTFrameProcessor *p=r->_frameProcessor;
+        assert(CVPixelBufferCreate(NULL,4,4,kCVPixelFormatType_32BGRA,NULL,&r->_pendingInterpolatedFrame)==kCVReturnSuccess);
+        r->_pendingInterpolatedForSourceSequence=7;
+        MLActiveVideoEnhancementEngine engine=engineIndex?MLActiveVideoEnhancementEngineVTQualitySuperResolution:MLActiveVideoEnhancementEngineVTLowLatencySuperResolution;
+        BOOL w=NO,pending=NO,wait=NO;
+        p.elapsedMs=5; // One deadline overrun, not a processor-wide hard failure.
+        CVImageBufferRef first=firstKind?r->_pendingInterpolatedFrame:r->_currentFrame;
+        [r copyFrameUsingFrameProcessorIfNeeded:first activeEnhancement:engine scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:firstKind warmupPending:&w processingPending:&pending waitForOutput:&wait];
+        assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
+        dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
+        assert((firstKind?r->_enhancementFailedInterpolatedSequence:r->_enhancementFailedSequence)==7);
+        // Same input is not retried, preserving the bounded fallback.
+        [r copyFrameUsingFrameProcessorIfNeeded:first activeEnhancement:engine scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:firstKind warmupPending:&w processingPending:&pending waitForOutput:&wait];
+        assert(!r->_enhancementProcessInFlight && p.calls==1 && pending && !wait);
+        p.elapsedMs=lateSecond?5:0;
+        CVImageBufferRef second=firstKind?r->_currentFrame:r->_pendingInterpolatedFrame;
+        [r copyFrameUsingFrameProcessorIfNeeded:second activeEnhancement:engine scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:!firstKind warmupPending:&w processingPending:&pending waitForOutput:&wait];
+        assert(r->_enhancementProcessInFlight && pending && wait);
+        assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
+        dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
+        CVImageBufferRef result=[r copyFrameUsingFrameProcessorIfNeeded:second activeEnhancement:engine scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:!firstKind warmupPending:&w processingPending:&pending waitForOutput:&wait];
+        if (!lateSecond) {assert(result && p.calls==2);CVBufferRelease(result);}
+        else {
+            assert(!result && p.calls==2 && !r->_enhancementSuspended);
+            assert(r->_enhancementFailedSequence==7 && r->_enhancementFailedInterpolatedSequence==7);
+            [r copyFrameUsingFrameProcessorIfNeeded:first activeEnhancement:engine scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:firstKind warmupPending:&w processingPending:&pending waitForOutput:&wait];
+            assert(!r->_enhancementProcessInFlight && p.calls==2 && pending && !wait);
+        }
+        [r teardownEnhancementProcessor];dispatch_sync(r->_vtEnhancementQueue,^{});
+        assert(!r->_enhancementFailedSequence && !r->_enhancementFailedInterpolatedSequence);
+        CVBufferRelease(r->_pendingInterpolatedFrame);r->_pendingInterpolatedFrame=NULL;
+        CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;
+    }
+    puts("ok: eight SR source/midpoint failure-isolation scenarios, same input never requeues");
     // Three mild consecutive overruns pause; an in-budget call resets strikes.
     for(int recover=0;recover<2;recover++) {
         Probe *r=freshProbe();VTFrameProcessor *p=r->_frameProcessor;
