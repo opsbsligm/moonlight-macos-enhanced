@@ -19,3 +19,11 @@ device-redirection-panel-model-tests.py提取生产note与pairedTemporaryHost方
 本阶段不打开设备、不改许可、不自动检测远端，更没有启用USB连接。真实DriverKit和远端通道仍缺失；界面和调度测试不是设备真实接管/回收验收。回滚撤销本阶段USB提交。
 
 完整冷缓存analyzer发现单参onChange重载已弃用；最低部署macOS26，监听改为双参当前重载，测试同时锁定该接线，不修改告警基线。最终分析门禁结果以阶段记录为准。
+
+## 反复访问泄漏诊断后的只读元数据路径
+
+CI38124574418两个架构在growth16门禁测得每次每主机1152/1177.6字节，高于1100；原始artifact显示既有TemporaryHost/TemporaryApp图继续增长。USB原先通过getHosts查询配对，为这条仅需连接参数的路径额外构建了强引用环。
+
+新增DataManager.hostMetadata(forUUID:)：在managed context上按UUID查询一个Host，仅复制连接描述与配对/证书字段。TemporaryHost的完整initFromHost复用这段元数据构造，再按原样建应用图；没有直接弱化app.host，不破坏串流持有app而依赖其host的关系。USB配对与serverinfo路径用元数据，不遍历应用，不写数据库。
+
+生产元数据查询/构造方法插入原生回放：100次弱引用释放、无应用遍历、证书/名称/各地址/codec保留、缺证书降为unpaired、空UUID不查询、找不到/读取错误返回nil。Foundation与NSFetchRequest/predicate真实，CoreData存储执行端为替身；重建应用图的可编译负变异被捕获。实际设置页16次leaks增长测量的结果另列阶段记录，不把替身测试当作真实进程泄漏验收；其他完整应用图路径的已知引用环仍未解决。

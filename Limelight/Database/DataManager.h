@@ -27,6 +27,8 @@
                   btMouseSupport:(BOOL)btMouseSupport;
 
 - (NSArray*) getHosts;
+/// Reads one connection descriptor without constructing any TemporaryApp graph.
+- (nullable TemporaryHost *)hostMetadataForUUID:(NSString *)uuid NS_SWIFT_NAME(hostMetadata(forUUID:));
 - (void) removeHostsWithEmptyUuid;
 - (void) updateHost:(TemporaryHost*)host;
 - (void) updateAppsForExistingHost:(TemporaryHost *)host;
