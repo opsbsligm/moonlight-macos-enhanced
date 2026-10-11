@@ -2675,6 +2675,8 @@ check(not parity_problems,
 # driver is itself named by a step, so the gates that lean on that are written out
 # with their driver instead of absorbed into a rule that would prove nothing.
 DRIVEN_BY = {
+    # Hardware collection is opt-in; its report verifier runs inside this gate.
+    "vt-enhancement-probe.py": "enhanced-presentation-tests.py",
     "enhanced-presentation-tests.py": "constraints-audit.py",
     "assertion-battery.py": "constraints-audit.py",
     "prepare-release.py": "release-gate.py",
