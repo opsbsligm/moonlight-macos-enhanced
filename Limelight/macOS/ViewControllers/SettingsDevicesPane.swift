@@ -84,33 +84,35 @@ struct DevicesView: View {
 
   var body: some View {
     ScrollView {
-      LazyVStack(spacing: 32) {
-        readinessSection
-        switchesSection
-        rulesSection
+      LazyVStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 6) {
+          Text(languageManager.localize("USB permissions"))
+            .font(.title2.weight(.semibold))
+          Text(languageManager.localize("USB permissions scope"))
+            .foregroundColor(.secondary)
+        }
+        ToggleCell(
+          title: "USB device redirection",
+          hintKey: "USB permission switch detail",
+          boolBinding: Binding(
+            get: { panel.featureEnabled },
+            set: { panel.featureEnabled = $0; panelRevision += 1 }))
         busSection
-        FormSection(title: "What stands in the way") {
-          VStack(alignment: .leading, spacing: 8) {
-            HStack {
-              Text(languageManager.localize("Reason"))
-              Spacer()
-              Text(panel.blockingReasonName)
-                .font(.system(.body, design: .monospaced))
-                .foregroundColor(panel.mayBecomeActive ? .green : .orange)
-            }
-            SettingDescriptionRow(textKey: "Devices panel reason detail")
-            SettingDescriptionRow(textKey: "Devices panel audit detail")
-            Text(panel.auditLine)
-              .font(.system(.caption, design: .monospaced))
-              .foregroundColor(.secondary)
-              .textSelection(.enabled)
-              .frame(maxWidth: .infinity, alignment: .leading)
-          }
-          .padding(6)
+        rulesSection
+        DisclosureGroup(languageManager.localize("USB advanced permissions")) {
+          switchesSection
+        }
+        DisclosureGroup(languageManager.localize("Technical details")) {
+          readinessSection
+          Text(panel.auditLine)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundColor(.secondary)
+            .textSelection(.enabled)
         }
       }
       .padding()
     }
+    .onAppear(perform: scanBus)
   }
 
   // MARK: - What has to be true first
@@ -177,15 +179,6 @@ struct DevicesView: View {
     FormSection(title: "Switches") {
       VStack(alignment: .leading, spacing: 12) {
         ToggleCell(
-          title: "USB device redirection",
-          hintKey: "USB device redirection detail",
-          boolBinding: Binding(
-            get: { panel.featureEnabled },
-            set: {
-              panel.featureEnabled = $0
-              panelRevision += 1
-            }))
-        ToggleCell(
           title: "Local input devices",
           hintKey: "Local input devices detail",
           boolBinding: Binding(
@@ -234,7 +227,7 @@ struct DevicesView: View {
   // MARK: - Rules
 
   private var rulesSection: some View {
-    FormSection(title: "Allow rules") {
+    FormSection(title: "USB allowed models") {
       VStack(alignment: .leading, spacing: 12) {
         if panel.rules.isEmpty {
           SettingDescriptionRow(textKey: "No rules yet detail")
@@ -245,8 +238,9 @@ struct DevicesView: View {
             Divider()
           }
         }
-        Divider()
-        ruleEditor
+        DisclosureGroup(languageManager.localize("USB manual permission rule")) {
+          ruleEditor
+        }
         if panel.unreadableStoredRuleCount > 0 {
           Divider()
           unreadableRulesRow
@@ -329,12 +323,12 @@ struct DevicesView: View {
           // zero value, which is the same value a readable bus gets.
           Text(
             panel.busHasBeenScanned
-              ? MLUSBBusSnapshotStatusName(panel.busStatus)
+              ? languageManager.localize(panel.busStatus == .read ? "USB devices available" : "USB device scan failed")
               : languageManager.localize("Bus not scanned"))
             .font(.system(.body, design: .monospaced))
             .foregroundColor(panel.busHasBeenScanned && panel.busStatus == .read ? .green : .orange)
           Spacer()
-          Button(languageManager.localize("Scan the bus"), action: scanBus)
+          Button(languageManager.localize("USB refresh devices"), action: scanBus)
         }
         if panel.busHasBeenScanned && rows.isEmpty {
           SettingDescriptionRow(textKey: "No devices on the bus detail")
@@ -354,71 +348,47 @@ struct DevicesView: View {
   /// One device, one card: picture, name, what it is, whether it can move, and why not -- in that
   /// order, because that is the order the questions arrive in a player's head.
   private func deviceCard(_ row: MLDeviceRedirectionPanelRow) -> some View {
-    let cardIsBlocked = !row.allowed
-    return VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .firstTextBaseline, spacing: 12) {
-        Image(systemName: row.categorySymbolName)
-          .font(.title2)
-          .foregroundColor(row.allowed ? .accentColor : .secondary)
-          .frame(width: 26, alignment: .center)
-          .accessibilityHidden(true)
-        VStack(alignment: .leading, spacing: 3) {
-          // A device that named itself gets its own name; one that did not is introduced by its
-          // class, because an empty headline reads as a bug and not as an absent string.
-          Text(row.displayName ?? languageManager.localize(row.categoryNameKey ?? "USB class vendor specific"))
-            .font(.body.weight(.medium))
-          Text(row.identifiersLine)
-            .font(.system(.caption, design: .monospaced))
-            .foregroundColor(.secondary)
-            .textSelection(.enabled)
-        }
-        Spacer(minLength: 8)
-        VStack(alignment: .trailing, spacing: 6) {
-          verdictChip(row)
-          // The identifiers come off the device the row was built from, not out of the text on the
-          // card. A page that recovered them from its own rendering would be parsing what it
-          // printed, and would keep working -- wrongly -- the moment the wording changed.
-          Button(languageManager.localize("Use this device")) { prefill(ruleEditor: row) }
-            .disabled(row.identity?.vendorID == nil)
-        }
-      }
-      HStack(spacing: 6) {
-        chip(languageManager.localize(row.categoryNameKey ?? "USB class vendor specific"),
-             colour: .blue)
+    HStack(spacing: 12) {
+      Image(systemName: row.categorySymbolName)
+        .font(.title3)
+        .foregroundColor(.secondary)
+        .frame(width: 26)
+        .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 3) {
+        Text(row.displayName ?? languageManager.localize(row.categoryNameKey ?? "USB class vendor specific"))
+          .font(.body.weight(.medium))
+        Text(languageManager.localize(row.categoryNameKey ?? "USB class vendor specific") + " · " + row.identifiersLine)
+          .font(.caption)
+          .foregroundColor(.secondary)
         if row.hasReservedInterface {
-          chip(languageManager.localize("Device stays with this Mac"), colour: .secondary)
+          Text(languageManager.localize("Device stays with this Mac"))
+            .font(.caption)
+            .foregroundColor(.secondary)
         }
       }
-      // The sentence and the machine line describe the same obstacle; the sentence is for the
-      // player, the line is for the support thread that has the log open beside the screenshot.
-      Text(languageManager.localize(row.humanReasonKey))
-        .font(.callout)
-        .foregroundColor(cardIsBlocked ? .secondary : .green)
-      DisclosureGroup(languageManager.localize("Technical details")) {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(row.identityLine)
-            .font(.system(.caption, design: .monospaced))
-            .textSelection(.enabled)
-          Text(row.decisionLine)
-            .font(.system(.caption, design: .monospaced))
-            .foregroundColor(row.allowed ? .green : .secondary)
-            .textSelection(.enabled)
-        }
-        .padding(.top, 4)
+      Spacer(minLength: 8)
+      Button(languageManager.localize(hasPermissionRule(row) ? "USB permission already listed" : "USB allow this model")) {
+        addPermissionRule(row)
       }
-      .font(.caption)
+      .disabled(row.hasReservedInterface || row.identity?.vendorID == nil ||
+                row.identity?.productID == nil || hasPermissionRule(row))
     }
-    .padding(10)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-      RoundedRectangle(cornerRadius: 8)
-        .fill(Color(nsColor: .controlBackgroundColor))
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 8)
-        .stroke(cardIsBlocked ? Color.secondary.opacity(0.25) : Color.accentColor.opacity(0.4),
-                lineWidth: 1)
-    )
+    .padding(.vertical, 8)
+  }
+
+  // A VID/PID rule authorizes a model, not one serial-numbered physical unit.
+  private func hasPermissionRule(_ row: MLDeviceRedirectionPanelRow) -> Bool {
+    guard let identity = row.identity, let vendor = identity.vendorID, let product = identity.productID else { return false }
+    return panel.rules.contains {
+      $0.vendorID == vendor.uint16Value && ($0.productIsWildcard || $0.productID == product.uint16Value)
+    }
+  }
+
+  private func addPermissionRule(_ row: MLDeviceRedirectionPanelRow) {
+    guard !row.hasReservedInterface, !hasPermissionRule(row),
+          let identity = row.identity, let vendor = identity.vendorID, let product = identity.productID else { return }
+    _ = panel.addRule(vendorID: UInt(vendor.uint16Value), productID: UInt(product.uint16Value), family: false)
+    panelRevision += 1
   }
 
   /// Red means "could move the moment you press something", grey means "stays here no matter what

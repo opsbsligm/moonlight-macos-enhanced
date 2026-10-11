@@ -1341,3 +1341,23 @@
 
 "Summon On Arrival" = "Summon On Arrival";
 "Summon On Arrival detail" = "On (default): resting at the edge activation band opens the controls outright and hands the pointer to the bar; it collapses when you leave. Off: arrival only lights the tab and a click on the lit tab opens the bar — the legacy two-step protocol, kept as a fallback.";
+
+/* USB permission and session separation */
+"USB permissions" = "USB permissions";
+"USB permissions scope" = "Choose which device models may be redirected. Connect devices from the stream sidebar; permission does not connect a device.";
+"USB permission switch detail" = "Allow USB redirection when the host and driver support it. Devices stay on this Mac until you connect them in a session.";
+"USB advanced permissions" = "Advanced permission rules";
+"USB allowed models" = "Allowed device models";
+"USB permission already listed" = "Rule already listed";
+"USB allow this model" = "Allow this model";
+"USB devices available" = "Local devices";
+"USB device scan failed" = "Unable to read USB devices";
+"USB devices" = "USB devices";
+"USB session unavailable" = "USB redirection unavailable in this build";
+"USB connect to this session" = "Connect to this session";
+"USB permissions disabled" = "Enable USB permissions in Settings first";
+"USB runtime required" = "Requires a compatible host channel and USB driver";
+"USB no devices found" = "No USB devices found";
+"USB configure permissions in settings" = "Manage allowed devices in Settings → Devices";
+"USB refresh devices" = "Refresh devices";
+"USB manual permission rule" = "Add a model by vendor and product ID";

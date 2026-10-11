@@ -715,6 +715,22 @@ def main():
           "no-argument factory named after its class is what an importer rewrites into init()")
     check("panelModel" not in pane and "panelModel" not in header and "panelModel" not in impl,
           "no factory is left for an importer to rename out from under the page that calls it")
+    menu = read("Limelight/macOS/ViewControllers/StreamViewController+MenuUI.m")
+    body = pane.split("var body: some View {", 1)[1].split("// MARK:", 1)[0]
+    check('USB permissions scope' in body and 'USB advanced permissions' in body,
+          "settings separates permission scope from advanced diagnostics")
+    check('DisclosureGroup' in body and 'readinessSection' in body,
+          "driver preconditions remain accessible without dominating the settings page")
+    check('USB allow this model' in pane and 'hasPermissionRule(row)' in pane and 'family: false' in pane,
+          "device permission authoring uses exact model IDs and avoids duplicate rules")
+    check('usbItem.submenu = usbMenu;' in menu and '[self.streamMenu addItem:usbItem]' in menu,
+          "session USB choices are reachable from the stream sidebar menu")
+    check('connect.enabled = NO;' in menu and 'USB runtime required' in menu and 'UNLOCK(stage3)' in menu,
+          "a menu never claims connection while host and driver integration are missing")
+    check('usbMenu.autoenablesItems = NO;' in menu and 'deviceMenu.autoenablesItems = NO;' in menu,
+          "AppKit cannot turn unavailable USB actions on automatically")
+    check('row.displayName' in menu and 'row.categorySymbolName' in menu and 'row.identifiersLine' in menu,
+          "the sidebar identifies devices without asking the player to decode audit tokens")
     folded_pane = " ".join(pane.split())
     for tag in ("TAG_UNIQUE_ID", "MLDeviceRedirectionServerInfoTagName()"):
         at = folded_pane.find("getStringTag(" + tag)
