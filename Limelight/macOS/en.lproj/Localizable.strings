@@ -1379,3 +1379,6 @@
 "Video Frame Interpolation Runtime Detail Processing Paused" = "Frame interpolation is paused after a processing failure or overload. Source frames continue normally. Change the stream configuration or reconnect to retry.";
 
 "Video Enhancement Runtime Detail Processing Paused" = "VideoToolbox super resolution is paused after a processing failure or overload. Spatial scaling continues. Reconnect or change the upscaling configuration to retry.";
+
+"Local library unavailable" = "Local library unavailable";
+"Local library preserved after open failure" = "The local library could not be opened. Existing data has not been deleted. Quit, check disk space and file permissions, or restore a known-good backup before relaunching. Error: %@ (%ld).";
