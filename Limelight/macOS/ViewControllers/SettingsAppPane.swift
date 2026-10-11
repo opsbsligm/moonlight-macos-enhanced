@@ -190,7 +190,7 @@ struct AppView: View {
 
   private func clearAllHosts() {
     let dataManager = DataManager()
-    guard let hosts = dataManager.getHosts() as? [TemporaryHost] else { return }
+    guard let hosts = dataManager.getHostMetadata() else { return }
 
     for host in hosts {
       dataManager.remove(host)

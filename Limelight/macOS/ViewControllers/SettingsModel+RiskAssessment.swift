@@ -38,12 +38,7 @@ extension SettingsModel {
       return nil
     }
 
-    let dataManager = DataManager()
-    guard let hosts = dataManager.getHosts() as? [TemporaryHost] else {
-      return nil
-    }
-
-    return hosts.first(where: { !$0.uuid.isEmpty && $0.uuid == hostId })
+    return DataManager().hostMetadata(forUUID: hostId)
   }
 
   private func effectiveStreamingModeForRiskAssessment() -> (width: Int, height: Int, fps: Int) {

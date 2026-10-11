@@ -217,8 +217,7 @@ extension SettingsModel {
     guard let hostId = selectedHost?.id, hostId != Self.globalHostId else { return }
 
     let dataMan = DataManager()
-    guard let hosts = dataMan.getHosts() as? [TemporaryHost],
-      let host = hosts.first(where: { !$0.uuid.isEmpty && $0.uuid == hostId })
+    guard let host = dataMan.hostMetadata(forUUID: hostId)
     else { return }
 
     let endpoints = ConnectionEndpointStore.allEndpoints(for: host)

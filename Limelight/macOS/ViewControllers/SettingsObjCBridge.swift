@@ -60,8 +60,7 @@ class SettingsClass: NSObject {
 
   private static func temporaryHost(for key: String) -> TemporaryHost? {
     guard key != SettingsModel.globalHostId else { return nil }
-    guard let hosts = DataManager().getHosts() as? [TemporaryHost] else { return nil }
-    return hosts.first(where: { !$0.uuid.isEmpty && $0.uuid == key })
+    return DataManager().hostMetadata(forUUID: key)
   }
 
   private static func inferredHostRuntimeLabel(for key: String) -> String? {
@@ -824,7 +823,7 @@ class SettingsClass: NSObject {
   }
 
   @objc static func getHostUUID(from address: String) -> String? {
-    if let hosts = DataManager().getHosts() as? [TemporaryHost] {
+    if let hosts = DataManager().getHostMetadata() {
       // Try exact match first
       if let matchingHost = hosts.first(where: { host in
         guard !host.uuid.isEmpty else { return false }

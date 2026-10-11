@@ -124,7 +124,7 @@ class SettingsModel: ObservableObject {
 
     let dataMan = DataManager()
     dataMan.removeHostsWithEmptyUuid()
-    if let tempHosts = dataMan.getHosts() as? [TemporaryHost] {
+    if let tempHosts = dataMan.getHostMetadata() {
       let hosts = tempHosts
         .filter { !$0.uuid.isEmpty }
         .sorted { lhs, rhs in
@@ -1072,8 +1072,7 @@ class SettingsModel: ObservableObject {
     }
 
     let dataMan = DataManager()
-    if let hosts = dataMan.getHosts() as? [TemporaryHost],
-      let host = hosts.first(where: { !$0.uuid.isEmpty && $0.uuid == hostId })
+    if let host = dataMan.hostMetadata(forUUID: hostId)
     {
       var latencies: [String: NSNumber] = [:]
       var states: [String: NSNumber] = [:]
@@ -1167,8 +1166,7 @@ class SettingsModel: ObservableObject {
   private func currentTemporaryHost() -> TemporaryHost? {
     guard let hostId = selectedHost?.id, hostId != Self.globalHostId else { return nil }
     let dataMan = DataManager()
-    guard let hosts = dataMan.getHosts() as? [TemporaryHost] else { return nil }
-    return hosts.first(where: { !$0.uuid.isEmpty && $0.uuid == hostId })
+    return dataMan.hostMetadata(forUUID: hostId)
   }
 
   func refreshSunshineDisplays(force: Bool = false) {

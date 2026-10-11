@@ -12,7 +12,7 @@
 #import "TemporarySettings.h"
 
 // Legacy methods retain unspecified nullability; the new metadata API alone
-// explicitly promises a nonnull UUID and a nullable lookup result.
+// explicitly promise nullable lookup/fetch results.
 @interface DataManager : NSObject
 
 - (void) saveSettingsWithBitrate:(NSInteger)bitrate
@@ -29,6 +29,8 @@
                   btMouseSupport:(BOOL)btMouseSupport;
 
 - (NSArray * _Null_unspecified) getHosts;
+/// Connection descriptors only; nil on fetch failure, empty on a successful empty store.
+- (nullable NSArray<TemporaryHost *> *)getHostMetadata;
 /// Reads one connection descriptor without constructing any TemporaryApp graph.
 - (nullable TemporaryHost *)hostMetadataForUUID:(NSString * _Nonnull)uuid NS_SWIFT_NAME(hostMetadata(forUUID:));
 - (void) removeHostsWithEmptyUuid;

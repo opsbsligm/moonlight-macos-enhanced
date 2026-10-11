@@ -304,13 +304,14 @@ def verify(report, out_dir=None):
     return refusals
 
 
-# What one trip through each page costs the database, measured on 2026-09-25 by three runs of
+# Historical full-library read counts, measured on 2026-09-25 by three runs of
 # this build (one at 3 visit cycles, two at 6) against the machine's own one-host library:
 # videoPane 1, appPane 1, streamPane 3, and nothing on every dismissal, the same numbers at
 # both cycle counts. streamPane is the odd one because its own view model reads the host list
 # per section rather than once per visit; that is the number the byte ceiling in
 # `leak-audit.py` has been absorbing ever since it was written, and it is now written down
-# where a change to it has to be argued about.
+# where a change to it has to be argued about. These are historical numbers, not
+# the current expectation: cp22 removes full-library reads from settings.
 #
 # The counts are exact rather than bounded above, deliberately: how many times a page opens
 # the database is decided by the structure of the code that opens it, not by the machine, the
@@ -318,7 +319,9 @@ def verify(report, out_dir=None):
 # it. One read builds one graph per host in the library (DataManager.m:205 builds a fresh
 # TemporaryHost per row every call), so a read added to a cell binding is a graph added per
 # host per visit -- which is the leak, measured before it reaches the byte count.
-HOST_READS_WHEN_OPENED = {"videoPane": 1, "appPane": 1, "streamPane": 3, "devicesPane": 1}
+# cp22: settings now fetch connection descriptors, never cyclic application libraries.
+# The independent libraryEnd read must still increment the production counter below.
+HOST_READS_WHEN_OPENED = {"videoPane": 0, "appPane": 0, "streamPane": 0, "devicesPane": 0}
 
 
 def verify_host_reads(report, refusals):
@@ -643,9 +646,9 @@ def self_test():
                  lambda report: report["streamPane"].update(
                      {"readableContent": list(report["videoPane"]["readableContent"])})),
                 ("asking for a pane did not stick", lambda report: report["videoPane"].update({"storedPane": 0})),
-                ("a pane doubled the library reads it takes to open",
+                ("a pane resumed reading the cyclic application library",
                  lambda report: report["videoPane"].update(
-                     {"hostReadsDuringPresent": HOST_READS_WHEN_OPENED["videoPane"] * 2})),
+                     {"hostReadsDuringPresent": HOST_READS_WHEN_OPENED["videoPane"] + 1})),
                 ("a pane read the library while it was being dismissed",
                  lambda report: report["streamPane"].update({"hostReadsDuringDismiss": 1})),
             ]
