@@ -27,3 +27,7 @@ CI38124574418两个架构在growth16门禁测得每次每主机1152/1177.6字节
 新增DataManager.hostMetadata(forUUID:)：在managed context上按UUID查询一个Host，仅复制连接描述与配对/证书字段。TemporaryHost的完整initFromHost复用这段元数据构造，再按原样建应用图；没有直接弱化app.host，不破坏串流持有app而依赖其host的关系。USB配对与serverinfo路径用元数据，不遍历应用，不写数据库。
 
 生产元数据查询/构造方法插入原生回放：100次弱引用释放、无应用遍历、证书/名称/各地址/codec保留、缺证书降为unpaired、空UUID不查询、找不到/读取错误返回nil。Foundation与NSFetchRequest/predicate真实，CoreData存储执行端为替身；重建应用图的可编译负变异被捕获。实际设置页16次leaks增长测量的结果另列阶段记录，不把替身测试当作真实进程泄漏验收；其他完整应用图路径的已知引用环仍未解决。
+
+现场growth16测量（本机1主机、元数据路径Debug构建）：第一方对象3840→9600字节，15次额外访问增长384字节/次/主机，门禁0失败。其他设置路径仍泄漏完整主机/应用图，不能宣称全软件零泄漏；不同机器不能用1152→384简单当成严格同机A/B。
+
+新增可空查询返回值触发旧DataManager头部空值注解完整性告警。为旧指针签名显式标为_Null_unspecified，保留原有未指定语义；新UUID输入为_Nonnull、新返回值为nullable。不把旧的getSettings/getUniqueId等接口盲标非空，不 suppress warning，也不修改analyzer baseline。Swift33文件类型检查通过，最终冷缓存分析以阶段记录为准。
