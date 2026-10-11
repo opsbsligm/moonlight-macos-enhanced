@@ -41,7 +41,7 @@ ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
 # The floor the compiled driver's own case count has to clear. It is a floor and not the
 # count itself, because the count the binary prints is the truth and this number only notices
 # a case list that got shorter.
-MIN_DRIVER_CHECKS = 20
+MIN_DRIVER_CHECKS = 39
 POLICY_H = "Limelight/Stream/DeviceRedirectionPolicy.h"
 POLICY_M = "Limelight/Stream/DeviceRedirectionPolicy.m"
 ENUM_H = "Limelight/Stream/USBDeviceEnumeration.h"
@@ -218,6 +218,26 @@ int main(void) {
         check(shortNamed.vendorID.unsignedShortValue == 0x046d &&
               shortNamed.productID.unsignedShortValue == 0xc52b,
               "the io-kit short key names are read too, not only the USB ones");
+
+        NSString *prefix63=[@"a" stringByPaddingToLength:63 withString:@"a" startingAtIndex:0];
+        NSString *prefix62=[@"a" stringByPaddingToLength:62 withString:@"a" startingAtIndex:0];
+        check([MLUSBDeviceDisplayNameFromProperty([prefix63 stringByAppendingString:@"😀"]) isEqual:prefix63],
+              "the cap never splits an emoji surrogate pair");
+        check([MLUSBDeviceDisplayNameFromProperty([prefix62 stringByAppendingString:@"😀"]) isEqual:[prefix62 stringByAppendingString:@"😀"]],
+              "an emoji fitting exactly keeps both UTF16 units");
+        check([MLUSBDeviceDisplayNameFromProperty([prefix63 stringByAppendingString:@"e\u0301"]) isEqual:prefix63],
+              "the cap never detaches a combining accent");
+        check([MLUSBDeviceDisplayNameFromProperty(@"Camera\u2028\u2029\u00a0 Lens") isEqual:@"Camera Lens"],
+              "Unicode line separators and nonbreaking spaces cannot forge rows");
+        check([MLUSBDeviceDisplayNameFromProperty(@"Cam\u202eera\u202c\u2066 USB\u2069") isEqual:@"Camera USB"],
+              "directional control characters cannot reorder the device identity");
+        check([MLUSBDeviceDisplayNameFromProperty(@"Camera 👨‍👩‍👧‍👦") isEqual:@"Camera 👨‍👩‍👧‍👦"],
+              "ordinary emoji joiners remain intact instead of being stripped as controls");
+
+        check([MLUSBDeviceDisplayNameFromProperty([prefix63 stringByAppendingString:@"👨‍👩‍👧‍👦"]) isEqual:prefix63],
+              "the cap never turns a joined family emoji into another emoji");
+        check(MLUSBDeviceDisplayNameFromProperty(@"\u202e\u202c\u2066\u2069") == nil,
+              "a direction-control-only name falls back to the device category");
 
         // Interfaces, with the protocol byte when the registry had one.
         MLUSBDeviceIdentity *paired = MLUSBDeviceIdentityFromRegistryProperties(
@@ -431,6 +451,22 @@ def main():
     if shape_tool.returncode != 0:
         print(shape_tool.stdout[-1200:])
         print(shape_tool.stderr[-400:])
+
+    run_rules("Unicode whitespace forges a second device row",
+              mutated(rules, "Unicode whitespace",
+                      "[whitespace characterIsMember:character]",
+                      "([whitespace characterIsMember:character] && character < 0x80)"),
+              cc, sdk)
+    run_rules("direction controls reorder the visible device name",
+              mutated(rules, "direction controls",
+                      "if (directionControl || character < 0x20",
+                      "if ((directionControl && NO) || character < 0x20"),
+              cc, sdk)
+    run_rules("a composed sequence is appended beyond the cap",
+              mutated(rules, "composed boundary",
+                      "if (clean.length + piece.length > kMLDisplayNameCharacterLimit) {",
+                      "if (clean.length + piece.length > NSUIntegerMax) {"),
+              cc, sdk)
 
     run_rules("the serial is written out instead of digested",
               mutated(rules, "the serial digest",
