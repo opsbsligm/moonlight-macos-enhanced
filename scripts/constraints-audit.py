@@ -2531,6 +2531,15 @@ for cadence_shape, cadence_arguments in (("its readings", []),
           "the cadence policy gate failed %s: %s"
           % (cadence_shape, (cadence_run.stdout + cadence_run.stderr).strip().splitlines()[-1:]))
 
+# Presentation ordering is also pure C: replay pressure without an Apple GPU.
+presentation_run = subprocess.run(
+    [sys.executable, os.path.join(scripts_dir, "enhanced-presentation-tests.py")],
+    capture_output=True, text=True, cwd=root)
+check(presentation_run.returncode == 0,
+      "enhanced submission ordering, retry and stale-result replay passes"
+      if presentation_run.returncode == 0 else
+      "enhanced presentation replay failed: " + (presentation_run.stdout + presentation_run.stderr)[-1200:])
+
 # The readout is judged by scripts/interpolation-readout-tests.py, which lifts the shipping
 # publisher out of VideoDecoderRenderer.m and runs it against a fake settings class. That is a
 # compiled harness, so the audits runner has no answer for it and the build matrix carries the
