@@ -5,6 +5,7 @@
 
 #import "StreamViewController_Internal.h"
 #import "DeviceRedirectionPanelModel.h"
+#import "USBScanPolicy.h"
 
 @implementation StreamViewController (MenuUI)
 
@@ -1475,6 +1476,45 @@
     }
 }
 
+// Read IOKit away from the frame-presentation and input event thread. One scan per
+// controller at a time; completion is accepted only by the stream/host that requested it.
+- (void)refreshUSBMenuSnapshotForced:(BOOL)force {
+    NSAssert(NSThread.isMainThread, @"USB menu state belongs to the main thread");
+    if (!MLUSBScanShouldStart(self.usbMenuScanInFlight, self.stopStreamInProgress, force,
+                             self.usbMenuDeviceSnapshot != nil, self.usbMenuSnapshotGeneration,
+                             self.activeStreamGeneration, self.usbMenuScannedAt,
+                             NSProcessInfo.processInfo.systemUptime)) return;
+    self.usbMenuScanInFlight = YES;
+    NSUInteger generation = self.activeStreamGeneration;
+    NSString *hostUUID = [self.app.host.uuid copy];
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        @autoreleasepool {
+            MLUSBBusSnapshotStatus status = MLUSBBusSnapshotStatusBusUnreadable;
+            NSArray<MLUSBDeviceIdentity *> *devices = [MLUSBBusSnapshotCopyDeviceIdentities(&status) copy];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                if (!strongSelf) return;
+                strongSelf.usbMenuScanInFlight = NO;
+                BOOL sameHost = hostUUID.length > 0 && [hostUUID isEqualToString:strongSelf.app.host.uuid];
+                if (!MLUSBScanMayPublish(strongSelf.stopStreamInProgress, generation,
+                                         strongSelf.activeStreamGeneration, sameHost)) return;
+                strongSelf.usbMenuDeviceSnapshot = devices;
+                strongSelf.usbMenuBusStatus = status;
+                strongSelf.usbMenuSnapshotGeneration = generation;
+                strongSelf.usbMenuScannedAt = NSProcessInfo.processInfo.systemUptime;
+                // Do not mutate a menu under its current pointer. The next opening
+                // always rebuilds, while an inactive menu can be refreshed immediately.
+                if (!strongSelf.edgeMenuMenuVisible) [strongSelf rebuildStreamMenu];
+            });
+        }
+    });
+}
+
+- (void)refreshUSBDevicesFromMenu:(NSMenuItem *)sender {
+    [self refreshUSBMenuSnapshotForced:YES];
+}
+
 - (void)rebuildStreamMenu {
     if (![NSThread isMainThread]) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -1930,6 +1970,9 @@
     audioItem.submenu = audioMenu;
     [self.streamMenu addItem:audioItem];
 
+    [self refreshUSBMenuSnapshotForced:NO];
+    BOOL hasUSBSnapshot = self.usbMenuDeviceSnapshot != nil &&
+                          self.usbMenuSnapshotGeneration == self.activeStreamGeneration;
     // Session operations live in the stream dock, never in permission settings.
     NSMenuItem *usbItem = [[NSMenuItem alloc] initWithTitle:MLString(@"USB devices", nil) action:nil keyEquivalent:@""];
     setSymbol(usbItem, @"cable.connector");
@@ -1942,7 +1985,8 @@
     usbStatus.enabled = NO;
     [usbMenu addItem:usbStatus];
     NSArray<MLDeviceRedirectionPanelRow *> *usbRows = [MLDeviceRedirectionPanelRow displayOrderedRows:
-        [usbPermissions rowsByScanningBusWithHostPaired:self.app.host.pairState == PairStatePaired]];
+        [usbPermissions rowsForDevices:hasUSBSnapshot ? self.usbMenuDeviceSnapshot : @[]
+                          hostIsPaired:self.app.host.pairState == PairStatePaired]];
     [usbMenu addItem:[NSMenuItem separatorItem]];
     for (MLDeviceRedirectionPanelRow *row in usbRows) {
         NSString *name = row.displayName ?: MLString(row.categoryNameKey ?: @"USB class vendor specific", nil);
@@ -1967,11 +2011,19 @@
         deviceItem.submenu = deviceMenu;
         [usbMenu addItem:deviceItem];
     }
-    if (usbRows.count == 0) {
-        NSMenuItem *empty = [[NSMenuItem alloc] initWithTitle:MLString(@"USB no devices found", nil) action:nil keyEquivalent:@""];
+    if (!hasUSBSnapshot || self.usbMenuScanInFlight || self.usbMenuBusStatus != MLUSBBusSnapshotStatusRead || usbRows.count == 0) {
+        NSString *stateKey = !hasUSBSnapshot ? @"USB scanning devices" :
+            (self.usbMenuScanInFlight ? @"USB refreshing devices" :
+                (self.usbMenuBusStatus != MLUSBBusSnapshotStatusRead ? @"USB device scan failed" : @"USB no devices found"));
+        NSMenuItem *empty = [[NSMenuItem alloc] initWithTitle:MLString(stateKey, nil) action:nil keyEquivalent:@""];
         empty.enabled = NO;
         [usbMenu addItem:empty];
     }
+    NSMenuItem *refresh = [[NSMenuItem alloc] initWithTitle:MLString(@"USB refresh devices", nil)
+        action:@selector(refreshUSBDevicesFromMenu:) keyEquivalent:@""];
+    refresh.target = self;
+    refresh.enabled = !self.usbMenuScanInFlight && !self.stopStreamInProgress;
+    [usbMenu addItem:refresh];
     NSMenuItem *scope = [[NSMenuItem alloc] initWithTitle:MLString(@"USB configure permissions in settings", nil) action:nil keyEquivalent:@""];
     scope.enabled = NO;
     [usbMenu addItem:[NSMenuItem separatorItem]];
