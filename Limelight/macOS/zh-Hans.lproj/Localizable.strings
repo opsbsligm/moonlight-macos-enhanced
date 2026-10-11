@@ -1372,3 +1372,6 @@
 "Actual Display" = "实际呈现";
 "Present Wait" = "提交后等待";
 "Actual Display Metrics Detail" = "实际呈现基于最近 128 个 drawable 呈现时间戳；没有新鲜样本时显示 --。提交后等待只测客户端提交至显示，不是输入到光子的总延迟。Rx/Dec/Render 与增强计数仍描述原有处理和提交路径。";
+
+"USB hubs" = "USB 集线器";
+"USB hubs grouping detail" = "集线器默认收起，便于先找到外设。展开后可查看全部集线器；分组不会改变设备许可。";

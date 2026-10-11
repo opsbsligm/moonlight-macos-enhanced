@@ -327,7 +327,10 @@ struct DevicesView: View {
   // move and, when it cannot, one sentence saying why. Every word on a card is a field the model
   // produced and the panel gate exercised; the only decisions left here are which colour a chip is.
   private var busSection: some View {
-    FormSection(title: "Devices on this Mac") {
+    let ordered = MLDeviceRedirectionPanelRow.displayOrderedRows(rows)
+    let peripherals = ordered.filter { !$0.isInfrastructureDevice }
+    let hubs = ordered.filter { $0.isInfrastructureDevice }
+    return FormSection(title: "Devices on this Mac") {
       VStack(alignment: .leading, spacing: 10) {
         HStack {
           // Before the first scan there is no status to print: `busStatus` holds the enumeration's
@@ -350,8 +353,24 @@ struct DevicesView: View {
         // The order is the model's, not the view's: what could move today leads, what a rule can
         // never reach comes next, and a player who sorts by anything else is sorting a list that
         // already answers "which of these should I care about first?".
-        ForEach(Array(MLDeviceRedirectionPanelRow.displayOrderedRows(rows).enumerated()), id: \.offset) { _, row in
+        ForEach(Array(peripherals.enumerated()), id: \.offset) { _, row in
           deviceCard(row)
+        }
+        if !hubs.isEmpty {
+          DisclosureGroup {
+            SettingDescriptionRow(textKey: "USB hubs grouping detail")
+            ForEach(Array(hubs.enumerated()), id: \.offset) { _, row in
+              deviceCard(row)
+            }
+          } label: {
+            HStack {
+              Text(languageManager.localize("USB hubs"))
+              Text("\(hubs.count)")
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+            }
+          }
+          .padding(.vertical, 6)
         }
         SettingDescriptionRow(textKey: "Devices panel privacy detail")
       }
