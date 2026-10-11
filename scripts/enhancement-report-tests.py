@@ -72,6 +72,7 @@ STATES = (
     ("MLVideoEnhancementReportDisabledForHdr",
      "Video Enhancement Runtime Detail Disabled For Hdr"),
     ("MLVideoEnhancementReportDisabled", "Video Enhancement Runtime Detail Off"),
+    ("MLVideoEnhancementReportProcessingBudget", "Video Enhancement Runtime Detail Processing Budget"),
 )
 
 # Every reason the resolver can write, with the state it has to produce. Written from what the
@@ -184,7 +185,7 @@ int main(void) {
         }
         printf("%s %lu states of the enhancement report checked, %lu failed\n",
                gFailed ? "FAIL" : "ok", (unsigned long)gChecked, (unsigned long)gFailed);
-        printf("   the eight states answer %lu distinct ways\n",
+        printf("   the report states answer %lu distinct ways\n",
                (unsigned long)gAnswerCount);
         if (gAnswerCount != gWantCount) {
             gFailed++;
@@ -328,7 +329,7 @@ def main():
         return 1
     with tempfile.TemporaryDirectory() as work:
         ok, detail = compiled(dispatcher_source(renderer), work, clang, sdk)
-    check(ok, "the shipping dispatcher answers all eight states distinctly"
+    check(ok, "the shipping dispatcher answers all declared states distinctly"
           if ok else "the enhancement dispatcher failed: %s" % (detail,))
     found = gaps(renderer, rules, pane, en, zh)
     check(not found, "each state reaches its own sentence on the page (%d gaps)" % len(found)

@@ -11,6 +11,7 @@
 #import "RendererLayerContainer.h"
 #import "InterpolationCadencePolicy.h"
 #include "EnhancedPresentationPolicy.h"
+#include "EnhancementProcessingPolicy.h"
 
 #include "Limelight.h"
 #include <math.h>
@@ -322,6 +323,7 @@ typedef NS_ENUM(NSInteger, MLVideoEnhancementReport) {
     MLVideoEnhancementReportNoUpScaleNeeded,
     MLVideoEnhancementReportDisabledForHdr,
     MLVideoEnhancementReportDisabled,
+    MLVideoEnhancementReportProcessingBudget,
 };
 
 typedef NS_ENUM(NSInteger, MLRequestedVideoFrameInterpolationMode) {
@@ -1490,6 +1492,18 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // question has not been asked and answered.
     OSType _frameInterpolationRefusedSourcePixelFormat;
     dispatch_queue_t _vtWarmupQueue;
+    dispatch_queue_t _vtEnhancementQueue;
+    NSUInteger _enhancementProcessGeneration;
+    BOOL _enhancementProcessInFlight;
+    CVImageBufferRef _enhancementTaskSourceFrame; // borrowed from the retained task
+    uint64_t _enhancementTaskSequence;
+    uint64_t _enhancementTaskStartedAtMs;
+    uint64_t _enhancementFailedSequence;
+    CVImageBufferRef _enhancementResultFrame;
+    CVImageBufferRef _enhancementResultSourceFrame;
+    uint64_t _enhancementResultSequence;
+    CMTime _previousEnhancedPresentationTimeStamp;
+
     BOOL _frameInterpolationForceAdmission;
     BOOL _frameInterpolationCadenceForced;
     BOOL _frameInterpolationWarmupInFlight;
@@ -1499,7 +1513,9 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     NSInteger _frameInterpolationNoSlotWidth;
     NSInteger _frameInterpolationNoSlotHeight;
     CVImageBufferRef _previousInterpolationSourceFrame;
+    CMTime _previousInterpolationSourcePresentationTimeStamp;
     CVImageBufferRef _pendingInterpolatedFrame;
+    CMTime _pendingInterpolatedPresentationTimeStamp;
     uint64_t _pendingInterpolatedEnqueueTimeMs;
     uint32_t _pendingInterpolatedFrameNumber;
     uint64_t _pendingInterpolatedForSourceSequence;
@@ -1635,6 +1651,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         MLPrewarmSharedMetalPipelines();
     }
     _vtWarmupQueue = dispatch_queue_create("std.skyhua.moonlight.video.vt-warmup", DISPATCH_QUEUE_SERIAL);
+    _vtEnhancementQueue = dispatch_queue_create("std.skyhua.moonlight.video.vt-enhancement", DISPATCH_QUEUE_SERIAL);
 
     return self;
 }
@@ -1877,30 +1894,45 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 
 - (void)teardownEnhancementProcessor
 {
-    _enhancementWarmupGeneration += 1;
-    _enhancementWarmupInFlight = NO;
-    _enhancementWarmupWidth = 0;
-    _enhancementWarmupHeight = 0;
-    _enhancementWarmupScaleFactor = 0.0f;
-    _enhancementWarmupEngine = MLActiveVideoEnhancementEngineNone;
-    if (_frameProcessor != nil && [_frameProcessor respondsToSelector:@selector(endSession)]) {
-        [_frameProcessor endSession];
+    @synchronized(self) {
+        _enhancementWarmupGeneration += 1;
+        _enhancementProcessGeneration += 1;
+        _enhancementWarmupInFlight = NO;
+        _enhancementWarmupWidth = 0;
+        _enhancementWarmupHeight = 0;
+        _enhancementWarmupScaleFactor = 0.0f;
+        _enhancementWarmupEngine = MLActiveVideoEnhancementEngineNone;
+        // Retire on the processing queue, behind any task using this session.
+        // Neither mode changes nor stop may endSession underneath processWithParameters.
+        id retiredProcessor = _frameProcessor;
+        _frameProcessor = nil;
+        if (retiredProcessor != nil) {
+            dispatch_async(_vtEnhancementQueue, ^{
+                if ([retiredProcessor respondsToSelector:@selector(endSession)]) [retiredProcessor endSession];
+            });
+        }
+        _frameProcessorConfiguration = nil;
+        _frameProcessorEngine = MLActiveVideoEnhancementEngineNone;
+        _frameProcessorInputWidth = 0;
+        _frameProcessorInputHeight = 0;
+        _frameProcessorScaleFactor = 0.0f;
+        if (_frameProcessorOutputPool != NULL) {
+            CFRelease(_frameProcessorOutputPool);
+            _frameProcessorOutputPool = NULL;
+        }
+        if (_enhancementResultFrame) CVBufferRelease(_enhancementResultFrame);
+        if (_enhancementResultSourceFrame) CVBufferRelease(_enhancementResultSourceFrame);
+        _enhancementResultFrame = NULL;
+        _enhancementResultSourceFrame = NULL;
+        _enhancementResultSequence = 0;
+        _enhancementFailedSequence = 0;
+        // Do not clear the single-flight slot here. Its old task still owns it
+        // until the queued completion releases its retained input and pool.
+        [self releasePreviousEnhancedFrames];
+        _previousEnhancedPresentationTimeStamp = kCMTimeInvalid;
+        _activeEnhancementEngine = MLActiveVideoEnhancementEngineNone;
+        _lastLoggedEnhancementEngine = MLActiveVideoEnhancementEngineNone;
     }
-    _frameProcessor = nil;
-    _frameProcessorConfiguration = nil;
-    _frameProcessorEngine = MLActiveVideoEnhancementEngineNone;
-    _frameProcessorInputWidth = 0;
-    _frameProcessorInputHeight = 0;
-    _frameProcessorScaleFactor = 0.0f;
-
-    if (_frameProcessorOutputPool != NULL) {
-        CFRelease(_frameProcessorOutputPool);
-        _frameProcessorOutputPool = NULL;
-    }
-
-    [self releasePreviousEnhancedFrames];
-    _activeEnhancementEngine = MLActiveVideoEnhancementEngineNone;
-    _lastLoggedEnhancementEngine = MLActiveVideoEnhancementEngineNone;
     [self publishVideoEnhancementRuntimeStatusSummary:MLVideoEnhancementEngineName(MLActiveVideoEnhancementEngineNone)
                                                detail:@"Video Enhancement Runtime Detail Off"];
 }
@@ -2590,6 +2622,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
             return @"Video Enhancement Runtime Detail Needs Stream Shape";
         case MLVideoEnhancementReportWarmup:
             return @"Video Enhancement Runtime Detail Warmup";
+        case MLVideoEnhancementReportProcessingBudget:
+            return @"Video Enhancement Runtime Detail Processing Budget";
         case MLVideoEnhancementReportNoUpScaleNeeded:
             return @"Video Enhancement Runtime Detail No Up Scale Needed";
         case MLVideoEnhancementReportDisabledForHdr:
@@ -4264,6 +4298,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
 - (CVImageBufferRef)copyInterpolatedFrameFromPreviousSource:(CVImageBufferRef)previousSourceFrame
                                                    toSource:(CVImageBufferRef)sourceFrame
+                                             outputTimeStamp:(CMTime *)outputTimeStamp
                                                      report:(MLVideoFrameInterpolationReport *)reportOut
 {
     if (previousSourceFrame == NULL || sourceFrame == NULL) {
@@ -4288,18 +4323,27 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     if (@available(macOS 26.0, *)) {
-        CMTime presentationTimestamp = CMTIME_IS_VALID(_currentFramePresentationTimeStamp)
-            ? _currentFramePresentationTimeStamp
-            : kCMTimeZero;
+        CMTime presentationTimestamp = kCMTimeZero;
+        CMTime previousTimestamp = kCMTimeZero;
+        @synchronized(self) {
+            if (_currentFrame != sourceFrame || _previousInterpolationSourceFrame != previousSourceFrame) {
+                CVBufferRelease(destinationBuffer);
+                return NULL;
+            }
+            if (CMTIME_IS_NUMERIC(_currentFramePresentationTimeStamp)) presentationTimestamp = _currentFramePresentationTimeStamp;
+            if (CMTIME_IS_NUMERIC(_previousInterpolationSourcePresentationTimeStamp)) previousTimestamp = _previousInterpolationSourcePresentationTimeStamp;
+        }
+        CMTime midpointTimestamp = CMTimeAdd(previousTimestamp,
+            CMTimeMultiplyByFloat64(CMTimeSubtract(presentationTimestamp, previousTimestamp), 0.5));
         VTFrameProcessorFrame *sourceProcessorFrame =
             [[VTFrameProcessorFrame alloc] initWithBuffer:sourceFrame
                                     presentationTimeStamp:presentationTimestamp];
         VTFrameProcessorFrame *previousProcessorFrame =
             [[VTFrameProcessorFrame alloc] initWithBuffer:previousSourceFrame
-                                    presentationTimeStamp:kCMTimeZero];
+                                    presentationTimeStamp:previousTimestamp];
         VTFrameProcessorFrame *destinationProcessorFrame =
             [[VTFrameProcessorFrame alloc] initWithBuffer:destinationBuffer
-                                    presentationTimeStamp:presentationTimestamp];
+                                    presentationTimeStamp:midpointTimestamp];
         if (sourceProcessorFrame == nil || previousProcessorFrame == nil || destinationProcessorFrame == nil) {
             CVBufferRelease(destinationBuffer);
             return NULL;
@@ -4319,6 +4363,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             return NULL;
         }
 
+        if (outputTimeStamp) *outputTimeStamp = midpointTimestamp;
         return destinationBuffer;
     }
 
@@ -4346,9 +4391,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     MLVideoFrameInterpolationReport copyReport = MLVideoFrameInterpolationReportRuntimeUnavailable;
+    CMTime interpolatedTimeStamp = kCMTimeInvalid;
     CVImageBufferRef interpolatedFrame =
         [self copyInterpolatedFrameFromPreviousSource:previousSourceFrame
                                              toSource:sourceFrame
+                                       outputTimeStamp:&interpolatedTimeStamp
                                                report:&copyReport];
     if (interpolatedFrame == NULL) {
         // Which sentence the log keeps and which line the settings page shows are the
@@ -4396,6 +4443,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             CVBufferRelease(_pendingInterpolatedFrame);
         }
         _pendingInterpolatedFrame = interpolatedFrame;
+        _pendingInterpolatedPresentationTimeStamp = interpolatedTimeStamp;
         _pendingInterpolatedEnqueueTimeMs = enqueueTimeMs;
         _pendingInterpolatedFrameNumber = frameNumber;
         _pendingInterpolatedForSourceSequence = sourceSequence;
@@ -4483,6 +4531,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 }
 
 - (void)cachePresentedInterpolationSourceFrame:(CVImageBufferRef)sourceFrame
+                        presentationTimeStamp:(CMTime)presentationTimeStamp
 {
     if (sourceFrame == NULL) {
         return;
@@ -4493,6 +4542,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             CVBufferRelease(_previousInterpolationSourceFrame);
         }
         _previousInterpolationSourceFrame = CVBufferRetain(sourceFrame);
+        _previousInterpolationSourcePresentationTimeStamp = presentationTimeStamp;
     }
 }
 
@@ -4556,261 +4606,306 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                              sourceHeight:(NSInteger)sourceHeight
                               scaleFactor:(float)scaleFactor
 {
-    if ((engine != MLActiveVideoEnhancementEngineVTLowLatencySuperResolution &&
-         engine != MLActiveVideoEnhancementEngineVTQualitySuperResolution) ||
-        sourceWidth <= 0 ||
-        sourceHeight <= 0 ||
-        scaleFactor <= 1.0f) {
-        return;
-    }
-
-    if (@available(macOS 26.0, *)) {
-        if (_frameProcessor != nil &&
-            _frameProcessorEngine == engine &&
-            _frameProcessorInputWidth == sourceWidth &&
-            _frameProcessorInputHeight == sourceHeight &&
-            fabsf(_frameProcessorScaleFactor - scaleFactor) < 0.02f) {
+    @synchronized(self) {
+        if ((engine != MLActiveVideoEnhancementEngineVTLowLatencySuperResolution &&
+             engine != MLActiveVideoEnhancementEngineVTQualitySuperResolution) ||
+            sourceWidth <= 0 ||
+            sourceHeight <= 0 ||
+            scaleFactor <= 1.0f) {
             return;
         }
 
-        if (_enhancementWarmupInFlight &&
-            _enhancementWarmupEngine == engine &&
-            _enhancementWarmupWidth == sourceWidth &&
-            _enhancementWarmupHeight == sourceHeight &&
-            fabsf(_enhancementWarmupScaleFactor - scaleFactor) < 0.02f) {
-            return;
-        }
-
-        _enhancementWarmupInFlight = YES;
-        _enhancementWarmupWidth = sourceWidth;
-        _enhancementWarmupHeight = sourceHeight;
-        _enhancementWarmupScaleFactor = scaleFactor;
-        _enhancementWarmupEngine = engine;
-        NSUInteger warmupGeneration = ++_enhancementWarmupGeneration;
-
-        dispatch_async(_vtWarmupQueue, ^{
-            id configuration = nil;
-            if (engine == MLActiveVideoEnhancementEngineVTLowLatencySuperResolution) {
-                configuration =
-                    [[VTLowLatencySuperResolutionScalerConfiguration alloc] initWithFrameWidth:sourceWidth
-                                                                                   frameHeight:sourceHeight
-                                                                                   scaleFactor:scaleFactor];
-            } else {
-                configuration =
-                    [[VTSuperResolutionScalerConfiguration alloc] initWithFrameWidth:sourceWidth
-                                                                         frameHeight:sourceHeight
-                                                                         scaleFactor:(NSInteger)lroundf(scaleFactor)
-                                                                           inputType:VTSuperResolutionScalerConfigurationInputTypeVideo
-                                                                  usePrecomputedFlow:NO
-                                                               qualityPrioritization:VTSuperResolutionScalerConfigurationQualityPrioritizationNormal
-                                                                            revision:VTSuperResolutionScalerConfiguration.defaultRevision];
-                if ([configuration respondsToSelector:@selector(configurationModelStatus)]) {
-                    NSInteger modelStatus = (NSInteger)[configuration configurationModelStatus];
-                    if (modelStatus != 2) {
-                        dispatch_async(dispatch_get_main_queue(), ^{
-                            if (warmupGeneration != self->_enhancementWarmupGeneration) {
-                                return;
-                            }
-                            self->_enhancementWarmupInFlight = NO;
-                            Log(LOG_W, @"[video] VT quality super-resolution model not ready (status=%ld)", (long)modelStatus);
-                        });
-                        return;
-                    }
-                }
-            }
-
-            if (configuration == nil) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (warmupGeneration != self->_enhancementWarmupGeneration) {
-                        return;
-                    }
-                    self->_enhancementWarmupInFlight = NO;
-                });
+        if (@available(macOS 26.0, *)) {
+            if (_frameProcessor != nil &&
+                _frameProcessorEngine == engine &&
+                _frameProcessorInputWidth == sourceWidth &&
+                _frameProcessorInputHeight == sourceHeight &&
+                fabsf(_frameProcessorScaleFactor - scaleFactor) < 0.02f) {
                 return;
             }
 
-            VTFrameProcessor *processor = [[VTFrameProcessor alloc] init];
-            NSError *error = nil;
-            BOOL started = [processor startSessionWithConfiguration:configuration error:&error];
-            CVPixelBufferPoolRef pool = NULL;
-            CVReturn poolStatus = kCVReturnError;
-
-            if (started) {
-                NSDictionary *outputAttributes =
-                    [self resolvedFrameProcessorAttributesWithPreferredPixelFormat:kCVPixelFormatType_32BGRA
-                                                                    baseAttributes:[configuration destinationPixelBufferAttributes]];
-                poolStatus = CVPixelBufferPoolCreate(kCFAllocatorDefault,
-                                                     NULL,
-                                                     (__bridge CFDictionaryRef)outputAttributes,
-                                                     &pool);
-                if (poolStatus != kCVReturnSuccess || pool == NULL) {
-                    [processor endSession];
-                    started = NO;
-                }
+            if (_enhancementWarmupInFlight &&
+                _enhancementWarmupEngine == engine &&
+                _enhancementWarmupWidth == sourceWidth &&
+                _enhancementWarmupHeight == sourceHeight &&
+                fabsf(_enhancementWarmupScaleFactor - scaleFactor) < 0.02f) {
+                return;
             }
 
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (warmupGeneration != self->_enhancementWarmupGeneration) {
-                    if (started) {
+            _enhancementWarmupInFlight = YES;
+            _enhancementWarmupWidth = sourceWidth;
+            _enhancementWarmupHeight = sourceHeight;
+            _enhancementWarmupScaleFactor = scaleFactor;
+            _enhancementWarmupEngine = engine;
+            NSUInteger warmupGeneration = ++_enhancementWarmupGeneration;
+
+            dispatch_async(_vtWarmupQueue, ^{
+                id configuration = nil;
+                if (engine == MLActiveVideoEnhancementEngineVTLowLatencySuperResolution) {
+                    configuration =
+                        [[VTLowLatencySuperResolutionScalerConfiguration alloc] initWithFrameWidth:sourceWidth
+                                                                                       frameHeight:sourceHeight
+                                                                                       scaleFactor:scaleFactor];
+                } else {
+                    configuration =
+                        [[VTSuperResolutionScalerConfiguration alloc] initWithFrameWidth:sourceWidth
+                                                                             frameHeight:sourceHeight
+                                                                             scaleFactor:(NSInteger)lroundf(scaleFactor)
+                                                                               inputType:VTSuperResolutionScalerConfigurationInputTypeVideo
+                                                                      usePrecomputedFlow:NO
+                                                                   qualityPrioritization:VTSuperResolutionScalerConfigurationQualityPrioritizationNormal
+                                                                                revision:VTSuperResolutionScalerConfiguration.defaultRevision];
+                    if ([configuration respondsToSelector:@selector(configurationModelStatus)]) {
+                        NSInteger modelStatus = (NSInteger)[configuration configurationModelStatus];
+                        if (modelStatus != 2) {
+                            dispatch_async(dispatch_get_main_queue(), ^{
+                                if (warmupGeneration != self->_enhancementWarmupGeneration) {
+                                    return;
+                                }
+                                self->_enhancementWarmupInFlight = NO;
+                                Log(LOG_W, @"[video] VT quality super-resolution model not ready (status=%ld)", (long)modelStatus);
+                            });
+                            return;
+                        }
+                    }
+                }
+
+                if (configuration == nil) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if (warmupGeneration != self->_enhancementWarmupGeneration) {
+                            return;
+                        }
+                        self->_enhancementWarmupInFlight = NO;
+                    });
+                    return;
+                }
+
+                VTFrameProcessor *processor = [[VTFrameProcessor alloc] init];
+                NSError *error = nil;
+                BOOL started = [processor startSessionWithConfiguration:configuration error:&error];
+                CVPixelBufferPoolRef pool = NULL;
+                CVReturn poolStatus = kCVReturnError;
+
+                if (started) {
+                    NSDictionary *outputAttributes =
+                        [self resolvedFrameProcessorAttributesWithPreferredPixelFormat:kCVPixelFormatType_32BGRA
+                                                                        baseAttributes:[configuration destinationPixelBufferAttributes]];
+                    poolStatus = CVPixelBufferPoolCreate(kCFAllocatorDefault,
+                                                         NULL,
+                                                         (__bridge CFDictionaryRef)outputAttributes,
+                                                         &pool);
+                    if (poolStatus != kCVReturnSuccess || pool == NULL) {
                         [processor endSession];
+                        started = NO;
                     }
-                    if (pool != NULL) {
-                        CFRelease(pool);
-                    }
-                    return;
                 }
 
-                self->_enhancementWarmupInFlight = NO;
-                if (!started) {
-                    if (poolStatus != kCVReturnSuccess && pool == NULL) {
-                        Log(LOG_W, @"[video] Failed to prewarm VT frame processor output pool: %d", (int)poolStatus);
-                    } else {
-                        Log(LOG_W, @"[video] Failed to prewarm VT frame processor session: %@", error);
-                    }
-                    return;
-                }
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    @synchronized(self) {
+                        if (warmupGeneration != self->_enhancementWarmupGeneration) {
+                            if (started) {
+                                [processor endSession];
+                            }
+                            if (pool != NULL) {
+                                CFRelease(pool);
+                            }
+                            return;
+                        }
 
-                if (self->_frameProcessor != nil &&
-                    self->_frameProcessorEngine == engine &&
-                    self->_frameProcessorInputWidth == sourceWidth &&
-                    self->_frameProcessorInputHeight == sourceHeight &&
-                    fabsf(self->_frameProcessorScaleFactor - scaleFactor) < 0.02f) {
-                    [processor endSession];
-                    if (pool != NULL) {
-                        CFRelease(pool);
-                    }
-                    return;
-                }
+                        self->_enhancementWarmupInFlight = NO;
+                        if (!started) {
+                            if (poolStatus != kCVReturnSuccess && pool == NULL) {
+                                Log(LOG_W, @"[video] Failed to prewarm VT frame processor output pool: %d", (int)poolStatus);
+                            } else {
+                                Log(LOG_W, @"[video] Failed to prewarm VT frame processor session: %@", error);
+                            }
+                            return;
+                        }
 
-                NSUInteger preservedWarmupGeneration = self->_enhancementWarmupGeneration;
-                [self teardownEnhancementProcessor];
-                self->_enhancementWarmupGeneration = preservedWarmupGeneration;
-                self->_enhancementWarmupInFlight = NO;
-                self->_enhancementWarmupWidth = sourceWidth;
-                self->_enhancementWarmupHeight = sourceHeight;
-                self->_enhancementWarmupScaleFactor = scaleFactor;
-                self->_enhancementWarmupEngine = engine;
-                self->_frameProcessor = processor;
-                self->_frameProcessorConfiguration = configuration;
-                self->_frameProcessorOutputPool = pool;
-                self->_frameProcessorEngine = engine;
-                self->_frameProcessorInputWidth = sourceWidth;
-                self->_frameProcessorInputHeight = sourceHeight;
-                self->_frameProcessorScaleFactor = scaleFactor;
-                Log(LOG_I, @"[video] %@ prewarmed for %ldx%ld scale=%.2f",
-                    MLVideoEnhancementEngineName(engine),
-                    (long)sourceWidth,
-                    (long)sourceHeight,
-                    scaleFactor);
+                        if (self->_frameProcessor != nil &&
+                            self->_frameProcessorEngine == engine &&
+                            self->_frameProcessorInputWidth == sourceWidth &&
+                            self->_frameProcessorInputHeight == sourceHeight &&
+                            fabsf(self->_frameProcessorScaleFactor - scaleFactor) < 0.02f) {
+                            [processor endSession];
+                            if (pool != NULL) {
+                                CFRelease(pool);
+                            }
+                            return;
+                        }
+
+                        NSUInteger preservedWarmupGeneration = self->_enhancementWarmupGeneration;
+                        [self teardownEnhancementProcessor];
+                        self->_enhancementWarmupGeneration = preservedWarmupGeneration;
+                        self->_enhancementWarmupInFlight = NO;
+                        self->_enhancementWarmupWidth = sourceWidth;
+                        self->_enhancementWarmupHeight = sourceHeight;
+                        self->_enhancementWarmupScaleFactor = scaleFactor;
+                        self->_enhancementWarmupEngine = engine;
+                        self->_frameProcessor = processor;
+                        self->_frameProcessorConfiguration = configuration;
+                        self->_frameProcessorOutputPool = pool;
+                        self->_frameProcessorEngine = engine;
+                        self->_frameProcessorInputWidth = sourceWidth;
+                        self->_frameProcessorInputHeight = sourceHeight;
+                        self->_frameProcessorScaleFactor = scaleFactor;
+                        Log(LOG_I, @"[video] %@ prewarmed for %ldx%ld scale=%.2f",
+                            MLVideoEnhancementEngineName(engine),
+                            (long)sourceWidth,
+                            (long)sourceHeight,
+                            scaleFactor);
+                    }
+                });
             });
-        });
+        }
     }
 }
+
 
 - (CVImageBufferRef)copyFrameUsingFrameProcessorIfNeeded:(CVImageBufferRef)sourceFrame
                                          activeEnhancement:(MLActiveVideoEnhancementEngine)engine
                                               scaleFactor:(float)scaleFactor
+                                             frameSequence:(uint64_t)frameSequence
+                                     presentationTimeStamp:(CMTime)presentationTimeStamp
+                                          interpolatedFrame:(BOOL)isInterpolated
                                             warmupPending:(BOOL *)warmupPending
+                                        processingPending:(BOOL *)processingPending
+                                            waitForOutput:(BOOL *)waitForOutput
 {
-    if (warmupPending != NULL) {
-        *warmupPending = NO;
-    }
-
-    if (sourceFrame == NULL) {
-        return NULL;
-    }
-
+    if (warmupPending) *warmupPending = NO;
+    if (processingPending) *processingPending = NO;
+    if (waitForOutput) *waitForOutput = NO;
+    if (sourceFrame == NULL) return NULL;
     if (engine != MLActiveVideoEnhancementEngineVTLowLatencySuperResolution &&
         engine != MLActiveVideoEnhancementEngineVTQualitySuperResolution) {
         return NULL;
     }
 
-    if (![self prepareFrameProcessorForEngine:engine
-                                  sourceWidth:CVPixelBufferGetWidth(sourceFrame)
-                                 sourceHeight:CVPixelBufferGetHeight(sourceFrame)
-                                  scaleFactor:scaleFactor
-                                warmupPending:warmupPending]) {
-        return NULL;
-    }
-
-    if (_frameProcessorOutputPool == NULL || _frameProcessor == nil) {
-        return NULL;
-    }
-
-    CVPixelBufferRef destinationBuffer = NULL;
-    CVReturn createStatus = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault,
-                                                               _frameProcessorOutputPool,
-                                                               &destinationBuffer);
-    if (createStatus != kCVReturnSuccess || destinationBuffer == NULL) {
-        Log(LOG_W, @"[video] Failed to allocate VT frame processor output buffer: %d", (int)createStatus);
-        return NULL;
-    }
-
-    if (@available(macOS 26.0, *)) {
-        VTFrameProcessorFrame *sourceProcessorFrame =
-            [[VTFrameProcessorFrame alloc] initWithBuffer:sourceFrame
-                                    presentationTimeStamp:CMTIME_IS_VALID(_currentFramePresentationTimeStamp) ? _currentFramePresentationTimeStamp : kCMTimeZero];
-        VTFrameProcessorFrame *destinationProcessorFrame =
-            [[VTFrameProcessorFrame alloc] initWithBuffer:destinationBuffer
-                                    presentationTimeStamp:CMTIME_IS_VALID(_currentFramePresentationTimeStamp) ? _currentFramePresentationTimeStamp : kCMTimeZero];
-        if (sourceProcessorFrame == nil || destinationProcessorFrame == nil) {
-            CVBufferRelease(destinationBuffer);
+    @synchronized(self) {
+        if (![self prepareFrameProcessorForEngine:engine
+                                     sourceWidth:CVPixelBufferGetWidth(sourceFrame)
+                                    sourceHeight:CVPixelBufferGetHeight(sourceFrame)
+                                     scaleFactor:scaleFactor
+                                   warmupPending:warmupPending]) return NULL;
+        if (_frameProcessorOutputPool == NULL || _frameProcessor == nil) return NULL;
+        if (_enhancementResultFrame && _enhancementResultSourceFrame == sourceFrame &&
+            _enhancementResultSequence == frameSequence) {
+            return CVBufferRetain(_enhancementResultFrame);
+        }
+        if (_enhancementFailedSequence == frameSequence) return NULL;
+        uint64_t nowMs = LiGetMillis();
+        // At most one display period of CPU wait, serviced by refresh retries,
+        // not a blocking main-thread wait. Newer sources bypass the old task.
+        double outputRate = MAX(_lastDisplayRefreshRate, (double)MAX(self.frameRate, 1));
+        uint64_t budgetMs = MAX((uint64_t)1, (uint64_t)floor(1000.0 / outputRate));
+        if (_enhancementProcessInFlight) {
+            if (processingPending) *processingPending = YES;
+            if (waitForOutput) *waitForOutput = MLEnhancementShouldWait(
+                _enhancementTaskSourceFrame == sourceFrame && _enhancementTaskSequence == frameSequence,
+                _enhancementTaskStartedAtMs, nowMs, budgetMs);
             return NULL;
         }
+        if (@available(macOS 26.0, *)) {
+            // ARC-backed CF snapshots remain alive through the queued task even
+            // when stop retires all renderer-owned references immediately.
+            id inputLifetime = (__bridge_transfer id)CVBufferRetain(sourceFrame);
+            id poolLifetime = (__bridge_transfer id)CFRetain(_frameProcessorOutputPool);
+            id previousSourceLifetime = _previousEnhancedSourceFrame
+                ? (__bridge_transfer id)CVBufferRetain(_previousEnhancedSourceFrame) : nil;
+            id previousOutputLifetime = _previousEnhancedOutputFrame
+                ? (__bridge_transfer id)CVBufferRetain(_previousEnhancedOutputFrame) : nil;
+            CMTime previousTimestamp = _previousEnhancedPresentationTimeStamp;
+            CMTime inputTimestamp = CMTIME_IS_NUMERIC(presentationTimeStamp) ? presentationTimeStamp : kCMTimeZero;
+            id processor = _frameProcessor;
+            NSUInteger generation = _enhancementProcessGeneration;
+            _enhancementProcessInFlight = YES;
+            _enhancementTaskSourceFrame = sourceFrame;
+            _enhancementTaskSequence = frameSequence;
+            _enhancementTaskStartedAtMs = nowMs;
+            if (processingPending) *processingPending = YES;
+            if (waitForOutput) *waitForOutput = YES;
 
-        NSError *error = nil;
-        BOOL processed = NO;
-        if (engine == MLActiveVideoEnhancementEngineVTLowLatencySuperResolution) {
-            VTLowLatencySuperResolutionScalerParameters *parameters =
-                [[VTLowLatencySuperResolutionScalerParameters alloc] initWithSourceFrame:sourceProcessorFrame
-                                                                         destinationFrame:destinationProcessorFrame];
-            processed = parameters != nil && [(VTFrameProcessor *)_frameProcessor processWithParameters:parameters error:&error];
-        } else {
-            VTFrameProcessorFrame *previousSourceFrame = nil;
-            VTFrameProcessorFrame *previousOutputFrame = nil;
-            VTSuperResolutionScalerParametersSubmissionMode submissionMode =
-                VTSuperResolutionScalerParametersSubmissionModeRandom;
-
-            if (_previousEnhancedSourceFrame != NULL) {
-                previousSourceFrame =
-                    [[VTFrameProcessorFrame alloc] initWithBuffer:_previousEnhancedSourceFrame
-                                            presentationTimeStamp:kCMTimeZero];
-            }
-            if (_previousEnhancedOutputFrame != NULL) {
-                previousOutputFrame =
-                    [[VTFrameProcessorFrame alloc] initWithBuffer:_previousEnhancedOutputFrame
-                                            presentationTimeStamp:kCMTimeZero];
-            }
-            if (previousSourceFrame != nil && previousOutputFrame != nil) {
-                submissionMode = VTSuperResolutionScalerParametersSubmissionModeSequential;
-            }
-
-            VTSuperResolutionScalerParameters *parameters =
-                [[VTSuperResolutionScalerParameters alloc] initWithSourceFrame:sourceProcessorFrame
-                                                                 previousFrame:previousSourceFrame
-                                                           previousOutputFrame:previousOutputFrame
-                                                                   opticalFlow:nil
-                                                                submissionMode:submissionMode
-                                                              destinationFrame:destinationProcessorFrame];
-            processed = parameters != nil && [(VTFrameProcessor *)_frameProcessor processWithParameters:parameters error:&error];
+            dispatch_async(_vtEnhancementQueue, ^{
+                @autoreleasepool {
+                    CVImageBufferRef input = (__bridge CVImageBufferRef)inputLifetime;
+                    CVPixelBufferPoolRef pool = (__bridge CVPixelBufferPoolRef)poolLifetime;
+                    CVPixelBufferRef output = NULL;
+                    BOOL processed = NO;
+                    NSError *error = nil;
+                    // A queued task invalidated before it starts never runs VT.
+                    BOOL currentTask = NO;
+                    @synchronized(self) {
+                        BOOL inputIsCurrent = isInterpolated
+                            ? self->_pendingInterpolatedFrame == input && self->_pendingInterpolatedForSourceSequence == frameSequence
+                            : self->_currentFrame == input;
+                        BOOL alreadySubmitted = isInterpolated ? self->_pendingInterpolatedPresented
+                            : self->_lastPresentedFrameSequence == frameSequence;
+                        currentTask = processor == self->_frameProcessor &&
+                            MLEnhancementMayPublish(generation, self->_enhancementProcessGeneration,
+                                frameSequence, self->_currentFrameSequence, inputIsCurrent, alreadySubmitted);
+                    }
+                    if (currentTask && CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &output) == kCVReturnSuccess && output) {
+                        VTFrameProcessorFrame *source = [[VTFrameProcessorFrame alloc] initWithBuffer:input presentationTimeStamp:inputTimestamp];
+                        VTFrameProcessorFrame *destination = [[VTFrameProcessorFrame alloc] initWithBuffer:output presentationTimeStamp:inputTimestamp];
+                        if (source && destination) {
+                            if (engine == MLActiveVideoEnhancementEngineVTLowLatencySuperResolution) {
+                                VTLowLatencySuperResolutionScalerParameters *parameters =
+                                    [[VTLowLatencySuperResolutionScalerParameters alloc] initWithSourceFrame:source destinationFrame:destination];
+                                processed = parameters && [(VTFrameProcessor *)processor processWithParameters:parameters error:&error];
+                            } else {
+                                VTFrameProcessorFrame *previousSource = nil;
+                                VTFrameProcessorFrame *previousOutput = nil;
+                                if (previousSourceLifetime && previousOutputLifetime &&
+                                    CMTIME_IS_NUMERIC(previousTimestamp) && CMTimeCompare(previousTimestamp, inputTimestamp) < 0) {
+                                    previousSource = [[VTFrameProcessorFrame alloc] initWithBuffer:(__bridge CVImageBufferRef)previousSourceLifetime presentationTimeStamp:previousTimestamp];
+                                    previousOutput = [[VTFrameProcessorFrame alloc] initWithBuffer:(__bridge CVImageBufferRef)previousOutputLifetime presentationTimeStamp:previousTimestamp];
+                                }
+                                VTSuperResolutionScalerParameters *parameters =
+                                    [[VTSuperResolutionScalerParameters alloc] initWithSourceFrame:source
+                                        previousFrame:previousSource previousOutputFrame:previousOutput opticalFlow:nil
+                                        submissionMode:(previousSource && previousOutput ? VTSuperResolutionScalerParametersSubmissionModeSequential : VTSuperResolutionScalerParametersSubmissionModeRandom)
+                                        destinationFrame:destination];
+                                processed = parameters && [(VTFrameProcessor *)processor processWithParameters:parameters error:&error];
+                            }
+                        }
+                    }
+                    BOOL retryDraw = NO;
+                    @synchronized(self) {
+                        self->_enhancementProcessInFlight = NO;
+                        self->_enhancementTaskSourceFrame = NULL;
+                        BOOL inputIsCurrent = isInterpolated
+                            ? self->_pendingInterpolatedFrame == input && self->_pendingInterpolatedForSourceSequence == frameSequence
+                            : self->_currentFrame == input;
+                        BOOL alreadySubmitted = isInterpolated ? self->_pendingInterpolatedPresented
+                            : self->_lastPresentedFrameSequence == frameSequence;
+                        BOOL publish = processor == self->_frameProcessor &&
+                            MLEnhancementMayPublish(generation, self->_enhancementProcessGeneration,
+                                frameSequence, self->_currentFrameSequence, inputIsCurrent, alreadySubmitted);
+                        if (publish && processed && output) {
+                            if (self->_enhancementResultFrame) CVBufferRelease(self->_enhancementResultFrame);
+                            if (self->_enhancementResultSourceFrame) CVBufferRelease(self->_enhancementResultSourceFrame);
+                            self->_enhancementResultFrame = CVBufferRetain(output);
+                            self->_enhancementResultSourceFrame = CVBufferRetain(input);
+                            self->_enhancementResultSequence = frameSequence;
+                            if (engine == MLActiveVideoEnhancementEngineVTQualitySuperResolution) {
+                                [self releasePreviousEnhancedFrames];
+                                self->_previousEnhancedSourceFrame = CVBufferRetain(input);
+                                self->_previousEnhancedOutputFrame = CVBufferRetain(output);
+                                self->_previousEnhancedPresentationTimeStamp = inputTimestamp;
+                            }
+                            retryDraw = YES;
+                        } else if (publish && !processed) {
+                            self->_enhancementFailedSequence = frameSequence;
+                            Log(LOG_W, @"[video] Asynchronous VT enhancement failed: %@", error);
+                            retryDraw = YES;
+                        }
+                    }
+                    if (output) CVBufferRelease(output);
+                    if (retryDraw) [self requestEnhancedDraw];
+                }
+            });
         }
-
-        if (!processed) {
-            Log(LOG_W, @"[video] VT frame processor failed: %@", error);
-            CVBufferRelease(destinationBuffer);
-            return NULL;
-        }
-
-        if (engine == MLActiveVideoEnhancementEngineVTQualitySuperResolution) {
-            [self releasePreviousEnhancedFrames];
-            _previousEnhancedSourceFrame = CVBufferRetain(sourceFrame);
-            _previousEnhancedOutputFrame = CVBufferRetain(destinationBuffer);
-        }
-
-        return destinationBuffer;
     }
-
-    CVBufferRelease(destinationBuffer);
     return NULL;
 }
 
@@ -5008,6 +5103,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     uint32_t frameNumber = 0;
     uint64_t frameSequence = 0;
     BOOL presentingInterpolatedFrame = NO;
+    CMTime framePresentationTimeStamp = kCMTimeInvalid;
     @synchronized(self) {
         // A refresh retry must not run SR/MetalFX again on an already submitted
         // source. Wait for staging so the source cannot overtake its midpoint.
@@ -5022,6 +5118,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             frameEnqueueTimeMs = _currentFrameEnqueueTimeMs;
             frameNumber = _currentFrameNumber;
             frameSequence = _currentFrameSequence;
+            framePresentationTimeStamp = _currentFramePresentationTimeStamp;
         }
         if (_pendingInterpolatedFrame != NULL &&
             _pendingInterpolatedForSourceSequence != 0 &&
@@ -5030,6 +5127,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             interpolatedFrame = CVBufferRetain(_pendingInterpolatedFrame);
             frameEnqueueTimeMs = _pendingInterpolatedEnqueueTimeMs;
             frameNumber = _pendingInterpolatedFrameNumber;
+            framePresentationTimeStamp = _pendingInterpolatedPresentationTimeStamp;
             presentingInterpolatedFrame = YES;
         }
     }
@@ -5108,35 +5206,53 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                                   reason:&enhancementReason
                                                   report:&enhancementReport];
         _activeEnhancementEngine = resolvedEngine;
-        [self logActiveEnhancementEngine:_activeEnhancementEngine
-                                  reason:enhancementReason
-                                  report:enhancementReport];
+        if (resolvedEngine != MLActiveVideoEnhancementEngineVTLowLatencySuperResolution &&
+            resolvedEngine != MLActiveVideoEnhancementEngineVTQualitySuperResolution) {
+            [self logActiveEnhancementEngine:_activeEnhancementEngine reason:enhancementReason report:enhancementReport];
+        }
 
         BOOL enhancementWarmupPending = NO;
+        BOOL enhancementProcessingPending = NO;
+        BOOL waitForEnhancedOutput = NO;
         CVImageBufferRef processedFrame = [self copyFrameUsingFrameProcessorIfNeeded:presentationFrame
                                                                    activeEnhancement:_activeEnhancementEngine
                                                                         scaleFactor:resolvedScaleFactor
-                                                                      warmupPending:&enhancementWarmupPending];
+                                                                       frameSequence:frameSequence
+                                                               presentationTimeStamp:framePresentationTimeStamp
+                                                                    interpolatedFrame:presentingInterpolatedFrame
+                                                                      warmupPending:&enhancementWarmupPending
+                                                                  processingPending:&enhancementProcessingPending
+                                                                      waitForOutput:&waitForEnhancedOutput];
+        if (waitForEnhancedOutput) {
+            if (interpolatedFrame) CVBufferRelease(interpolatedFrame);
+            if (frame) CVBufferRelease(frame);
+            return; // @finally returns the unused GPU slot; CVDisplayLink retries.
+        }
         if (processedFrame == NULL &&
             (_activeEnhancementEngine == MLActiveVideoEnhancementEngineVTLowLatencySuperResolution ||
              _activeEnhancementEngine == MLActiveVideoEnhancementEngineVTQualitySuperResolution)) {
-            if (!enhancementWarmupPending) {
+            if (!enhancementWarmupPending && !enhancementProcessingPending) {
                 [self teardownEnhancementProcessor];
             }
             _activeEnhancementEngine = MLMetalFXIsSupported(_device)
                 ? MLActiveVideoEnhancementEngineMetalFXQuality
                 : MLActiveVideoEnhancementEngineBasicScaling;
             [self logActiveEnhancementEngine:_activeEnhancementEngine
-                                      reason:enhancementWarmupPending
+                                      reason:enhancementProcessingPending
+                ? @"VT enhancement busy or beyond this frame budget; temporarily using spatial scaling"
+                : enhancementWarmupPending
                 ? (_activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXQuality
                     ? @"VT enhancement warmup in progress; temporarily using MetalFX"
                     : @"VT enhancement warmup in progress; temporarily using basic scaling")
                 : @"VT enhancement unavailable at runtime; fell back"
-                                      report:enhancementWarmupPending
-                ? MLVideoEnhancementReportWarmup
-                : MLVideoEnhancementReportFellBack];
+                                      report:enhancementProcessingPending
+                ? MLVideoEnhancementReportProcessingBudget
+                : (enhancementWarmupPending ? MLVideoEnhancementReportWarmup : MLVideoEnhancementReportFellBack)];
         }
 
+        if (processedFrame != NULL) {
+            [self logActiveEnhancementEngine:_activeEnhancementEngine reason:enhancementReason report:enhancementReport];
+        }
         CVImageBufferRef workingFrame = processedFrame != NULL ? processedFrame : presentationFrame;
         const OSType pixelFormat = CVPixelBufferGetPixelFormatType(workingFrame);
         const size_t workingWidth = CVPixelBufferGetWidth(workingFrame);
@@ -5372,7 +5488,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     }
                 }
             } else if (frame != NULL) {
-                [self cachePresentedInterpolationSourceFrame:frame];
+                [self cachePresentedInterpolationSourceFrame:frame presentationTimeStamp:framePresentationTimeStamp];
                 @synchronized(self) {
                     if (_deferredCurrentSourceSequence == frameSequence) {
                         _deferredCurrentSourceSequence = 0;

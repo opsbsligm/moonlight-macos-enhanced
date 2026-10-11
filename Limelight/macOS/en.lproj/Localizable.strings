@@ -1365,3 +1365,5 @@
 /* Asynchronous USB enumeration */
 "USB scanning devices" = "Reading USB devices…";
 "USB refreshing devices" = "Refreshing USB devices…";
+
+"Video Enhancement Runtime Detail Processing Budget" = "VideoToolbox processing is busy or exceeded this frame’s latency budget. This frame uses spatial scaling; later frames can retry.";
