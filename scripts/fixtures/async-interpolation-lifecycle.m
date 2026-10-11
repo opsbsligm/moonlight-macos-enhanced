@@ -8,6 +8,10 @@
 #include <stdatomic.h>
 #include "EnhancementProcessingPolicy.h"
 #include "EnhancedPresentationPolicy.h"
+// Never register doubles under the system VideoToolbox runtime class names.
+#define VTFrameProcessorFrame MLTestFIFrameProcessorFrame
+#define VTLowLatencyFrameInterpolationParameters MLTestFILowLatencyFrameInterpolationParameters
+#define VTFrameProcessor MLTestFIFrameProcessor
 #define LOG_W 1
 #define Log(level, ...) do {} while (0)
 static _Atomic uint64_t testClock = 100;
@@ -116,6 +120,10 @@ static Probe *freshProbe(BOOL blocked) {
 static BOOL stage(Probe *r) { return [r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:7 enqueueTimeMs:90 frameNumber:42 displayRefreshRate:180]; }
 static void dispose(Probe *r) { [r teardownFrameInterpolationProcessor];dispatch_sync(r->_vtInterpolationQueue,^{});if(r->_currentFrame){CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;} }
 int main(void) { @autoreleasepool {
+    assert([NSStringFromClass([VTFrameProcessorFrame class]) isEqualToString:@"MLTestFIFrameProcessorFrame"]);
+    assert([NSStringFromClass([VTLowLatencyFrameInterpolationParameters class]) isEqualToString:@"MLTestFILowLatencyFrameInterpolationParameters"]);
+    assert([NSStringFromClass([VTFrameProcessor class]) isEqualToString:@"MLTestFIFrameProcessor"]);
+
     // Successful path carries the exact immutable midpoint; repeats cannot queue more work.
     Probe *r=freshProbe(NO);VTFrameProcessor *p=r->_frameInterpolationProcessor;
     assert(stage(r));waitFor(r.finished);assert(r->_pendingInterpolatedFrame && r->_pendingInterpolatedForSourceSequence==7);

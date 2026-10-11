@@ -6,6 +6,11 @@
 #include <assert.h>
 #include <math.h>
 #include "EnhancementProcessingPolicy.h"
+// Never register doubles under the system VideoToolbox runtime class names.
+#define VTFrameProcessorFrame MLTestSRFrameProcessorFrame
+#define VTLowLatencySuperResolutionScalerParameters MLTestSRLowLatencySuperResolutionScalerParameters
+#define VTSuperResolutionScalerParameters MLTestSRSuperResolutionScalerParameters
+#define VTFrameProcessor MLTestSRFrameProcessor
 #define LOG_W 1
 #define Log(level, ...) do {} while (0)
 static uint64_t testTimeMs = 100;
@@ -109,6 +114,11 @@ static Probe *freshProbe(void) {
     return r;
 }
 int main(void) { @autoreleasepool {
+    assert([NSStringFromClass([VTFrameProcessorFrame class]) isEqualToString:@"MLTestSRFrameProcessorFrame"]);
+    assert([NSStringFromClass([VTLowLatencySuperResolutionScalerParameters class]) isEqualToString:@"MLTestSRLowLatencySuperResolutionScalerParameters"]);
+    assert([NSStringFromClass([VTSuperResolutionScalerParameters class]) isEqualToString:@"MLTestSRSuperResolutionScalerParameters"]);
+    assert([NSStringFromClass([VTFrameProcessor class]) isEqualToString:@"MLTestSRFrameProcessor"]);
+
     if (@available(macOS 26.0,*)) {} else { puts("SKIP async VT lifecycle: runtime below macOS 26");return 0; }
     for(int engineIndex=0;engineIndex<2;engineIndex++) for(int scenario=0;scenario<4;scenario++) {
         Probe *r=freshProbe();VTFrameProcessor *p=r->_frameProcessor;
