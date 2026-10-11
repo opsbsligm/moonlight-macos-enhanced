@@ -1888,9 +1888,16 @@ CACHE_STOP_HANDOFF = """    CVMetalTextureCacheRef retiredCache = NULL;
 
 
 def draw_with_the_shared_pointer(text):
-    once(text, CACHE_SNAPSHOT_BLOCK, "the draw cache snapshot")
-    return text.replace(CACHE_SNAPSHOT_BLOCK,
-                        "    if (!_computePipelineState || !_textureCache) {", 1)
+    # The draw body can live inside an admission cleanup scope. Match its actual
+    # indentation rather than losing this proof when the enclosing scope changes.
+    match = re.search(r"(?m)^([ \t]*)CVMetalTextureCacheRef cacheSnapshot = NULL;", text)
+    if match is None:
+        raise SystemExit("the draw cache snapshot anchor is gone")
+    indent = match.group(1)
+    block = "\n".join(indent + line[4:] for line in CACHE_SNAPSHOT_BLOCK.splitlines())
+    once(text, block, "the draw cache snapshot")
+    return text.replace(block,
+                        indent + "if (!_computePipelineState || !_textureCache) {", 1)
 
 
 def stop_frees_the_cache_under_a_draw(text):
