@@ -15,7 +15,7 @@ stream -- nothing to rebuild, and no setting will change that while the sizes ma
 VideoToolbox's scalers are macOS 26 API, so a player on an older system will never satisfy that
 option however they resize the window. Both are now states, and both have a sentence.
 
-The dispatcher is lifted and played: all eight states are asked, and each must answer a different
+The dispatcher is lifted and played: all declared states are asked, and each must answer a different
 key that exists in both tables. The resolver is read where the answers are written: every branch that
 returns an engine names a state on the way out, every reason the resolver can write is named by this
 file with the state it must produce, and the refusal that means "older system" is produced by the OS

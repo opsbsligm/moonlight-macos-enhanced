@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import importlib.util
 import re
-import shutil
+import apple_toolchain
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'Limelight/Stream/EnhancedPresentationPolicy.h'
@@ -132,10 +132,11 @@ assert 'cacheSnapshot = NULL;' not in battery.draw_with_the_shared_pointer(sourc
 # Extract the actual async/retirement methods, with a deterministic VT double.
 # Native CV buffers/pool and dispatch queues stay real; this is lifecycle evidence,
 # never evidence of VT quality, supported scale factors or on-screen smoothness.
-xcrun = shutil.which('xcrun')
-if xcrun is None:
+native_toolchain = apple_toolchain.clang_and_sdk_or_none()
+if native_toolchain is None:
     print('SKIP native async lifecycle harness: Apple toolchain unavailable')
 else:
+    native_clang, native_sdk = native_toolchain
     enum_start = source.index('typedef NS_ENUM(NSInteger, MLActiveVideoEnhancementEngine)')
     enum_end = source.index('};', enum_start) + 2
     release_history = section('- (void)releasePreviousEnhancedFrames\n', '- (void)releaseFrameInterpolationFrames\n')
@@ -147,7 +148,7 @@ else:
             p = Path(d)
             (p/'EnhancementProcessingPolicy.h').write_text(enhancement_header)
             (p/'probe.m').write_text(rendered)
-            built = subprocess.run([xcrun, 'clang', '-fobjc-arc', '-fblocks', '-Wall', '-Werror',
+            built = subprocess.run([native_clang, '-isysroot', native_sdk, '-fobjc-arc', '-fblocks', '-Wall', '-Werror',
                 '-Wno-unused-function', '-framework', 'Foundation', '-framework', 'CoreVideo',
                 '-framework', 'CoreMedia', str(p/'probe.m'), '-o', str(p/'probe')], capture_output=True, text=True)
             assert built.returncode == 0, name + ': ' + built.stderr
