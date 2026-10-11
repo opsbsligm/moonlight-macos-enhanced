@@ -38,6 +38,7 @@ static NSString *MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpola
 @interface VTFrameProcessor : NSObject
 @property BOOL blockProcessing, fail, ended, endedDuringProcess, ranOnCaller, processing;
 @property NSUInteger calls;
+@property uint64_t elapsedMs;
 @property double midpoint, previousTime, inputTime;
 @property dispatch_semaphore_t entered, releaseWork;
 - (BOOL)processWithParameters:(VTLowLatencyFrameInterpolationParameters *)p error:(NSError **)error;
@@ -52,6 +53,7 @@ static NSString *MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpola
     assert(CVPixelBufferGetWidth(p.source.buffer)==8 && CVPixelBufferGetWidth(p.previous.buffer)==8);
     dispatch_semaphore_signal(self.entered);
     if (self.blockProcessing) assert(dispatch_semaphore_wait(self.releaseWork,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
+    atomic_fetch_add(&testClock,self.elapsedMs);
     self.processing=NO;return !self.fail;
 }
 - (void)endSession { self.endedDuringProcess=self.processing;self.ended=YES; }
@@ -60,6 +62,8 @@ static NSString *MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpola
 @public
     dispatch_queue_t _vtInterpolationQueue;
     NSUInteger _interpolationProcessGeneration, _frameInterpolationWarmupGeneration;
+    uint32_t _interpolationOverloadStrikes;
+    BOOL _interpolationSuspended;
     BOOL _interpolationProcessInFlight, _frameInterpolationWarmupInFlight, _frameInterpolationCadenceForced;
     NSInteger _frameInterpolationWarmupWidth, _frameInterpolationWarmupHeight;
     NSInteger _frameInterpolationInputWidth, _frameInterpolationInputHeight;
@@ -143,9 +147,45 @@ int main(void) { @autoreleasepool {
     dispatch_semaphore_signal(p.releaseWork);waitFor(r.finished);assert(!r->_pendingInterpolatedFrame);dispose(r);
     // Backend failure unblocks presentation and reports runtime failure, not active.
     r=freshProbe(NO);p=r->_frameInterpolationProcessor;p.fail=YES;assert(stage(r));waitFor(r.finished);
-    assert(!r->_pendingInterpolatedFrame && r->_interpolationStagingSequence==0 && r.report==MLVideoFrameInterpolationReportRuntimeUnavailable);dispose(r);
+    assert(!r->_pendingInterpolatedFrame && r->_interpolationStagingSequence==0 && r.report==MLVideoFrameInterpolationReportPausedForProcessing);
+    assert(r->_interpolationSuspended && r->_frameInterpolationProcessor==p && !p.ended);
+    for(int i=0;i<20;i++) {assert(!stage(r));assert(p.calls==1);}
+    dispose(r);assert(!r->_interpolationSuspended && r->_interpolationOverloadStrikes==0);
     // Preparatory staging also expires, without requiring a task to have been admitted.
     r=freshProbe(NO);atomic_store(&testClock,105);[r expireInterpolationStagingIfNeeded];
     assert(r->_interpolationStagingSequence==0);dispose(r);
+    // Severe/three mild overruns stop compute; in-budget work resets mild strikes.
+    for(int mode=0;mode<3;mode++) {
+        r=freshProbe(NO);p=r->_frameInterpolationProcessor;
+        int tasks=mode==0?1:3;
+        for(int task=0;task<tasks;task++) {
+            @synchronized(r) {
+                r->_currentFrameSequence=7+task;r->_interpolationStagingSequence=7+task;
+                r->_interpolationStagingStartedAtMs=LiGetMillis();
+            }
+            p.elapsedMs=mode==0?900:((mode==2 && task==1)?4:6);
+            assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:7+task enqueueTimeMs:90 frameNumber:42 displayRefreshRate:180]);
+            waitFor(r.finished);
+        }
+        assert(r->_interpolationSuspended==(mode!=2));
+        assert(r->_interpolationOverloadStrikes==(mode==2?1:3));
+        if(mode!=2) {for(int i=0;i<20;i++) {assert(!stage(r));assert(p.calls==(NSUInteger)tasks);}}
+        dispose(r);
+    }
+    // Actual failed/slow work on a stale source must still pause its session.
+    for(int failure=0;failure<2;failure++) {
+        r=freshProbe(YES);p=r->_frameInterpolationProcessor;p.fail=failure;p.elapsedMs=failure?0:900;
+        assert(stage(r));waitFor(p.entered);
+        @synchronized(r){r->_currentFrameSequence=8;}
+        dispatch_semaphore_signal(p.releaseWork);waitFor(r.finished);
+        assert(r->_interpolationSuspended && !r->_pendingInterpolatedFrame && p.calls==1);dispose(r);
+    }
+    // Retired task's late failure must not latch a replacement's breaker.
+    r=freshProbe(YES);p=r->_frameInterpolationProcessor;p.fail=YES;p.elapsedMs=900;
+    assert(stage(r));waitFor(p.entered);[r teardownFrameInterpolationProcessor];
+    r->_frameInterpolationProcessor=[VTFrameProcessor new];
+    dispatch_semaphore_signal(p.releaseWork);waitFor(r.finished);dispatch_sync(r->_vtInterpolationQueue,^{});
+    assert(!r->_interpolationSuspended && r->_interpolationOverloadStrikes==0);dispose(r);
+    puts("ok: FI failure does not rewarm; overload stops compute; healthy calls reset; stale/retired completions isolated");
     puts("ok: native FI lifecycle 8 scenarios; real CV/dispatch, simulated VT");
 } return 0; }

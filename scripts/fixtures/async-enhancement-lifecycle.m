@@ -141,7 +141,7 @@ int main(void) { @autoreleasepool {
         BOOL w=NO,pending=NO,wait=NO;
         for(int task=0;task<3;task++) {
             @synchronized(r) {r->_currentFrameSequence=7+task;}
-            p.elapsedMs=(recover && task==1)?5:6;
+            p.elapsedMs=(recover && task==1)?4:6;
             [r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTLowLatencySuperResolution scaleFactor:2 frameSequence:7+task presentationTimeStamp:CMTimeMake(7+task,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
             assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
             dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});

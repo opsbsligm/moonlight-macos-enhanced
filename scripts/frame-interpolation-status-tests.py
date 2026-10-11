@@ -251,6 +251,9 @@ int main(void) {
         Report("no cadence", MLActiveVideoFrameInterpolationEngineNone, answer.report,
                answer.reason, @"Off",
                @"Video Frame Interpolation Runtime Detail No Cadence Headroom");
+        Report("processing paused", MLActiveVideoFrameInterpolationEngineNone,
+               MLVideoFrameInterpolationReportPausedForProcessing, @"pause log", @"Off",
+               @"Video Frame Interpolation Runtime Detail Processing Paused");
         Report("runtime failure", MLActiveVideoFrameInterpolationEngineNone,
                kRuntimeFailureReport, kRuntimeFailureReason, @"Off",
                @"Video Frame Interpolation Runtime Detail Fallback");
@@ -498,6 +501,7 @@ WANT_KEYS = (
     "Video Frame Interpolation Runtime Detail Refresh Rate Unknown",
     "Video Frame Interpolation Runtime Detail No Cadence Headroom",
     "Video Frame Interpolation Runtime Detail Fallback",
+    "Video Frame Interpolation Runtime Detail Processing Paused",
     "Video Frame Interpolation Runtime Detail Source Format Unsupported",
     "Video Frame Interpolation Runtime Detail Warmup",
     "Video Frame Interpolation Runtime Detail No Interpolation Slots",
@@ -568,6 +572,13 @@ RUNTIME_GUARD = "runtimeReport != MLVideoFrameInterpolationReportSourceFormatUns
 TEARDOWN_CALL = "[self teardownFrameInterpolationProcessor];"
 
 KNOWN_BAD = [
+    ("processing-pause-reads-as-off",
+     '        case MLVideoFrameInterpolationReportPausedForProcessing:\n'
+     '            return @"Video Frame Interpolation Runtime Detail Processing Paused";',
+     '        case MLVideoFrameInterpolationReportPausedForProcessing:\n'
+     '            return @"Video Frame Interpolation Runtime Detail Off";',
+     "a processing circuit breaker is incorrectly presented as never enabled"),
+
     ("a-refused-format-borrows-the-runtime-failure-sentence",
      "            runtimeReport = MLVideoFrameInterpolationReportSourceFormatUnsupported;",
      "            runtimeReport = MLVideoFrameInterpolationReportRuntimeUnavailable;",
