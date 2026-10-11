@@ -1365,3 +1365,5 @@
 /* Asynchronous USB enumeration */
 "USB scanning devices" = "正在读取 USB 设备…";
 "USB refreshing devices" = "正在刷新 USB 设备…";
+
+"Video Enhancement Runtime Detail Processing Budget" = "VideoToolbox 处理繁忙或已超过当前帧的延迟预算。本帧暂用空间缩放，后续帧会继续尝试。";
