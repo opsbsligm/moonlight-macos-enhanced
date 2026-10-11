@@ -1507,6 +1507,8 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     uint64_t _enhancementTaskSequence;
     uint64_t _enhancementTaskStartedAtMs;
     uint64_t _enhancementFailedSequence;
+    uint32_t _enhancementOverloadStrikes;
+    BOOL _enhancementSuspended;
     CVImageBufferRef _enhancementResultFrame;
     CVImageBufferRef _enhancementResultSourceFrame;
     uint64_t _enhancementResultSequence;
@@ -1974,6 +1976,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         _enhancementResultSourceFrame = NULL;
         _enhancementResultSequence = 0;
         _enhancementFailedSequence = 0;
+        _enhancementOverloadStrikes = 0;
+        _enhancementSuspended = NO;
         // Do not clear the single-flight slot here. Its old task still owns it
         // until the queued completion releases its retained input and pool.
         [self releasePreviousEnhancedFrames];
@@ -4901,6 +4905,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                      scaleFactor:scaleFactor
                                    warmupPending:warmupPending]) return NULL;
         if (_frameProcessorOutputPool == NULL || _frameProcessor == nil) return NULL;
+        if (_enhancementSuspended) {
+            // Keep the session identity: automatic fallback must not reset the
+            // breaker and recreate a failing/overloaded processor every frame.
+            if (processingPending) *processingPending = YES;
+            return NULL;
+        }
         if (_enhancementResultFrame && _enhancementResultSourceFrame == sourceFrame &&
             _enhancementResultSequence == frameSequence) {
             return CVBufferRetain(_enhancementResultFrame);
@@ -4957,6 +4967,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                             MLEnhancementMayPublish(generation, self->_enhancementProcessGeneration,
                                 frameSequence, self->_currentFrameSequence, inputIsCurrent, alreadySubmitted);
                     }
+                    uint64_t processStartedAtMs = LiGetMillis();
                     if (currentTask && CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &output) == kCVReturnSuccess && output) {
                         VTFrameProcessorFrame *source = [[VTFrameProcessorFrame alloc] initWithBuffer:input presentationTimeStamp:inputTimestamp];
                         VTFrameProcessorFrame *destination = [[VTFrameProcessorFrame alloc] initWithBuffer:output presentationTimeStamp:inputTimestamp];
@@ -4982,8 +4993,24 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                             }
                         }
                     }
+                    uint64_t processFinishedAtMs = LiGetMillis();
+                    uint64_t processElapsedMs = processFinishedAtMs >= processStartedAtMs
+                        ? processFinishedAtMs - processStartedAtMs : UINT64_MAX;
                     BOOL retryDraw = NO;
                     @synchronized(self) {
+                        // Even an obsolete source consumed compute. Account for it,
+                        // but never let a retired processor poison a newer session.
+                        if (currentTask && processor == self->_frameProcessor &&
+                            generation == self->_enhancementProcessGeneration) {
+                            self->_enhancementOverloadStrikes = MLEnhancementOverloadStrikes(
+                                self->_enhancementOverloadStrikes, processed, processElapsedMs, budgetMs);
+                            self->_enhancementSuspended = self->_enhancementOverloadStrikes >= 3;
+                            if (self->_enhancementSuspended) {
+                                Log(LOG_W, @"[video] VT enhancement paused for this configuration: processed=%d elapsed=%llu ms budget=%llu ms",
+                                    processed, (unsigned long long)processElapsedMs, (unsigned long long)budgetMs);
+                                retryDraw = YES;
+                            }
+                        }
                         self->_enhancementProcessInFlight = NO;
                         self->_enhancementTaskSourceFrame = NULL;
                         BOOL inputIsCurrent = isInterpolated
@@ -4994,7 +5021,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                         BOOL publish = processor == self->_frameProcessor &&
                             MLEnhancementMayPublish(generation, self->_enhancementProcessGeneration,
                                 frameSequence, self->_currentFrameSequence, inputIsCurrent, alreadySubmitted);
-                        if (publish && processed && output) {
+                        if (publish && processed && output && !self->_enhancementSuspended) {
                             if (self->_enhancementResultFrame) CVBufferRelease(self->_enhancementResultFrame);
                             if (self->_enhancementResultSourceFrame) CVBufferRelease(self->_enhancementResultSourceFrame);
                             self->_enhancementResultFrame = CVBufferRetain(output);
@@ -5353,9 +5380,13 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             _activeEnhancementEngine = MLMetalFXIsSupported(_device)
                 ? MLActiveVideoEnhancementEngineMetalFXQuality
                 : MLActiveVideoEnhancementEngineBasicScaling;
+            BOOL enhancementSuspended = NO;
+            @synchronized(self) { enhancementSuspended = _enhancementSuspended; }
             [self logActiveEnhancementEngine:_activeEnhancementEngine
                                       reason:enhancementProcessingPending
-                ? @"VT enhancement busy or beyond this frame budget; temporarily using spatial scaling"
+                ? (enhancementSuspended
+                    ? @"VT enhancement paused after processing failure or overload; using spatial scaling until configuration or session changes"
+                    : @"VT enhancement busy or beyond this frame budget; temporarily using spatial scaling")
                 : enhancementWarmupPending
                 ? (_activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXQuality
                     ? @"VT enhancement warmup in progress; temporarily using MetalFX"

@@ -8,7 +8,8 @@
 #include "EnhancementProcessingPolicy.h"
 #define LOG_W 1
 #define Log(level, ...) do {} while (0)
-static uint64_t LiGetMillis(void) { return NSProcessInfo.processInfo.systemUptime * 1000; }
+static uint64_t testTimeMs = 100;
+static uint64_t LiGetMillis(void) { return testTimeMs; }
 @@ENUM@@
 static NSString *MLVideoEnhancementEngineName(MLActiveVideoEnhancementEngine e) { return @"test"; }
 @interface VTFrameProcessorFrame : NSObject
@@ -42,6 +43,8 @@ static NSString *MLVideoEnhancementEngineName(MLActiveVideoEnhancementEngine e) 
 @property(atomic) NSUInteger calls;
 @property(atomic) NSUInteger ends;
 @property(nonatomic) CMTime seenTimestamp;
+@property(nonatomic) uint64_t elapsedMs;
+@property(nonatomic) BOOL fail;
 - (BOOL)processWithParameters:(VTLowLatencySuperResolutionScalerParameters *)p error:(NSError **)e;
 - (void)endSession;
 @end
@@ -53,7 +56,7 @@ static NSString *MLVideoEnhancementEngineName(MLActiveVideoEnhancementEngine e) 
     // Touch real buffers only after the test has retired the renderer's references.
     assert(CVPixelBufferGetWidth(p.source.buffer)==4);
     assert(CVPixelBufferGetWidth(p.destination.buffer)==8);
-    self.seenTimestamp=p.source.timestamp;self.running=NO;return YES;
+    self.seenTimestamp=p.source.timestamp; testTimeMs += self.elapsedMs; self.running=NO;return !self.fail;
 }
 - (void)endSession { assert(!self.running);self.ends+=1; }
 @end
@@ -74,6 +77,8 @@ static NSString *MLVideoEnhancementEngineName(MLActiveVideoEnhancementEngine e) 
     uint64_t _enhancementTaskSequence, _enhancementTaskStartedAtMs, _enhancementFailedSequence;
     uint64_t _enhancementResultSequence, _currentFrameSequence, _pendingInterpolatedForSourceSequence, _lastPresentedFrameSequence;
     BOOL _pendingInterpolatedPresented;
+    uint32_t _enhancementOverloadStrikes;
+    BOOL _enhancementSuspended;
     CMTime _previousEnhancedPresentationTimeStamp;
     double _lastDisplayRefreshRate;
 }
@@ -130,6 +135,45 @@ int main(void) { @autoreleasepool {
         [r teardownEnhancementProcessor];dispatch_sync(r->_vtEnhancementQueue,^{});
         assert(p.ends==1);
     }
+    // Three mild consecutive overruns pause; an in-budget call resets strikes.
+    for(int recover=0;recover<2;recover++) {
+        Probe *r=freshProbe();VTFrameProcessor *p=r->_frameProcessor;
+        BOOL w=NO,pending=NO,wait=NO;
+        for(int task=0;task<3;task++) {
+            @synchronized(r) {r->_currentFrameSequence=7+task;}
+            p.elapsedMs=(recover && task==1)?5:6;
+            [r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTLowLatencySuperResolution scaleFactor:2 frameSequence:7+task presentationTimeStamp:CMTimeMake(7+task,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
+            assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
+            dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
+        }
+        assert(r->_enhancementSuspended==!recover);
+        assert(r->_enhancementOverloadStrikes==(recover?1:3));
+        [r teardownEnhancementProcessor];dispatch_sync(r->_vtEnhancementQueue,^{});
+        CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;
+    }
+    // Stale input still consumed compute; failure/overload pauses that session.
+    for (int reason=0; reason<3; reason++) {
+        Probe *r=freshProbe(); VTFrameProcessor *p=r->_frameProcessor;
+        p.elapsedMs=reason==0?900:0; p.fail=reason==1;
+        BOOL w=NO,pending=NO,wait=NO;
+        [r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTQualitySuperResolution scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
+        assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
+        @synchronized(r) {r->_currentFrameSequence=8;}
+        if(reason==2) {p.elapsedMs=900; [r teardownEnhancementProcessor];}
+        dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
+        assert(r->_enhancementSuspended==(reason!=2));
+        assert(!r->_enhancementResultFrame);
+        if(reason!=2) {
+            for(int i=0;i<20;i++) {
+                CVImageBufferRef result=[r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTQualitySuperResolution scaleFactor:2 frameSequence:8 presentationTimeStamp:CMTimeMake(8,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
+                assert(!result && pending && !wait && p.calls==1);
+            }
+        }
+        [r teardownEnhancementProcessor];dispatch_sync(r->_vtEnhancementQueue,^{});
+        assert(!r->_enhancementSuspended && r->_enhancementOverloadStrikes==0);
+        CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;
+    }
+    puts("ok: overload/failure suppress repeated VT, stale source charged, retired session cannot suspend replacement");
     puts("ok: 8 shipping asynchronous lifecycle scenarios, native CV lifetime + dispatch ordering; VT backend simulated");
     return 0;
 }}
