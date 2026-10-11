@@ -153,6 +153,9 @@ FOUNDATION_EXPORT NSString *MLUSBInterfaceClassNames(NSArray<MLUSBInterfaceDescr
                                    rules:(nullable NSArray<MLDeviceRedirectionRule *> *)rules;
 
 - (MLDeviceRedirectionVerdict *)verdictForDevice:(MLUSBDeviceDescriptor *)device;
+/// Local configuration only: feature, identity, reserved/input classes and rules.
+/// Never evidence of pairing, host capability, a working driver or a connection.
+- (MLDeviceRedirectionVerdict *)localPermissionVerdictForDevice:(MLUSBDeviceDescriptor *)device;
 
 /// Interface classes no rule can reach. Asked by the diagnostics panel so it can say
 /// why a rule it just accepted will never fire, instead of accepting it in silence.
