@@ -2144,6 +2144,19 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
+    NSError *libraryError = [DatabaseSingleton shared].persistentStoreLoadError;
+    if (libraryError != nil) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.alertStyle = NSAlertStyleCritical;
+        alert.messageText = MLString(@"Local library unavailable", nil);
+        alert.informativeText = [NSString stringWithFormat:
+            MLString(@"Local library preserved after open failure", nil),
+            libraryError.domain, (long)libraryError.code];
+        [alert addButtonWithTitle:MLString(@"Quit Moonlight", nil)];
+        [alert runModal];
+        [NSApp terminate:nil];
+        return;
+    }
 #ifdef DEBUG
     // The second half of the render probe: readable claims about the page, which
     // need an app that has finished launching. Inert unless the first half armed it.

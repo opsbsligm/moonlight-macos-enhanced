@@ -960,7 +960,16 @@ def run_vt_probe_report_contract():
           if ran.returncode == 0 else "VT probe report verifier failed: " + ran.stdout + ran.stderr)
 
 
+def run_database_preservation():
+    ran = subprocess.run([sys.executable, "scripts/database-open-preservation-tests.py"],
+                         cwd=ROOT, capture_output=True, text=True)
+    check(ran.returncode == 0,
+          "a failed database open preserves the library and refuses a storeless context"
+          if ran.returncode == 0 else "database preservation gate failed:\n" + (ran.stdout + ran.stderr)[-1200:])
+
+
 def finish():
+    run_database_preservation()
     run_vt_probe_report_contract()
     run_aspect_fit()
     run_device_redirection_policy()

@@ -1379,3 +1379,6 @@
 "Video Frame Interpolation Runtime Detail Processing Paused" = "插帧因处理失败或过载已暂停，继续显示原生帧。更改串流配置或重新连接后重试。";
 
 "Video Enhancement Runtime Detail Processing Paused" = "VideoToolbox 超分因处理失败或过载已暂停，继续使用空间缩放。重新连接或切换超分配置后重试。";
+
+"Local library unavailable" = "无法打开本地主机库";
+"Local library preserved after open failure" = "无法打开本地主机库，现有数据未被删除。请退出，检查磁盘空间和文件权限，或恢复已确认有效的备份后再启动。错误：%@ (%ld)。";
