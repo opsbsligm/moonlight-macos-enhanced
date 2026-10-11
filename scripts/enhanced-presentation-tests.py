@@ -258,6 +258,21 @@ else:
             return True
     methods = release_history + teardown + processor
     if native_replay(methods, 'control', True):
+        admission = 'MLEnhancementShouldWait(true, nowMs, LiGetMillis(), budgetMs);'
+        assert processor.count(admission) == 2
+        native_replay(methods.replace(admission, 'true;', 1), 'SR-starts-after-queue-deadline', False)
+        publication = 'BOOL publish = eligible && MLEnhancementShouldWait(true, nowMs, LiGetMillis(), budgetMs);'
+        assert processor.count(publication) == 1
+        native_replay(methods.replace(publication, 'BOOL publish = eligible;'), 'SR-publishes-expired-output', False)
+        native_replay(methods.replace('} else if (eligible) {', '} else if (eligible && processed) {', 1), 'SR-requeues-expired-source', False)
+        expired = 'if (_enhancementFailedSequence == frameSequence) {'
+        assert processor.count(expired) == 1
+        start = methods.index(expired)
+        end = methods.index('return NULL;', start)
+        broken = methods[:start] + methods[start:end].replace('if (processingPending) *processingPending = YES;', 'if (processingPending) *processingPending = NO;') + methods[end:]
+        native_replay(broken, 'SR-expiry-retires-breaker-history', False)
+
+
         native_replay(methods.replace('if (_enhancementSuspended)', 'if (_enhancementSuspended && false)', 1), 'ignore-session-breaker', False)
         native_replay(methods.replace('if (currentTask && processor == self->_frameProcessor &&', 'if (currentTask &&', 1).replace('generation == self->_enhancementProcessGeneration) {', 'generation <= self->_enhancementProcessGeneration) {', 1), 'retired-task-poisons-breaker', False)
 
