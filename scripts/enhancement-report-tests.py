@@ -73,6 +73,7 @@ STATES = (
      "Video Enhancement Runtime Detail Disabled For Hdr"),
     ("MLVideoEnhancementReportDisabled", "Video Enhancement Runtime Detail Off"),
     ("MLVideoEnhancementReportProcessingBudget", "Video Enhancement Runtime Detail Processing Budget"),
+    ("MLVideoEnhancementReportPausedForProcessing", "Video Enhancement Runtime Detail Processing Paused"),
 )
 
 # Every reason the resolver can write, with the state it has to produce. Written from what the
@@ -158,6 +159,10 @@ static const NSUInteger gWantCount = sizeof(gWantKeys) / sizeof(gWantKeys[0]);
 
 int main(void) {
     @autoreleasepool {
+        if (MLVideoEnhancementProcessingReport(NO) != MLVideoEnhancementReportProcessingBudget ||
+            MLVideoEnhancementProcessingReport(YES) != MLVideoEnhancementReportPausedForProcessing) {
+            gFailed++; printf("FAIL busy and paused processing are routed incorrectly\n");
+        }
         for (NSUInteger index = 0; index < gWantCount; index++) {
             gChecked++;
             // The shipped dispatcher is an instance method of the renderer, so the
@@ -202,6 +207,7 @@ def dispatcher_source(renderer):
     module = load_sibling()
     return (module.STUBS + "\n"
             + module.enum_block(renderer, "typedef NS_ENUM(NSInteger, MLVideoEnhancementReport)")
+            + "\n" + renderer[renderer.index("static inline MLVideoEnhancementReport MLVideoEnhancementProcessingReport("):renderer.index("typedef NS_ENUM(NSInteger, MLRequestedVideoFrameInterpolationMode)")]
             + "\n@interface MLVideoDecoderUnderTest : NSObject\n@end\n@implementation "
               "MLVideoDecoderUnderTest\n"
             + module.method(renderer, DISPATCHER) + "\n@end\n"
@@ -223,7 +229,7 @@ def compiled(source, work, clang, sdk):
         return False, (built.stdout + built.stderr)[-2500:]
     ran = subprocess.run([binary], capture_output=True, text=True)
     sys.stdout.write(ran.stdout)
-    return ran.returncode == 0, (ran.stdout.strip().splitlines() or ["no output"])[-1]
+    return ran.returncode == 0, "runtime: " + (ran.stdout.strip() or "no output")
 
 
 def resolver_span(source):
@@ -308,6 +314,8 @@ def gaps(renderer, rules, pane, en, zh):
         found.append("a warming scaler does not reach the page as a warming scaler")
     if "report:MLVideoEnhancementReportFellBack" not in renderer:
         found.append("a scaler that failed at runtime does not say so")
+    if "? MLVideoEnhancementProcessingReport(enhancementSuspended)" not in renderer:
+        found.append("processing pause does not reach the page from the actual fallback")
     if "runtimeDetailKeyForEnhancementEngine:" in renderer:
         found.append("the prose dispatcher is still there beside the state dispatcher")
     if "videoToolboxSuperResolutionIsAvailable" not in rules or \
@@ -353,6 +361,17 @@ def red_proofs():
         print("%-4s %s is refused" % ("ok" if hit else "FAIL", name))
         rc |= 0 if hit else 1
 
+    refuse("a paused scaler claiming later frames can retry",
+           renderer, "processing pause does not reach the page",
+           [("? MLVideoEnhancementProcessingReport(enhancementSuspended)",
+             "? MLVideoEnhancementReportProcessingBudget")])
+    before="return suspended ? MLVideoEnhancementReportPausedForProcessing"
+    assert renderer.count(before)==1
+    with tempfile.TemporaryDirectory() as work:
+        ok, detail=compiled(dispatcher_source(renderer.replace(before,"return !suspended ? MLVideoEnhancementReportPausedForProcessing")), work, clang, sdk)
+    check(not ok and detail.startswith("runtime: ") and "busy and paused" in detail,
+          "the compiled processing router rejects inverted pause status")
+    rc |= 1 if ok or not detail.startswith("runtime: ") or "busy and paused" not in detail else 0
     refuse("the older-system refusal answering the generic fallback line",
            renderer, "produced by the macOS 26 gate",
            [("!videoToolboxScalerAPIAvailable ? MLVideoEnhancementReportNeedsNewerSystem",
