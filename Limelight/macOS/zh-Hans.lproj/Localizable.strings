@@ -1377,3 +1377,5 @@
 "USB hubs grouping detail" = "集线器默认收起，便于先找到外设。展开后可查看全部集线器；分组不会改变设备许可。";
 
 "Video Frame Interpolation Runtime Detail Processing Paused" = "插帧因处理失败或过载已暂停，继续显示原生帧。更改串流配置或重新连接后重试。";
+
+"Video Enhancement Runtime Detail Processing Paused" = "VideoToolbox 超分因处理失败或过载已暂停，继续使用空间缩放。重新连接或切换超分配置后重试。";

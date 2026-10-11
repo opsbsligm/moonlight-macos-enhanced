@@ -325,7 +325,13 @@ typedef NS_ENUM(NSInteger, MLVideoEnhancementReport) {
     MLVideoEnhancementReportDisabledForHdr,
     MLVideoEnhancementReportDisabled,
     MLVideoEnhancementReportProcessingBudget,
+    MLVideoEnhancementReportPausedForProcessing,
 };
+
+// Busy can retry another source; paused keeps the circuit breaker until reconfiguration.
+static inline MLVideoEnhancementReport MLVideoEnhancementProcessingReport(BOOL suspended) {
+    return suspended ? MLVideoEnhancementReportPausedForProcessing : MLVideoEnhancementReportProcessingBudget;
+}
 
 typedef NS_ENUM(NSInteger, MLRequestedVideoFrameInterpolationMode) {
     MLRequestedVideoFrameInterpolationModeOff = 0,
@@ -2687,6 +2693,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
             return @"Video Enhancement Runtime Detail Warmup";
         case MLVideoEnhancementReportProcessingBudget:
             return @"Video Enhancement Runtime Detail Processing Budget";
+        case MLVideoEnhancementReportPausedForProcessing:
+            return @"Video Enhancement Runtime Detail Processing Paused";
         case MLVideoEnhancementReportNoUpScaleNeeded:
             return @"Video Enhancement Runtime Detail No Up Scale Needed";
         case MLVideoEnhancementReportDisabledForHdr:
@@ -5424,7 +5432,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     : @"VT enhancement warmup in progress; temporarily using basic scaling")
                 : @"VT enhancement unavailable at runtime; fell back"
                                       report:enhancementProcessingPending
-                ? MLVideoEnhancementReportProcessingBudget
+                ? MLVideoEnhancementProcessingReport(enhancementSuspended)
                 : (enhancementWarmupPending ? MLVideoEnhancementReportWarmup : MLVideoEnhancementReportFellBack)];
         }
 
