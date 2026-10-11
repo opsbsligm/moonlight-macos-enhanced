@@ -237,8 +237,8 @@ else:
     enum_start = source.index('typedef NS_ENUM(NSInteger, MLActiveVideoEnhancementEngine)')
     enum_end = source.index('};', enum_start) + 2
     release_history = section('- (void)releasePreviousEnhancedFrames\n', '- (void)releaseFrameInterpolationFrames\n')
-    def native_replay(methods, name, should_pass):
-        rendered = (ROOT/'scripts/fixtures/async-enhancement-lifecycle.m').read_text()
+    def native_replay(methods, name, should_pass, template_override=None):
+        rendered = template_override if template_override is not None else (ROOT/'scripts/fixtures/async-enhancement-lifecycle.m').read_text()
         rendered = rendered.replace('@@ENUM@@', source[enum_start:enum_end]).replace('@@METHODS@@', methods)
         rendered = '#define MLTestRunInline(block) ((block)())\n' + rendered
         with tempfile.TemporaryDirectory(prefix='ml-enhancement-lifecycle-') as d:
@@ -250,6 +250,7 @@ else:
                 '-framework', 'CoreMedia', str(p/'probe.m'), '-o', str(p/'probe')], capture_output=True, text=True)
             assert built.returncode == 0, name + ': ' + built.stderr
             ran = subprocess.run([str(p/'probe')], capture_output=True, text=True, timeout=30)
+            assert 'is implemented in both' not in ran.stderr, name + ': runtime class collision: ' + ran.stderr
             if 'SKIP' in ran.stdout:
                 print(ran.stdout.strip())
                 return False
@@ -258,6 +259,8 @@ else:
             return True
     methods = release_history + teardown + processor
     if native_replay(methods, 'control', True):
+        template = (ROOT/'scripts/fixtures/async-enhancement-lifecycle.m').read_text()
+        native_replay(methods, 'SR-wrong-runtime-double', False, template.replace('#define VTFrameProcessor MLTestSRFrameProcessor', '#define VTFrameProcessor MLTestSRWrongFrameProcessor', 1))
         admission = 'MLEnhancementShouldWait(true, nowMs, LiGetMillis(), budgetMs);'
         assert processor.count(admission) == 2
         native_replay(methods.replace(admission, 'true;', 1), 'SR-starts-after-queue-deadline', False)
@@ -294,8 +297,8 @@ if native_toolchain is not None:
         a = source.index('typedef NS_ENUM(NSInteger, ' + name + ')')
         enums.append(source[a:source.index('};', a)+2])
     fi_release = section('- (void)releaseFrameInterpolationFrames\n', '- (void)teardownEnhancementProcessor\n')
-    def fi_native_replay(methods, name, expected):
-        template = (ROOT/'scripts/fixtures/async-interpolation-lifecycle.m').read_text()
+    def fi_native_replay(methods, name, expected, template_override=None):
+        template = template_override if template_override is not None else (ROOT/'scripts/fixtures/async-interpolation-lifecycle.m').read_text()
         text = '#define MLTestRunInline(block) ((block)())\n' + template.replace('@@ENUMS@@', '\n'.join(enums)).replace('@@METHODS@@', methods)
         with tempfile.TemporaryDirectory(prefix='ml-fi-lifecycle-') as d:
             p=Path(d)
@@ -306,10 +309,13 @@ if native_toolchain is not None:
                 '-framework','Foundation','-framework','CoreVideo','-framework','CoreMedia',str(p/'probe.m'),'-o',str(p/'probe')],capture_output=True,text=True)
             assert built.returncode==0, name+': '+built.stderr
             ran=subprocess.run([str(p/'probe')],capture_output=True,text=True,timeout=30)
+            assert 'is implemented in both' not in ran.stderr, name + ': runtime class collision: ' + ran.stderr
             assert (ran.returncode==0)==expected, name+': '+ran.stdout+ran.stderr
             print(ran.stdout.strip() if expected else 'ok: native FI rejects '+name+' (mutation compiled)')
     fi_methods=fi_release+fi_teardown+fi_compute+fi_expire+stage
     fi_native_replay(fi_methods,'control',True)
+    template = (ROOT/'scripts/fixtures/async-interpolation-lifecycle.m').read_text()
+    fi_native_replay(fi_methods, 'FI-wrong-runtime-double', False, template.replace('#define VTFrameProcessor MLTestFIFrameProcessor', '#define VTFrameProcessor MLTestFIWrongFrameProcessor', 1))
     fi_native_replay(fi_methods.replace('if (_interpolationSuspended)', 'if (_interpolationSuspended && false)', 1), 'FI-ignore-session-breaker', False)
     fi_native_replay(fi_methods.replace('if (runTask && processor == self->_frameInterpolationProcessor &&', 'if (runTask &&', 1).replace('generation == self->_interpolationProcessGeneration) {', 'generation <= self->_interpolationProcessGeneration) {', 1), 'FI-retired-task-poisons-breaker', False)
 
