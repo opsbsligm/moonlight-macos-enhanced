@@ -17,3 +17,5 @@
 device-redirection-panel-model-tests.py提取生产note与pairedTemporaryHost方法，编译Swift测试夹具；C调度/发布策略直接由Swift桥接导入生产USBScanPolicy.h。真实Dispatch/main RunLoop，HTTP、主机存储及面板接收端为替身。9种场景：成功、旧代次、页面离开、换主机、已取消配对、全局配置、主机记录删除、真实请求不可达、空UUID。四个合法编译负变异验证忽略页面代次/主机身份/离开状态/配对状态分别被捕获。另有实际界面接线约束、完整Swift类型检查和Debug应用构建。
 
 本阶段不打开设备、不改许可、不自动检测远端，更没有启用USB连接。真实DriverKit和远端通道仍缺失；界面和调度测试不是设备真实接管/回收验收。回滚撤销本阶段USB提交。
+
+完整冷缓存analyzer发现单参onChange重载已弃用；最低部署macOS26，监听改为双参当前重载，测试同时锁定该接线，不修改告警基线。最终分析门禁结果以阶段记录为准。

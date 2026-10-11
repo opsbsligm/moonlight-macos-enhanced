@@ -832,6 +832,8 @@ def usb_host_completion_tests():
     check(".onChange(of: settingsModel.selectedHost?.id)" in pane and
           "rows = panel.rows(for:" in pane and "hostCheckGeneration &+= 1" in pane,
           "selected host changes invalidate capabilities and reassess rows without scanning the bus")
+    check(".onChange(of: settingsModel.selectedHost?.id) { _, _ in" in pane,
+          "USB host selection uses the nondeprecated observer supported by the deployment target")
     check("guard pageIsVisible && !isCheckingHost" in pane,
           "host checks reject hidden pages and overlapping requests")
 
