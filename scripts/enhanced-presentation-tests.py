@@ -15,9 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'Limelight/Stream/EnhancedPresentationPolicy.h'
 ENHANCEMENT_POLICY = ROOT / 'Limelight/Stream/EnhancementProcessingPolicy.h'
 enhancement_header = ENHANCEMENT_POLICY.read_text()
+actual_header = (ROOT/'Limelight/Stream/ActualPresentationMetrics.h').read_text()
 DRIVER = r'''
 #include "EnhancedPresentationPolicy.h"
 #include "EnhancementProcessingPolicy.h"
+#include "ActualPresentationMetrics.h"
 #include <assert.h>
 int main(void) {
     assert(!MLPresentationNeedsDraw(0,0,0,0,false));
@@ -51,14 +53,56 @@ int main(void) {
     assert(!MLEnhancementShouldWait(false,100,101,10));
     assert(!MLEnhancementShouldWait(true,100,99,10));
     assert(!MLEnhancementShouldWait(true,100,100,0));
+    MLActualPresentationState actual = {0};
+    assert(MLActualPresentationRecord(&actual,0,10,9.997,false,true));
+    assert(!MLActualPresentationRead(&actual,10).available);
+    assert(MLActualPresentationRecord(&actual,0,10+1.0/180,10+1.0/180-0.003,true,false));
+    MLActualPresentationReading observed = MLActualPresentationRead(&actual,10.01);
+    assert(observed.available && fabs(observed.fps-180)<0.00001);
+    assert(fabs(observed.frameP95Ms-1000.0/180)<0.00001);
+    assert(observed.waitAvailable && fabs(observed.waitP95Ms-3)<0.00001);
+    assert(actual.presented==2 && actual.interpolated==1 && actual.scaled==1);
+    assert(!MLActualPresentationRecord(&actual,0,0,0,true,true));
+    assert(actual.unpresented==1 && actual.presented==2);
+    assert(!MLActualPresentationRecord(&actual,0,NAN,0,false,false));
+    assert(!MLActualPresentationRecord(&actual,0,INFINITY,0,false,false));
+    assert(!MLActualPresentationRecord(&actual,0,-1,0,false,false));
+    assert(actual.invalid==3);
+    assert(MLActualPresentationRecord(&actual,0,10.02,10.018,false,false));
+    assert(MLActualPresentationRecord(&actual,0,10.01,10.008,false,false));
+    observed=MLActualPresentationRead(&actual,10.03);
+    assert(observed.available && fabs(observed.fps-150)<0.00001);
+    assert(fabs(observed.frameP95Ms-10)<0.00001);
+    assert(!MLActualPresentationRead(&actual,13).available);
+    assert(!MLActualPresentationRead(&actual,NAN).available);
+    assert(!MLActualPresentationRead(&actual,9).available);
+    assert(MLActualPresentationRecord(&actual,0,10.01,10,false,false));
+    assert(!MLActualPresentationRead(&actual,10.03).available);
+    MLActualPresentationReset(&actual);
+    assert(actual.generation==1 && actual.count==0 && actual.presented==0);
+    assert(!MLActualPresentationRecord(&actual,0,20,19,false,false));
+    for(int i=0;i<1000;i++) {
+        double t=20+i/180.0;
+        assert(MLActualPresentationRecord(&actual,1,t,t-0.002,(i%2)==1,false));
+        assert(actual.count<=ML_ACTUAL_PRESENTATION_CAPACITY);
+    }
+    observed=MLActualPresentationRead(&actual,20+999/180.0);
+    assert(actual.count==128 && actual.presented==1000 && actual.interpolated==500);
+    assert(observed.available && fabs(observed.fps-180)<0.00001);
+    MLActualPresentationReset(&actual);
+    assert(MLActualPresentationRecord(&actual,2,30,NAN,false,false));
+    assert(MLActualPresentationRecord(&actual,2,30.01,31,false,false));
+    observed=MLActualPresentationRead(&actual,30.02);
+    assert(observed.available && !observed.waitAvailable);
     return 0;
 }
 '''
-def replay(header, processing_header=enhancement_header):
+def replay(header, processing_header=enhancement_header, observations_header=actual_header):
     with tempfile.TemporaryDirectory(prefix='ml-present-') as d:
         p = Path(d)
         (p/'EnhancedPresentationPolicy.h').write_text(header)
         (p/'EnhancementProcessingPolicy.h').write_text(processing_header)
+        (p/'ActualPresentationMetrics.h').write_text(observations_header)
         (p/'replay.c').write_text(DRIVER)
         subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',str(p/'replay.c'),'-o',str(p/'replay')],check=True)
         return subprocess.run([str(p/'replay')],capture_output=True).returncode
@@ -86,6 +130,17 @@ enhancement_mutations = [
 for name, before, after in enhancement_mutations:
     assert enhancement_header.count(before) == 1, name
     assert replay(header, enhancement_header.replace(before, after)) != 0, name + ' survived'
+actual_mutations = [
+    ('old-drawable-enters-new-session', 'generation != state->generation', 'generation > state->generation'),
+    ('zero-time-counts-as-presented', 'if (time == 0.0)', 'if (time < 0.0)'),
+    ('unbounded-sample-count', 'state->count < ML_ACTUAL_PRESENTATION_CAPACITY', 'state->count <= ML_ACTUAL_PRESENTATION_CAPACITY'),
+    ('stale-fps-stays-visible', 'now - result.latestTime > 2.0', 'now - result.latestTime > 200.0'),
+    ('callbacks-assumed-ordered', 'qsort(times, state->count, sizeof(double), MLActualPresentationCompare);', '(void)times;'),
+    ('counts-a-submit-instead-of-present', 'state->presented++;', 'state->presented += 2;'),
+]
+for name, before, after in actual_mutations:
+    assert actual_header.count(before) == 1, name
+    assert replay(header, enhancement_header, actual_header.replace(before,after)) != 0, name + ' survived'
 source = (ROOT/'Limelight/Stream/VideoDecoderRenderer.m').read_text()
 def section(start, end):
     return source[source.index(start):source.index(end,source.index(start))]
@@ -120,6 +175,15 @@ assert '!enhancementWarmupPending && !enhancementProcessingPending' in draw, 'te
 assert 'report:enhancementProcessingPending' in draw and 'MLVideoEnhancementReportProcessingBudget' in draw, 'CPU pressure is mislabeled as model warmup'
 assert 'framePresentationTimeStamp = _pendingInterpolatedPresentationTimeStamp;' in draw and 'outputTimeStamp:&interpolatedTimeStamp' in stage, 'midpoint timestamp is not carried with its output'
 assert 'if (processedFrame != NULL)' in draw and 'if (resolvedEngine != MLActiveVideoEnhancementEngineVTLowLatencySuperResolution' in draw, 'VT is marked active merely from selection'
+observation = section('- (void)recordActualDrawableTime:', '- (void)recordRenderedFrameSampleAtTimeMs:')
+clear = section('- (void)clearCurrentFrame\n', '- (NSDictionary<NSString *, NSNumber *> *)actualPresentationMetrics')
+assert 'MLActualPresentationRecord(' in observation and 'MLActualPresentationRead(' in observation, 'drawable observations bypass replayed policy'
+assert 'MLActualPresentationReset(&_actualPresentationState)' in clear, 'old presentation callbacks survive stop'
+assert draw.index('observationGeneration = _actualPresentationState.generation;') < draw.index('frame = CVBufferRetain(_currentFrame);'), 'generation is captured after its frame may have stopped'
+assert draw.index('[drawable addPresentedHandler:') < draw.index('[commandBuffer presentDrawable:'), 'handler registered too late'
+assert 'presentedDrawable.presentedTime' in draw and 'weakRenderer' in draw, 'missing actual timestamp or renderer retained by drawable'
+actual_overlay = (ROOT/'Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m').read_text()
+assert 'actualPresentationMetrics]' in actual_overlay and 'actualPresent[@"available"]' in actual_overlay, 'overlay uses submission counters or stale observations'
 # Exercise the legacy cache mutation against both enclosing scopes. A moved draw
 # must not make the battery silently lose the lifetime regression it guards.
 spec = importlib.util.spec_from_file_location('presentation_battery', ROOT/'scripts/assertion-battery.py')
@@ -170,4 +234,4 @@ else:
         assert processor.count('if (_enhancementProcessInFlight)') == 1
         native_replay(release_history + teardown + processor.replace('if (_enhancementProcessInFlight)', 'if (_enhancementProcessInFlight && _enhancementTaskSequence == UINT64_MAX)'),
                       'multiple-CPU-tasks-in-flight', False)
-print('ok: presentation + asynchronous enhancement replay, 11 mutations caught, 25 renderer wiring checks, 3 cache anchors')
+print('ok: presentation + asynchronous enhancement replay, 17 policy mutations caught, renderer wiring checks, 3 cache anchors')

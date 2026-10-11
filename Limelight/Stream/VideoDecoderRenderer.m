@@ -11,6 +11,7 @@
 #import "RendererLayerContainer.h"
 #import "InterpolationCadencePolicy.h"
 #include "EnhancedPresentationPolicy.h"
+#include "ActualPresentationMetrics.h"
 #include "EnhancementProcessingPolicy.h"
 
 #include "Limelight.h"
@@ -1447,6 +1448,8 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     CVDisplayLinkRef _displayLink;
 
     VideoStats _activeWndVideoStats;
+    MLActualPresentationState _actualPresentationState;
+    CFTimeInterval _lastActualPresentationLogTime;
     int _lastFrameNumber;
 
     NSString *_runtimeHostKey;
@@ -1805,6 +1808,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 - (void)clearCurrentFrame
 {
     @synchronized(self) {
+        MLActualPresentationReset(&_actualPresentationState);
+        _lastActualPresentationLogTime = 0.0;
         if (_currentFrame) {
             CVBufferRelease(_currentFrame);
             _currentFrame = NULL;
@@ -1828,6 +1833,43 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
             CVBufferRelease(_previousInterpolationSourceFrame);
             _previousInterpolationSourceFrame = NULL;
         }
+    }
+}
+
+- (NSDictionary<NSString *, NSNumber *> *)actualPresentationMetrics
+{
+    @synchronized(self) {
+        MLActualPresentationReading reading = MLActualPresentationRead(&_actualPresentationState, CACurrentMediaTime());
+        return @{ @"available": @(reading.available), @"samples": @(reading.count),
+                  @"fps": @(reading.fps), @"frameP95Ms": @(reading.frameP95Ms),
+                  @"waitAvailable": @(reading.waitAvailable), @"waitP95Ms": @(reading.waitP95Ms),
+                  @"presented": @(_actualPresentationState.presented),
+                  @"interpolated": @(_actualPresentationState.interpolated),
+                  @"scaled": @(_actualPresentationState.scaled),
+                  @"unpresentedCallbacks": @(_actualPresentationState.unpresented),
+                  @"invalidCallbacks": @(_actualPresentationState.invalid) };
+    }
+}
+
+- (void)recordActualDrawableTime:(CFTimeInterval)time
+                    submittedAt:(CFTimeInterval)submittedAt
+                     generation:(uint64_t)generation
+                   interpolated:(BOOL)interpolated
+                         scaled:(BOOL)scaled
+{
+    @synchronized(self) {
+        if (!MLActualPresentationRecord(&_actualPresentationState, generation, time, submittedAt, interpolated, scaled)) return;
+        CFTimeInterval now = CACurrentMediaTime();
+        if (now - _lastActualPresentationLogTime < 1.0) return;
+        MLActualPresentationReading reading = MLActualPresentationRead(&_actualPresentationState, now);
+        if (!reading.available) return;
+        _lastActualPresentationLogTime = now;
+        Log(LOG_I, @"[video] Actual drawable present fps=%.2f frameP95=%.3fms submitWaitP95=%.3fms waitAvailable=%d samples=%lu source=%llu interpolated=%llu scaled=%llu",
+            reading.fps, reading.frameP95Ms, reading.waitP95Ms, reading.waitAvailable,
+            (unsigned long)reading.count,
+            (unsigned long long)(_actualPresentationState.presented - _actualPresentationState.interpolated),
+            (unsigned long long)_actualPresentationState.interpolated,
+            (unsigned long long)_actualPresentationState.scaled);
     }
 }
 
@@ -5104,7 +5146,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     uint64_t frameSequence = 0;
     BOOL presentingInterpolatedFrame = NO;
     CMTime framePresentationTimeStamp = kCMTimeInvalid;
+    uint64_t observationGeneration = 0;
     @synchronized(self) {
+        observationGeneration = _actualPresentationState.generation;
         // A refresh retry must not run SR/MetalFX again on an already submitted
         // source. Wait for staging so the source cannot overtake its midpoint.
         if (!MLPresentationNeedsDraw(_currentFrameSequence, _interpolationStagingSequence,
@@ -5471,6 +5515,17 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     }
                 }
             }
+
+            CFTimeInterval submittedAt = CACurrentMediaTime();
+            BOOL actuallyScaled = scalingEvidence.reachedDisplay;
+            __weak typeof(self) weakRenderer = self;
+            [drawable addPresentedHandler:^(id<MTLDrawable> presentedDrawable) {
+                __strong typeof(weakRenderer) renderer = weakRenderer;
+                if (!renderer) return;
+                [renderer recordActualDrawableTime:presentedDrawable.presentedTime
+                                       submittedAt:submittedAt generation:observationGeneration
+                                     interpolated:presentingInterpolatedFrame scaled:actuallyScaled];
+            }];
 
             CFTimeInterval presentationHoldSeconds = 0.0;
             if ([self presentationCadenceForInterpolationHold:&presentationHoldSeconds outputFps:NULL]) {

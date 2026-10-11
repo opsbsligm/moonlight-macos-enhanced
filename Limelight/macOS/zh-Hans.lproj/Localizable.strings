@@ -1367,3 +1367,8 @@
 "USB refreshing devices" = "正在刷新 USB 设备…";
 
 "Video Enhancement Runtime Detail Processing Budget" = "VideoToolbox 处理繁忙或已超过当前帧的延迟预算。本帧暂用空间缩放，后续帧会继续尝试。";
+
+/* Drawable observations, independent from submitted frame counters */
+"Actual Display" = "实际呈现";
+"Present Wait" = "提交后等待";
+"Actual Display Metrics Detail" = "实际呈现基于最近 128 个 drawable 呈现时间戳；没有新鲜样本时显示 --。提交后等待只测客户端提交至显示，不是输入到光子的总延迟。Rx/Dec/Render 与增强计数仍描述原有处理和提交路径。";
