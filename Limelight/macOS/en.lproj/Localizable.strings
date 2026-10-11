@@ -1382,3 +1382,14 @@
 
 "Local library unavailable" = "Local library unavailable";
 "Local library preserved after open failure" = "The local library could not be opened. Existing data has not been deleted. Quit, check disk space and file permissions, or restore a known-good backup before relaunching. Error: %@ (%ld).";
+
+"USB permission: %@" = "Local permission: %@";
+
+"USB permission allowed" = "Allowed by local settings";
+"USB permission rule missing" = "No matching permission rule; configure it in Settings";
+
+"USB permission identity unreadable" = "Device identifiers unreadable";
+"USB permission reserved interface" = "Reserved interface; stays on this Mac";
+"USB permission input protected" = "Keyboard/mouse protection is enabled";
+"USB permission class missing" = "Device class not allowed in Settings";
+"USB permission rule disabled" = "Matching permission rule is disabled";

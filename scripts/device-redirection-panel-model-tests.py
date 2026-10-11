@@ -499,6 +499,37 @@ int main(void) {
         CHECK(Says(DecisionFor(unruled, webcam, YES), @"no-rule"),
               "an allowed class with no rule for this device is still a refusal");
 
+        // Local permissions cannot inherit a fabricated paired/offered host state.
+        [armed noteServerInfoValue:nil];
+        NSArray<MLDeviceRedirectionPanelRow *> *localRows=[armed rowsForDevices:@[webcam,dock,keyed] hostIsPaired:NO];
+        CHECK(localRows[0].localPermissionAllowed && !localRows[0].allowed &&
+              [localRows[0].localPermissionReasonKey isEqualToString:@"USB permission allowed"] &&
+              [localRows[0].humanReasonKey isEqualToString:@"usb reason host unpaired"],
+              "a configured webcam remains locally permitted but never session-allowed without pairing");
+        CHECK(armed.hostClaim != MLDeviceRedirectionHostClaimOffered,
+              "local evaluation never promotes the host to offered");
+        CHECK(!localRows[1].localPermissionAllowed && [localRows[1].localPermissionReasonKey isEqualToString:@"USB permission reserved interface"],
+              "local permissions retain reserved interface safety");
+        CHECK(!localRows[2].localPermissionAllowed && [localRows[2].localPermissionReasonKey isEqualToString:@"USB permission input protected"],
+              "local permissions do not accidentally capture keyboard input");
+        MLDeviceRedirectionPanelRow *noRule=[unruled rowsForDevices:@[webcam] hostIsPaired:NO][0];
+        CHECK(!noRule.localPermissionAllowed && [noRule.localPermissionReasonKey isEqualToString:@"USB permission rule missing"],
+              "unpaired devices still explain missing local rules separately");
+        [armed setInterfaceClassAllowed:NO forClass:14];
+        MLDeviceRedirectionPanelRow *classOff=[armed rowsForDevices:@[webcam] hostIsPaired:NO][0];
+        CHECK(!classOff.localPermissionAllowed && [classOff.localPermissionReasonKey isEqualToString:@"USB permission class missing"],
+              "local reasons tell the player that the device class is not permitted");
+        [armed setInterfaceClassAllowed:YES forClass:14];
+        [armed setRuleEnabled:NO atIndex:0];
+        MLDeviceRedirectionPanelRow *ruleOff=[armed rowsForDevices:@[webcam] hostIsPaired:NO][0];
+        CHECK(!ruleOff.localPermissionAllowed && [ruleOff.localPermissionReasonKey isEqualToString:@"USB permission rule disabled"],
+              "local reasons distinguish a disabled matching rule from no rule");
+        [armed setRuleEnabled:YES atIndex:0];
+        [armed setFeatureEnabled:NO];
+        MLDeviceRedirectionPanelRow *off=[armed rowsForDevices:@[webcam] hostIsPaired:NO][0];
+        CHECK(!off.localPermissionAllowed && [off.localPermissionReasonKey isEqualToString:@"USB permissions disabled"],
+              "local permissions obey the feature switch rather than just matching a rule");
+        [armed setFeatureEnabled:YES];[armed noteServerInfoValue:@"1"];
         // What a row may contain.
         MLDeviceRedirectionPanelModel *shown = armed;
         NSArray<MLDeviceRedirectionPanelRow *> *rows =
@@ -1010,6 +1041,8 @@ def main():
           "a menu never claims connection while host and driver integration are missing")
     check('usbMenu.autoenablesItems = NO;' in menu and 'deviceMenu.autoenablesItems = NO;' in menu,
           "AppKit cannot turn unavailable USB actions on automatically")
+    check('row.localPermissionReasonKey' in menu and 'USB permission: %@' in menu and 'permission.enabled = NO;' in menu,
+          "sidebar displays local permission separately, never as an actionable connection")
     check('row.displayName' in menu and 'row.categorySymbolName' in menu and 'row.identifiersLine' in menu,
           "the sidebar identifies devices without asking the player to decode audit tokens")
     folded_pane = " ".join(pane.split())
@@ -1086,6 +1119,20 @@ def main():
     check("localizedStandardCompare" in impl,
           "the card order uses the player's collation, so a localized list sorts the way the "
           "player reads instead of by code unit")
+
+    for label, before, after in [
+        ("local permission inherits host refusal", "_localPermissionAllowed = permissionVerdict.isAllowed;", "_localPermissionAllowed = verdict.isAllowed;"),
+        ("local permission becomes session permission", "_allowed = verdict.isAllowed;", "_allowed = permissionVerdict.isAllowed;"),
+        ("local reason hides a missing rule", '_localPermissionReasonKey = [permissionKey copy];', '_localPermissionReasonKey = [permissionKey copy]; _localPermissionReasonKey = @"USB permission allowed";'),
+    ]:
+        check(rules.count(before) == 1, label + " has one shipping mutation anchor")
+        if rules.count(before) == 1:
+            run_rules(label, rules.replace(before, after), cc, sdk)
+    for key in re.findall(r'@"(USB permission[^"\n]+)"', impl):
+        check(('"%s" = "' % key) in en and ('"%s" = "' % key) in zh,
+              "both languages translate local permission: " + key)
+    check('"USB permission: %@" = "' in en and '"USB permission: %@" = "' in zh,
+          "both languages name local permission without calling it a connected session")
 
     run_rules("the identity is not asked about",
               mutated(rules, "the first precondition",
