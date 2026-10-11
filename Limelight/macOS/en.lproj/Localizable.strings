@@ -1255,6 +1255,8 @@
 "The host offers it" = "The host offers it";
 "Check host" = "Check host";
 "Check host detail" = "Asks the selected host one question and remembers the answer only for this visit. A host that answered no, answered with something the protocol does not define, or left the field out is a refusal; a host that could not be reached at all is shown as unreachable instead.";
+"Check host needs a paired host" = "Select a paired host first";
+"Check host needs a paired host detail" = "This button asks one question of one machine, so it needs a specific paired host selected on the Hosts page. While it says nothing was asked, nothing here is refusing you: pick a host, or pair one, then press the button.";
 "Host unreachable detail" = "The question went out and nothing answerable came back: no address for this host, no reply, an error, or a reply signed by a different machine. None of those is the host refusing devices, so the setting to look at is the connection rather than the PC.";
 
 "What stands in the way" = "What stands in the way";
