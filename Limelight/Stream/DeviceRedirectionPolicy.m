@@ -314,7 +314,10 @@ NSString *MLDeviceRedirectionServerInfoTagName(void) {
 + (BOOL)hostAdvertisesDeviceRedirectionInServerInfo:(NSDictionary<NSString *, id> *)serverInfo {
     id value = serverInfo[MLDeviceRedirectionServerInfoTag];
     if ([value isKindOfClass:[NSNumber class]]) {
-        return [value longLongValue] == 1;
+        // Numeric conversion truncates 1.x to 1; capability is exact, not truthy.
+        // Compare decimal-to-decimal too: comparing NSDecimalNumber against @1
+        // can round a tiny fractional excess to double precision on Foundation.
+        return [(NSNumber *)value compare:[NSDecimalNumber one]] == NSOrderedSame;
     }
     if ([value isKindOfClass:[NSString class]]) {
         // The answer arrives out of an XML reader, and every other tag this app reads from the

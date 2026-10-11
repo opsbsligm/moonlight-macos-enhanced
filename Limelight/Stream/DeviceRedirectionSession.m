@@ -158,7 +158,10 @@ static MLFieldReading MLReadField(NSArray<MLDeviceRedirectionField *> *fields,
 /// on, and the reading that survives a disagreement is the one that refused in the meantime.
 static BOOL MLAnswerIsYes(id value) {
     if ([value isKindOfClass:[NSNumber class]]) {
-        return [(NSNumber *)value integerValue] == 1;
+        // Numeric conversion truncates 1.x to 1; capability is exact, not truthy.
+        // Compare decimal-to-decimal too: comparing NSDecimalNumber against @1
+        // can round a tiny fractional excess to double precision on Foundation.
+        return [(NSNumber *)value compare:[NSDecimalNumber one]] == NSOrderedSame;
     }
     if ([value isKindOfClass:[NSString class]]) {
         return [(NSString *)value isEqualToString:@"1"];
