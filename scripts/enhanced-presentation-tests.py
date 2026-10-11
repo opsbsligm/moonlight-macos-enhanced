@@ -285,7 +285,7 @@ if native_toolchain is not None:
             (p/'EnhancementProcessingPolicy.h').write_text(enhancement_header)
             (p/'EnhancedPresentationPolicy.h').write_text(header)
             (p/'probe.m').write_text(text)
-            built=subprocess.run([native_clang,'-isysroot',native_sdk,'-fobjc-arc','-fblocks','-Wall','-Werror','-Wno-unused-function',
+            built=subprocess.run([native_clang,'-isysroot',native_sdk,'-fobjc-arc','-fblocks','-Wall','-Werror','-Wimplicit-retain-self','-Wno-unused-function',
                 '-framework','Foundation','-framework','CoreVideo','-framework','CoreMedia',str(p/'probe.m'),'-o',str(p/'probe')],capture_output=True,text=True)
             assert built.returncode==0, name+': '+built.stderr
             ran=subprocess.run([str(p/'probe')],capture_output=True,text=True,timeout=30)

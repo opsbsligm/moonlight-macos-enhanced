@@ -4580,27 +4580,27 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                             // Preserve the paused processor identity. Retiring here
                             // would let the next source rewarm and fail at frame rate.
                         } else {
-                            if (_pendingInterpolatedFrame) {
-                                CVBufferRelease(_pendingInterpolatedFrame);
+                            if (self->_pendingInterpolatedFrame) {
+                                CVBufferRelease(self->_pendingInterpolatedFrame);
                             }
-                            _pendingInterpolatedFrame = interpolatedFrame;
-                            _pendingInterpolatedPresentationTimeStamp = interpolatedTimeStamp;
-                            _pendingInterpolatedEnqueueTimeMs = enqueueTimeMs;
-                            _pendingInterpolatedFrameNumber = frameNumber;
-                            _pendingInterpolatedForSourceSequence = sourceSequence;
-                            _pendingInterpolatedPresented = NO;
-                            _deferredCurrentSourceSequence = sourceSequence;
+                            self->_pendingInterpolatedFrame = interpolatedFrame;
+                            self->_pendingInterpolatedPresentationTimeStamp = interpolatedTimeStamp;
+                            self->_pendingInterpolatedEnqueueTimeMs = enqueueTimeMs;
+                            self->_pendingInterpolatedFrameNumber = frameNumber;
+                            self->_pendingInterpolatedForSourceSequence = sourceSequence;
+                            self->_pendingInterpolatedPresented = NO;
+                            self->_deferredCurrentSourceSequence = sourceSequence;
 
-                            _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineVTLowLatency;
-                            if (_frameInterpolationCadenceForced) {
+                            self->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineVTLowLatency;
+                            if (self->_frameInterpolationCadenceForced) {
                                 // The engine runs because the player asked for it, not because the cadence
                                 // allowed it. Say which of the two it is: collapsing this into the quiet
                                 // success sentence is how a forced session would read as an ordinary one.
-                                [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                [self logActiveFrameInterpolationEngine:self->_activeFrameInterpolationEngine
                                                                  report:MLVideoFrameInterpolationReportActiveForced
                                                                  reason:@"forced interpolation over a cadence refusal; see the forced-over-cadence warning for the measured rates"];
                             } else {
-                                [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                [self logActiveFrameInterpolationEngine:self->_activeFrameInterpolationEngine
                                                                  report:MLVideoFrameInterpolationReportActive
                                                                  reason:[NSString stringWithFormat:@"display %.2fHz carries %d FPS doubled on whole refreshes",
                                                                          displayRefreshRate,
