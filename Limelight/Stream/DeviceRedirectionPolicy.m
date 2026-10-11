@@ -347,6 +347,18 @@ NSString *MLDeviceRedirectionServerInfoTagName(void) {
     if (!self.hostSupportsDeviceRedirection) {
         return [self denialFor:MLDeviceRedirectionDenialHostUnsupported device:device token:token ruleIndex:-1];
     }
+    return [self localPermissionVerdictForDevice:device token:token];
+}
+
+- (MLDeviceRedirectionVerdict *)localPermissionVerdictForDevice:(MLUSBDeviceDescriptor *)device {
+    return [self localPermissionVerdictForDevice:device token:MLUSBDeviceAuditToken(device.serialNumber)];
+}
+
+- (MLDeviceRedirectionVerdict *)localPermissionVerdictForDevice:(MLUSBDeviceDescriptor *)device
+                                                       token:(NSString *)token {
+    if (!self.featureEnabled) {
+        return [self denialFor:MLDeviceRedirectionDenialFeatureDisabled device:device token:token ruleIndex:-1];
+    }
     // Nothing after this point can be trusted about a device whose identity is not known,
     // so none of it is tried: a rule cannot be matched against an unknown vendor, and a
     // class check cannot be run over an empty interface list.

@@ -89,6 +89,9 @@ typedef NS_ENUM(NSInteger, MLDeviceRedirectionHostClaim) {
 /// and it sits beside `decisionLine` rather than replacing it, so a screenshot and a log line
 /// still describe the same obstacle in words a support thread can match.
 @property(nonatomic, readonly, copy) NSString *humanReasonKey;
+/// Independent local settings verdict; does not authorize a session operation.
+@property(nonatomic, readonly) BOOL localPermissionAllowed;
+@property(nonatomic, readonly, copy) NSString *localPermissionReasonKey;
 /// The device this row was built from, so that a page can offer the identifiers back to the rule
 /// editor instead of asking a player to retype hexadecimal digits they can already see. The line
 /// above is what a player reads; this is what a page acts on, and neither is derived from the other.

@@ -177,7 +177,8 @@ static NSUInteger MLDominantInterfaceClass(NSArray<MLUSBInterfaceDescriptor *> *
 @implementation MLDeviceRedirectionPanelRow
 
 - (instancetype)initWithIdentity:(MLUSBDeviceIdentity *)identity
-                         verdict:(MLDeviceRedirectionVerdict *)verdict {
+                         verdict:(MLDeviceRedirectionVerdict *)verdict
+               permissionVerdict:(MLDeviceRedirectionVerdict *)permissionVerdict {
     self = [super init];
     if (self) {
         _identity = identity;
@@ -187,6 +188,18 @@ static NSUInteger MLDominantInterfaceClass(NSArray<MLUSBInterfaceDescriptor *> *
                                                       MLUSBIdentityName(identity.vendorID),
                                                       MLUSBIdentityName(identity.productID)];
         _allowed = verdict.isAllowed;
+        _localPermissionAllowed = permissionVerdict.isAllowed;
+        NSString *permissionKey = @{
+            @(MLDeviceRedirectionDenialNone): @"USB permission allowed",
+            @(MLDeviceRedirectionDenialFeatureDisabled): @"USB permissions disabled",
+            @(MLDeviceRedirectionDenialIdentityIncomplete): @"USB permission identity unreadable",
+            @(MLDeviceRedirectionDenialClassReserved): @"USB permission reserved interface",
+            @(MLDeviceRedirectionDenialLocalInputReserved): @"USB permission input protected",
+            @(MLDeviceRedirectionDenialClassNotAllowed): @"USB permission class missing",
+            @(MLDeviceRedirectionDenialRuleDisabled): @"USB permission rule disabled",
+            @(MLDeviceRedirectionDenialNoRule): @"USB permission rule missing"
+        }[@(permissionVerdict.denial)];
+        _localPermissionReasonKey = [permissionKey copy];
         _identityIsReadable = identity.vendorID != nil && identity.productID != nil &&
                               identity.interfaces.count > 0;
         BOOL pureHub = _identityIsReadable;
@@ -513,7 +526,8 @@ static NSUInteger MLDominantInterfaceClass(NSArray<MLUSBInterfaceDescriptor *> *
     for (MLUSBDeviceIdentity *identity in devices) {
         [rows addObject:[[MLDeviceRedirectionPanelRow alloc]
                             initWithIdentity:identity
-                                     verdict:[policy verdictForDevice:identity.descriptor]]];
+                                     verdict:[policy verdictForDevice:identity.descriptor]
+                           permissionVerdict:[policy localPermissionVerdictForDevice:identity.descriptor]]];
     }
     return [rows copy];
 }

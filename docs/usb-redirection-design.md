@@ -402,3 +402,31 @@ A→D 的顺序由风险决定：A 让后面几批的取证前提不会悄悄过
 
 1. **真主机实现**（Stage 2 互通）：现状取证为 Sunshine 仓库无 USB 重定向议题、协议无设备通道（host-contract §1 #1/#2/#8）。到位判据 = 对端在同一能力位上答 `1` 且三段式消息双端跑通。**不接线到 stream 启动路径**是有意选择：我们没有对端，接线等于用猜测填协议，而猜错的代价是"看起来支持"。
 2. **Developer ID + 公证**（Stage 3 加载 DEXT）：到位判据 = `codesign` 出 Developer ID 且 `notarytool` 返回 accepted，此后才允许出现 DEXT 目标。到位清单四项：DEXT 目标进 workflow 的两个 macOS job → 安装/卸载生命周期接到 helper（复用 `SMAuthorizedClients` 代码要求串的做法，见 2.3）→ 公证步骤进 release job → 崩溃与热拔插回退在真机上复测。四项各是一个可评审提交，不是一个"顺手做完"。
+
+## cp24：侧栏独立展示本机许可，不冒充会话可用（2026-10-11）
+
+串流 USB 子菜单新增「本机许可」一行，单独回答设置里的总开关、身份、
+保留接口、键鼠保护、类别与设备规则是否允许该设备。原来仅显示缺少运行环境，
+无论白名单匹配与否都难以分辨，不能指导用户到设置配置许可。
+
+`localPermissionVerdictForDevice:` 是共享 policy 的配置评估入口，不检查主机
+配对/能力，也不修改 hostClaim；不是设置虚假的 paired/offered 标志再求 verdict。
+会话 `verdictForDevice:` 仍按 feature→paired→host-supported→本机配置的顺序拒绝；
+两者共享同一本机规则实现与审计 token，保留原有保留类别/复合设备/输入保护、
+启用规则与禁用规则语义。行的 `allowed`、`humanReasonKey` 仍是会话结果，新增
+`localPermissionAllowed`、`localPermissionReasonKey` 仅是本机配置结果。
+
+侧栏使用简短中英文许可文案：设置已允许、未匹配规则、规则停用、类别未允许、
+保留接口、键鼠保护、身份不可读与许可关闭，不引用「上面的列表/下面的按钮」。
+该许可行 disabled，连接按钮继续 disabled，`USB session unavailable` 继续显示。
+配对白名单匹配不等于真实 USB 重定向；未声称主机通道或 DriverKit 已可用。
+
+原生生产 policy/model replay 验证：未配对/未询问主机的设备可以本机许可匹配，
+但会话仍拒绝且 hostClaim 不会被提升；保留接口、键鼠、类别、禁用规则、
+缺失规则、总开关分开解释。合法负变异分别混用 host refusal、把本机许可
+冒充会话 allowed、把拒绝文案覆盖为允许，均必须编译后再判断行为。
+原 policy 门禁继续检查拒绝优先级和 serial 隐私。Debug构建已通过。
+
+边界：原生组件/模型测试不是操作者 GUI 与真实 USB 到远端验收。cp23本地
+提交仍未推送，本轮也不取消正在执行的cp22 CI；新提交在其终态后推送。
+回滚只需 revert 本轮提交，不改变已保存的许可规则或主机数据。

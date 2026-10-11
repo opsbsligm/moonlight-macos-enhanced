@@ -2016,6 +2016,12 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
             action:nil keyEquivalent:@""];
         identity.enabled = NO;
         [deviceMenu addItem:identity];
+        // A whitelist match is configuration, not a connected USB session.
+        NSMenuItem *permission = [[NSMenuItem alloc] initWithTitle:
+            [NSString stringWithFormat:MLString(@"USB permission: %@", nil),
+                MLString(row.localPermissionReasonKey, nil)] action:nil keyEquivalent:@""];
+        permission.enabled = NO;
+        [deviceMenu addItem:permission];
         NSMenuItem *connect = [[NSMenuItem alloc] initWithTitle:MLString(@"USB connect to this session", nil) action:nil keyEquivalent:@""];
         connect.enabled = NO;
         [deviceMenu addItem:connect];

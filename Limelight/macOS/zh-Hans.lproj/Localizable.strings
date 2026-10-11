@@ -1382,3 +1382,14 @@
 
 "Local library unavailable" = "无法打开本地主机库";
 "Local library preserved after open failure" = "无法打开本地主机库，现有数据未被删除。请退出，检查磁盘空间和文件权限，或恢复已确认有效的备份后再启动。错误：%@ (%ld)。";
+
+"USB permission: %@" = "本机许可：%@";
+
+"USB permission allowed" = "设置已允许";
+"USB permission rule missing" = "没有匹配的许可规则，请到设置中配置";
+
+"USB permission identity unreadable" = "无法读取设备标识";
+"USB permission reserved interface" = "保留接口，留在本机";
+"USB permission input protected" = "键鼠保护已启用";
+"USB permission class missing" = "设置未允许该设备类别";
+"USB permission rule disabled" = "匹配的许可规则已停用";
