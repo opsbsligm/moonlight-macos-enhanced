@@ -96,6 +96,10 @@ typedef NS_ENUM(NSInteger, MLDeviceRedirectionHostClaim) {
 @property(nonatomic, readonly) BOOL allowed;
 @property(nonatomic, readonly) BOOL identityIsReadable;
 @property(nonatomic, readonly) BOOL hasReservedInterface;
+/// Presentation-only grouping. True only for a readable device whose every interface
+/// is hub class 0x09. Composite, unknown and reserved faces remain in the main list.
+/// This never changes a permission verdict or removes a device from enumeration.
+@property(nonatomic, readonly) BOOL isInfrastructureDevice;
 
 /// Rows in the order a card list should show them: devices that could move today first, then
 /// the ones a rule can never reach, then everything else; each group in name order with the

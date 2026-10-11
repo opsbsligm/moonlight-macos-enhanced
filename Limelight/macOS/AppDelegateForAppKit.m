@@ -600,6 +600,17 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     result[@"initialPixels"] = MLProbePixels([output stringByAppendingPathComponent:initialPNG], initialRep);
     result[@"initialCapture"] = initialPNG;
 
+    // USB hubs are intentionally collapsed. Keep their initial screenshot above,
+    // then prove the grouped rows can still be reached without altering permissions.
+    if ([name isEqualToString:@"devicesPane"] &&
+        MLProbeNodesVendText(result[@"readableContent"], expectation[@"deviceHubsSectionTitle"])) {
+        NSMutableArray<id> *deviceTriangles = [NSMutableArray array];
+        MLProbeCollectDisclosureTriangles(overlay, 0, deviceTriangles);
+        result[@"hubDisclosuresPressed"] = @(MLProbePressDisclosureTriangles(deviceTriangles));
+        MLProbeSpin(0.8);
+        result[@"readableContentExpanded"] = MLProbeReadableNodes(overlay);
+    }
+
     // Read the rest of the page. The enhancement controls and the capability matrix
     // are below the fold, and a ScrollView that has not been scrolled has no such
     // rows to read, so "the page does not say it" would otherwise be indistinguishable

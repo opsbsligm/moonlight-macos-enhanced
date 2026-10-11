@@ -1372,3 +1372,6 @@
 "Actual Display" = "Actual Display";
 "Present Wait" = "Present Wait";
 "Actual Display Metrics Detail" = "Actual Display uses the latest 128 drawable presentation timestamps. No fresh samples are shown as --. Present Wait measures client submission to display, not input-to-photon latency. Rx/Dec/Render and enhancement counters describe the existing processing/submission path.";
+
+"USB hubs" = "USB hubs";
+"USB hubs grouping detail" = "USB hubs are grouped here to keep peripherals easy to find. Expanding this section reveals every hub; this grouping does not change device permissions.";

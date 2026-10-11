@@ -141,6 +141,17 @@ def verify_panes(report, refusals, out_dir):
             variation = pixels.get("stddev")
             expect(isinstance(variation, (int, float)) and variation >= 0.02,
                    "USB permission page initially drew a flat surface")
+            hub_title = expectation.get("deviceHubsSectionTitle")
+            hub_detail = expectation.get("deviceHubsSectionDetail")
+            expect(bool(hub_title) and bool(hub_detail), "USB grouping expectations are missing")
+            initial_texts = texts_of(pane, "readableContent")
+            if hub_title and hub_title in initial_texts:
+                expect(bool(hub_detail), "USB hub section supplies no scope explanation")
+                expect(hub_detail not in initial_texts, "USB hubs did not start collapsed")
+                expect(int(pane.get("hubDisclosuresPressed") or 0) >= 1,
+                       "USB hubs were never expanded for the reachability pass")
+                expect(hub_detail in texts_of(pane, "readableContentExpanded"),
+                       "expanded USB hub group exposes no explanation")
             required = expectation.get("devicePermissionStrings")
             expect(isinstance(required, list) and len(required) >= 5,
                    "USB pane supplied no permission scope expectations")
@@ -496,11 +507,13 @@ def sample_panes():
     return {
         "devicesPane": pane(6,
             [{"role": "AXStaticText", "text": value} for value in
-             ("USB permissions", "permission only", "USB switch", "local devices", "refresh")],
-            {"expectationsFromPageModel": True, "devicePermissionStrings":
+             ("USB permissions", "permission only", "USB switch", "local devices", "refresh", "USB hubs")],
+            {"expectationsFromPageModel": True, "deviceHubsSectionTitle": "USB hubs",
+             "deviceHubsSectionDetail": "hubs remain reachable", "devicePermissionStrings":
              ["USB permissions", "permission only", "USB switch", "local devices", "refresh"]},
             SAMPLE_CAPTURES[3], initialCapture=SAMPLE_CAPTURES[3],
-            initialPixels={"stddev": 0.21, "distinctColours": 77}),
+            initialPixels={"stddev": 0.21, "distinctColours": 77}, hubDisclosuresPressed=1,
+            readableContentExpanded=[{"role": "AXStaticText", "text": "hubs remain reachable"}]),
         "streamPane": pane(0, stream_nodes, stream_expectation, SAMPLE_CAPTURES[0]),
         "videoPane": pane(1, video_nodes, video_expectation, SAMPLE_CAPTURES[1]),
         "appPane": pane(3, app_nodes, app_expectation, SAMPLE_CAPTURES[2],
@@ -574,6 +587,10 @@ def self_test():
                     {"settingsPagePixels": {"stddev": 0.012, "distinctColours": 44}})),
                 ("no material is composited", lambda report: report.update({"materialLayers": []})),
                 ("the report is empty", lambda report: report.update({"windowsAddedByPresentingSettings": None})),
+                ("USB grouping expectations absent", lambda report: report["devicesPane"]["expectations"].update(
+                    {"deviceHubsSectionTitle": "", "deviceHubsSectionDetail": ""})),
+                ("USB hubs unreachable", lambda report: report["devicesPane"].update(
+                    {"hubDisclosuresPressed": 0, "readableContentExpanded": []})),
                 ("USB initial fold is flat", lambda report: report["devicesPane"].update(
                     {"initialPixels": {"stddev": 0.001}})),
                 ("USB initial fold capture missing", lambda report: report["devicesPane"].update(
