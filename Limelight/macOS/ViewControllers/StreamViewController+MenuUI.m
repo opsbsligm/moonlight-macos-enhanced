@@ -7,6 +7,21 @@
 #import "DeviceRedirectionPanelModel.h"
 #import "USBScanPolicy.h"
 
+// Group only the model's proven pure hubs; composite and unreadable devices stay visible.
+static void MLAppendUSBMenuDevice(NSMenu *devices, NSMenu *hubs,
+                                  NSMenuItem *item, BOOL infrastructure) {
+    [(infrastructure ? hubs : devices) addItem:item];
+}
+
+static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
+    if (hubs.numberOfItems == 0) return;
+    NSMenuItem *group = [[NSMenuItem alloc] initWithTitle:
+        [NSString stringWithFormat:@"%@ (%ld)", hubs.title, (long)hubs.numberOfItems]
+        action:nil keyEquivalent:@""];
+    group.submenu = hubs;
+    [devices addItem:group];
+}
+
 @implementation StreamViewController (MenuUI)
 
 - (NSString *)mouseModeDisplayNameForMode:(NSString *)mode {
@@ -1978,6 +1993,8 @@
     setSymbol(usbItem, @"cable.connector");
     NSMenu *usbMenu = [[NSMenu alloc] initWithTitle:usbItem.title];
     usbMenu.autoenablesItems = NO;
+    NSMenu *usbHubsMenu = [[NSMenu alloc] initWithTitle:MLString(@"USB hubs", nil)];
+    usbHubsMenu.autoenablesItems = NO;
     MLDeviceRedirectionPanelModel *usbPermissions = [[MLDeviceRedirectionPanelModel alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
     // No host capability is inferred from a video connection. UNLOCK(stage3):
     // until a real host channel and loadable driver exist, no menu action may claim connection.
@@ -2009,8 +2026,9 @@
         reason.enabled = NO;
         [deviceMenu addItem:reason];
         deviceItem.submenu = deviceMenu;
-        [usbMenu addItem:deviceItem];
+        MLAppendUSBMenuDevice(usbMenu, usbHubsMenu, deviceItem, row.isInfrastructureDevice);
     }
+    MLFinishUSBHubMenu(usbMenu, usbHubsMenu);
     if (!hasUSBSnapshot || self.usbMenuScanInFlight || self.usbMenuBusStatus != MLUSBBusSnapshotStatusRead || usbRows.count == 0) {
         NSString *stateKey = !hasUSBSnapshot ? @"USB scanning devices" :
             (self.usbMenuScanInFlight ? @"USB refreshing devices" :
