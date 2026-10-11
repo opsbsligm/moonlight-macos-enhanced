@@ -53,6 +53,15 @@ int main(void) {
     assert(!MLEnhancementShouldWait(false,100,101,10));
     assert(!MLEnhancementShouldWait(true,100,99,10));
     assert(!MLEnhancementShouldWait(true,100,100,0));
+    assert(MLEnhancementOverloadStrikes(0,true,5,5)==0);
+    assert(MLEnhancementOverloadStrikes(0,true,6,5)==1);
+    assert(MLEnhancementOverloadStrikes(1,true,6,5)==2);
+    assert(MLEnhancementOverloadStrikes(2,true,6,5)==3);
+    assert(MLEnhancementOverloadStrikes(2,true,5,5)==0);
+    assert(MLEnhancementOverloadStrikes(0,true,20,5)==3);
+    assert(MLEnhancementOverloadStrikes(0,false,0,5)==3);
+    assert(MLEnhancementOverloadStrikes(0,true,1,0)==3);
+    assert(MLEnhancementOverloadStrikes(0,true,UINT64_MAX,5)==3);
     MLActualPresentationState actual = {0};
     assert(MLActualPresentationRecord(&actual,0,10,9.997,false,true));
     assert(!MLActualPresentationRead(&actual,10).available);
@@ -120,6 +129,10 @@ for name, before, after in mutations:
     assert header.count(before) == 1, name
     assert replay(header.replace(before,after)) != 0, name + ' survived'
 enhancement_mutations = [
+    ('ignore-failed-process', '!processed || budgetMs == 0', '(budgetMs == 0 && processed)'),
+    ('ignore-severe-overload', 'elapsedMs / budgetMs >= 4', 'elapsedMs / budgetMs >= 400'),
+    ('never-stop-mild-overload', 'previous >= 2 ? 3 : previous + 1', 'previous >= 2 ? 2 : previous + 1'),
+
     ('publish-after-stop', 'taskGeneration == currentGeneration', 'taskGeneration <= currentGeneration'),
     ('publish-old-frame', 'taskSequence == currentSequence', 'taskSequence <= currentSequence'),
     ('publish-wrong-buffer', 'inputIsCurrent &&', '(inputIsCurrent || !inputIsCurrent) &&'),
@@ -237,6 +250,9 @@ else:
             return True
     methods = release_history + teardown + processor
     if native_replay(methods, 'control', True):
+        native_replay(methods.replace('if (_enhancementSuspended)', 'if (_enhancementSuspended && false)', 1), 'ignore-session-breaker', False)
+        native_replay(methods.replace('if (currentTask && processor == self->_frameProcessor &&', 'if (currentTask &&', 1).replace('generation == self->_enhancementProcessGeneration) {', 'generation <= self->_enhancementProcessGeneration) {', 1), 'retired-task-poisons-breaker', False)
+
         assert teardown.count('dispatch_async(_vtEnhancementQueue, ^{') == 1
         native_replay(release_history + teardown.replace('dispatch_async(_vtEnhancementQueue, ^{', 'MLTestRunInline(^{') + processor,
                       'end-session-during-process', False)
@@ -276,4 +292,4 @@ if native_toolchain is not None:
 spec=importlib.util.spec_from_file_location('vt_hardware_probe', ROOT/'scripts/vt-enhancement-probe.py')
 vt_probe=importlib.util.module_from_spec(spec);spec.loader.exec_module(vt_probe)
 assert vt_probe.self_test()==0
-print('ok: presentation + asynchronous enhancement replay, 17 policy mutations caught, renderer wiring checks, 3 cache anchors')
+print(f'ok: presentation + asynchronous enhancement replay, {len(mutations)+len(enhancement_mutations)+len(actual_mutations)} policy mutations caught, renderer wiring checks, 3 cache anchors')
