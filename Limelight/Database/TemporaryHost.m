@@ -23,7 +23,7 @@
     return self;
 }
 
-- (id) initFromHost:(Host*)host {
+- (id) initMetadataFromHost:(Host*)host {
     self = [self init];
     
     self.address = host.address;
@@ -40,6 +40,12 @@
     // Ensure we don't use a stale cached pair state if we haven't pinned the cert yet
     self.pairState = host.serverCert ? [host.pairState intValue] : PairStateUnpaired;
     
+    return self;
+}
+
+- (id) initFromHost:(Host*)host {
+    self = [self initMetadataFromHost:host];
+
     NSMutableSet *appList = [[NSMutableSet alloc] init];
 
     for (App* app in host.appList) {

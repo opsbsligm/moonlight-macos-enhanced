@@ -207,6 +207,23 @@ static void MLRecordHostRead(void) {
     [[DatabaseSingleton shared] saveContext];
 }
 
+- (TemporaryHost *)hostMetadataForUUID:(NSString *)uuid {
+    if (uuid.length == 0) return nil;
+    __block TemporaryHost *metadata = nil;
+    [_managedObjectContext performBlockAndWait:^{
+        NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"Host"];
+        request.predicate = [NSPredicate predicateWithFormat:@"uuid == %@", uuid];
+        request.fetchLimit = 1;
+        NSError *error = nil;
+        NSArray *hosts = [self->_managedObjectContext executeFetchRequest:request error:&error];
+        Host *host = hosts.firstObject;
+        if (error == nil && host != nil) {
+            metadata = [[TemporaryHost alloc] initMetadataFromHost:host];
+        }
+    }];
+    return metadata;
+}
+
 - (NSArray*) getHosts {
 #if DEBUG
     MLRecordHostRead();

@@ -41,6 +41,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(atomic, retain) NSSet *appList;
 @property(nonatomic, readonly) NSString *displayName;
 
+// Connection metadata only: never constructs the application back-reference graph.
+- (instancetype)initMetadataFromHost:(Host *)host;
 - (instancetype)initFromHost:(Host *)host;
 
 - (NSComparisonResult)compareName:(TemporaryHost *)other;
