@@ -516,12 +516,19 @@ static NSUInteger MLDominantInterfaceClass(NSArray<MLUSBInterfaceDescriptor *> *
 - (NSArray<MLDeviceRedirectionPanelRow *> *)rowsByScanningBusWithHostPaired:(BOOL)hostIsPaired {
     MLUSBBusSnapshotStatus status = MLUSBBusSnapshotStatusBusUnreadable;
     NSArray<MLUSBDeviceIdentity *> *devices = MLUSBBusSnapshotCopyDeviceIdentities(&status);
+    return [self acceptBusSnapshot:devices status:status hostIsPaired:hostIsPaired];
+}
+
+- (NSArray<MLDeviceRedirectionPanelRow *> *)acceptBusSnapshot:(NSArray<MLUSBDeviceIdentity *> *)devices
+                                                    status:(MLUSBBusSnapshotStatus)status
+                                              hostIsPaired:(BOOL)hostIsPaired {
     _busStatus = status;
     // The status alone cannot answer "was the bus ever looked at": before the first scan it holds
     // the enumeration's zero value, which is `read`. A page that printed it would be reporting an
     // empty bus as a fact learned from the machine, so the scan records that it happened.
     _busHasBeenScanned = YES;
-    return [self rowsForDevices:devices hostIsPaired:hostIsPaired];
+    return [self rowsForDevices:status == MLUSBBusSnapshotStatusRead ? devices : @[]
+                  hostIsPaired:hostIsPaired];
 }
 
 + (NSArray<NSNumber *> *)interfaceClassesNoRuleCanReach {

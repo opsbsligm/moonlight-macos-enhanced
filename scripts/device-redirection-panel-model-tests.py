@@ -588,6 +588,21 @@ int main(void) {
               "the device no rule can ever reach keeps its own group, between the ready one and "
               "the refusals that have a fix");
 
+        // Background readers hand over an immutable result. A failed read must not
+        // advertise partial identities; an empty successful read is a different state.
+        NSArray *snapshotDevices = @[DeviceWithFaces(0x1234, 0x5678, @[@8])];
+        NSArray *failedSnapshot = [clean acceptBusSnapshot:snapshotDevices
+                                  status:MLUSBBusSnapshotStatusBusUnreadable hostIsPaired:NO];
+        CHECK(clean.busHasBeenScanned && clean.busStatus == MLUSBBusSnapshotStatusBusUnreadable
+              && failedSnapshot.count == 0, "an unreadable snapshot publishes no partial devices");
+        NSArray *emptySnapshot = [clean acceptBusSnapshot:@[]
+                                  status:MLUSBBusSnapshotStatusRead hostIsPaired:NO];
+        CHECK(clean.busHasBeenScanned && clean.busStatus == MLUSBBusSnapshotStatusRead
+              && emptySnapshot.count == 0, "an empty completed snapshot is a readable bus");
+        NSArray *goodSnapshot = [clean acceptBusSnapshot:snapshotDevices
+                                  status:MLUSBBusSnapshotStatusRead hostIsPaired:NO];
+        CHECK(goodSnapshot.count == 1, "a successful snapshot becomes one row per device");
+
         // Looking at the real bus. Read-only, and explicit: this is the one case that reaches the
         // machine the tests run on, and it is here because the property it sets is the one the page
         // puts next to an empty list.
@@ -743,6 +758,19 @@ int main(void) {
           "a scan neither retains its controller nor expires merely because the dock opened")
     check("if (!strongSelf.edgeMenuMenuVisible)" in worker,
           "scan completion cannot rebuild the menu while a user is tracking it")
+    settings = read("Limelight/macOS/ViewControllers/SettingsDevicesPane.swift")
+    scan = settings.split("private func scanBus() {", 1)[1].split("private func prefill", 1)[0]
+    check(scan.index("DispatchQueue.global(qos: .utility)") <
+          scan.index("MLUSBBusSnapshotCopyDeviceIdentities") <
+          scan.index("DispatchQueue.main.async") < scan.index("panel.acceptBusSnapshot"),
+          "settings enumerates in background and only mutates its model back on main")
+    check("MLUSBScanShouldStart(" in scan and "MLUSBScanMayPublish(" in scan and
+          "busScanGeneration" in scan and "rowsByScanningBus(" not in scan,
+          "settings uses the replayed single-flight and old-visit rejection policy")
+    check(".onDisappear" in settings and "busScanGeneration &+= 1" in settings and
+          ".disabled(busScanInFlight)" in settings,
+          "leaving invalidates a scan and refresh cannot overlap an active read")
+
     check("usbMenuSnapshotGeneration == self.activeStreamGeneration" in rebuild and
           '"USB device scan failed"' in rebuild and '"USB scanning devices"' in rebuild,
           "the sidebar distinguishes old session, unreadable bus and initial scan from emptiness")
@@ -967,6 +995,11 @@ def main():
               mutated(rules, "the switch\'s own row addressing",
                       "    NSMutableArray<NSNumber *> *positions = [NSMutableArray array];\n    [self collectRules:nil storageIndices:positions];\n    if (index >= positions.count) {\n        return NO;\n    }\n    const NSUInteger storageIndex = [positions[index] unsignedIntegerValue];\n    NSArray *records = [self storedRules];\n    if (storageIndex >= records.count) {\n        return NO;\n    }\n    id record = records[storageIndex];",
                       "    const NSUInteger storageIndex = index;\n    NSArray *records = [self storedRules];\n    if (storageIndex >= records.count) {\n        return NO;\n    }\n    id record = records[storageIndex];"),
+              cc, sdk)
+    run_rules("failed bus snapshot exposes partial devices",
+              mutated(rules, "snapshot failure suppresses devices",
+                      "status == MLUSBBusSnapshotStatusRead ? devices : @[]",
+                      "status == MLUSBBusSnapshotStatusRead ? devices : devices"),
               cc, sdk)
     run_rules("a bus that was never scanned claims it was",
               mutated(rules, "the scan records itself",

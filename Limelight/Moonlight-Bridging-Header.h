@@ -24,3 +24,5 @@
 // stream then refuses.
 #import "InterpolationCadencePolicy.h"
 #import "DeviceRedirectionPanelModel.h"
+
+#include "USBScanPolicy.h"
