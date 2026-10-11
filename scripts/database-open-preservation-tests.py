@@ -56,6 +56,14 @@ static id injectedShared(id self, SEL cmd) { return fixture; }
 #define CHECK(c, msg) do { if (!(c)) { puts("FAIL: " msg); return 1; } } while(0)
 int main(int argc, char **argv) { @autoreleasepool { @try {
     CHECK(argc == 2, "private fixture path required");
+    CHECK([MLDatabaseSupportDirectoryName(nil) isEqualToString:@"Moonlight"], "missing identity keeps normal library");
+    CHECK([MLDatabaseSupportDirectoryName(@"std.skyhua.MoonlightMac2") isEqualToString:@"Moonlight"], "normal identity unchanged");
+    CHECK([MLDatabaseSupportDirectoryName(@"other.QA") isEqualToString:@"Moonlight"], "unknown identity does not redirect library");
+#if DEBUG
+    CHECK([MLDatabaseSupportDirectoryName(@"std.skyhua.MoonlightMac2.QA") isEqualToString:@"Moonlight-QA"], "Debug QA library isolated");
+#else
+    CHECK([MLDatabaseSupportDirectoryName(@"std.skyhua.MoonlightMac2.QA") isEqualToString:@"Moonlight"], "Release never redirects library");
+#endif
     Method add = class_getInstanceMethod(NSPersistentStoreCoordinator.class,
         @selector(addPersistentStoreWithType:configuration:URL:options:error:));
     realAdd = (void *)method_setImplementation(add, (IMP)injectedAdd);
@@ -112,6 +120,9 @@ def main():
     failures = 0
     cases = [
         ('shipping', source, init, True),
+        ('shipping-release', source, init, True),
+        ('QA-shares-library', source.replace('@"Moonlight-QA"', '@"Moonlight"'), init, False),
+        ('release-redirects-library', source.replace('#if DEBUG', '#if 1'), init, False),
         ('delete-store', source.replace('return nil;\n        }', '[[NSFileManager defaultManager] removeItemAtURL:[self getStoreURL] error:nil];\n            return nil;\n        }', 1), init, False),
         ('unserialized-open', source.replace('@synchronized(self)', 'if (YES)'), init, False),
         ('retry-failed', source.replace('|| _persistentStoreLoadAttempted', '|| NO'), init, False),
@@ -124,6 +135,7 @@ def main():
             path = folder/'gate.m'; binary = folder/'gate'
             path.write_text(DRIVER.replace('@@SINGLETON@@', singleton).replace('@@INIT@@', initialiser))
             built = subprocess.run([cc, '-isysroot', sdk, '-fobjc-arc', '-Wall', '-Werror',
+                '-DDEBUG='+('0' if name in ('shipping-release', 'release-redirects-library') else '1'),
                 '-I'+str(ROOT/'Limelight'), str(path), '-framework', 'Foundation', '-framework', 'CoreData', '-o', str(binary)], capture_output=True, text=True)
             if built.returncode:
                 print('FAIL:', name, 'must compile', built.stderr[-1800:]); failures += 1; continue
@@ -131,6 +143,9 @@ def main():
             valid = ran.returncode == 0 and 'PASS:' in ran.stdout if positive else ran.returncode == 1 and 'FAIL:' in ran.stdout
             print('ok:' if valid else 'FAIL:', name, 'compiled; runtime:', ran.stdout.strip())
             failures += not valid
+    wired = 'URLByAppendingPathComponent:MLDatabaseSupportDirectoryName(NSBundle.mainBundle.bundleIdentifier)' in source
+    print('ok:' if wired else 'FAIL:', 'shipping directory uses identity helper')
+    failures += not wired
     app = (ROOT/'Limelight/macOS/AppDelegateForAppKit.m').read_text()
     startup = app.split('- (void)applicationDidFinishLaunching:', 1)[1].split('- (void)addDiagnoseMenu', 1)[0]
     valid = all(s in startup for s in ('persistentStoreLoadError', 'Local library unavailable',
