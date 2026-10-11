@@ -83,6 +83,7 @@ CLASS_GATE = """    if (!anyClassAllowed) {
 
 DRIVER = r"""
 #import <Foundation/Foundation.h>
+#include <math.h>
 
 @@RULES@@
 
@@ -299,6 +300,14 @@ int main(void) {
         expect_capability("a word instead of the answer", @{@"usbRedirection": @"yes"}, NO);
         expect_capability("a tag nobody agreed on", @{@"usbredirection": @"1"}, NO);
 
+        NSArray *nonYes=@[@1.01,@1.9,@0.99,@(-1),@(NAN),@(INFINITY),@(-INFINITY),
+            [NSDecimalNumber decimalNumberWithString:@"1.00000000000000000000001"]];
+        for(NSNumber *value in nonYes) {
+            expect_capability("numeric conversion must not invent a capability", @{@"usbRedirection":value}, NO);
+        }
+        expect_capability("true remains an explicit yes", @{@"usbRedirection":@YES}, YES);
+        expect_capability("exact numeric one is compatible", @{@"usbRedirection":@1.0}, YES);
+        expect_capability("exact decimal one is compatible", @{@"usbRedirection":[NSDecimalNumber one]}, YES);
         // The audit line, which is the only form any of this should reach disk in.
         MLUSBDeviceDescriptor *serialised = device(0x28de, 0x2202, @"SERIAL-NEVER-LOGGED-9", pad);
         MLDeviceRedirectionVerdict *quiet = [policy(YES, YES, padClass, NO, padRule)
@@ -365,6 +374,12 @@ def main():
 
     cc, sdk = apple_toolchain.clang_and_sdk("device redirection policy")
     run_rules("the shipping policy", rules, cc, sdk, expect_pass=True)
+    run_rules("decimal yes loses precision against an ordinary NSNumber", rules.replace(
+        "return [(NSNumber *)value compare:[NSDecimalNumber one]] == NSOrderedSame;",
+        "return [(NSNumber *)value isEqualToNumber:@1];"), cc, sdk)
+    run_rules("numeric capability truncated to a yes", rules.replace(
+        "return [(NSNumber *)value compare:[NSDecimalNumber one]] == NSOrderedSame;", "return [value longLongValue] == 1;"), cc, sdk)
+
 
     # --- nothing here touches a device, a driver, or a socket -----------------
     impl = read(IMPL)
