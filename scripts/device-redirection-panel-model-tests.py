@@ -863,7 +863,63 @@ def usb_host_completion_tests():
           "host checks reject hidden pages and overlapping requests")
 
 
+def usb_sidebar_grouping_tests():
+    """Replay the actual shipping AppKit insertion, not a parallel menu implementation."""
+    menu = read("Limelight/macOS/ViewControllers/StreamViewController+MenuUI.m")
+    check("MLAppendUSBMenuDevice(usbMenu, usbHubsMenu, deviceItem, row.isInfrastructureDevice);" in menu
+          and "MLFinishUSBHubMenu(usbMenu, usbHubsMenu);" in menu
+          and "usbHubsMenu.autoenablesItems = NO;" in menu,
+          "sidebar routes the model's pure hubs to a non-autoenabled folded menu")
+    helper = menu.split("static void MLAppendUSBMenuDevice", 1)[1].split("@implementation", 1)[0]
+    helper = "static void MLAppendUSBMenuDevice" + helper
+    driver = r'''
+#import <AppKit/AppKit.h>
+@@HELPER@@
+int main(void) { @autoreleasepool {
+    [NSApplication sharedApplication];
+    for (int mode = 0; mode < 3; mode++) {
+        NSMenu *devices = [[NSMenu alloc] initWithTitle:@"USB"];
+        NSMenu *hubs = [[NSMenu alloc] initWithTitle:@"Hubs"];
+        devices.autoenablesItems = NO; hubs.autoenablesItems = NO;
+        NSMenuItem *peripheral = [[NSMenuItem alloc] initWithTitle:@"Composite or unknown" action:nil keyEquivalent:@""];
+        NSMenuItem *hub = [[NSMenuItem alloc] initWithTitle:@"Pure hub" action:nil keyEquivalent:@""];
+        if (mode != 2) MLAppendUSBMenuDevice(devices, hubs, peripheral, NO);
+        if (mode != 0) MLAppendUSBMenuDevice(devices, hubs, hub, YES);
+        MLFinishUSBHubMenu(devices, hubs);
+        NSInteger expected = mode == 1 ? 2 : 1;
+        if (devices.numberOfItems != expected) return 1;
+        if (mode != 2 && [devices itemAtIndex:0] != peripheral) return 2;
+        if (mode != 0) {
+            NSMenuItem *group = devices.itemArray.lastObject;
+            if (group.submenu != hubs || ![group.title isEqualToString:@"Hubs (1)"] ||
+                hubs.numberOfItems != 1 || [hubs itemAtIndex:0] != hub) return 3;
+        }
+    }
+    puts("shipping AppKit grouping: peripheral-only, mixed, hubs-only passed");
+} return 0; }
+'''
+    cc, sdk = apple_toolchain.clang_and_sdk("USB sidebar grouping")
+    with tempfile.TemporaryDirectory(prefix="ml-usb-sidebar-") as td:
+        for label, code, positive in (
+            ("shipping", helper, True),
+            ("inverted-routing", helper.replace("infrastructure ? hubs : devices", "infrastructure ? devices : hubs"), False),
+            ("empty-group", helper.replace("if (hubs.numberOfItems == 0) return;", "if (hubs.numberOfItems < 0) return;"), False),
+        ):
+            source, binary = os.path.join(td, label + ".m"), os.path.join(td, label)
+            with open(source, "w") as f:
+                f.write(driver.replace("@@HELPER@@", code))
+            built = subprocess.run([cc, "-isysroot", sdk, "-fobjc-arc", "-Wall", "-Werror",
+                                    source, "-framework", "AppKit", "-o", binary], capture_output=True, text=True)
+            check(built.returncode == 0, "AppKit %s compiles: %s" % (label, built.stderr[-500:]))
+            if built.returncode != 0:
+                continue
+            ran = subprocess.run([binary], capture_output=True, text=True, timeout=30)
+            check(ran.returncode == 0 if positive else ran.returncode in (1, 2, 3),
+                  "AppKit %s %s at runtime" % (label, "passes" if positive else "is rejected"))
+
+
 def main():
+    usb_sidebar_grouping_tests()
     usb_scan_policy_tests()
     usb_host_completion_tests()
     usb_host_metadata_tests()
