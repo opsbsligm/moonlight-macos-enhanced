@@ -4954,7 +4954,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             _enhancementResultSequence == frameSequence) {
             return CVBufferRetain(_enhancementResultFrame);
         }
-        if (_enhancementFailedSequence == frameSequence) return NULL;
+        if (_enhancementFailedSequence == frameSequence) {
+            // An expired/failed source must fall back without requeueing it or
+            // retiring the session and resetting its overload history.
+            if (processingPending) *processingPending = YES;
+            return NULL;
+        }
         uint64_t nowMs = LiGetMillis();
         // At most one display period of CPU wait, serviced by refresh retries,
         // not a blocking main-thread wait. Newer sources bypass the old task.
@@ -4994,7 +4999,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     CVPixelBufferRef output = NULL;
                     BOOL processed = NO;
                     NSError *error = nil;
-                    // A queued task invalidated before it starts never runs VT.
+                    // A superseded or expired queued task never starts VT.
                     BOOL currentTask = NO;
                     @synchronized(self) {
                         BOOL inputIsCurrent = isInterpolated
@@ -5004,7 +5009,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                             : self->_lastPresentedFrameSequence == frameSequence;
                         currentTask = processor == self->_frameProcessor &&
                             MLEnhancementMayPublish(generation, self->_enhancementProcessGeneration,
-                                frameSequence, self->_currentFrameSequence, inputIsCurrent, alreadySubmitted);
+                                frameSequence, self->_currentFrameSequence, inputIsCurrent, alreadySubmitted) &&
+                            MLEnhancementShouldWait(true, nowMs, LiGetMillis(), budgetMs);
                     }
                     uint64_t processStartedAtMs = LiGetMillis();
                     if (currentTask && CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &output) == kCVReturnSuccess && output) {
@@ -5057,9 +5063,10 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                             : self->_currentFrame == input;
                         BOOL alreadySubmitted = isInterpolated ? self->_pendingInterpolatedPresented
                             : self->_lastPresentedFrameSequence == frameSequence;
-                        BOOL publish = processor == self->_frameProcessor &&
+                        BOOL eligible = processor == self->_frameProcessor &&
                             MLEnhancementMayPublish(generation, self->_enhancementProcessGeneration,
                                 frameSequence, self->_currentFrameSequence, inputIsCurrent, alreadySubmitted);
+                        BOOL publish = eligible && MLEnhancementShouldWait(true, nowMs, LiGetMillis(), budgetMs);
                         if (publish && processed && output && !self->_enhancementSuspended) {
                             if (self->_enhancementResultFrame) CVBufferRelease(self->_enhancementResultFrame);
                             if (self->_enhancementResultSourceFrame) CVBufferRelease(self->_enhancementResultSourceFrame);
@@ -5073,9 +5080,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 self->_previousEnhancedPresentationTimeStamp = inputTimestamp;
                             }
                             retryDraw = YES;
-                        } else if (publish && !processed) {
+                        } else if (eligible) {
+                            // Queue delay and processing share one presentation budget.
+                            // Do not retry this source, even if VT was skipped entirely.
                             self->_enhancementFailedSequence = frameSequence;
-                            Log(LOG_W, @"[video] Asynchronous VT enhancement failed: %@", error);
+                            if (currentTask && !processed) Log(LOG_W, @"[video] Asynchronous VT enhancement failed: %@", error);
                             retryDraw = YES;
                         }
                     }
