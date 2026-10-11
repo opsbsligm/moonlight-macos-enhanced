@@ -209,6 +209,13 @@ typedef NS_ENUM(NSInteger, MLDeviceRedirectionHostClaim) {
 - (NSArray<MLDeviceRedirectionPanelRow *> *)rowsByScanningBusWithHostPaired:(BOOL)hostIsPaired
     NS_SWIFT_NAME(rowsByScanningBus(hostPaired:));
 
+/// Accept a completed read on the UI thread. Registry work may run in the background,
+/// but permission evaluation and model mutation stay with the owning caller.
+- (NSArray<MLDeviceRedirectionPanelRow *> *)acceptBusSnapshot:(NSArray<MLUSBDeviceIdentity *> *)devices
+                                                    status:(MLUSBBusSnapshotStatus)status
+                                              hostIsPaired:(BOOL)hostIsPaired
+    NS_SWIFT_NAME(acceptBusSnapshot(_:status:hostIsPaired:));
+
 /// Rows for devices handed in, which is what a gate uses: a device nobody could plug in is still a
 /// device the panel has to describe correctly.
 - (NSArray<MLDeviceRedirectionPanelRow *> *)rowsForDevices:(NSArray<MLUSBDeviceIdentity *> *)devices
