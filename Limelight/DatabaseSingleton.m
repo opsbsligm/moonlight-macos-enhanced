@@ -8,6 +8,15 @@
 
 #import "DatabaseSingleton.h"
 
+// Only the explicit Debug QA identity uses a private library. Release and normal
+// Debug keep the user's established path; changing HOME does not isolate Foundation.
+static NSString *MLDatabaseSupportDirectoryName(NSString *bundleIdentifier) {
+#if DEBUG
+    if ([bundleIdentifier isEqualToString:@"std.skyhua.MoonlightMac2.QA"]) return @"Moonlight-QA";
+#endif
+    return @"Moonlight";
+}
+
 @interface DatabaseSingleton ()
 @property (strong, nonatomic) NSManagedObjectContext *managedObjectContext;
 @property (strong, nonatomic) NSManagedObjectModel *managedObjectModel;
@@ -110,7 +119,7 @@
 + (NSURL *)applicationSupportDirectory {
     
     NSURL *directoryUrl = [[[[NSFileManager defaultManager] URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask] firstObject]
-            URLByAppendingPathComponent:@"Moonlight"];
+            URLByAppendingPathComponent:MLDatabaseSupportDirectoryName(NSBundle.mainBundle.bundleIdentifier)];
     NSError *error;
     if (![[NSFileManager defaultManager] fileExistsAtPath:directoryUrl.path]) {
         [[NSFileManager defaultManager] createDirectoryAtPath:directoryUrl.path withIntermediateDirectories:YES attributes:nil error:&error];
