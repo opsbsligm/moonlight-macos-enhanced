@@ -171,8 +171,7 @@ struct StreamView: View {
                 Button(action: {
                   guard let uuid = settingsModel.selectedHost?.id,
                     uuid != SettingsModel.globalHostId,
-                    let hosts = DataManager().getHosts() as? [TemporaryHost],
-                    let host = hosts.first(where: { !$0.uuid.isEmpty && $0.uuid == uuid })
+                    let host = DataManager().hostMetadata(forUUID: uuid)
                   else { return }
 
                   let editor = ConnectionEditorViewController(host: host)

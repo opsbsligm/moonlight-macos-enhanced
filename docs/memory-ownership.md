@@ -2264,3 +2264,38 @@ CoreHID 位移/失败回调交回主线程后再检查驱动身份，位移检�
 §26 的几何测试没有证明游戏模式能到达感应带。系统指针被锁在中心时，事件位置和定时器复核都读中心，原来的 27 项几何检查仍能通过。现增加 `edge_sensor_runtime_probe.py`，由既有 CI 入口 `edge-sensor-summon-tests.py` 执行：28 项生产方法回放覆盖锁中心、四条边、真实停留定时器、推压、回退、拖拽、禁用、模式边界和窗口尺寸变化；两种恢复旧坐标读取的变异均失败。
 
 另一处缺口是全屏先完成、连接随后重置控制栏时没有再次刷新可见性。重置后现在显式调度显示恢复及既有延迟重试。详细变更与验证范围见 `input-full-review-2026-09-27.md` 的串流边缘控制栏恢复段。
+
+## 2026-10-11 cp22：设置只读连接描述符，不再构建应用图
+
+run `38131148820`（`24c66229`）的 arm64 / x86_64 设置 growth16 均失败：
+1 主机，15 次额外访问，项目自身字节 5760→22656，1126.4 bytes/visit/host，
+超过 1100。原生栈定位到 `StreamView.body` → `SettingsModel.hosts` →
+`DataManager.getHosts` → 完整 `TemporaryHost`/`TemporaryApp` 图。
+
+修复不是放宽内存预算，也不是把 `TemporaryApp.host` 盲改 weak：
+- 新增可空 `getHostMetadata`，在私有 context 队列读取全部连接描述符，
+  不遍历 apps；成功空库返回空数组，fetch 错误或无 context 返回 nil。
+- 设置主机菜单、地址匹配、清除主机只取 metadata；已知 UUID 的连接候选、
+  风险评估、连接编辑与 Sunshine 显示查询使用已有单主机 metadata API。
+- 应用工作区继续读取完整库；配对依然要求证书，连接字段保持原语义。
+- `MLHostReads` 仍只统计完整应用库，未删除/虚增计数。设置各 pane 的
+  精确期望由 1/1/3/1 改为全 0；反例改为 +1（不能用 0×2 假装负变异）。
+  探针末尾独立全库读取仍须增加计数，防“计数器失效即通过”。
+
+本机新 Debug 构建的真实 `leaks --atExit --list` 结果：
+1 / 16 visits 的项目自身对象均 768 bytes，TemporaryHost=2、TemporaryApp=6；
+15 次额外访问增长 **0 bytes/visit/host**，完整库读取 **0/visit**，
+`leak-audit.py --growth --growth-cycles 16` exit0。报告：
+`/tmp/ml-cp22-leaks.txt` 与 `/tmp/ml-cp22-leaks-16visits.txt`。
+原 1100 阈值、graph ratio、baseline 均未改变。
+
+原生 Foundation/CoreData request + fake context replay 连续 100 次验证单/批量
+构造字段、配对、顺序、空库、失败和释放；单/批量退回全图、失败冒充空成功
+三个可编译负变异均被拒绝。此 replay 不是完整真实持久库测试；上述 App
+实测补上生产 context 与真实界面呈现路径。USB 模型和 scaling 综合门禁 exit0。
+
+验收边界：固定 2 个旧完整图仍存在，不代表全软件零泄漏；本机 arm64
+结果不替代新 CI 两架构。Computer Use 再绑定隔离 QA 应用仍报告 native pipe
+closed，未获得可用界面观察；原生 render probe 也不冒充操作者 GUI 验收。
+USB 真实驱动/主机通道与超分插帧到屏顺滑仍未完成。回滚用单独 revert 本轮
+提交，恢复旧设置取值会重新带回每访问全图增长，不能据此降低门禁。
