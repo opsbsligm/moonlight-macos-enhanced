@@ -53,11 +53,12 @@ int main(void) {
     assert(!MLEnhancementShouldWait(false,100,101,10));
     assert(!MLEnhancementShouldWait(true,100,99,10));
     assert(!MLEnhancementShouldWait(true,100,100,0));
-    assert(MLEnhancementOverloadStrikes(0,true,5,5)==0);
+    assert(MLEnhancementOverloadStrikes(0,true,4,5)==0);
+    assert(MLEnhancementOverloadStrikes(0,true,5,5)==1);
     assert(MLEnhancementOverloadStrikes(0,true,6,5)==1);
     assert(MLEnhancementOverloadStrikes(1,true,6,5)==2);
     assert(MLEnhancementOverloadStrikes(2,true,6,5)==3);
-    assert(MLEnhancementOverloadStrikes(2,true,5,5)==0);
+    assert(MLEnhancementOverloadStrikes(2,true,4,5)==0);
     assert(MLEnhancementOverloadStrikes(0,true,20,5)==3);
     assert(MLEnhancementOverloadStrikes(0,false,0,5)==3);
     assert(MLEnhancementOverloadStrikes(0,true,1,0)==3);
@@ -129,6 +130,7 @@ for name, before, after in mutations:
     assert header.count(before) == 1, name
     assert replay(header.replace(before,after)) != 0, name + ' survived'
 enhancement_mutations = [
+    ('deadline-equality-resets-overload', 'elapsedMs >= budgetMs', 'elapsedMs > budgetMs'),
     ('ignore-failed-process', '!processed || budgetMs == 0', '(budgetMs == 0 && processed)'),
     ('ignore-severe-overload', 'elapsedMs / budgetMs >= 4', 'elapsedMs / budgetMs >= 400'),
     ('never-stop-mild-overload', 'previous >= 2 ? 3 : previous + 1', 'previous >= 2 ? 2 : previous + 1'),
@@ -218,6 +220,12 @@ for indent in ('    ', '        '):
     fixture = '\n'.join(indent + line[4:] for line in battery.CACHE_SNAPSHOT_BLOCK.splitlines())
     assert 'cacheSnapshot = NULL;' not in battery.draw_with_the_shared_pointer(fixture)
 assert 'cacheSnapshot = NULL;' not in battery.draw_with_the_shared_pointer(source)
+# Same-format preparation must preserve a paused session; changed input may recover.
+fi_pool = section('- (BOOL)ensureFrameInterpolationOutputPoolForConfiguration:(VTLowLatencyFrameInterpolationConfiguration *)configuration\n                                         sourcePixelFormat:(OSType)sourcePixelFormat API_AVAILABLE(macos(26.0))\n{', '- (void)requestFrameInterpolationWarmupForStreamWidth:')
+assert fi_pool.index('_frameInterpolationSourcePixelFormat == sourcePixelFormat') < fi_pool.index('_interpolationSuspended = NO;'), 'same source format resets the breaker every frame'
+assert '_frameInterpolationSourcePixelFormat = sourcePixelFormat;' in fi_pool
+assert 'if (!queuedInterpolation && _interpolationStagingSequence == sourceSequence)' in source, 'paused FI holds the source staging'
+assert stage.index('prepareFrameInterpolationProcessorForSourceFrame:') < stage.index('if (_interpolationSuspended)'), 'new input configuration cannot reset the breaker'
 # Extract the actual async/retirement methods, with a deterministic VT double.
 # Native CV buffers/pool and dispatch queues stay real; this is lifecycle evidence,
 # never evidence of VT quality, supported scale factors or on-screen smoothness.
@@ -285,6 +293,9 @@ if native_toolchain is not None:
             print(ran.stdout.strip() if expected else 'ok: native FI rejects '+name+' (mutation compiled)')
     fi_methods=fi_release+fi_teardown+fi_compute+fi_expire+stage
     fi_native_replay(fi_methods,'control',True)
+    fi_native_replay(fi_methods.replace('if (_interpolationSuspended)', 'if (_interpolationSuspended && false)', 1), 'FI-ignore-session-breaker', False)
+    fi_native_replay(fi_methods.replace('if (runTask && processor == self->_frameInterpolationProcessor &&', 'if (runTask &&', 1).replace('generation == self->_interpolationProcessGeneration) {', 'generation <= self->_interpolationProcessGeneration) {', 1), 'FI-retired-task-poisons-breaker', False)
+
     fi_native_replay(fi_methods.replace('dispatch_async(_vtInterpolationQueue, ^{','MLTestRunInline(^{',1),'FI-end-session-during-process',False)
     fi_native_replay(fi_methods.replace('_interpolationProcessInFlight ||','(_interpolationProcessInFlight && false) ||',1),'FI-overlapping-tasks',False)
     fi_native_replay(fi_methods.replace('!MLEnhancementShouldWait(true, _interpolationStagingStartedAtMs,','!MLEnhancementShouldWait(true, LiGetMillis(),',1),'FI-unbounded-staging',False)
