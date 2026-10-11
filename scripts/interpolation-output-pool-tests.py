@@ -83,6 +83,8 @@ DRIVER = r"""
     CVPixelBufferPoolRef _frameInterpolationOutputPool;
     OSType _frameInterpolationSourcePixelFormat;
     id _frameInterpolationProcessor;
+    NSUInteger _interpolationOverloadStrikes;
+    BOOL _interpolationSuspended;
 }
 @end
 
@@ -111,6 +113,12 @@ int main(void) {
             return 0;
         }
         FakeRenderer *renderer = [[FakeRenderer alloc] init];
+        renderer->_interpolationOverloadStrikes = 3;
+        renderer->_interpolationSuspended = YES;
+        if ([renderer ensureFrameInterpolationOutputPoolForConfiguration:configuration sourcePixelFormat:0x34323076] ||
+            renderer->_interpolationOverloadStrikes != 3 || !renderer->_interpolationSuspended) {
+            printf("scenario breaker refused=0\n"); return 0;
+        }
         VTFrameProcessor *session = [[VTFrameProcessor alloc] init];
         renderer->_frameInterpolationProcessor = session;
         BOOL built = [renderer ensureFrameInterpolationOutputPoolForConfiguration:configuration
@@ -119,6 +127,22 @@ int main(void) {
             printf("scenario pool ready=0\n");
             return 0;
         }
+        if (renderer->_interpolationOverloadStrikes != 0 || renderer->_interpolationSuspended) {
+            printf("scenario breaker fresh=0\n"); return 0;
+        }
+        renderer->_interpolationOverloadStrikes = 3;
+        renderer->_interpolationSuspended = YES;
+        BOOL cached = [renderer ensureFrameInterpolationOutputPoolForConfiguration:configuration
+                                                               sourcePixelFormat:0x34323076];
+        if (!cached || renderer->_interpolationOverloadStrikes != 3 || !renderer->_interpolationSuspended) {
+            printf("scenario breaker cached=0\n"); return 0;
+        }
+        BOOL rebuilt = [renderer ensureFrameInterpolationOutputPoolForConfiguration:configuration
+                                                                sourcePixelFormat:0x34323066];
+        if (!rebuilt || renderer->_interpolationOverloadStrikes != 0 || renderer->_interpolationSuspended) {
+            printf("scenario breaker rebuild=0\n"); return 0;
+        }
+        printf("scenario breaker fresh=1 cached=1 rebuild=1 refused=1\n");
         CVPixelBufferRef buffer = NULL;
         CVReturn status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault,
                                                              renderer->_frameInterpolationOutputPool,
@@ -316,6 +340,18 @@ def main():
     check(fields.get("fmt") == "0x34323076",
           "the buffers carry the configuration's own video-range 4:2:0 format, "
           "not the renderer's preferred override")
+    check(all(fields.get(key) == "1" for key in ("fresh", "cached", "rebuild", "refused")),
+          "new/rebuilt pool resets overload, while cached/refused pool preserves suspension")
+    for name, broken_pool in (
+        ("no-strike-reset", pool.replace("_interpolationOverloadStrikes = 0;", "_interpolationOverloadStrikes += 0;")),
+        ("no-suspension-reset", pool.replace("_interpolationSuspended = NO;", "_interpolationSuspended = _interpolationSuspended;")),
+        ("cached-pool-rebuild", pool.replace("_frameInterpolationSourcePixelFormat == sourcePixelFormat", "_frameInterpolationSourcePixelFormat == 0")),
+    ):
+        bad, detail = compiled(build(source, pool=broken_pool), name, clang, sdk)
+        check(bad is not None, name + " must compile before it can be rejected: " + detail)
+        if bad is not None:
+            check("scenario breaker" in bad and "=0" in bad and "fresh=1 cached=1 rebuild=1 refused=1" not in bad,
+                  name + " is caught by actual pool lifecycle replay")
     can_process = "capability=0" not in out
     if can_process:
         check(fields.get("ok") == "1",
