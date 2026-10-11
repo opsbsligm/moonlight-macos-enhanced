@@ -1496,6 +1496,11 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     OSType _frameInterpolationRefusedSourcePixelFormat;
     dispatch_queue_t _vtWarmupQueue;
     dispatch_queue_t _vtEnhancementQueue;
+    dispatch_queue_t _vtInterpolationQueue;
+    NSUInteger _interpolationProcessGeneration;
+    BOOL _interpolationProcessInFlight;
+    uint64_t _interpolationStagingStartedAtMs;
+    uint64_t _interpolationStagingBudgetMs;
     NSUInteger _enhancementProcessGeneration;
     BOOL _enhancementProcessInFlight;
     CVImageBufferRef _enhancementTaskSourceFrame; // borrowed from the retained task
@@ -1655,6 +1660,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     }
     _vtWarmupQueue = dispatch_queue_create("std.skyhua.moonlight.video.vt-warmup", DISPATCH_QUEUE_SERIAL);
     _vtEnhancementQueue = dispatch_queue_create("std.skyhua.moonlight.video.vt-enhancement", DISPATCH_QUEUE_SERIAL);
+    _vtInterpolationQueue = dispatch_queue_create("std.skyhua.moonlight.video.vt-interpolation", DISPATCH_QUEUE_SERIAL);
 
     return self;
 }
@@ -1981,32 +1987,38 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 
 - (void)teardownFrameInterpolationProcessor
 {
-    _frameInterpolationWarmupGeneration += 1;
-    _frameInterpolationWarmupInFlight = NO;
-    _frameInterpolationWarmupWidth = 0;
-    _frameInterpolationWarmupHeight = 0;
-    if (_frameInterpolationProcessor != nil &&
-        [_frameInterpolationProcessor respondsToSelector:@selector(endSession)]) {
-        [_frameInterpolationProcessor endSession];
-    }
-    _frameInterpolationProcessor = nil;
-    _frameInterpolationConfiguration = nil;
-    _frameInterpolationInputWidth = 0;
-    _frameInterpolationInputHeight = 0;
-    _frameInterpolationSourcePixelFormat = 0;
-    _frameInterpolationRefusedSourcePixelFormat = 0;
-    _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
-    _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
-    [self publishVideoFrameInterpolationRuntimeStatusSummary:MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpolationEngineNone)
-                                                      detail:[self runtimeDetailKeyForFrameInterpolationReport:MLVideoFrameInterpolationReportDisabled]];
-    [self publishVideoCadenceRuntimeReadoutStopped];
+    @synchronized(self) {
+        _interpolationProcessGeneration += 1;
+        _frameInterpolationWarmupGeneration += 1;
+        _frameInterpolationWarmupInFlight = NO;
+        _frameInterpolationWarmupWidth = 0;
+        _frameInterpolationWarmupHeight = 0;
+        id retiredProcessor = _frameInterpolationProcessor;
+        _frameInterpolationProcessor = nil;
+        if (retiredProcessor != nil) {
+            dispatch_async(_vtInterpolationQueue, ^{
+                if ([retiredProcessor respondsToSelector:@selector(endSession)]) [retiredProcessor endSession];
+            });
+        }
+        // The task, not teardown, releases the single-flight slot and retained snapshots.
+        _frameInterpolationConfiguration = nil;
+        _frameInterpolationInputWidth = 0;
+        _frameInterpolationInputHeight = 0;
+        _frameInterpolationSourcePixelFormat = 0;
+        _frameInterpolationRefusedSourcePixelFormat = 0;
+        _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+        _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+        [self publishVideoFrameInterpolationRuntimeStatusSummary:MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpolationEngineNone)
+                                                          detail:[self runtimeDetailKeyForFrameInterpolationReport:MLVideoFrameInterpolationReportDisabled]];
+        [self publishVideoCadenceRuntimeReadoutStopped];
 
-    if (_frameInterpolationOutputPool != NULL) {
-        CFRelease(_frameInterpolationOutputPool);
-        _frameInterpolationOutputPool = NULL;
-    }
+        if (_frameInterpolationOutputPool != NULL) {
+            CFRelease(_frameInterpolationOutputPool);
+            _frameInterpolationOutputPool = NULL;
+        }
 
-    [self releaseFrameInterpolationFrames];
+        [self releaseFrameInterpolationFrames];
+    }
 }
 
 - (void)teardownHDRPresentationResources
@@ -3511,19 +3523,22 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff &&
             previousInterpolationSourceFrame != NULL) {
             _interpolationStagingSequence = sourceSequence;
+            _interpolationStagingStartedAtMs = LiGetMillis();
+            _interpolationStagingBudgetMs = MAX((uint64_t)1, (uint64_t)floor(1000.0 /
+                MAX(_lastDisplayRefreshRate, (double)MAX(self.frameRate, 1))));
         }
     }
 
     if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff &&
         previousInterpolationSourceFrame != NULL) {
-        [self stageInterpolatedFrameFromPreviousSource:previousInterpolationSourceFrame
+        BOOL queuedInterpolation = [self stageInterpolatedFrameFromPreviousSource:previousInterpolationSourceFrame
                                               toSource:imageBuffer
                                          frameSequence:sourceSequence
                                          enqueueTimeMs:(frameContext != NULL ? frameContext->enqueueTimeMs : 0)
                                           frameNumber:(frameContext != NULL ? frameContext->frameNumber : 0)
                                     displayRefreshRate:_lastDisplayRefreshRate];
         @synchronized(self) {
-            if (_interpolationStagingSequence == sourceSequence) {
+            if (!queuedInterpolation && _interpolationStagingSequence == sourceSequence) {
                 _interpolationStagingSequence = 0;
             }
         }
@@ -4142,10 +4157,14 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                                                 numberOfInterpolatedFrames:1];
             if (configuration == nil) {
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    if (warmupGeneration != self->_frameInterpolationWarmupGeneration) {
-                        return;
+                    @synchronized(self) {
+                        if (warmupGeneration != self->_frameInterpolationWarmupGeneration) {
+                            return;
+                        }
+                        self->_frameInterpolationWarmupInFlight = NO;
+
+
                     }
-                    self->_frameInterpolationWarmupInFlight = NO;
                 });
                 return;
             }
@@ -4185,17 +4204,21 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     @(MLInterpolationSlotReason(verdict)));
                 NSString *slotReason = @(MLInterpolationSlotReason(verdict));
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    if (warmupGeneration != self->_frameInterpolationWarmupGeneration) {
-                        return;
+                    @synchronized(self) {
+                        if (warmupGeneration != self->_frameInterpolationWarmupGeneration) {
+                            return;
+                        }
+                        self->_frameInterpolationWarmupInFlight = NO;
+                        // Same turn as the flag: a reader that sees the request as
+                        // finished must already see the refusal, or it re-asks.
+                        self->_frameInterpolationNoSlotWidth = streamWidth;
+                        self->_frameInterpolationNoSlotHeight = streamHeight;
+                        [self logActiveFrameInterpolationEngine:MLActiveVideoFrameInterpolationEngineNone
+                                                         report:MLVideoFrameInterpolationReportForSlotVerdict(verdict)
+                                                         reason:slotReason];
+
+
                     }
-                    self->_frameInterpolationWarmupInFlight = NO;
-                    // Same turn as the flag: a reader that sees the request as
-                    // finished must already see the refusal, or it re-asks.
-                    self->_frameInterpolationNoSlotWidth = streamWidth;
-                    self->_frameInterpolationNoSlotHeight = streamHeight;
-                    [self logActiveFrameInterpolationEngine:MLActiveVideoFrameInterpolationEngineNone
-                                                     report:MLVideoFrameInterpolationReportForSlotVerdict(verdict)
-                                                     reason:slotReason];
                 });
                 return;
             }
@@ -4205,40 +4228,44 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             BOOL started = [processor startSessionWithConfiguration:configuration error:&error];
 
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (warmupGeneration != self->_frameInterpolationWarmupGeneration) {
-                    if (started) {
-                        [processor endSession];
+                @synchronized(self) {
+                    if (warmupGeneration != self->_frameInterpolationWarmupGeneration) {
+                        if (started) {
+                            [processor endSession];
+                        }
+                        return;
                     }
-                    return;
-                }
 
-                self->_frameInterpolationWarmupInFlight = NO;
-                if (!started) {
-                    Log(LOG_W, @"[video] Failed to prewarm VT frame interpolation session: %@", error);
-                    return;
-                }
+                    self->_frameInterpolationWarmupInFlight = NO;
+                    if (!started) {
+                        Log(LOG_W, @"[video] Failed to prewarm VT frame interpolation session: %@", error);
+                        return;
+                    }
 
-                if (self->_frameInterpolationProcessor != nil &&
-                    self->_frameInterpolationInputWidth == streamWidth &&
-                    self->_frameInterpolationInputHeight == streamHeight) {
-                    [processor endSession];
-                    return;
-                }
+                    if (self->_frameInterpolationProcessor != nil &&
+                        self->_frameInterpolationInputWidth == streamWidth &&
+                        self->_frameInterpolationInputHeight == streamHeight) {
+                        [processor endSession];
+                        return;
+                    }
 
-                NSUInteger preservedWarmupGeneration = self->_frameInterpolationWarmupGeneration;
-                [self teardownFrameInterpolationProcessor];
-                self->_frameInterpolationWarmupGeneration = preservedWarmupGeneration;
-                self->_frameInterpolationWarmupInFlight = NO;
-                self->_frameInterpolationWarmupWidth = streamWidth;
-                self->_frameInterpolationWarmupHeight = streamHeight;
-                self->_frameInterpolationProcessor = processor;
-                self->_frameInterpolationConfiguration = configuration;
-                self->_frameInterpolationInputWidth = streamWidth;
-                self->_frameInterpolationInputHeight = streamHeight;
-                self->_frameInterpolationSourcePixelFormat = 0;
-                Log(LOG_I, @"[video] VT frame interpolation prewarmed for %ldx%ld",
-                    (long)streamWidth,
-                    (long)streamHeight);
+                    NSUInteger preservedWarmupGeneration = self->_frameInterpolationWarmupGeneration;
+                    [self teardownFrameInterpolationProcessor];
+                    self->_frameInterpolationWarmupGeneration = preservedWarmupGeneration;
+                    self->_frameInterpolationWarmupInFlight = NO;
+                    self->_frameInterpolationWarmupWidth = streamWidth;
+                    self->_frameInterpolationWarmupHeight = streamHeight;
+                    self->_frameInterpolationProcessor = processor;
+                    self->_frameInterpolationConfiguration = configuration;
+                    self->_frameInterpolationInputWidth = streamWidth;
+                    self->_frameInterpolationInputHeight = streamHeight;
+                    self->_frameInterpolationSourcePixelFormat = 0;
+                    Log(LOG_I, @"[video] VT frame interpolation prewarmed for %ldx%ld",
+                        (long)streamWidth,
+                        (long)streamHeight);
+
+
+                }
             });
         });
     }
@@ -4340,24 +4367,21 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
 - (CVImageBufferRef)copyInterpolatedFrameFromPreviousSource:(CVImageBufferRef)previousSourceFrame
                                                    toSource:(CVImageBufferRef)sourceFrame
+                                                processor:(id)processor
+                                               outputPool:(CVPixelBufferPoolRef)outputPool
+                                        previousTimestamp:(CMTime)previousTimestamp
+                                    presentationTimestamp:(CMTime)presentationTimestamp
                                              outputTimeStamp:(CMTime *)outputTimeStamp
-                                                     report:(MLVideoFrameInterpolationReport *)reportOut
 {
     if (previousSourceFrame == NULL || sourceFrame == NULL) {
         return NULL;
     }
 
-    if (![self prepareFrameInterpolationProcessorForSourceFrame:sourceFrame report:reportOut]) {
-        return NULL;
-    }
-
-    if (_frameInterpolationOutputPool == NULL || _frameInterpolationProcessor == nil) {
-        return NULL;
-    }
+    if (processor == nil || outputPool == NULL) return NULL;
 
     CVPixelBufferRef destinationBuffer = NULL;
     CVReturn createStatus = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault,
-                                                               _frameInterpolationOutputPool,
+                                                               outputPool,
                                                                &destinationBuffer);
     if (createStatus != kCVReturnSuccess || destinationBuffer == NULL) {
         Log(LOG_W, @"[video] Failed to allocate VT frame interpolation output buffer: %d", (int)createStatus);
@@ -4365,16 +4389,6 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     if (@available(macOS 26.0, *)) {
-        CMTime presentationTimestamp = kCMTimeZero;
-        CMTime previousTimestamp = kCMTimeZero;
-        @synchronized(self) {
-            if (_currentFrame != sourceFrame || _previousInterpolationSourceFrame != previousSourceFrame) {
-                CVBufferRelease(destinationBuffer);
-                return NULL;
-            }
-            if (CMTIME_IS_NUMERIC(_currentFramePresentationTimeStamp)) presentationTimestamp = _currentFramePresentationTimeStamp;
-            if (CMTIME_IS_NUMERIC(_previousInterpolationSourcePresentationTimeStamp)) previousTimestamp = _previousInterpolationSourcePresentationTimeStamp;
-        }
         CMTime midpointTimestamp = CMTimeAdd(previousTimestamp,
             CMTimeMultiplyByFloat64(CMTimeSubtract(presentationTimestamp, previousTimestamp), 0.5));
         VTFrameProcessorFrame *sourceProcessorFrame =
@@ -4398,7 +4412,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                                                interpolationPhase:@[@0.5f]
                                                                 destinationFrames:@[destinationProcessorFrame]];
         BOOL processed = parameters != nil &&
-            [(VTFrameProcessor *)_frameInterpolationProcessor processWithParameters:parameters error:&error];
+            [(VTFrameProcessor *)processor processWithParameters:parameters error:&error];
         if (!processed) {
             Log(LOG_W, @"[video] VT frame interpolation failed: %@", error);
             CVBufferRelease(destinationBuffer);
@@ -4413,6 +4427,18 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     return NULL;
 }
 
+// A slow VT task never owns the source indefinitely. Expiring staging only
+// releases presentation; the task keeps the single-flight slot until it finishes.
+- (void)expireInterpolationStagingIfNeeded {
+    @synchronized(self) {
+        if (_interpolationStagingSequence != 0 &&
+            !MLEnhancementShouldWait(true, _interpolationStagingStartedAtMs,
+                LiGetMillis(), _interpolationStagingBudgetMs)) {
+            _interpolationStagingSequence = 0;
+        }
+    }
+}
+
 - (BOOL)stageInterpolatedFrameFromPreviousSource:(CVImageBufferRef)previousSourceFrame
                                         toSource:(CVImageBufferRef)sourceFrame
                                    frameSequence:(uint64_t)sourceSequence
@@ -4420,95 +4446,140 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                      frameNumber:(uint32_t)frameNumber
                               displayRefreshRate:(double)displayRefreshRate
 {
-    NSString *reason = nil;
-    MLVideoFrameInterpolationReport report = MLVideoFrameInterpolationReportActive;
-    if (![self shouldUseFrameInterpolationForDisplayRefreshRate:displayRefreshRate
-                                                         report:&report
-                                                         reason:&reason]) {
-        _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
-        [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
-                                         report:report
-                                         reason:reason];
-        return NO;
-    }
-
-    MLVideoFrameInterpolationReport copyReport = MLVideoFrameInterpolationReportRuntimeUnavailable;
-    CMTime interpolatedTimeStamp = kCMTimeInvalid;
-    CVImageBufferRef interpolatedFrame =
-        [self copyInterpolatedFrameFromPreviousSource:previousSourceFrame
-                                             toSource:sourceFrame
-                                       outputTimeStamp:&interpolatedTimeStamp
-                                               report:&copyReport];
-    if (interpolatedFrame == NULL) {
-        // Which sentence the log keeps and which line the settings page shows are the
-        // same decision, so they are made in the same branch, one branch per answer.
-        // Choosing them apart is what let a running interpolator answer with the refusal
-        // sentence and a per-frame failure answer "not enabled". A third answer was
-        // needed here: a stream decoded in a format the interpolator will never accept.
-        // It is not a broken session, it is not warming up, and it must not be torn down
-        // once per frame, so it says what is true instead of borrowing a neighbour's
-        // sentence.
-        NSString *runtimeReason;
-        MLVideoFrameInterpolationReport runtimeReport;
-        if (_frameInterpolationWarmupInFlight) {
-            runtimeReason = @"VT frame interpolation warmup in progress";
-            runtimeReport = MLVideoFrameInterpolationReportWarmup;
-        } else if (copyReport == MLVideoFrameInterpolationReportSourceFormatUnsupported) {
-            runtimeReason = @"VT frame interpolation cannot accept the decoded pixel format";
-            runtimeReport = MLVideoFrameInterpolationReportSourceFormatUnsupported;
-        } else {
-            runtimeReason = @"VT frame interpolation unavailable at runtime";
-            runtimeReport = MLVideoFrameInterpolationReportRuntimeUnavailable;
-        }
-        if (!_frameInterpolationWarmupInFlight &&
-            _frameInterpolationProcessor != nil &&
-            runtimeReport != MLVideoFrameInterpolationReportSourceFormatUnsupported) {
-            [self teardownFrameInterpolationProcessor];
-        }
-        _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
-        [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
-                                         report:runtimeReport
-                                         reason:runtimeReason];
-        return NO;
-    }
-
     @synchronized(self) {
-        // VT may finish after another decode or a stop. Never attach an old midpoint
-        // to a new source, or insert a midpoint after its source already went out.
-        if (_currentFrame != sourceFrame ||
-            !MLInterpolationResultIsCurrent(_currentFrameSequence, sourceSequence,
-                                             _lastPresentedFrameSequence)) {
-            CVBufferRelease(interpolatedFrame);
+        if (_interpolationProcessInFlight || _currentFrame != sourceFrame ||
+            _previousInterpolationSourceFrame != previousSourceFrame) return NO;
+        NSString *reason = nil;
+        MLVideoFrameInterpolationReport report = MLVideoFrameInterpolationReportActive;
+        if (![self shouldUseFrameInterpolationForDisplayRefreshRate:displayRefreshRate
+                                                             report:&report
+                                                             reason:&reason]) {
+            _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+            [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                             report:report
+                                             reason:reason];
             return NO;
         }
-        if (_pendingInterpolatedFrame) {
-            CVBufferRelease(_pendingInterpolatedFrame);
-        }
-        _pendingInterpolatedFrame = interpolatedFrame;
-        _pendingInterpolatedPresentationTimeStamp = interpolatedTimeStamp;
-        _pendingInterpolatedEnqueueTimeMs = enqueueTimeMs;
-        _pendingInterpolatedFrameNumber = frameNumber;
-        _pendingInterpolatedForSourceSequence = sourceSequence;
-        _pendingInterpolatedPresented = NO;
-        _deferredCurrentSourceSequence = sourceSequence;
-    }
 
-    _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineVTLowLatency;
-    if (_frameInterpolationCadenceForced) {
-        // The engine runs because the player asked for it, not because the cadence
-        // allowed it. Say which of the two it is: collapsing this into the quiet
-        // success sentence is how a forced session would read as an ordinary one.
-        [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
-                                         report:MLVideoFrameInterpolationReportActiveForced
-                                         reason:@"forced interpolation over a cadence refusal; see the forced-over-cadence warning for the measured rates"];
-    } else {
-        [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
-                                         report:MLVideoFrameInterpolationReportActive
-                                         reason:[NSString stringWithFormat:@"display %.2fHz carries %d FPS doubled on whole refreshes",
-                                                 displayRefreshRate,
-                                                 self.frameRate]];
+        MLVideoFrameInterpolationReport copyReport = MLVideoFrameInterpolationReportRuntimeUnavailable;
+        BOOL prepared = [self prepareFrameInterpolationProcessorForSourceFrame:sourceFrame report:&copyReport];
+        if (!prepared) {
+            // Which sentence the log keeps and which line the settings page shows are the
+            // same decision, so they are made in the same branch, one branch per answer.
+            // Choosing them apart is what let a running interpolator answer with the refusal
+            // sentence and a per-frame failure answer "not enabled". A third answer was
+            // needed here: a stream decoded in a format the interpolator will never accept.
+            // It is not a broken session, it is not warming up, and it must not be torn down
+            // once per frame, so it says what is true instead of borrowing a neighbour's
+            // sentence.
+            NSString *runtimeReason;
+            MLVideoFrameInterpolationReport runtimeReport;
+            if (_frameInterpolationWarmupInFlight) {
+                runtimeReason = @"VT frame interpolation warmup in progress";
+                runtimeReport = MLVideoFrameInterpolationReportWarmup;
+            } else if (copyReport == MLVideoFrameInterpolationReportSourceFormatUnsupported) {
+                runtimeReason = @"VT frame interpolation cannot accept the decoded pixel format";
+                runtimeReport = MLVideoFrameInterpolationReportSourceFormatUnsupported;
+            } else {
+                runtimeReason = @"VT frame interpolation unavailable at runtime";
+                runtimeReport = MLVideoFrameInterpolationReportRuntimeUnavailable;
+            }
+            if (!_frameInterpolationWarmupInFlight &&
+                _frameInterpolationProcessor != nil &&
+                runtimeReport != MLVideoFrameInterpolationReportSourceFormatUnsupported) {
+                [self teardownFrameInterpolationProcessor];
+            }
+            _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+            [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                             report:runtimeReport
+                                             reason:runtimeReason];
+            return NO;
+        }
+
+        if (@available(macOS 26.0, *)) {
+            id sourceLifetime = (__bridge_transfer id)CVBufferRetain(sourceFrame);
+            id previousLifetime = (__bridge_transfer id)CVBufferRetain(previousSourceFrame);
+            id poolLifetime = (__bridge_transfer id)CFRetain(_frameInterpolationOutputPool);
+            id processor = _frameInterpolationProcessor;
+            CMTime inputTimestamp = _currentFramePresentationTimeStamp;
+            CMTime previousTimestamp = _previousInterpolationSourcePresentationTimeStamp;
+            if (!CMTIME_IS_NUMERIC(inputTimestamp) || !CMTIME_IS_NUMERIC(previousTimestamp) ||
+                CMTimeCompare(inputTimestamp, previousTimestamp) <= 0) return NO;
+            NSUInteger generation = _interpolationProcessGeneration;
+            uint64_t startedAtMs = _interpolationStagingStartedAtMs;
+            uint64_t budgetMs = _interpolationStagingBudgetMs;
+            _interpolationProcessInFlight = YES;
+            dispatch_async(_vtInterpolationQueue, ^{
+                @autoreleasepool {
+                    CVImageBufferRef input = (__bridge CVImageBufferRef)sourceLifetime;
+                    CVImageBufferRef previous = (__bridge CVImageBufferRef)previousLifetime;
+                    CVPixelBufferPoolRef pool = (__bridge CVPixelBufferPoolRef)poolLifetime;
+                    BOOL runTask;
+                    @synchronized(self) {
+                        runTask = processor == self->_frameInterpolationProcessor &&
+                            MLEnhancementMayPublish(generation, self->_interpolationProcessGeneration,
+                                sourceSequence, self->_currentFrameSequence, self->_currentFrame == input,
+                                self->_lastPresentedFrameSequence == sourceSequence) &&
+                            MLEnhancementShouldWait(true, startedAtMs, LiGetMillis(), budgetMs);
+                    }
+                    CMTime interpolatedTimeStamp = kCMTimeInvalid;
+                    CVImageBufferRef interpolatedFrame = runTask ?
+                        [self copyInterpolatedFrameFromPreviousSource:previous toSource:input
+                            processor:processor outputPool:pool previousTimestamp:previousTimestamp
+                            presentationTimestamp:inputTimestamp outputTimeStamp:&interpolatedTimeStamp] : NULL;
+                    @synchronized(self) {
+                        self->_interpolationProcessInFlight = NO;
+                        BOOL current = processor == self->_frameInterpolationProcessor &&
+                            MLEnhancementMayPublish(generation, self->_interpolationProcessGeneration,
+                                sourceSequence, self->_currentFrameSequence, self->_currentFrame == input,
+                                self->_lastPresentedFrameSequence == sourceSequence);
+                        if (self->_interpolationStagingSequence == sourceSequence)
+                            self->_interpolationStagingSequence = 0;
+                        if (!current || !interpolatedFrame ||
+                            !MLEnhancementShouldWait(true, startedAtMs, LiGetMillis(), budgetMs)) {
+                            if (interpolatedFrame) CVBufferRelease(interpolatedFrame);
+                            if (current && runTask && !interpolatedFrame) {
+                                [self teardownFrameInterpolationProcessor];
+                                [self logActiveFrameInterpolationEngine:MLActiveVideoFrameInterpolationEngineNone
+                                    report:MLVideoFrameInterpolationReportRuntimeUnavailable
+                                    reason:@"asynchronous VT frame interpolation failed"];
+                            }
+                        } else {
+                            if (_pendingInterpolatedFrame) {
+                                CVBufferRelease(_pendingInterpolatedFrame);
+                            }
+                            _pendingInterpolatedFrame = interpolatedFrame;
+                            _pendingInterpolatedPresentationTimeStamp = interpolatedTimeStamp;
+                            _pendingInterpolatedEnqueueTimeMs = enqueueTimeMs;
+                            _pendingInterpolatedFrameNumber = frameNumber;
+                            _pendingInterpolatedForSourceSequence = sourceSequence;
+                            _pendingInterpolatedPresented = NO;
+                            _deferredCurrentSourceSequence = sourceSequence;
+
+                            _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineVTLowLatency;
+                            if (_frameInterpolationCadenceForced) {
+                                // The engine runs because the player asked for it, not because the cadence
+                                // allowed it. Say which of the two it is: collapsing this into the quiet
+                                // success sentence is how a forced session would read as an ordinary one.
+                                [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                                                 report:MLVideoFrameInterpolationReportActiveForced
+                                                                 reason:@"forced interpolation over a cadence refusal; see the forced-over-cadence warning for the measured rates"];
+                            } else {
+                                [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                                                 report:MLVideoFrameInterpolationReportActive
+                                                                 reason:[NSString stringWithFormat:@"display %.2fHz carries %d FPS doubled on whole refreshes",
+                                                                         displayRefreshRate,
+                                                                         self.frameRate]];
+                            }
+                        }
+                    }
+                    [self requestEnhancedDraw];
+                }
+            });
+            return YES;
+        }
+        return NO;
     }
-    return YES;
 }
 
 // The hold, in seconds, that an interpolated present should ask the window server for, and
@@ -5149,6 +5220,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     uint64_t observationGeneration = 0;
     @synchronized(self) {
         observationGeneration = _actualPresentationState.generation;
+        [self expireInterpolationStagingIfNeeded];
         // A refresh retry must not run SR/MetalFX again on an already submitted
         // source. Wait for staging so the source cannot overtake its midpoint.
         if (!MLPresentationNeedsDraw(_currentFrameSequence, _interpolationStagingSequence,
@@ -5859,6 +5931,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
 
     BOOL shouldRetryEnhancedFrame = NO;
     @synchronized(self) {
+        [self expireInterpolationStagingIfNeeded];
         // Both halves can fail submission under GPU/drawable pressure. Retry on
         // the next refresh even when no new decode arrives; never queue a backlog.
         shouldRetryEnhancedFrame = MLPresentationNeedsDraw(self->_currentFrameSequence,

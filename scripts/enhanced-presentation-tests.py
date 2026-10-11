@@ -150,8 +150,20 @@ callback = section('static CVReturn displayLinkCallback(CVDisplayLinkRef display
 decode = section('- (void)handleDecompressionOutput:', '- (BOOL)createDecompressionSession')
 assert draw.index('MLPresentationNeedsDraw(') < draw.index('copyFrameUsingFrameProcessorIfNeeded:'), 'duplicate SR work'
 assert 'MLPresentationNeedsDraw(' in callback and 'if (shouldRetryEnhancedFrame)' in callback, 'refresh retry disconnected'
-assert stage.index('MLInterpolationResultIsCurrent(') < stage.index('_pendingInterpolatedFrame = interpolatedFrame;'), 'stale publication'
+assert stage.index('MLEnhancementMayPublish(') < stage.index('_pendingInterpolatedFrame = interpolatedFrame;'), 'stale publication'
 assert '_currentFrame != sourceFrame' in stage, 'buffer identity guard missing'
+fi_compute = section('- (CVImageBufferRef)copyInterpolatedFrameFromPreviousSource:', '// A slow VT task')
+fi_teardown = section('- (void)teardownFrameInterpolationProcessor\n', '- (void)teardownHDRPresentationResources')
+fi_expire = section('- (void)expireInterpolationStagingIfNeeded', '- (BOOL)stageInterpolatedFrameFromPreviousSource:')
+assert 'processWithParameters:' not in decode and 'dispatch_async(_vtInterpolationQueue' in stage, 'FI still blocks decode'
+assert '_frameInterpolationProcessor' not in fi_compute and '_currentFrame' not in fi_compute, 'FI reads mutable live state on worker'
+assert 'sourceLifetime' in stage and 'previousLifetime' in stage and 'poolLifetime' in stage, 'FI snapshots lose lifetimes'
+assert '_interpolationProcessInFlight ||' in stage and 'MLEnhancementShouldWait(' in stage, 'FI CPU queue is unbounded'
+assert 'expireInterpolationStagingIfNeeded' in callback and 'expireInterpolationStagingIfNeeded' in draw, 'FI timeout cannot progress on refresh'
+assert 'MLEnhancementShouldWait(' in fi_expire and '_interpolationStagingSequence = 0;' in fi_expire, 'FI staging can wait indefinitely'
+assert 'dispatch_async(_vtInterpolationQueue' in fi_teardown and '_interpolationProcessInFlight = NO;' not in fi_teardown, 'FI stop races process or frees active slot'
+assert '!queuedInterpolation && _interpolationStagingSequence == sourceSequence' in decode, 'decode immediately clears async staging'
+
 assert '_interpolationStagingSequence = sourceSequence;' in decode, 'staging guard disconnected'
 assert '_interpolationStagingSequence == sourceSequence' in decode, 'old completion clears newer staging'
 assert draw.index('dispatch_semaphore_wait(') < draw.index('copyFrameUsingFrameProcessorIfNeeded:'), 'SR runs before GPU admission'
@@ -234,4 +246,30 @@ else:
         assert processor.count('if (_enhancementProcessInFlight)') == 1
         native_replay(release_history + teardown + processor.replace('if (_enhancementProcessInFlight)', 'if (_enhancementProcessInFlight && _enhancementTaskSequence == UINT64_MAX)'),
                       'multiple-CPU-tasks-in-flight', False)
+# FI uses shipping admission/completion/compute/retirement, not a second workflow.
+if native_toolchain is not None:
+    enums = []
+    for name in ('MLActiveVideoFrameInterpolationEngine', 'MLVideoFrameInterpolationReport'):
+        a = source.index('typedef NS_ENUM(NSInteger, ' + name + ')')
+        enums.append(source[a:source.index('};', a)+2])
+    fi_release = section('- (void)releaseFrameInterpolationFrames\n', '- (void)teardownEnhancementProcessor\n')
+    def fi_native_replay(methods, name, expected):
+        template = (ROOT/'scripts/fixtures/async-interpolation-lifecycle.m').read_text()
+        text = '#define MLTestRunInline(block) ((block)())\n' + template.replace('@@ENUMS@@', '\n'.join(enums)).replace('@@METHODS@@', methods)
+        with tempfile.TemporaryDirectory(prefix='ml-fi-lifecycle-') as d:
+            p=Path(d)
+            (p/'EnhancementProcessingPolicy.h').write_text(enhancement_header)
+            (p/'EnhancedPresentationPolicy.h').write_text(header)
+            (p/'probe.m').write_text(text)
+            built=subprocess.run([native_clang,'-isysroot',native_sdk,'-fobjc-arc','-fblocks','-Wall','-Werror','-Wno-unused-function',
+                '-framework','Foundation','-framework','CoreVideo','-framework','CoreMedia',str(p/'probe.m'),'-o',str(p/'probe')],capture_output=True,text=True)
+            assert built.returncode==0, name+': '+built.stderr
+            ran=subprocess.run([str(p/'probe')],capture_output=True,text=True,timeout=30)
+            assert (ran.returncode==0)==expected, name+': '+ran.stdout+ran.stderr
+            print(ran.stdout.strip() if expected else 'ok: native FI rejects '+name+' (mutation compiled)')
+    fi_methods=fi_release+fi_teardown+fi_compute+fi_expire+stage
+    fi_native_replay(fi_methods,'control',True)
+    fi_native_replay(fi_methods.replace('dispatch_async(_vtInterpolationQueue, ^{','MLTestRunInline(^{',1),'FI-end-session-during-process',False)
+    fi_native_replay(fi_methods.replace('_interpolationProcessInFlight ||','(_interpolationProcessInFlight && false) ||',1),'FI-overlapping-tasks',False)
+    fi_native_replay(fi_methods.replace('!MLEnhancementShouldWait(true, _interpolationStagingStartedAtMs,','!MLEnhancementShouldWait(true, LiGetMillis(),',1),'FI-unbounded-staging',False)
 print('ok: presentation + asynchronous enhancement replay, 17 policy mutations caught, renderer wiring checks, 3 cache anchors')
