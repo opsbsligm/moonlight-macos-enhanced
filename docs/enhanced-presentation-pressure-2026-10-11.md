@@ -24,6 +24,9 @@ VT 完成后同时核对 buffer 身份、sequence 与源帧提交状态；过期
   staging → 中间帧多次提交失败 → 中间帧成功 → 源帧成功 → 空闲刷新，
   并覆盖 decode 超越 VT、stop、插帧失败/预热中的源帧路径。
 - 5 个变异必须编译成功并在重放中失败；11 个接线断言核对实际 renderer。
+- CI 全量变异回归捕获了旧纹理缓存测试的缩进锚点失效；锚点已改为适配
+  实际缩进，另验证 4/8 空格与实际源文件共 3 个布局。单项实植回归被
+  正确拒绝，失败项为“a drawn frame holds its own reference to the texture cache”。
 - 新测试由已有 `constraints-audit.py` 调用，进入现有 CI 入口。
 - 本地 Debug Xcode build 成功，build-warning-audit 无一方源码警告。
 - 合法 90FPS/180Hz 会话的持续帧率、主观蜂蜜感、720p 超分耗时仍需实机证据。
@@ -36,3 +39,10 @@ VT 完成后同时核对 buffer 身份、sequence 与源帧提交状态；过期
 ## 回滚
 
 回滚本轮提交即可；无设置迁移、无数据库变化。
+
+## 呈现接口边界
+
+Apple 文档将 `afterMinimumDuration` 定义为上一 drawable 的最短显示时长，
+不是实际二倍输出率的验收证据。后续需采集实际 drawable 呈现时间，区分
+提交完成、真正显示和节拍波动。来源：
+https://developer.apple.com/documentation/metal/mtlcommandbuffer/present%28_%3Aafterminimumduration%3A%29?language=objc

@@ -7,7 +7,7 @@ Wiring checks ensure both the draw and refresh callback consult that decision.
 from pathlib import Path
 import subprocess
 import tempfile
-import re
+import importlib.util
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'Limelight/Stream/EnhancedPresentationPolicy.h'
@@ -76,4 +76,13 @@ assert draw.count('dispatch_semaphore_wait(') == 1, 'double reservation'
 assert '@finally' in draw and 'inflightSemaphore != nil && !submittedCommandBuffer' in draw, 'early exit leaks permit'
 assert draw.count('dispatch_semaphore_signal(inflightSemaphore)') == 2, 'GPU/early-exit release paths'
 assert 'dispatch_semaphore_signal(self->_metalInflightSemaphore)' not in draw, 'completion signals new session'
-print('ok: presentation replay, 5 mutations caught, 11 renderer wiring checks')
+# Exercise the legacy cache mutation against both enclosing scopes. A moved draw
+# must not make the battery silently lose the lifetime regression it guards.
+spec = importlib.util.spec_from_file_location('presentation_battery', ROOT/'scripts/assertion-battery.py')
+battery = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(battery)
+for indent in ('    ', '        '):
+    fixture = '\n'.join(indent + line[4:] for line in battery.CACHE_SNAPSHOT_BLOCK.splitlines())
+    assert 'cacheSnapshot = NULL;' not in battery.draw_with_the_shared_pointer(fixture)
+assert 'cacheSnapshot = NULL;' not in battery.draw_with_the_shared_pointer(source)
+print('ok: presentation replay, 5 mutations caught, 11 renderer wiring checks, 3 cache anchors')
