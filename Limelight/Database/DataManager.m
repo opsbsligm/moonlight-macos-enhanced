@@ -52,11 +52,13 @@ static void MLRecordHostRead(void) {
 
 - (id) init {
     self = [super init];
-    
-    _managedObjectContext = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
-    [_managedObjectContext setPersistentStoreCoordinator:[DatabaseSingleton shared].persistentStoreCoordinator];
-    [_managedObjectContext setMergePolicy:NSMergeByPropertyObjectTrumpMergePolicy];
-    
+    if (self) {
+        NSPersistentStoreCoordinator *coordinator = [DatabaseSingleton shared].persistentStoreCoordinator;
+        if (coordinator == nil) return nil;
+        _managedObjectContext = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSPrivateQueueConcurrencyType];
+        [_managedObjectContext setPersistentStoreCoordinator:coordinator];
+        [_managedObjectContext setMergePolicy:NSMergeByPropertyObjectTrumpMergePolicy];
+    }
     return self;
 }
 

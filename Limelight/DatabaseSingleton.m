@@ -12,9 +12,12 @@
 @property (strong, nonatomic) NSManagedObjectContext *managedObjectContext;
 @property (strong, nonatomic) NSManagedObjectModel *managedObjectModel;
 @property (strong, nonatomic) NSPersistentStoreCoordinator *persistentStoreCoordinator;
+@property (strong, nonatomic) NSError *persistentStoreLoadError;
 @end
 
-@implementation DatabaseSingleton
+@implementation DatabaseSingleton {
+    BOOL _persistentStoreLoadAttempted;
+}
 
 + (DatabaseSingleton *)shared {
     static DatabaseSingleton *instance;
@@ -69,29 +72,36 @@
 // If the coordinator doesn't already exist, it is created and the application's store added to it.
 - (NSPersistentStoreCoordinator *)persistentStoreCoordinator
 {
-    if (_persistentStoreCoordinator != nil) {
+    @synchronized(self) {
+        if (_persistentStoreCoordinator != nil || _persistentStoreLoadAttempted) {
+            return _persistentStoreCoordinator;
+        }
+        // Publish only after opening succeeds. A failed store must never look like
+        // an empty working library, or be deleted/retried by each DataManager.
+        _persistentStoreLoadAttempted = YES;
+        NSPersistentStoreCoordinator *coordinator =
+            [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:self.managedObjectModel];
+        NSDictionary *options = @{ NSMigratePersistentStoresAutomaticallyOption: @YES,
+                                    NSInferMappingModelAutomaticallyOption: @YES };
+        NSError *error = nil;
+        if (![coordinator addPersistentStoreWithType:NSSQLiteStoreType configuration:nil
+                                                URL:[self getStoreURL] options:options error:&error]) {
+            _persistentStoreLoadError = error ?: [NSError errorWithDomain:@"MoonlightDatabase"
+                                                                    code:1 userInfo:nil];
+            Log(LOG_E, @"Database open failed; data preserved (%@, %ld)",
+                _persistentStoreLoadError.domain, (long)_persistentStoreLoadError.code);
+            return nil;
+        }
+        _persistentStoreCoordinator = coordinator;
         return _persistentStoreCoordinator;
     }
-    
-    NSURL *storeURL = [self getStoreURL];
-    
-    NSError *error = nil;
-    _persistentStoreCoordinator = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:[self managedObjectModel]];
-    NSDictionary *options = [NSDictionary dictionaryWithObjectsAndKeys:
-                             [NSNumber numberWithBool:YES], NSMigratePersistentStoresAutomaticallyOption,
-                             [NSNumber numberWithBool:YES], NSInferMappingModelAutomaticallyOption, nil];
-    if (![_persistentStoreCoordinator addPersistentStoreWithType:NSSQLiteStoreType configuration:nil URL:storeURL options:options error:&error]) {
-        // Log the error
-        Log(LOG_E, @"Critical database error: %@, %@", error, [error userInfo]);
-        
-        // Drop the database
-        [[NSFileManager defaultManager] removeItemAtURL:storeURL error:nil];
-        
-        // Try again
-        return [self persistentStoreCoordinator];
+}
+
+- (NSError *)persistentStoreLoadError {
+    @synchronized(self) {
+        (void)self.persistentStoreCoordinator;
+        return _persistentStoreLoadError;
     }
-    
-    return _persistentStoreCoordinator;
 }
 
 
