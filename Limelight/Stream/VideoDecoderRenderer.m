@@ -354,6 +354,7 @@ typedef NS_ENUM(NSInteger, MLVideoFrameInterpolationReport) {
     MLVideoFrameInterpolationReportActiveForced,
     MLVideoFrameInterpolationReportWarmup,
     MLVideoFrameInterpolationReportRuntimeUnavailable,
+    MLVideoFrameInterpolationReportPausedForProcessing,
     MLVideoFrameInterpolationReportSourceFormatUnsupported,
     MLVideoFrameInterpolationReportNoCadenceHeadroom,
     MLVideoFrameInterpolationReportRequiresMetalRenderer,
@@ -1499,6 +1500,8 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     dispatch_queue_t _vtInterpolationQueue;
     NSUInteger _interpolationProcessGeneration;
     BOOL _interpolationProcessInFlight;
+    uint32_t _interpolationOverloadStrikes;
+    BOOL _interpolationSuspended;
     uint64_t _interpolationStagingStartedAtMs;
     uint64_t _interpolationStagingBudgetMs;
     NSUInteger _enhancementProcessGeneration;
@@ -1993,6 +1996,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 {
     @synchronized(self) {
         _interpolationProcessGeneration += 1;
+        _interpolationOverloadStrikes = 0;
+        _interpolationSuspended = NO;
         _frameInterpolationWarmupGeneration += 1;
         _frameInterpolationWarmupInFlight = NO;
         _frameInterpolationWarmupWidth = 0;
@@ -2711,6 +2716,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
             return @"Video Frame Interpolation Runtime Detail Warmup";
         case MLVideoFrameInterpolationReportRuntimeUnavailable:
             return @"Video Frame Interpolation Runtime Detail Fallback";
+        case MLVideoFrameInterpolationReportPausedForProcessing:
+            return @"Video Frame Interpolation Runtime Detail Processing Paused";
         case MLVideoFrameInterpolationReportSourceFormatUnsupported:
             // Not a failure of the machine and not a setting to turn on: the stream
             // is being decoded in a format the interpolator cannot be given. Telling
@@ -4105,6 +4112,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
     _frameInterpolationOutputPool = pool;
     _frameInterpolationSourcePixelFormat = sourcePixelFormat;
+    _interpolationOverloadStrikes = 0;
+    _interpolationSuspended = NO;
     return YES;
 }
 
@@ -4500,6 +4509,14 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             return NO;
         }
 
+        if (_interpolationSuspended) {
+            _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+            [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                report:MLVideoFrameInterpolationReportPausedForProcessing
+                reason:@"VT frame interpolation paused after processing failure or overload; presenting source frames until configuration or session changes"];
+            return NO;
+        }
+
         if (@available(macOS 26.0, *)) {
             id sourceLifetime = (__bridge_transfer id)CVBufferRetain(sourceFrame);
             id previousLifetime = (__bridge_transfer id)CVBufferRetain(previousSourceFrame);
@@ -4526,12 +4543,30 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 self->_lastPresentedFrameSequence == sourceSequence) &&
                             MLEnhancementShouldWait(true, startedAtMs, LiGetMillis(), budgetMs);
                     }
+                    uint64_t processStartedAtMs = LiGetMillis();
                     CMTime interpolatedTimeStamp = kCMTimeInvalid;
                     CVImageBufferRef interpolatedFrame = runTask ?
                         [self copyInterpolatedFrameFromPreviousSource:previous toSource:input
                             processor:processor outputPool:pool previousTimestamp:previousTimestamp
                             presentationTimestamp:inputTimestamp outputTimeStamp:&interpolatedTimeStamp] : NULL;
+                    uint64_t processFinishedAtMs = LiGetMillis();
+                    uint64_t processElapsedMs = processFinishedAtMs >= processStartedAtMs
+                        ? processFinishedAtMs - processStartedAtMs : UINT64_MAX;
                     @synchronized(self) {
+                        // An expired source still cost compute. Charge only the
+                        // processor/configuration which actually ran the call.
+                        if (runTask && processor == self->_frameInterpolationProcessor &&
+                            generation == self->_interpolationProcessGeneration) {
+                            self->_interpolationOverloadStrikes = MLEnhancementOverloadStrikes(
+                                self->_interpolationOverloadStrikes, interpolatedFrame != NULL, processElapsedMs, budgetMs);
+                            self->_interpolationSuspended = self->_interpolationOverloadStrikes >= 3;
+                            if (self->_interpolationSuspended) {
+                                self->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+                                [self logActiveFrameInterpolationEngine:self->_activeFrameInterpolationEngine
+                                    report:MLVideoFrameInterpolationReportPausedForProcessing
+                                    reason:@"VT frame interpolation paused after processing failure or overload; presenting source frames until configuration or session changes"];
+                            }
+                        }
                         self->_interpolationProcessInFlight = NO;
                         BOOL current = processor == self->_frameInterpolationProcessor &&
                             MLEnhancementMayPublish(generation, self->_interpolationProcessGeneration,
@@ -4539,15 +4574,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 self->_lastPresentedFrameSequence == sourceSequence);
                         if (self->_interpolationStagingSequence == sourceSequence)
                             self->_interpolationStagingSequence = 0;
-                        if (!current || !interpolatedFrame ||
+                        if (!current || !interpolatedFrame || self->_interpolationSuspended ||
                             !MLEnhancementShouldWait(true, startedAtMs, LiGetMillis(), budgetMs)) {
                             if (interpolatedFrame) CVBufferRelease(interpolatedFrame);
-                            if (current && runTask && !interpolatedFrame) {
-                                [self teardownFrameInterpolationProcessor];
-                                [self logActiveFrameInterpolationEngine:MLActiveVideoFrameInterpolationEngineNone
-                                    report:MLVideoFrameInterpolationReportRuntimeUnavailable
-                                    reason:@"asynchronous VT frame interpolation failed"];
-                            }
+                            // Preserve the paused processor identity. Retiring here
+                            // would let the next source rewarm and fail at frame rate.
                         } else {
                             if (_pendingInterpolatedFrame) {
                                 CVBufferRelease(_pendingInterpolatedFrame);

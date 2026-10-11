@@ -1375,3 +1375,5 @@
 
 "USB hubs" = "USB 集线器";
 "USB hubs grouping detail" = "集线器默认收起，便于先找到外设。展开后可查看全部集线器；分组不会改变设备许可。";
+
+"Video Frame Interpolation Runtime Detail Processing Paused" = "插帧因处理失败或过载已暂停，继续显示原生帧。更改串流配置或重新连接后重试。";
