@@ -315,6 +315,10 @@ int main(void) {
         expect_state("the last slot is spent, and no third device may start", last_one,
                      MLDeviceRedirectionPhaseReady, MLDeviceRedirectionStopNone,
                      0, NO, NO, NO);
+        expect_state("an explicit request after the last slot is refused",
+                     ask(last_one, MLDeviceRedirectionChannelItem),
+                     MLDeviceRedirectionPhaseClosed, MLDeviceRedirectionStopNoSlots,
+                     0, NO, NO, NO);
         expect_state("the host refused the device",
                      answered(ask(ready(the_advertised_host(), 1), MLDeviceRedirectionChannelItem),
                               MLDeviceRedirectionChannelItem,
@@ -532,6 +536,12 @@ def main():
               mutated(rules, "the spent slot",
                       "                delivered.availableSlots = delivered.availableSlots - 1;",
                       "                delivered.availableSlots = delivered.availableSlots;"),
+              cc, sdk)
+
+    run_rules("a request bypasses exhausted-slot admission",
+              mutated(rules, "the exhausted-slot request guard",
+                      "channel == MLDeviceRedirectionChannelItem && self.availableSlots == 0",
+                      "channel == MLDeviceRedirectionChannelItem && self.availableSlots < 0"),
               cc, sdk)
 
     print("%d device-redirection-session failures" % len(failures))
