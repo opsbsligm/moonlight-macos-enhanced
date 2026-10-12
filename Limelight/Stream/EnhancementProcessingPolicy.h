@@ -21,3 +21,11 @@ static inline uint32_t MLEnhancementOverloadStrikes(uint32_t previous, bool proc
     if (elapsedMs >= budgetMs) return previous >= 2 ? 3 : previous + 1;
     return 0;
 }
+
+// Cooldown probe: a paused engine re-tests one frame after a growing backoff.
+// Without this the breaker is permanent for the whole session, so a temporary
+// thermal/scaled-frame stall (for example 4x super-resolution while hot) can
+// never recover even after the GPU has cooled down.
+static inline bool MLEnhancementProbeDue(uint64_t suspendedSinceMs, uint64_t nowMs, uint64_t backoffMs) {
+    return nowMs >= suspendedSinceMs && nowMs - suspendedSinceMs >= backoffMs;
+}
