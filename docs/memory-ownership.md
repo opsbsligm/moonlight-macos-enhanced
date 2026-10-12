@@ -131,6 +131,10 @@ TemporaryHost ──appList(retain, TemporaryHost.h:41)──▶ TemporaryApp
 > 也就是说：`weak` 化的提交从此**必须先让 `streamVC.host`/`item.host` 这类赋值存在**才可能过 CI——
 > 这条改动不再等一个跑不起来的会话，它等的是两个今天就能补上的属性。
 
+> **2026-10-12 的状态更新（round76）**：上面这条登记已经销号。`TemporaryApp.host` 现为 `weak`，
+> `StreamViewController` 与 `AppCell` 各带一个 `strong` host 并在赋值点配对，
+> 三类测量（holder 规则、三形状读数、`leaks` 的 ROOT CYCLE）同时到位，细节与踩坑见 §42。
+
 ## 6. 这次没测到
 
 - ~~96 处泄漏未被归因~~ **已解决（2026-09-24 同日）**：那是 `leaks` 默认**树状报告**的性质，不是应用的性质。
@@ -2299,3 +2303,79 @@ run `38131148820`（`24c66229`）的 arm64 / x86_64 设置 growth16 均失败：
 closed，未获得可用界面观察；原生 render probe 也不冒充操作者 GUI 验收。
 USB 真实驱动/主机通道与超分插帧到屏顺滑仍未完成。回滚用单独 revert 本轮
 提交，恢复旧设置取值会重新带回每访问全图增长，不能据此降低门禁。
+
+## 42. 2026-10-12 round76：反向指针真的改成 weak，以及「改了源码必须重新构建才重跑 audit」
+
+§5 等了 17 轮的那三步，本轮按登记的条件同时到位，因此不再属于「打磨模式登记项」。
+
+**改了什么（六个文件）**：
+1. `TemporaryApp.h`：`host` 由 `strong` → `weak`。
+2. `StreamViewController.h`：新增 `strong` 的 `TemporaryHost *host`（§5 第 2 步）。
+3. `AppCell.h`：新增 `strong` 的 `TemporaryHost *host`（§5 第 3 步的 apps 页形状；
+   artwork 那条 `AppAssetRetriever` 路径本就已经成对，见 §4 的更正）。
+4. `AppsViewController.m`：`prepareForSegue:` 里 `streamVC.app` 之后赋 `streamVC.host`；
+   `configureItem:` 里 `item.app` 之后赋 `item.host`。两处都是配着赋，不新增读点。
+5. `TemporaryApp.m`：`hash` 去掉对 host 的依赖（`[self.id hash] * 31`）——
+   一条 weak 反指不能参与哈希，否则 host 置零会让同一个 app 在集合里换桶；
+   `isEqual:` 加 `ownHostUuid != nil` 守卫，孤儿 app 故意不等价，不是漏判。
+6. `TemporaryHost.m`：新增 `dealloc`，先把 appList 里每个 `app.host` 置 nil 再释放数组，
+   避免宿主先走时留下读得到 nil 的孤儿。
+
+**实测（本机 arm64 Debug 真库）**：`python3 scripts/ownership-audit.py` → `0 ownership failure(s)`。
+声明行现在是 `app.host=weak,host.appList=strong`；三种形状全部 `held=no no-holder=no`
+（production `appList 3`、hand-built `1`、back-pointer `0`）；
+§10 那张表里两行 yes 从此翻成 no，即 `leaks` 名为 ROOT CYCLE 的那条环在进程内部已经没有对应物。
+断链形状 `severed, app-only: host held=no` 对 `app+host: host held=yes`，
+说明续命现在来自具名的 host 持有者，而不是反指。三条把 app 交给持有者的赋值点 3/3 配对。
+`scripts/ownership-baseline.json` 的 weak profile 期望（全 false）一次全中，**基线未改**。
+
+**本轮最值钱的一条踩坑**：改完源码直接重跑 audit 会得出 15 条 FAIL，
+而这 15 条全是假警报。`ownership-audit.py` 自己不构建，
+它读 `build-render-probe/` 里那份由 `scripts/render-probe.py` 产出的产物；
+产物 mtime 早于源码改动时，探针跑的是 `weak` 之前的旧二进制，
+于是报出「声明说 weak、host 却还活着」这种自相矛盾的读数——
+而那恰好是门禁设计用来拒绝的形状。**结论：动过头文件或源码，必须先重跑
+`xcodebuild ... -derivedDataPath build-render-probe build`，再跑 audit。**
+这条写在这里，是因为它能同时骗过「改坏了」和「改好了」两种判断。
+
+**`leaks` 侧**：`python3 scripts/leak-audit.py` → `0 leak-audit failure(s)`，
+本轮我们自己的对象是 **0 个**（`first-party classes: none`）。
+在此之前，§9 记录的九次 sweep 每次都有 6–9 张图、384 bytes/graph 是我们的。
+审计打印了一条指引：某类在零泄漏时无法判定扇出，若归零是因为修好了，
+请在**同一个 commit** 里调低上限。本轮没有照抄这句话去调 `apps_per_host: 3`，
+理由是这条读数本身不携带信息——零泄漏既可能来自修复，也可能来自这一次没走到写路径，
+而 `leaks` 分不清。因此调整等到 CI 两架构各拿到一次非零扇出后再做，
+`growth_bytes_per_cycle_per_host: 1100` 同样不动：它是 §9 的哨兵，
+它的松紧应当由「我们的对象还在不在长」来推，而不是由一次零读来推。
+
+**仍未测到（不改口）**：真串流会话里 `self.app.host` 的运行时读数依旧没有，
+拦它的是源码侧的持有者规则；`cell ← app → host ← cell` 会不会成新环，
+已由本轮的 production/hand-built 两形状读数排除在**对象图层**，但没经真实 collection view 生命周期；
+固定 2 张旧完整图的地板值仍在；mDNS 应答拼出的 host 与其 appList 的所有权仍未测。
+回滚：单独 revert 本轮提交即回到双 strong 的已知状态，代价是 ROOT CYCLE 回归。
+
+**本轮三条门禁失败的根因（都记下来，因为它们各自能骗过一次「绿了」）**：
+
+1. `constraints-audit.py --no-battery` 与 `ownership-audit.py --red-team` 同时报
+   「the holders that ship, under a weak header passed. This is the rule that guards the
+   fix, and it is not guarding it.」——这不是规则失效，是**预期写在了双 strong 时代**：
+   该 case 断言「在 weak 声明下，shipping 的三处赋值点必须被拒绝」，而本轮修复要的就是
+   这三处全部配对。预期为 `["hand an app"]` 时它必然假失败。改成预期 `[]`（零问题），
+   并且这才是真正的修复态断言：**在 weak 声明下，shipping 树必须一条问题都没有**。
+2. 「the one paired holder quietly un-paired」要的是 `'new holder'`，实际报
+   「without ever giving it a host」。原因：`judge_pairing` 的 weak 分支不看「新旧」，
+   只看「是否配对」，所以 weak 下这条规则比 strong 时代**更严**（不问历史，只问当下）。
+   预期改成实际消息子串 `without ever giving it a host`，并在注释里写明这条规则随声明
+   换向而变严，不是变松。
+3. 「a cycle that stopped leaking while the header still promises it」要的是 `ROOT CYCLE`，
+   实际被 production/hand-built 一致性控制项咬住（`disagree on hostAliveWithNoHolder`）。
+   根因：`cycle_declared` 要求两侧都声明 strong，`app.host` 一旦 weak，ROOT CYCLE 那条
+   规则在红队里**不可达**。改法不是把规则删掉，而是把这条 mutation 的 label 与预期改为
+   它真正证明的东西——「手工构造的图不再泄漏，而真实产线的图仍在泄漏 ⇒ 形状不再同构」；
+   ROOT CYCLE 本身的咬合仍由 `--self-test` 在 strong 声明的样本上覆盖（那里可达）。
+
+**顺带一条 C 侧踩坑**：`TemporaryHost.m` 的 `dealloc` 里原先写了 `self.appList = nil;`，
+而 `TemporaryHost.h` 处在 `NS_ASSUME_NONNULL` 区内，`appList` 因此是 **nonnull** 属性，
+loopback harness 把该文件内联编译并带 `-Werror,-Wnonnull`，于是「向 nonnull 属性赋 nil」
+直接编译失败。ARC 本来就会释放该 ivar，置 nil 是多余的写法而非必需的清理，删掉即可。
+教训：在 `NS_ASSUME_NONNULL` 文件里给 dealloc 加清理语句前，先看属性的可空性。

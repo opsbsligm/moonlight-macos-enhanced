@@ -12,6 +12,18 @@
 
 @implementation TemporaryHost
 
+// Deterministically drop the weak back-pointers before this host dies, so a
+// temporarily detached TemporaryApp never observes a half-destroyed host.
+// Note: do not assign self.appList = nil here. The property is declared
+// non-null (this file sits inside NS_ASSUME_NONNULL), so handing nil to the
+// setter trips -Wnonnull under -Werror in the loopback harness. ARC releases
+// the ivar on its own once dealloc returns.
+- (void) dealloc {
+    for (TemporaryApp *app in self.appList) {
+        app.host = nil;
+    }
+}
+
 - (id) init {
     self = [super init];
     self.appList = [[NSMutableSet alloc] init];

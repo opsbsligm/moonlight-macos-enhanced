@@ -7,6 +7,7 @@
 //
 
 #import <Cocoa/Cocoa.h>
+@class TemporaryHost;
 #import "TemporaryApp.h"
 #import "AppsViewControllerDelegate.h"
 
@@ -23,6 +24,10 @@ struct Resolution {
 
 @interface StreamViewController : NSViewController
 @property (nonatomic, strong) TemporaryApp *app;
+// Strong snapshot of app.host: the app->host edge is weak, so the streaming
+// view controller keeps the host graph alive for the whole session (and for
+// the deferred reconnect state). Required pairing for the weak back-pointer.
+@property (nonatomic, strong, nullable) TemporaryHost *host;
 @property (nonatomic, weak) id<AppsViewControllerDelegate> delegate;
 @property (nonatomic) BOOL hasSessionSunshineTargetDisplayOverride;
 @property (nonatomic, copy) NSString *sessionSunshineTargetDisplayNameOverride;

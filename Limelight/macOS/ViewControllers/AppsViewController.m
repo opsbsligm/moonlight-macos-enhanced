@@ -629,6 +629,9 @@ static NSUserInterfaceItemIdentifier const MLSunshineRefreshDisplaysMenuItemIden
 - (void)prepareForSegue:(NSStoryboardSegue *)segue sender:(id)sender {
     StreamViewController *streamVC = segue.destinationController;
     streamVC.app = self.runningApp;
+    // Paired strong host snapshot: app->host is weak, so the streaming session
+    // must own the host graph itself (also covers the deferred reconnect state).
+    streamVC.host = self.host;
     streamVC.delegate = self;
     streamVC.hasSessionSunshineTargetDisplayOverride = self.hasPendingSessionSunshineTargetDisplayOverride;
     streamVC.sessionSunshineTargetDisplayNameOverride = self.pendingSessionSunshineTargetDisplayNameOverride;
@@ -740,6 +743,8 @@ static NSUserInterfaceItemIdentifier const MLSunshineRefreshDisplaysMenuItemIden
     TemporaryApp *app = [self itemsForSection:indexPath.section][indexPath.item];
     item.appName.stringValue = app.name;
     item.app = app;
+    // Paired strong host snapshot for the weak app->host back-pointer (audit rule).
+    item.host = self.host;
     
     BOOL isRunning = [self isAppRunning:app];
     item.runningIconContainer.alphaValue = isRunning ? 1.0 : 0.0;

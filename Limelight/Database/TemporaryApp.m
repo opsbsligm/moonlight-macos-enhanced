@@ -59,7 +59,11 @@
 }
 
 - (NSUInteger)hash {
-    return [self.host.uuid hash] * 31 + [self.id intValue];
+    // Deliberately host-independent: the host back-pointer is weak, so hashing on
+    // host.uuid would let the hash change (to 0) once the host is released and
+    // silently corrupt any NSSet the app is still an element of. Equal apps still
+    // agree because isEqual only ever narrows the id-based bucket.
+    return [self.id hash] * 31;
 }
 
 - (BOOL)isEqual:(id)object {
@@ -71,7 +75,11 @@
         return NO;
     }
     
-    return [self.host.uuid isEqualToString:((App*)object).host.uuid] &&
+    // A released weak host makes this app an orphan: it is intentionally unequal
+    // to anything, rather than silently matching a same-id app on another host.
+    NSString *ownHostUuid = self.host.uuid;
+    return ownHostUuid != nil &&
+    [ownHostUuid isEqualToString:((App*)object).host.uuid] &&
     [self.id isEqualToString:((App*)object).id];
 }
 
