@@ -68,6 +68,7 @@ static NSString *MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpola
     NSUInteger _interpolationProcessGeneration, _frameInterpolationWarmupGeneration;
     uint32_t _interpolationOverloadStrikes;
     BOOL _interpolationSuspended;
+    uint64_t _interpolationSuspendedSinceMs, _interpolationProbeBackoffMs;
     BOOL _interpolationProcessInFlight, _frameInterpolationWarmupInFlight, _frameInterpolationCadenceForced;
     NSInteger _frameInterpolationWarmupWidth, _frameInterpolationWarmupHeight;
     NSInteger _frameInterpolationInputWidth, _frameInterpolationInputHeight;

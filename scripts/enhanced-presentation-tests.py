@@ -63,6 +63,13 @@ int main(void) {
     assert(MLEnhancementOverloadStrikes(0,false,0,5)==3);
     assert(MLEnhancementOverloadStrikes(0,true,1,0)==3);
     assert(MLEnhancementOverloadStrikes(0,true,UINT64_MAX,5)==3);
+    // Cooldown probe: a paused engine retries one frame once the backoff elapsed.
+    assert(MLEnhancementProbeDue(100,2100,2000));
+    assert(MLEnhancementProbeDue(100,1100,1000));
+    assert(MLEnhancementProbeDue(100,100,0));
+    assert(!MLEnhancementProbeDue(100,1099,1000));
+    assert(!MLEnhancementProbeDue(100,50,2000));
+    assert(!MLEnhancementProbeDue(100,99,0));
     MLActualPresentationState actual = {0};
     assert(MLActualPresentationRecord(&actual,0,10,9.997,false,true));
     assert(!MLActualPresentationRead(&actual,10).available);
@@ -141,6 +148,8 @@ enhancement_mutations = [
     ('publish-after-fallback', '!alreadySubmitted;', '(alreadySubmitted || !alreadySubmitted);'),
     ('wait-on-older-input', 'return sameInput &&', 'return (sameInput || !sameInput) &&'),
     ('wait-past-deadline', 'nowMs - startedAtMs < budgetMs', 'nowMs - startedAtMs <= budgetMs'),
+    ('probe-boundary-off-by-one', 'nowMs - suspendedSinceMs >= backoffMs', 'nowMs - suspendedSinceMs > backoffMs'),
+    ('probe-underflow-guard-dropped', 'nowMs >= suspendedSinceMs && nowMs', 'nowMs'),
 ]
 for name, before, after in enhancement_mutations:
     assert enhancement_header.count(before) == 1, name

@@ -1508,6 +1508,10 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     BOOL _interpolationProcessInFlight;
     uint32_t _interpolationOverloadStrikes;
     BOOL _interpolationSuspended;
+    // Cooldown probe state: when the interpolation breaker last paused us and how
+    // long to wait before the next single-frame retry. Both reset with the breaker.
+    uint64_t _interpolationSuspendedSinceMs;
+    uint64_t _interpolationProbeBackoffMs;
     uint64_t _interpolationStagingStartedAtMs;
     uint64_t _interpolationStagingBudgetMs;
     NSUInteger _enhancementProcessGeneration;
@@ -1519,6 +1523,9 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     uint64_t _enhancementFailedInterpolatedSequence;
     uint32_t _enhancementOverloadStrikes;
     BOOL _enhancementSuspended;
+    // Cooldown probe state, mirroring the interpolation breaker above.
+    uint64_t _enhancementSuspendedWhenMs;
+    uint64_t _enhancementProbeBackoffMs;
     CVImageBufferRef _enhancementResultFrame;
     CVImageBufferRef _enhancementResultSourceFrame;
     uint64_t _enhancementResultSequence;
@@ -1989,6 +1996,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         _enhancementFailedInterpolatedSequence = 0;
         _enhancementOverloadStrikes = 0;
         _enhancementSuspended = NO;
+        _enhancementSuspendedWhenMs = 0;
+        _enhancementProbeBackoffMs = 0;
         // Do not clear the single-flight slot here. Its old task still owns it
         // until the queued completion releases its retained input and pool.
         [self releasePreviousEnhancedFrames];
@@ -2006,6 +2015,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         _interpolationProcessGeneration += 1;
         _interpolationOverloadStrikes = 0;
         _interpolationSuspended = NO;
+        _interpolationSuspendedSinceMs = 0;
+        _interpolationProbeBackoffMs = 0;
         _frameInterpolationWarmupGeneration += 1;
         _frameInterpolationWarmupInFlight = NO;
         _frameInterpolationWarmupWidth = 0;
@@ -4124,6 +4135,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     _frameInterpolationSourcePixelFormat = sourcePixelFormat;
     _interpolationOverloadStrikes = 0;
     _interpolationSuspended = NO;
+    _interpolationSuspendedSinceMs = 0;
+    _interpolationProbeBackoffMs = 0;
     return YES;
 }
 
@@ -4520,11 +4533,17 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         }
 
         if (_interpolationSuspended) {
-            _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
-            [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
-                report:MLVideoFrameInterpolationReportPausedForProcessing
-                reason:@"VT frame interpolation paused after processing failure or overload; presenting source frames until configuration or session changes"];
-            return NO;
+            // Not a permanent breaker: after a growing backoff let one fresh frame
+            // probe the engine again, so a temporary thermal stall can recover.
+            uint64_t probeNow = LiGetMillis();
+            if (!MLEnhancementProbeDue(_interpolationSuspendedSinceMs, probeNow,
+                                       MAX((uint64_t)2000, _interpolationProbeBackoffMs))) {
+                _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+                [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                    report:MLVideoFrameInterpolationReportPausedForProcessing
+                    reason:@"VT frame interpolation paused after processing failure or overload; presenting source frames and will retry after a cooldown"];
+                return NO;
+            }
         }
 
         if (@available(macOS 26.0, *)) {
@@ -4571,10 +4590,17 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 self->_interpolationOverloadStrikes, interpolatedFrame != NULL, processElapsedMs, budgetMs);
                             self->_interpolationSuspended = self->_interpolationOverloadStrikes >= 3;
                             if (self->_interpolationSuspended) {
+                                self->_interpolationSuspendedSinceMs = LiGetMillis();
+                                self->_interpolationProbeBackoffMs = self->_interpolationProbeBackoffMs == 0
+                                    ? (uint64_t)2000
+                                    : MIN(self->_interpolationProbeBackoffMs * 2, (uint64_t)60000);
                                 self->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
                                 [self logActiveFrameInterpolationEngine:self->_activeFrameInterpolationEngine
                                     report:MLVideoFrameInterpolationReportPausedForProcessing
-                                    reason:@"VT frame interpolation paused after processing failure or overload; presenting source frames until configuration or session changes"];
+                                    reason:@"VT frame interpolation paused after processing failure or overload; presenting source frames and will retry after a cooldown"];
+                            } else {
+                                // A healthy probe cleared the breaker: forget the backoff.
+                                self->_interpolationProbeBackoffMs = 0;
                             }
                         }
                         self->_interpolationProcessInFlight = NO;
@@ -4949,8 +4975,14 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         if (_enhancementSuspended) {
             // Keep the session identity: automatic fallback must not reset the
             // breaker and recreate a failing/overloaded processor every frame.
-            if (processingPending) *processingPending = YES;
-            return NULL;
+            // After a growing backoff one frame probes the processor again, so a
+            // thermal/scaled-frame stall is not a permanent session-long breaker.
+            uint64_t probeNow = LiGetMillis();
+            if (!MLEnhancementProbeDue(_enhancementSuspendedWhenMs, probeNow,
+                                       MAX((uint64_t)2000, _enhancementProbeBackoffMs))) {
+                if (processingPending) *processingPending = YES;
+                return NULL;
+            }
         }
         if (_enhancementResultFrame && _enhancementResultSourceFrame == sourceFrame &&
             _enhancementResultSequence == frameSequence) {
@@ -5054,9 +5086,17 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 self->_enhancementOverloadStrikes, processed, processElapsedMs, budgetMs);
                             self->_enhancementSuspended = self->_enhancementOverloadStrikes >= 3;
                             if (self->_enhancementSuspended) {
-                                Log(LOG_W, @"[video] VT enhancement paused for this configuration: processed=%d elapsed=%llu ms budget=%llu ms",
-                                    processed, (unsigned long long)processElapsedMs, (unsigned long long)budgetMs);
+                                self->_enhancementSuspendedWhenMs = LiGetMillis();
+                                self->_enhancementProbeBackoffMs = self->_enhancementProbeBackoffMs == 0
+                                    ? (uint64_t)2000
+                                    : MIN(self->_enhancementProbeBackoffMs * 2, (uint64_t)60000);
+                                Log(LOG_W, @"[video] VT enhancement paused for this configuration: processed=%d elapsed=%llu ms budget=%llu ms backoff=%llu ms",
+                                    processed, (unsigned long long)processElapsedMs, (unsigned long long)budgetMs,
+                                    (unsigned long long)self->_enhancementProbeBackoffMs);
                                 retryDraw = YES;
+                            } else {
+                                // A healthy probe cleared the breaker: forget the backoff.
+                                self->_enhancementProbeBackoffMs = 0;
                             }
                         }
                         self->_enhancementProcessInFlight = NO;
@@ -5437,7 +5477,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             [self logActiveEnhancementEngine:_activeEnhancementEngine
                                       reason:enhancementProcessingPending
                 ? (enhancementSuspended
-                    ? @"VT enhancement paused after processing failure or overload; using spatial scaling until configuration or session changes"
+                    ? @"VT enhancement paused after processing failure or overload; using spatial scaling and will retry after a cooldown"
                     : @"VT enhancement busy or beyond this frame budget; temporarily using spatial scaling")
                 : enhancementWarmupPending
                 ? (_activeEnhancementEngine == MLActiveVideoEnhancementEngineMetalFXQuality
