@@ -1169,6 +1169,9 @@ def parse(arguments):
 
 def main():
     arguments = sys.argv[1:]
+    if "--help" in arguments or "-h" in arguments:
+        print(__doc__)
+        return 0
     # `report` is also the name of the function that prints the verdict below, so the flag
     # value is not allowed to answer to it here: the first run of `--report` shadowed the
     # printer with a None and died on the way to reporting a leak.
