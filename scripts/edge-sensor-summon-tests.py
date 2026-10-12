@@ -202,5 +202,58 @@ edgeui=(vc/'MLEdgeMenuUI.m').read_text()
 assert 'constrainFrameRect:(NSRect)frame toScreen:' in edgeui, \
     'the edge panel lost its menu-bar clamp opt-out: a top-docked handle gets cut in half again'
 
+
+# Input ownership for the edge dock is one contract with two halves. The panel owns
+# ignoresMouseEvents and grants it in exactly one phase (Hidden); the handle owns
+# hitTest and, while collapsed, answers only on the drawn strip plus its own slop.
+# A collapsed panel that set ignoresMouseEvents would make the clickable tab dead
+# again (the exact regression 85783864 fixed), and a compact hit rect that grew past
+# the plate would let an invisible overlay swallow game clicks. Pin both halves
+# structurally; the runtime probe pins the phase/flag behaviour.
+def pinned_input_contract(menu_src, edgeui_src):
+    transition = method(menu_src, '- (void)transitionEdgeMenuToPhase:')
+    assert 'self.edgeMenuPanel.ignoresMouseEvents = phase == MLEdgeMenuPhaseHidden;' in transition, \
+        'the collapsed panel no longer stays clickable: only Hidden may take native input away'
+    assert 'MLEdgeMenuPhaseCollapsed' not in transition.split('ignoresMouseEvents')[1].split(';')[0], \
+        'a collapsed-phase clause is back on ignoresMouseEvents: the drawn tab cannot be clicked'
+    hit = method(edgeui_src, '- (NSView *)hitTest:(NSPoint)point')
+    assert 'self.compactAppearance' in hit and 'if (NSIsEmptyRect(_compactHitRect)) return nil;' in hit, \
+        'the collapsed handle lost its narrow hit rect: an unseen overlay area can swallow stream clicks'
+    assert 'return NSPointInRect(localPoint, _compactHitRect) ? self : nil;' in hit, \
+        'the collapsed handle answers outside its drawn strip'
+    layout = method(edgeui_src, '- (void)layout')
+    assert '_compactHitRect = NSZeroRect;' in layout, \
+        'the compact hit rect is no longer reset every layout pass: a moved tab keeps answering on its old strip'
+    assert '_compactHitRect = NSInsetRect(plateFrame, -MLEdgeMenuHandleHitSlop, -MLEdgeMenuHandleHitSlop);' in layout, \
+        'the compact hit rect no longer follows the drawn plate plus its declared slop'
+pinned_input_contract(menu, edgeui)
+print('PASS input ownership: collapsed panel clickable, stream protected by the compact hit rect')
+if '--self-test' in sys.argv:
+    legacy_input = menu.replace(
+        'self.edgeMenuPanel.ignoresMouseEvents = phase == MLEdgeMenuPhaseHidden;',
+        'self.edgeMenuPanel.ignoresMouseEvents = phase == MLEdgeMenuPhaseCollapsed || phase == MLEdgeMenuPhaseHidden;')
+    try:
+        pinned_input_contract(legacy_input, edgeui)
+        raise AssertionError('the input contract accepts the dead-tab regression')
+    except AssertionError as error:
+        assert 'ignoresMouseEvents' in str(error) or 'collapsed' in str(error).lower(), error
+    print('PASS negative control: collapsed ignoresMouseEvents regression is rejected')
+    blind_hit = edgeui.replace('if (NSIsEmptyRect(_compactHitRect)) return nil;', '')
+    try:
+        pinned_input_contract(menu, blind_hit)
+        raise AssertionError('the input contract accepts a handle with no empty-rect guard')
+    except AssertionError as error:
+        assert 'hit rect' in str(error), error
+    print('PASS negative control: unguarded compact hit rect is rejected')
+    drift_layout = edgeui.replace(
+        '_compactHitRect = NSInsetRect(plateFrame, -MLEdgeMenuHandleHitSlop, -MLEdgeMenuHandleHitSlop);',
+        '_compactHitRect = NSMakeRect(0, 0, 56, 56);')
+    try:
+        pinned_input_contract(menu, drift_layout)
+        raise AssertionError('the input contract accepts a hit rect that ignores the drawing')
+    except AssertionError as error:
+        assert 'plate' in str(error) or 'reset' in str(error), error
+    print('PASS negative control: hit rect detached from the drawn plate is rejected')
+
 rebuild=method(menu,'- (void)rebuildStreamMenu')
 assert rebuild.index('if (self.edgeMenuMenuVisible) return;') < rebuild.index('[self.streamMenu removeAllItems]'), 'live updates can mutate the tracked menu'

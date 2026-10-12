@@ -302,7 +302,12 @@ int main(void) { @autoreleasepool {
             fire(s.edgeSensorDwellTimer);
             CHECK(s.edgeMenuHandleArmed && !s.expanded, "arrival at the edge lights the tab instead of opening the bar");
             CHECK(s.isMouseCaptured && !s.edgeMenuTemporaryReleaseActive, "lighting the tab leaves the pointer with the game");
-            CHECK(s.edgeMenuPanel.ignoresMouseEvents, "an armed tab never takes native input away from the stream");
+            // The collapsed panel stays clickable on purpose: a hitTest that returns nil
+            // only hands the event to the panel's content view, it does not push the
+            // click through to the stream. Stream protection for the collapsed tab is
+            // MLEdgeMenuHandleView's compact hit rect - the drawn strip plus its own
+            // slop - which this probe pins statically in the entry script.
+            CHECK(!s.edgeMenuPanel.ignoresMouseEvents, "an armed tab stays clickable; only the handle's narrow hit rect keeps the stream protected");
             CHECK([ProbeLog countMatching:@"Edge controls opened"] == 0, "lighting the tab opens nothing it could report");
             NSRect litTab = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
             CHECK(MIN(NSWidth(litTab), NSHeight(litTab)) > idleDepth,
@@ -542,7 +547,12 @@ int main(void) { @autoreleasepool {
         CHECK(s.expanded && deadline == s.edgeMenuAutoCollapseTimer, "movement neither collapses immediately nor restarts the grace deadline");
         fire(deadline);
         CHECK(!s.expanded && s.isMouseCaptured && !s.edgeMenuTemporaryReleaseActive, "grace completion returns captured input exactly once");
-        CHECK(s.edgeMenuPanel.ignoresMouseEvents, "collapsed transparent panel cannot swallow stream clicks");
+        // Auto-collapse returns the pointer to the game, but the bar must still
+        // answer a deliberate click on the drawn strip; swallowing the stream is the
+        // compact hit rect's job, not ignoresMouseEvents.
+        CHECK(!s.edgeMenuPanel.ignoresMouseEvents, "the collapsed panel stays clickable on its drawn strip instead of swallowing the whole overlay");
+        [s transitionEdgeMenuToPhase:MLEdgeMenuPhaseHidden];
+        CHECK(s.edgeMenuPanel.ignoresMouseEvents, "only a hidden panel gives all native input back to the stream");
     }
     s=fresh(MLFreeMouseExitEdgeRight); s.systemPoint=NSMakePoint(1918,540);
     move(s,0,0);
@@ -1196,6 +1206,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('the click target reads the wrong axis for a horizontal dock', 'BOOL verticalDock = self.edgeMenuDockEdge == MLFreeMouseExitEdgeLeft ||\n                        self.edgeMenuDockEdge == MLFreeMouseExitEdgeRight;', 'BOOL verticalDock = YES;'),
                 ('the click target reads the wrong axis for a vertical dock', 'BOOL verticalDock = self.edgeMenuDockEdge == MLFreeMouseExitEdgeLeft ||\n                        self.edgeMenuDockEdge == MLFreeMouseExitEdgeRight;', 'BOOL verticalDock = NO;'),
                 ('the armed light never goes out', 'if (self.edgeMenuHandleArmed) {\n        self.edgeMenuHandleArmed = NO;\n        [self updateEdgeMenuButtonAppearance];\n    }', 'if (NO) {\n        self.edgeMenuHandleArmed = NO;\n        [self updateEdgeMenuButtonAppearance];\n    }'),
+                ('a collapsed panel that ignores the mouse kills the clickable tab', 'self.edgeMenuPanel.ignoresMouseEvents = phase == MLEdgeMenuPhaseHidden;', 'self.edgeMenuPanel.ignoresMouseEvents = phase == MLEdgeMenuPhaseCollapsed || phase == MLEdgeMenuPhaseHidden;'),
             ]
             for label,before,after in mutations:
                 assert before in methods,label
