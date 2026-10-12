@@ -85,6 +85,7 @@ static NSString *MLVideoEnhancementEngineName(MLActiveVideoEnhancementEngine e) 
     uint64_t _enhancementFailedInterpolatedSequence;
     uint32_t _enhancementOverloadStrikes;
     BOOL _enhancementSuspended;
+    uint64_t _enhancementSuspendedWhenMs, _enhancementProbeBackoffMs;
     CMTime _previousEnhancedPresentationTimeStamp;
     double _lastDisplayRefreshRate;
 }

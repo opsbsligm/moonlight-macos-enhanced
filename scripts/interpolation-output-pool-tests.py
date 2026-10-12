@@ -85,6 +85,8 @@ DRIVER = r"""
     id _frameInterpolationProcessor;
     NSUInteger _interpolationOverloadStrikes;
     BOOL _interpolationSuspended;
+    uint64_t _interpolationSuspendedSinceMs;
+    uint64_t _interpolationProbeBackoffMs;
 }
 @end
 
