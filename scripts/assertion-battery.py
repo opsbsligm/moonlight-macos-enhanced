@@ -15,6 +15,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from apple_toolchain import NO_TOOLCHAIN_MESSAGE
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2324,6 +2325,8 @@ def gate_failed(gate):
 
 
 def main():
+    # CI consumes a pipe, not a terminal. Keep each progress line visible.
+    sys.stdout.reconfigure(line_buffering=True)
     keep = None
     if "--keep-broken" in sys.argv:
         keep = sys.argv[sys.argv.index("--keep-broken") + 1]
@@ -2408,6 +2411,8 @@ def main():
             pending[path] = original[path]
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(mutated)
+            started = time.monotonic()
+            print("RUN     %s (%s)" % (name, os.path.basename(gate[0])), flush=True)
             try:
                 failed, detail = gate_failed(gate)
             finally:
@@ -2420,6 +2425,7 @@ def main():
                 if text is not None:
                     with open(path, "w", encoding="utf-8") as handle:
                         handle.write(text)
+            print("TIME    %s %.2fs" % (name, time.monotonic() - started), flush=True)
             if failed is None:
                 # The gate reached for a compiler this host does not have. Counting that
                 # either way would be a lie -- as a proof, because nothing was tested, and
