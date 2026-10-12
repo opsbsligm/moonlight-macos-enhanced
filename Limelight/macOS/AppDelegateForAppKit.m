@@ -1896,6 +1896,9 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         } else {
             cycleRecord[@"status"] = @"running";
             NSMutableArray<NSNumber *> *readsPerCycle = [NSMutableArray array];
+            NSUserDefaults *cycleDefaults = NSUserDefaults.standardUserDefaults;
+            id savedCyclePane = [cycleDefaults objectForKey:@"selected-settings-pane"];
+            NSMutableArray<NSNumber *> *panesPerCycle = [NSMutableArray array];
 #if DEBUG
             // The loop total is measured from before the first visit rather than summed from the
             // per-cycle spans, so a read that happens between two cycles (the library count a
@@ -1907,6 +1910,10 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
 #if DEBUG
                 unsigned long long readsAtCycleStart = MLHostReads();
 #endif
+                // Exercise device enumeration appearance/disappearance as well as
+                // the stream settings; a saved selection must not narrow the sweep.
+                NSInteger cyclePane = cycle % 2 == 0 ? 0 : 6;
+                [cycleDefaults setInteger:cyclePane forKey:@"selected-settings-pane"];
                 [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
                 MLProbeSpin(0.25);
                 if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
@@ -1933,7 +1940,14 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
                 [readsPerCycle addObject:@(MLHostReads() - readsAtCycleStart)];
 #endif
                 cycleRecord[@"completed"] = @(cycle + 1);
+                [panesPerCycle addObject:@(cyclePane)];
             }
+            if (savedCyclePane) {
+                [cycleDefaults setObject:savedCyclePane forKey:@"selected-settings-pane"];
+            } else {
+                [cycleDefaults removeObjectForKey:@"selected-settings-pane"];
+            }
+            cycleRecord[@"requestedPanesPerCycle"] = panesPerCycle;
             if ([cycleRecord[@"status"] isEqualToString:@"running"]) {
                 cycleRecord[@"status"] = @"completed";
             }
