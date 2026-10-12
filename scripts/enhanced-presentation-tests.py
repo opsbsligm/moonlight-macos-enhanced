@@ -63,6 +63,11 @@ int main(void) {
     assert(MLEnhancementOverloadStrikes(0,false,0,5)==3);
     assert(MLEnhancementOverloadStrikes(0,true,1,0)==3);
     assert(MLEnhancementOverloadStrikes(0,true,UINT64_MAX,5)==3);
+    assert(MLEnhancementNextBackoff(0,14)==2000);
+    assert(MLEnhancementNextBackoff(0,741)==5928);
+    assert(MLEnhancementNextBackoff(5928,741)==11856);
+    assert(MLEnhancementNextBackoff(40000,1)==60000);
+    assert(MLEnhancementNextBackoff(0,UINT64_MAX)==60000);
     // Cooldown probe: a paused engine retries one frame once the backoff elapsed.
     assert(MLEnhancementProbeDue(100,2100,2000));
     assert(MLEnhancementProbeDue(100,1100,1000));
