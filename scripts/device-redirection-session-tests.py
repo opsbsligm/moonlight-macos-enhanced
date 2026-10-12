@@ -414,6 +414,12 @@ def compiled(source, work, name, cc, sdk):
     return ran, (ran.stdout + ran.stderr)
 
 
+def mutation_was_caught(returncode, output):
+    reported = re.search(r"RUN FAILED \((\d+) checks\)", output or "")
+    return (returncode == 1 and reported is not None
+            and int(reported.group(1)) >= MIN_DRIVER_CHECKS)
+
+
 def run_rules(label, rules, cc, sdk, expect_pass=False):
     with tempfile.TemporaryDirectory() as work:
         source = DRIVER.replace("@@RULES@@", rules)
@@ -429,7 +435,7 @@ def run_rules(label, rules, cc, sdk, expect_pass=False):
                   "the compiled run reports its own case list (%d checks, floor %d)"
                   % (count, MIN_DRIVER_CHECKS))
         else:
-            check(ran.returncode != 0 or "RUN FAILED" not in (out or ""),
+            check(mutation_was_caught(ran.returncode, out),
                   "the check still fails when %s" % label)
             if ran.returncode == 0:
                 print((out or "").strip().splitlines()[-1:])
@@ -441,6 +447,15 @@ def mutated(rules, label, before, after):
 
 
 def main():
+    for code, output, wanted, label in (
+        (0, "RUN PASSED (40 checks)", False, "successful unchanged source"),
+        (-11, "RUN FAILED (40 checks)", False, "crashed driver"),
+        (1, "", False, "missing driver verdict"),
+        (1, "RUN FAILED (1 checks)", False, "incomplete driver cases"),
+        (1, "RUN FAILED (40 checks)", True, "completed failing driver"),
+    ):
+        check(mutation_was_caught(code, output) == wanted,
+              "mutation verdict distinguishes " + label)
     rules = shipping_rules()
     impl = read(SESSION_M)
     print("-- the order a device may be handed over in, against a host that does not exist --")
