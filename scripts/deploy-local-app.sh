@@ -50,26 +50,26 @@ mv "$SRC" "$DEST"
 INSTALL_HASH=$(shasum -a 256 "$DEST/$BIN" | cut -d' ' -f1)
 [[ "$INSTALL_HASH" == "$SRC_HASH" ]] || { echo "error: installed hash differs" >&2; exit 3; }
 codesign --verify --strict --verbose=2 "$DEST" >/dev/null 2>&1 || codesign --verify --deep --strict --verbose=2 "$DEST" >/dev/null 2>&1
-cat > "$STAMP" <<JSON
-{
-  "sha256": "$INSTALL_HASH",
-  "previousSha256": "$PREV_HASH",
-  "trash": "$TRASH",
-  "signatureVerified": true,
-  "launched": false
+write_report() {
+python3 - "$STAMP" "$INSTALL_HASH" "$PREV_HASH" "$TRASH" "$1" <<'PY'
+import json, os, sys, tempfile
+path, installed, previous, trash, launched = sys.argv[1:]
+report = dict(sha256=installed, previousSha256=previous, trash=trash,
+              signatureVerified=True, launched=launched == 'true')
+fd, temporary = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.install-')
+try:
+    with os.fdopen(fd, 'w') as stream:
+        json.dump(report, stream, indent=2)
+        stream.write('\n')
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
 }
-JSON
+write_report false
 trap - EXIT
 open "$DEST"
 # Launch requested successfully; this is not proof of runtime/UI acceptance.
-python3 - "$STAMP" <<'PY'
-import json, sys
-path = sys.argv[1]
-with open(path) as stream:
-    report = json.load(stream)
-report['launched'] = True
-with open(path, 'w') as stream:
-    json.dump(report, stream, indent=2)
-    stream.write('\n')
-PY
+write_report true
 echo "installed $INSTALL_HASH (was $PREV_HASH); record $STAMP"
