@@ -29,3 +29,13 @@ static inline uint32_t MLEnhancementOverloadStrikes(uint32_t previous, bool proc
 static inline bool MLEnhancementProbeDue(uint64_t suspendedSinceMs, uint64_t nowMs, uint64_t backoffMs) {
     return nowMs >= suspendedSinceMs && nowMs - suspendedSinceMs >= backoffMs;
 }
+
+// A costly probe must also leave room for normal presentation. Cap its compute
+// duty cycle by waiting at least eight times the measured call duration, while
+// retaining exponential retry and a bounded opportunity to recover.
+static inline uint64_t MLEnhancementNextBackoff(uint64_t previousMs, uint64_t elapsedMs) {
+    uint64_t exponential = previousMs == 0 ? 2000 : (previousMs >= 30000 ? 60000 : previousMs * 2);
+    uint64_t measured = elapsedMs >= 7500 ? 60000 : elapsedMs * 8;
+    uint64_t next = exponential > measured ? exponential : measured;
+    return next > 60000 ? 60000 : next;
+}
