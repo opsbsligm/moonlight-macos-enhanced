@@ -1243,6 +1243,11 @@ def main():
         print("%d leak-audit red-team failure(s)" % failures)
         return 1 if failures else 0
     if "--growth" in arguments:
+        minimum_visits = baseline.get("growth_graph_rule_min_visits", 0)
+        if growth_cycles - 1 < minimum_visits:
+            print("FAIL --growth-cycles must be at least %d for the configured %d-visit window; "
+                  "no sweep was started" % (minimum_visits + 1, minimum_visits))
+            return 1
         # Both halves are judged on their own before the difference between them is judged:
         # a growth run that quietly stops checking the ceiling would be a weaker gate hiding
         # inside a stronger-sounding one.
