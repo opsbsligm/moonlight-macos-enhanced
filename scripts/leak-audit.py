@@ -713,6 +713,15 @@ def probe_problems(probe, returncode=0, cycles_requested=None):
             problems.append("the sweep asked for %d visit cycle(s) and the probe recorded %s as"
                             " completed, so the rate would be divided by visits that did not"
                             " happen" % (cycles_requested, cycles.get("completed")))
+        else:
+            panes = cycles.get("requestedPanesPerCycle")
+            expected = [0 if index % 2 == 0 else 6 for index in range(cycles_requested)]
+            if panes != expected:
+                problems.append("the visit sweep did not alternate stream and USB pages")
+            scans = cycles.get("deviceScanResults")
+            if (not isinstance(scans, list) or len(scans) != cycles_requested // 2 or
+                    any(result not in ("read", "unreadable") for result in scans)):
+                problems.append("the USB visit sweep has no completed scan for every device page")
     return problems
 
 
@@ -1017,7 +1026,19 @@ def probe_record_fixture():
          "no library reads"),
         ("the cycles completed and recorded their reads",
          dict(seeded, memoryCycles={"status": "completed", "completed": 3,
-                                    "readsPerCycle": [1, 1, 1]}), 3, 0, None),
+                                    "readsPerCycle": [1, 1, 1],
+                                    "requestedPanesPerCycle": [0, 6, 0],
+                                    "deviceScanResults": ["read"]}), 3, 0, None),
+        ("the completed sweep skipped USB pages",
+         dict(seeded, memoryCycles={"status": "completed", "completed": 3,
+                                    "readsPerCycle": [1, 1, 1],
+                                    "requestedPanesPerCycle": [0, 0, 0],
+                                    "deviceScanResults": ["read"]}), 3, 1, "alternate"),
+        ("the completed sweep never finished its USB scan",
+         dict(seeded, memoryCycles={"status": "completed", "completed": 3,
+                                    "readsPerCycle": [1, 1, 1],
+                                    "requestedPanesPerCycle": [0, 6, 0],
+                                    "deviceScanResults": ["timeout"]}), 3, 1, "completed scan"),
         # Stopping partway is refused for its own reason even though such a run would also
         # carry no reads: the shorter denominator is the sharper of the two messages.
         ("the cycles stopped partway",
