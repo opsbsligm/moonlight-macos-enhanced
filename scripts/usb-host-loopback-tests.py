@@ -576,6 +576,12 @@ def compiled(source, work, cc, sdk, port, uuid):
     return ran, (ran.stdout + ran.stderr)
 
 
+def mutation_was_caught(returncode, output):
+    reported = re.search(r"RUN FAILED \((\d+) checks\)", output or "")
+    return (returncode == 1 and reported is not None
+            and int(reported.group(1)) >= MIN_DRIVER_CHECKS)
+
+
 def run_bundle(label, rules, cc, sdk, port, expect_pass):
     with tempfile.TemporaryDirectory() as work:
         ran, out = compiled(DRIVER_HEAD.replace("@@RULES@@", rules) + DRIVER_MAIN,
@@ -594,7 +600,7 @@ def run_bundle(label, rules, cc, sdk, port, expect_pass):
                   "the compiled run reports its own case list (%d checks, floor %d)"
                   % (count, MIN_DRIVER_CHECKS))
         else:
-            check(ran.returncode != 0 or "RUN FAILED" in (out or ""),
+            check(mutation_was_caught(ran.returncode, out),
                   "the check still fails when %s" % label)
 
 
@@ -604,6 +610,15 @@ def mutated(rules, label, before, after):
 
 
 def main():
+    for code, output, wanted, label in (
+        (0, "RUN PASSED (40 checks)", False, "successful driver"),
+        (-11, "RUN FAILED (40 checks)", False, "crashed driver"),
+        (1, "", False, "missing verdict"),
+        (1, "RUN FAILED (1 checks)", False, "incomplete cases"),
+        (1, "RUN FAILED (40 checks)", True, "completed failing driver"),
+    ):
+        check(mutation_was_caught(code, output) == wanted,
+              "loopback mutation verdict distinguishes " + label)
     print("-- the USB chain over a socket, with the app's own parser on the other end --")
 
     with HostFixture() as host:
