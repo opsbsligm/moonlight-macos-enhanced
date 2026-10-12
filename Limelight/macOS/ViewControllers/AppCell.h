@@ -17,12 +17,14 @@
 @property (weak) IBOutlet NSImageView *appCoverArt;
 @property (weak) IBOutlet NSView *placeholderView;
 @property (weak) IBOutlet NSView *runningIconContainer;
-@property (nonatomic, strong) TemporaryApp *app;
+// Nullable by design: the cell is instantiated from the nib before
+// AppsViewController assigns the model, and every reader below tolerates nil.
+@property (nonatomic, strong, nullable) TemporaryApp *app;
 // Strong snapshot of app.host taken with every app assignment: the app->host
 // edge is weak, so the cell keeps the host graph alive while it displays one
 // of that host's apps (ownership audit requires this pairing).
 @property (nonatomic, strong, nullable) TemporaryHost *host;
-@property (nonatomic, weak) id<AppsViewControllerDelegate> delegate;
+@property (nonatomic, weak, nullable) id<AppsViewControllerDelegate> delegate;
 
 - (void)enterHoveredState;
 - (void)exitHoveredState;
