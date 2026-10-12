@@ -3780,13 +3780,13 @@ if run_battery:
     # constraints and not to a step someone can drop: the CI job runs this script,
     # and running it is enough.
     battery = os.path.join(root, "scripts", "assertion-battery.py")
-    proc = subprocess.run([sys.executable, battery, "--no-audit-recursion"],
-                          capture_output=True, text=True, cwd=root)
-    summary = [line for line in proc.stdout.splitlines() if "mutations caught" in line]
-    print("%s assertion battery: %s" % ("ok" if proc.returncode == 0 else "FAIL",
-                                        summary[0].strip() if summary else "no verdict reported"))
+    # Stream the battery's progress instead of hiding a long run in a captured pipe.
+    sys.stdout.flush()
+    proc = subprocess.run([sys.executable, "-u", battery, "--no-audit-recursion"],
+                          cwd=root)
+    print("%s assertion battery: exit %d" %
+          ("ok" if proc.returncode == 0 else "FAIL", proc.returncode))
     if proc.returncode != 0:
-        print(proc.stdout[-1500:])
         failures.append("the assertion battery failed to catch a planted regression")
 else:
     print("skip assertion battery (invoked by the battery itself)")
