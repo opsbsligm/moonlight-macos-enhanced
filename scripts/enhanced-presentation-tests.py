@@ -142,6 +142,8 @@ for name, before, after in mutations:
     assert header.count(before) == 1, name
     assert replay(header.replace(before,after)) != 0, name + ' survived'
 enhancement_mutations = [
+    ('ignore-probe-compute-cost', 'elapsedMs * 8', 'elapsedMs * 0'),
+    ('stop-growing-probe-backoff', 'previousMs * 2', 'previousMs'),
     ('deadline-equality-resets-overload', 'elapsedMs >= budgetMs', 'elapsedMs > budgetMs'),
     ('ignore-failed-process', '!processed || budgetMs == 0', '(budgetMs == 0 && processed)'),
     ('ignore-severe-overload', 'elapsedMs / budgetMs >= 4', 'elapsedMs / budgetMs >= 400'),
