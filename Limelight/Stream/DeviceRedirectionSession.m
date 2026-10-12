@@ -232,6 +232,10 @@ static BOOL MLAnswerIsYes(id value) {
     if (self.phase != expected) {
         return [self sessionByClosing:MLDeviceRedirectionStopStepOutOfOrder];
     }
+    // Admission belongs to the state machine too, not only the UI's getter.
+    if (channel == MLDeviceRedirectionChannelItem && self.availableSlots == 0) {
+        return [self sessionByClosing:MLDeviceRedirectionStopNoSlots];
+    }
     const MLDeviceRedirectionPhase waiting =
         channel == MLDeviceRedirectionChannelBind ? MLDeviceRedirectionPhaseAwaitingBind :
         channel == MLDeviceRedirectionChannelState ? MLDeviceRedirectionPhaseAwaitingState :
