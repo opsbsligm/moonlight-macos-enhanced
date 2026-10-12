@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local acceptance deploy: verify signature, stash the old app in Trash, swap
-# atomically, re-verify the installed bytes and record the hashes. Refuses to
+# with rollback on installation failure, re-verify the bytes and record hashes. Refuses to
 # interrupt a running instance. Usage: scripts/deploy-local-app.sh <staged.app> [slug]
 set -euo pipefail
 SRC="${1:?usage: deploy-local-app.sh /path/to/App.app [slug]}"
@@ -10,6 +10,7 @@ DEST="/Applications/MoonlightEnhanced.app"
 BIN="Contents/MacOS/MoonlightEnhanced"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAMP="$REPO/build-input-review/$SLUG-install-result.json"
+mkdir -p "$(dirname "$STAMP")"
 
 if [[ ! -f "$SRC/$BIN" ]]; then echo "error: staged app has no binary at $SRC/$BIN" >&2; exit 1; fi
 codesign --verify --deep --strict --verbose=2 "$SRC" 2>&1 | tail -1
@@ -20,6 +21,26 @@ if pgrep -x MoonlightEnhanced >/dev/null; then
   echo "error: an instance is running; refusing to interrupt it. Staged app kept at $SRC" >&2
   exit 2
 fi
+# Keep both versions recoverable if the move, verification or report fails.
+# Do not roll back after launching: that would move a running app bundle.
+rollback() {
+  local result=$?
+  trap - EXIT
+  if [[ "$result" -ne 0 && -n "$TRASH" && -d "$TRASH" ]]; then
+    if [[ -d "$DEST" ]]; then
+      if [[ ! -e "$SRC" ]]; then
+        mv "$DEST" "$SRC" || return "$result"
+      else
+        echo "error: cannot restore old app while destination and staging both exist; old app: $TRASH" >&2
+        return "$result"
+      fi
+    fi
+    mv "$TRASH" "$DEST" || return "$result"
+    echo "restored previous app; staged app kept at $SRC" >&2
+  fi
+  return "$result"
+}
+trap rollback EXIT
 if [[ -d "$DEST" ]]; then
   PREV_HASH=$(shasum -a 256 "$DEST/$BIN" | cut -d' ' -f1)
   TRASH="$HOME/.Trash/.MoonlightEnhanced-before-$SLUG-$(uuidgen | tr -d '-').app"
@@ -29,14 +50,26 @@ mv "$SRC" "$DEST"
 INSTALL_HASH=$(shasum -a 256 "$DEST/$BIN" | cut -d' ' -f1)
 [[ "$INSTALL_HASH" == "$SRC_HASH" ]] || { echo "error: installed hash differs" >&2; exit 3; }
 codesign --verify --strict --verbose=2 "$DEST" >/dev/null 2>&1 || codesign --verify --deep --strict --verbose=2 "$DEST" >/dev/null 2>&1
-open "$DEST"
 cat > "$STAMP" <<JSON
 {
   "sha256": "$INSTALL_HASH",
   "previousSha256": "$PREV_HASH",
   "trash": "$TRASH",
   "signatureVerified": true,
-  "launched": true
+  "launched": false
 }
 JSON
+trap - EXIT
+open "$DEST"
+# Launch requested successfully; this is not proof of runtime/UI acceptance.
+python3 - "$STAMP" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as stream:
+    report = json.load(stream)
+report['launched'] = True
+with open(path, 'w') as stream:
+    json.dump(report, stream, indent=2)
+    stream.write('\n')
+PY
 echo "installed $INSTALL_HASH (was $PREV_HASH); record $STAMP"
