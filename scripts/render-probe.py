@@ -573,6 +573,13 @@ def self_test():
                     "settingsPagePixels": {"stddev": 0.21, "distinctColours": 77},
                     "materialLayers": ["CABackdropLayer x4"]}
             good.update(sample_panes())
+            good["memoryCycles"] = {
+                "status": "completed", "requested": "4", "completed": 4,
+                "requestedPanesPerCycle": [0, 6, 0, 6],
+                "deviceScanResults": ["read", "read"],
+                "readsPerCycle": [0, 0, 0, 0], "readsDuringCycles": 0,
+                "readsUnattributedToCycles": 0, "libraryEndReads": 1,
+            }
             if verify(good):
                 print("FAIL the verifier refused a report that satisfies every rule: %s" % verify(good))
                 failures += 1
@@ -584,6 +591,16 @@ def self_test():
                 return good["videoPane"]
 
             cases = [
+                ("USB cycles never completed", lambda report: report["memoryCycles"].update(
+                    {"status": "device-scan-timeout"})),
+                ("USB cycle count is short", lambda report: report["memoryCycles"].update(
+                    {"completed": 3})),
+                ("USB page was skipped", lambda report: report["memoryCycles"].update(
+                    {"requestedPanesPerCycle": [0, 0, 0, 0]})),
+                ("one USB scan result is missing", lambda report: report["memoryCycles"].update(
+                    {"deviceScanResults": ["read"]})),
+                ("USB scan timed out", lambda report: report["memoryCycles"].update(
+                    {"deviceScanResults": ["read", "timeout"]})),
                 ("settings opened a second window", lambda report: report.update(
                     {"windowsAddedByPresentingSettings": ["NSPanel/Settings"]})),
                 ("the page is not embedded", lambda report: report.update({"overlayInsideWindowContent": False})),
