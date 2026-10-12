@@ -4591,9 +4591,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                             self->_interpolationSuspended = self->_interpolationOverloadStrikes >= 3;
                             if (self->_interpolationSuspended) {
                                 self->_interpolationSuspendedSinceMs = LiGetMillis();
-                                self->_interpolationProbeBackoffMs = self->_interpolationProbeBackoffMs == 0
-                                    ? (uint64_t)2000
-                                    : MIN(self->_interpolationProbeBackoffMs * 2, (uint64_t)60000);
+                                self->_interpolationProbeBackoffMs = MLEnhancementNextBackoff(
+                                    self->_interpolationProbeBackoffMs, processElapsedMs);
                                 self->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
                                 [self logActiveFrameInterpolationEngine:self->_activeFrameInterpolationEngine
                                     report:MLVideoFrameInterpolationReportPausedForProcessing
@@ -5087,9 +5086,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                             self->_enhancementSuspended = self->_enhancementOverloadStrikes >= 3;
                             if (self->_enhancementSuspended) {
                                 self->_enhancementSuspendedWhenMs = LiGetMillis();
-                                self->_enhancementProbeBackoffMs = self->_enhancementProbeBackoffMs == 0
-                                    ? (uint64_t)2000
-                                    : MIN(self->_enhancementProbeBackoffMs * 2, (uint64_t)60000);
+                                self->_enhancementProbeBackoffMs = MLEnhancementNextBackoff(
+                                    self->_enhancementProbeBackoffMs, processElapsedMs);
                                 Log(LOG_W, @"[video] VT enhancement paused for this configuration: processed=%d elapsed=%llu ms budget=%llu ms backoff=%llu ms",
                                     processed, (unsigned long long)processElapsedMs, (unsigned long long)budgetMs,
                                     (unsigned long long)self->_enhancementProbeBackoffMs);
