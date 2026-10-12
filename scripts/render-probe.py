@@ -362,6 +362,8 @@ def verify_host_reads(report, refusals):
     cycles = report.get("memoryCycles")
     if not isinstance(cycles, dict):
         return
+    expect(cycles.get("status") == "completed",
+           "the memory visit cycles did not complete: %r" % cycles.get("status"))
     spans = cycles.get("readsPerCycle")
     expect(isinstance(spans, list) and len(spans) > 0,
            "the visit cycles recorded no readsPerCycle, so the growth being measured cannot be"
