@@ -364,6 +364,19 @@ def verify_host_reads(report, refusals):
         return
     expect(cycles.get("status") == "completed",
            "the memory visit cycles did not complete: %r" % cycles.get("status"))
+    try:
+        requested = int(cycles.get("requested", ""))
+    except (TypeError, ValueError):
+        requested = 0
+    expect(1 <= requested <= 64 and cycles.get("completed") == requested,
+           "the memory visit count differs from its request")
+    panes = cycles.get("requestedPanesPerCycle")
+    expect(panes == [0 if index % 2 == 0 else 6 for index in range(max(0, min(requested, 64)))],
+           "the memory visits did not alternate stream and USB pages")
+    scans = cycles.get("deviceScanResults")
+    expect(isinstance(scans, list) and len(scans) == requested // 2 and
+           all(result in ("read", "unreadable") for result in scans),
+           "the USB visits did not each display a completed device scan")
     spans = cycles.get("readsPerCycle")
     expect(isinstance(spans, list) and len(spans) > 0,
            "the visit cycles recorded no readsPerCycle, so the growth being measured cannot be"
