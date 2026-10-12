@@ -24,7 +24,7 @@
 
 | 能力 | 位置 | 现状 |
 |---|---|---|
-| 主机应答读取：显式 `1`/`"1"` 才是是，缺字段/旧主机/解析失败/非 1 值一律为否 | `Limelight/Stream/DeviceRedirectionPolicy.m:310`（`hostAdvertisesDeviceRedirectionInServerInfo:`） | 已实现，**无生产调用点**（见 §6） |
+| 主机应答读取：显式 `1`/`"1"` 才是是，缺字段/旧主机/解析失败/非 1 值一律为否 | `Limelight/Stream/DeviceRedirectionPolicy.m:310`（`hostAdvertisesDeviceRedirectionInServerInfo:`） | 已实现，设置页通过面板模型查询；串流会话传输仍未接线（见 §6） |
 | 默认全拒的策略：未配对、未加密、身份不全、保留类别、无规则匹配各自独立成否 | 同文件 `verdictForDevice:`（`:321` 起，门禁逐项单独驱动） | 已实现 |
 | 设备身份只读枚举，序列号在读取处即归约为摘要，对象上不留序列号字段 | `Limelight/Stream/USBDeviceEnumeration.h/.m` | 已实现 |
 | 拒绝原因的可读名，日志与界面共用同一拼写 | `MLDeviceRedirectionDenialName()` | 已实现 |
@@ -65,7 +65,7 @@
 
 ## 6. 为什么客户端现在不接线
 
-`hostAdvertisesDeviceRedirectionInServerInfo:` 在生产路径里没有调用点，这是有意状态而非遗漏：没有任何东西去消费"主机支持"这个答案（不发消息、不开设备、无 UI），提前接线只会得到一段无法验证的死代码——真实主机永远不发这个字段（§1 #8），因此连"读到一次是"都无法被观测。等到 §3 在任一主机实现里落地，接线才是能被验证的改动。
+截至 2026-10-12，设置页的主机查询已经通过 `DeviceRedirectionPanelModel.m` 的 `noteServerInfoValue:` 调用 `hostAdvertisesDeviceRedirectionInServerInfo:`。该查询仅记录主机能力声明，不建立设备通道、不接管 USB，也不证明会话 bind/state/item 已实现。串流连接的真实传输接线仍待主机实现与驱动前置条件到位。现场 HOME-PC 的 `/serverinfo` 未包含 `usbRedirection`，按本契约应判不支持；这一观测仅代表该次应答。
 
 ## 7. 验收：双方各自要证明什么
 
