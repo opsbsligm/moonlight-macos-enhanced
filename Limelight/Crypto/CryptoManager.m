@@ -204,13 +204,62 @@ static NSData* p12 = nil;
     return signedData;
 }
 
++ (NSString*) cryptoDirectoryPath {
+    // The client key/cert must NOT live in ~/Documents: iCloud "Optimize Mac
+    // Storage" can evict its contents, turning it into a dataless placeholder
+    // whose synchronous read() on the main thread blocks indefinitely at
+    // launch (observed: app hangs with 0 windows). Application Support is not
+    // iCloud-synced by default.
+    NSArray *urls = [[NSFileManager defaultManager]
+        URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask];
+    NSURL *supportUrl = [[urls firstObject] URLByAppendingPathComponent:@"Moonlight" isDirectory:YES];
+    [[NSFileManager defaultManager] createDirectoryAtURL:supportUrl
+                             withIntermediateDirectories:YES
+                                             attributes:nil
+                                                  error:nil];
+    return [supportUrl path];
+}
+
++ (NSString*) cryptoObjectPath:(NSString*)item {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *file = [[CryptoManager cryptoDirectoryPath] stringByAppendingPathComponent:item];
+    if ([fm fileExistsAtPath:file]) {
+        return file;
+    }
+    // One-time migration from the legacy ~/Documents location.
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *legacy = [[paths objectAtIndex:0] stringByAppendingPathComponent:item];
+    if ([fm fileExistsAtPath:legacy]) {
+        // Copy-then-retire instead of move: the legacy file may be an iCloud
+        // dataless placeholder, and reading it here forces a one-time
+        // materialization into the (never-synced) Application Support copy.
+        // The whole trio is handled together so it never splits across dirs.
+        for (NSString *sibling in @[@"client.key", @"client.p12", @"client.crt"]) {
+            NSString *legacySibling = [[paths objectAtIndex:0] stringByAppendingPathComponent:sibling];
+            NSString *dest = [[CryptoManager cryptoDirectoryPath] stringByAppendingPathComponent:sibling];
+            if ([fm fileExistsAtPath:legacySibling] && ![fm fileExistsAtPath:dest]) {
+                NSData *contents = [NSData dataWithContentsOfFile:legacySibling];
+                if (contents && [contents writeToFile:dest atomically:YES]) {
+                    [fm moveItemAtPath:legacySibling
+                                toPath:[legacySibling stringByAppendingString:@".migrated"]
+                                 error:nil];
+                } else {
+                    Log(LOG_E, @"Failed to migrate crypto file %@", sibling);
+                }
+            }
+        }
+        if ([fm fileExistsAtPath:file]) {
+            return file;
+        }
+    }
+    return file;
+}
+
 + (NSData*) readCryptoObject:(NSString*)item {
 #if TARGET_OS_TV
     return [[NSUserDefaults standardUserDefaults] dataForKey:item];
 #else
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    NSString *file = [documentsDirectory stringByAppendingPathComponent:item];
+    NSString *file = [CryptoManager cryptoObjectPath:item];
     return [NSData dataWithContentsOfFile:file];
 #endif
 }
@@ -219,9 +268,7 @@ static NSData* p12 = nil;
 #if TARGET_OS_TV
     [[NSUserDefaults standardUserDefaults] setObject:data forKey:item];
 #else
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsDirectory = [paths objectAtIndex:0];
-    NSString *file = [documentsDirectory stringByAppendingPathComponent:item];
+    NSString *file = [[CryptoManager cryptoDirectoryPath] stringByAppendingPathComponent:item];
     [data writeToFile:file atomically:YES];
 #endif
 }
