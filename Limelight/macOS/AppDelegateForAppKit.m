@@ -1880,6 +1880,48 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
     // What it does assert is that the cycles it was asked for ran. A flag that reached a
     // build which ignores it would otherwise be read as "the page does not grow across
     // visits", which is the same false green with a number next to it.
+    // Hand over to the stage that runs after launch. Accessibility is the reason:
+    // measured on this tree, an app that has not finished launching vends a
+    // placeholder tree (the application element referring to itself, no window, no
+    // text), so nothing could be read from the page however hard the checker looked.
+    // The visual claims above do not need accessibility and stay where they were
+    // proven; the readable claims run once the app is really up.
+    MLProbeReport = report;
+    MLProbeFailures = failures;
+    MLProbeOutputDirectory = output;
+    MLProbeWindow = window;
+    MLProbeBackdrop = backdrop;
+    MLProbeArmed = YES;
+}
+
+static void MLFinishRenderProbeIfArmed(void) {
+    if (!MLProbeArmed) {
+        return;
+    }
+    MLProbeArmed = NO;
+    MLProbeSpin(1.0);
+
+    NSMutableDictionary *report = MLProbeReport;
+    NSMutableArray<NSString *> *failures = MLProbeFailures;
+    NSString *output = MLProbeOutputDirectory;
+
+    // What the production code believes about this machine, recorded so the
+    // checker compares the page against the rule instead of against a string
+    // someone typed into a test.
+
+
+    // Four panes of the same page. The video pane holds the enhancement controls
+    // and the readout of what the decoder is really doing; the App pane holds the
+    // capability matrix that says whether Video Toolbox and MetalFX can work here.
+    // Both used to be claims nobody could check without a human looking.
+    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 0, @"streamPane", report);
+    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 1, @"videoPane", report);
+    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 3, @"appPane", report);
+    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 6, @"devicesPane", report);
+
+    // Device scan status is readable only after application launch completes.
+    NSWindow *window = MLProbeWindow;
+    void (^refuse)(NSString *) = ^(NSString *reason) { [failures addObject:reason]; };
     const char *requestedCycles = getenv("ML_RENDER_PROBE_CYCLES");
     if (requestedCycles != NULL) {
         char *cyclesEnd = NULL;
@@ -1899,6 +1941,7 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
             NSUserDefaults *cycleDefaults = NSUserDefaults.standardUserDefaults;
             id savedCyclePane = [cycleDefaults objectForKey:@"selected-settings-pane"];
             NSMutableArray<NSNumber *> *panesPerCycle = [NSMutableArray array];
+            NSMutableArray<NSString *> *deviceScanResults = [NSMutableArray array];
 #if DEBUG
             // The loop total is measured from before the first visit rather than summed from the
             // per-cycle spans, so a read that happens between two cycles (the library count a
@@ -1914,6 +1957,7 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
                 // the stream settings; a saved selection must not narrow the sweep.
                 NSInteger cyclePane = cycle % 2 == 0 ? 0 : 6;
                 [cycleDefaults setInteger:cyclePane forKey:@"selected-settings-pane"];
+                NSSet *cycleViewsBefore = [NSSet setWithArray:window.contentView.subviews];
                 [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
                 MLProbeSpin(0.25);
                 if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
@@ -1921,6 +1965,33 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
                     refuse([NSString stringWithFormat:@"memory cycle %ld did not present the page,"
                             @" so the sweep counted fewer visits than it asked for", cycle + 1]);
                     break;
+                }
+                if (cyclePane == 6) {
+                    NSView *cycleOverlay = nil;
+                    for (NSView *candidate in window.contentView.subviews) {
+                        if (![cycleViewsBefore containsObject:candidate]) cycleOverlay = candidate;
+                    }
+                    NSString *scanResult = nil;
+                    NSString *available = [[LanguageManager shared] localize:@"USB devices available"];
+                    NSString *unreadable = [[LanguageManager shared] localize:@"USB device scan failed"];
+                    for (NSUInteger attempt = 0; attempt < 20 && !scanResult; attempt++) {
+                        NSArray *nodes = cycleOverlay ? MLProbeReadableNodes(cycleOverlay) : @[];
+                        if (MLProbeNodesVendText(nodes, available)) scanResult = @"read";
+                        else if (MLProbeNodesVendText(nodes, unreadable)) scanResult = @"unreadable";
+                        else MLProbeSpin(0.25);
+                    }
+                    [deviceScanResults addObject:scanResult ?: @"timeout"];
+                    if (!scanResult) {
+                        cycleRecord[@"deviceScanTimeoutContent"] = cycleOverlay ? MLProbeReadableNodes(cycleOverlay) : @[];
+                        cycleRecord[@"status"] = @"device-scan-timeout";
+                        refuse([NSString stringWithFormat:@"memory cycle %ld never displayed a completed USB scan",
+                                cycle + 1]);
+                        if (![SettingsOverlayPresenter pressBackControlInWindow:window]) {
+                            refuse(@"USB scan timeout cleanup could not reach the back control");
+                        }
+                        MLProbeSpin(0.25);
+                        break;
+                    }
                 }
                 if (![SettingsOverlayPresenter pressBackControlInWindow:window]) {
                     cycleRecord[@"status"] = @"back-control-unreachable";
@@ -1948,6 +2019,7 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
                 [cycleDefaults removeObjectForKey:@"selected-settings-pane"];
             }
             cycleRecord[@"requestedPanesPerCycle"] = panesPerCycle;
+            cycleRecord[@"deviceScanResults"] = deviceScanResults;
             if ([cycleRecord[@"status"] isEqualToString:@"running"]) {
                 cycleRecord[@"status"] = @"completed";
             }
@@ -1993,45 +2065,6 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
 #endif
         }
     }
-
-    // Hand over to the stage that runs after launch. Accessibility is the reason:
-    // measured on this tree, an app that has not finished launching vends a
-    // placeholder tree (the application element referring to itself, no window, no
-    // text), so nothing could be read from the page however hard the checker looked.
-    // The visual claims above do not need accessibility and stay where they were
-    // proven; the readable claims run once the app is really up.
-    MLProbeReport = report;
-    MLProbeFailures = failures;
-    MLProbeOutputDirectory = output;
-    MLProbeWindow = window;
-    MLProbeBackdrop = backdrop;
-    MLProbeArmed = YES;
-}
-
-static void MLFinishRenderProbeIfArmed(void) {
-    if (!MLProbeArmed) {
-        return;
-    }
-    MLProbeArmed = NO;
-    MLProbeSpin(1.0);
-
-    NSMutableDictionary *report = MLProbeReport;
-    NSMutableArray<NSString *> *failures = MLProbeFailures;
-    NSString *output = MLProbeOutputDirectory;
-
-    // What the production code believes about this machine, recorded so the
-    // checker compares the page against the rule instead of against a string
-    // someone typed into a test.
-
-
-    // Four panes of the same page. The video pane holds the enhancement controls
-    // and the readout of what the decoder is really doing; the App pane holds the
-    // capability matrix that says whether Video Toolbox and MetalFX can work here.
-    // Both used to be claims nobody could check without a human looking.
-    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 0, @"streamPane", report);
-    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 1, @"videoPane", report);
-    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 3, @"appPane", report);
-    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 6, @"devicesPane", report);
 
     report[@"failures"] = failures;
     NSData *json = [NSJSONSerialization dataWithJSONObject:report
