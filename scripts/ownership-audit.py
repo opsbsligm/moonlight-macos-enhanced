@@ -2267,9 +2267,14 @@ def red_team(sample_path, baseline, decls):
               " can exercise is a rule nobody can trust." % (sample_path, error))
         return 1
     mutations = [
-        ("a cycle that stopped leaking while the header still promises it",
+        # The header no longer promises a strong cycle, so this mutation cannot be refused as
+        # ROOT CYCLE any more: a weak back-pointer owes no leak. What catches it is the control
+        # under the strong header's head -- the filed record has the production graph surviving
+        # its last holder, so the hand-built graph alone cannot. The ROOT CYCLE bite itself is
+        # still exercised, against a strong header, in the self-test.
+        ("a hand-built graph that stopped leaking while the production one leaked",
          lambda report: mutate(report, "handBuiltGraph", hostAliveWithNoHolder=False),
-         "ROOT CYCLE"),
+         "disagree on hostAliveWithNoHolder"),
         ("the control holding its own pair",
          lambda report: mutate(report, "backpointerOnly", hostAliveWithNoHolder=True),
          "back-pointer-only pair survives"),
@@ -2463,13 +2468,18 @@ def red_team(sample_path, baseline, decls):
     broken_sources = dict(sources)
     broken_sources[paired_key] = "\n".join(line for line in sources[paired_key].splitlines()
                                             if "retriever.host =" not in line)
+    # Under the weak header the pairing rule got stricter, not looser: it no longer asks whether
+    # a holder is new or old, only whether the site that hands out an app also gives that holder
+    # its host. So un-pairing the one paired site has to be refused under the header that ships
+    # today, and the tree in its fixed shape has to be refused for nothing at all -- an expectation
+    # of zero problems is the assertion that the section 5 fix is what actually holds here.
     tree_cases = [
         ("the tree as it is, under the header that ships", app_assignment_sites(sources),
          decls, []),
         ("the one paired holder quietly un-paired", app_assignment_sites(broken_sources),
-         decls, ["new holder"]),
-        ("the holders that ship, under a weak header", app_assignment_sites(sources),
-         fixed_declarations(), ["hand an app"]),
+         decls, ["without ever giving it a host"]),
+        ("the holders that ship, under the weak header they now need",
+         app_assignment_sites(sources), fixed_declarations(), []),
     ]
     stream_page = next((path for path in sources
                         if path.endswith("StreamViewController.m")), None)
