@@ -107,3 +107,6 @@ checksums/
 release_body.md
 # Design spikes build products: the sources are evidence, the binaries are not.
 spikes/**/*.bin
+
+# Manually downloaded CI artifacts used for local distribution verification.
+dist-verify/
