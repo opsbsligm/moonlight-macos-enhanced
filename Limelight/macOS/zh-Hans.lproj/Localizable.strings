@@ -1355,7 +1355,16 @@
 "USB devices available" = "本机设备";
 "USB device scan failed" = "无法读取 USB 设备";
 "USB devices" = "USB 设备";
-"USB session unavailable" = "当前版本无法接管 USB 设备";
+/* 串流侧栏：按“第一个仍未满足的前置条件”逐态显示。以前这些状态共用一句话，
+   结果是本机签名的限制也被玩家当成 PC 端设置问题去反复摆弄电脑。 */
+"USB blocked by this build" = "当前版本无法加载 USB 驱动";
+"USB permissions disabled here" = "设置中未开启 USB 重定向";
+"USB host unreachable" = "未收到 PC 对 USB 能力的应答";
+"USB host not asked" = "本次串流尚未询问该 PC 的 USB 能力";
+"USB host refused" = "该 PC 不提供 USB 重定向";
+"USB host has no free slots" = "该 PC 当前没有空闲 USB 插槽";
+"USB host busy" = "PC 正忙，暂时未应答";
+"USB ready to connect devices" = "已就绪：该 PC 可接收 USB 设备";
 "USB connect to this session" = "连接到当前串流";
 "USB permissions disabled" = "请先在设置中开启 USB 重定向许可";
 "USB runtime required" = "需要兼容的主机通道和 USB 驱动";

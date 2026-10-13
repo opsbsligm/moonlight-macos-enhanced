@@ -1010,6 +1010,11 @@ highFreqMotor:(unsigned short)highFreqMotor {
     self.pendingDisconnectSource = nil;
     self.activeStreamGeneration += 1;
     NSUInteger streamGeneration = self.activeStreamGeneration;
+    // A host's answer belongs to one host, and this controller may stream a different one next.
+    // Forgetting the claim costs one capability question per session; keeping it would let a
+    // previous machine's offer be shown about a machine that was never asked.
+    self.usbMenuHostClaim = MLUSBMenuHostClaimNotAsked;
+    self.usbMenuHostClaimInFlight = NO;
     [self releaseClipboardSyncOwnershipWithUnbind:NO];
     self.clipboardRuntimeConnection = nil;
     LiSetThreadConnectionContext(NULL);
