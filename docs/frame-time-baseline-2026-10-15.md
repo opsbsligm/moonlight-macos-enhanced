@@ -87,8 +87,25 @@ MetalFX quality set, mouse drags for content motion):
 - `breaker tripped: 0` lines for the session (was: every cooldown probe);
 - evidence: `docs/evidence/frame-time-2026-10-15/post-fix-session.log`.
 
-Boundary, stated plainly: this stream negotiated 90 FPS but the host's locked
-screen sent ~30 FPS of real content, and the fixed floor at 90 FPS (11ms) still
-sits under a cold-start call — the first probes can strike until the EMA lifts
-the window to the measured cost. A 90 FPS stream with sustained host-side
-motion is the configuration this addendum did not re-measure.
+Two boundaries, stated plainly:
+
+1. This stream negotiated 90 FPS but the host's locked screen sent ~30 FPS of
+   real content, so the run proves the pipeline (VT produces, the renderer
+   presents, the breaker stays closed) at the frame rate the source actually
+   carried. Over a twenty-minute session the interpolated counter grew
+   monotonically to 37225 at a steady ~58 FPS, so this is sustained behaviour,
+   not one window. A 90 FPS stream with sustained host-side motion needs the
+   host unlocked (owner-held PIN) and is recorded as not yet acceptance-tested,
+   not as passing.
+2. The design conclusion the numbers force: on this 180Hz panel at a 90 FPS
+   stream, the cadence admits with k=1 -- the session logs `each frame held
+   5.555ms on 180.00Hz display at 180 FPS output` -- so an interpolated frame
+   gets one refresh period to be produced while the engine needs 18-41ms. The
+   doubled cadence cannot be served no matter what the breaker allows: an
+   interpolated frame arrives roughly seven refreshes late and is superseded.
+   Interpolation on a high-refresh panel therefore pays off at source rates
+   whose doubled cadence leaves several refreshes of room per frame (30 FPS on
+   this display: 33.3ms of room, which is exactly where the measurement above
+   landed), and the 90 FPS row of the settings page is a promise the panel, not
+   the feature, cannot keep. That is the honest shape of the feature, not a
+   defect the EMA can fund away.
