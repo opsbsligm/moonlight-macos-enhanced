@@ -1,0 +1,180 @@
+AXWindow|设置 – 手动 (192.168.3.110 (1ms))@625,30 1100x895
+  AXSplitGroup@625,62 1100x863
+    AXGroup@625,62 236x863
+      AXScrollArea@625,62 236x863
+        AXOutline|边栏@625,62 236x863
+          AXRow@625,62 236x19
+            AXCell@635,62 216x19
+              AXGroup@639,62 220x19
+                AXHeading|计算机@639,64 33x14
+          AXRow@625,81 236x32
+            AXCell@635,81 216x32
+              AXStaticText|HOME-PC@657,89 62x16
+              AXImage|播放@835,93 9x9
+          AXColumn@635,62 216x863
+    AXSplitter|235@860,62 1x863
+    AXScrollArea@861,62 864x863
+      AXList@861,62 864x863
+        AXList@877,146 409x170
+          AXGroup@877,146 127x170
+            AXImage@889,153 103x136
+            AXImage@964,160 18x23
+            AXStaticText|Desktop@916,297 50x16
+          AXGroup@1018,146 127x170
+            AXImage@1030,153 103x136
+            AXStaticText|Steam Big Picture@1032,297 100x16
+          AXGroup@1159,146 127x170
+            AXImage@1171,153 103x136
+            AXStaticText|Xbox Game@1189,297 67x16
+    AXGroup@861,62 864x863
+      AXImage|隔空播放视频@1266,363 55x48
+      AXStaticText|串流进行中@1245,439 96x24
+      AXStaticText|主机: HOME-PC@1245,471 96x16
+      AXStaticText|应用: Desktop@1251,495 84x16
+      AXStaticText|已连接@1278,523 30x13
+      AXButton|显示串流窗口@1150,560 286x28
+      AXButton|断开连接@1150,600 286x28
+  AXGroup@625,62 1100x863
+    AXButton|返回@649,76 76x36
+    AXTabGroup@963,82 425x24
+      AXRadioButton|串流|0@963,82 70x24
+      AXRadioButton|视频|1@1033,82 71x24
+      AXRadioButton|音频|0@1104,82 71x24
+      AXRadioButton|输入|0@1175,82 71x24
+      AXRadioButton|应用|0@1246,82 71x24
+      AXRadioButton|设备|0@1317,82 71x24
+    AXScrollArea@625,126 1100x799
+      AXScrollArea@707,146 920x2200
+        AXOpaqueProviderGroup@712,162 899x2168
+          AXGroup@712,162 899x2168
+            AXHeading|视频@733,162 26x16
+            AXStaticText|视频编解码器@734,203 78x16
+            AXPopUpButton|H.265@1515,199 85x24
+            AXStaticText|适合大多数场景。@734,232 75x13
+            AXStaticText|渲染模式@734,267 52x16
+            AXPopUpButton|Metal 渲染器@1446,263 154x24
+            AXStaticText|原生渲染器是推荐选项，主打最低延迟与最高默认色准。Metal 渲染器提供更专业的 HDR 与色彩调节。兼容渲染器用于旧设备或异常场景下的回退。@734,296 650x13
+            AXStaticText|HDR (高动态范围)@734,329 106x16
+            AXCheckBox|0@1556,327 44x20
+            AXStaticText|传输函数@734,370 52x16
+            AXPopUpButton|自动@1526,366 74x24
+            AXStaticText|选择首选 HDR 传输函数。自动模式现在会优先尝试 HLG，再在需要时回退到 PQ。@734,399 362x13
+            AXStaticText|画质增强@734,432 40x13
+            AXStaticText|超分与缩放@734,457 65x16
+            AXPopUpButton|关闭@1462,453 138x24
+            AXStaticText|超分重建的是解码后的串流画面本身：把它放大到更大的窗口尺寸，而不是把整个界面变大。它只在 Metal 渲染器上运行，且只有当窗口大于串流分辨率时才会启用；两者一样大时无事可做。每一帧都要多重建一次，因此会多花一点延迟和功耗。@734,486 849x26
+            AXStaticText|在低于原生分辨率或较低码率下更容易看出效果。@734,519 214x13
+            AXStaticText|分辨率缩放用于节省带宽；超分与缩放用于提升客户端重建细节。@734,540 284x13
+            AXStaticText|插帧@734,575 26x16
+            AXPopUpButton|VT 低延迟插帧@1468,571 132x24
+            AXStaticText|Metal 渲染器的节奏增强。会在显示器刷新率高于串流帧率且有余量时，调用 VideoToolbox 低延迟插帧。启用后通常会额外增加约一个显示刷新周期以内的延迟。@734,604 712x13
+            AXStaticText|强制开启插帧@734,627 78x16
+            AXButton|当前显示器刷新率恰好以整数倍刷新承载串流帧率的两倍，不强制也会插帧。保留此项可在串流中实测刷新率漂移时跳过该检查。@819,629 11x11
+            AXCheckBox|1@1556,625 44x20
+            AXStaticText|本次串流实际生效@734,666 80x13
+            AXStaticText|以下内容由渲染器在串流过程中实时上报；未开始串流时显示为空闲状态。@734,687 324x13
+            AXStaticText|渲染路径@734,707 40x13
+            AXStaticText|当前使用 Metal 渲染器。@1491,707 109x13
+              AXStaticText|当前使用 Metal 渲染器。@1491,707 109x13
+            AXStaticText|当前使用 Metal 渲染器。@734,728 108x13
+            AXStaticText|实际缩放引擎@734,749 60x13
+            AXStaticText|关闭@1580,749 20x13
+              AXStaticText|关闭@1580,749 20x13
+            AXStaticText|当前串流没有启用增强器。@734,770 115x13
+            AXStaticText|实际插帧引擎@734,790 60x13
+            AXStaticText|关闭@1580,790 20x13
+              AXStaticText|关闭@1580,790 20x13
+            AXStaticText|插帧因处理失败或过载已暂停，继续显示原生帧。更改串流配置或重新连接后重试。@734,811 364x13
+            AXStaticText|到达 32.0 FPS · 上屏 32.0 FPS · 显示器 180.00 Hz@734,832 235x13
+            AXDisclosureTriangle|Metal 渲染调节、高级|1@712,866 884x16
+              AXStaticText|Metal 渲染调节@746,866 89x16
+              AXStaticText|高级@1576,868 20x13
+            AXStaticText|这些选项用于调节 Metal 渲染器的 HDR 呈现和显示行为。@734,894 254x13
+            AXStaticText|HDR 元数据来源@734,940 96x16
+            AXPopUpButton|混合@1501,936 99x24
+            AXStaticText|选择 Metal 渲染器是跟随主机 HDR 元数据、使用本地手动显示配置，还是混合两者。@734,974 374x13
+            AXStaticText|本机显示器 HDR 配置@734,1020 125x16
+            AXPopUpButton|自动@1527,1016 73x24
+            AXStaticText|设为手动后，才会显示并启用 Metal 渲染器使用的本机显示器亮度配置。@734,1054 317x13
+            AXStaticText|光学输出倍率@734,1096 78x16
+            AXStaticText|100%@1563,1096 37x16
+            AXSlider@734,1120 866x16
+              AXValueIndicator@1016,1120 20x16
+            AXStaticText|调整 Metal 渲染器在 EDR 呈现或 SDR 映射前的 HDR 工作强度。@734,1150 287x13
+            AXStaticText|HLG 观看环境@734,1196 82x16
+            AXPopUpButton|自动@1501,1192 99x24
+            AXStaticText|在 Metal 渲染器启用时，根据房间明暗对 HLG 渲染做偏置。@734,1230 264x13
+            AXStaticText|EDR 策略@734,1276 55x16
+            AXPopUpButton|自动@1527,1272 73x24
+            AXStaticText|控制 Metal 渲染器在支持 HDR 的显示器上使用 EDR 余量的激进程度。@734,1310 310x13
+            AXStaticText|色调映射策略@734,1356 78x16
+            AXPopUpButton|自动@1475,1352 125x24
+            AXStaticText|控制 Metal 渲染器在非 HDR 屏幕上的 HDR→SDR 映射取向。@734,1390 272x13
+            AXStaticText|显示同步@734,1436 52x16
+            AXPopUpButton|自动@1527,1432 73x24
+            AXStaticText|控制 Metal 渲染器是否跟随显示同步。自动模式会沿用当前串流配置。@734,1470 307x13
+            AXStaticText|允许 Drawable 超时@734,1516 116x16
+            AXPopUpButton|自动@1527,1512 73x24
+            AXStaticText|控制 Metal 渲染器在等待窗口服务器时，是否允许 drawable 获取超时。@734,1550 316x13
+            AXStaticText|启用 YUV 4:4:4@734,1583 93x16
+            AXButton|需要主机端支持。可能增加延迟。@834,1586 11x11
+            AXCheckBox|1@1556,1581 44x20
+            AXStaticText|启用 10-Bit SDR@734,1622 96x16
+            AXButton|在主机自身 HDR 设置保持关闭的情况下，用 10-Bit 采样传输画面：SDR 桌面也能获得 10-Bit 编码更平滑的渐变，而不需要主机把显示器切到 HDR。它是传输层的设置，与上面的 HDR 开关彼此独立；两者同时开启与只开 HDR 得到的是同一路串流。需要主机具备为 SDR 编码 10-Bit 的能力（Sunshine，或提供该能力的 NVIDIA 驱动）；主机不支持时会自动回退到 8-Bit。它不改变码率，也不是在支持 HDR 的显示器上替代 HDR 的选项。@837,1625 11x11
+            AXCheckBox|0@1556,1620 44x20
+            AXStaticText|串流风格@734,1664 52x16
+            AXPopUpButton|自定义@1484,1660 116x24
+            AXStaticText|先选整体风格：更低延迟、均衡或更顺滑画面。@734,1693 205x13
+            AXStaticText|自定义后可单独微调下面这些选项。@734,1723 155x13
+            AXStaticText|自定义选项@734,1756 50x13
+            AXStaticText|垂直同步@734,1779 52x16
+            AXCheckBox|1@1556,1777 44x20
+            AXStaticText|减少撕裂，让画面更稳。@734,1806 105x13
+            AXStaticText|缓冲级别@734,1841 52x16
+            AXPopUpButton|高（更稳画面）@1471,1837 129x24
+            AXStaticText|调高后更稳画面，但操作反馈会慢一点。@734,1870 175x13
+            AXStaticText|输入响应优先@734,1903 78x16
+            AXCheckBox|0@1556,1901 44x20
+            AXStaticText|优先让鼠标和操作更快跟上；部分场景下画面可能没那么稳。@734,1930 264x13
+            AXStaticText|帧队列目标@734,1965 65x16
+            AXPopUpButton|自动@1527,1961 73x24
+            AXStaticText|覆盖当前呈现链路的待显示帧目标。更低更偏低延迟，更高更偏平滑。@734,1994 304x13
+            AXStaticText|响应倾向@734,2028 52x16
+            AXPopUpButton|关闭@1527,2024 73x24
+            AXStaticText|让当前呈现链路更积极地削减排队帧，以换取更低的输入延迟。@734,2058 274x13
+            AXStaticText|兼容性@734,2090 30x13
+            AXStaticText|下面两项只在遇到显示问题时再调整。@734,2111 165x13
+            AXStaticText|显示兼容模式@734,2134 78x16
+            AXCheckBox|0@1556,2132 44x20
+            AXStaticText|只在闪烁、黑屏或显示异常时打开。@734,2161 155x13
+            AXStaticText|SDR 兼容优化@734,2194 82x16
+            AXCheckBox|0@1556,2192 44x20
+            AXStaticText|只在 SDR 串流出现异常时打开。@734,2221 141x13
+            AXStaticText|显示性能统计@734,2258 78x16
+            AXStaticText|⌃@828,2258 9x16
+            AXStaticText|+@853,2258 9x15
+            AXStaticText|⌥@878,2258 9x16
+            AXStaticText|+@903,2258 9x15
+            AXStaticText|S@928,2258 9x16
+            AXCheckBox|1@1556,2256 44x20
+            AXStaticText|显示连接质量警告@734,2301 104x16
+            AXCheckBox|1@1556,2299 44x20
+      AXScrollBar|0@1707,125 19x794
+        AXValueIndicator|0@1711,129 11x294
+        AXButton@1708,126 0x0
+        AXButton@1708,126 0x0
+        AXButton@1711,423 11x491
+        AXButton@1711,129 11x0
+  AXButton@633,38 16x16
+  AXButton@679,38 16x16
+    AXGroup@680,39 14x14
+  AXButton@656,38 16x16
+  AXStaticText|设置 – 手动 (192.168.3.110 (1ms))@707,38 214x16
+AXWindow|Desktop - Starting – 手动 (192.168.3.110 (1ms))@135,30 1701x989
+  AXStaticText|1920x1080@90  HEVC  4:2:0  FPS 33.5 Rx · 33.5 De · 33.5 Rd  1% Low 11.1
+实际呈现 31.8 fps · P95 44.44 ms · 提交后等待 22.93 ms  串流延迟 ~6.7 ms  Loss 0.00%  Jit 6.7 ms  Br 0.4 Mbps  |  管线 6.18 ms · 主机 0.0 ms · Decode 0.65 ms · Queue 5.53 ms@430,91 1112x34
+  AXButton@143,38 16x16
+  AXButton@189,38 16x16
+    AXGroup@190,39 14x14
+  AXButton@166,38 16x16
+  AXStaticText|Desktop - Starting – 手动 (192.168.3.110 (1ms))@217,38 308x16
