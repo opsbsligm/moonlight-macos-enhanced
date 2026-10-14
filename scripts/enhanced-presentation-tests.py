@@ -63,6 +63,15 @@ int main(void) {
     assert(MLEnhancementOverloadStrikes(0,false,0,5)==3);
     assert(MLEnhancementOverloadStrikes(0,true,1,0)==3);
     assert(MLEnhancementOverloadStrikes(0,true,UINT64_MAX,5)==3);
+    // The staging deadline must be a window the work can honestly fit: one
+    // source frame, never below a display period, never below a service floor.
+    assert(MLEnhancementStagingBudgetMs(180,60)==16);
+    assert(MLEnhancementStagingBudgetMs(180,90)==11);
+    assert(MLEnhancementStagingBudgetMs(60,30)==33);
+    assert(MLEnhancementStagingBudgetMs(30,60)==33);
+    assert(MLEnhancementStagingBudgetMs(0,60)==16);
+    assert(MLEnhancementStagingBudgetMs(240,0)==16);
+    assert(MLEnhancementStagingBudgetMs(1000,1000)==8);
     assert(MLEnhancementNextBackoff(0,14)==2000);
     assert(MLEnhancementNextBackoff(0,741)==5928);
     assert(MLEnhancementNextBackoff(5928,741)==11856);
@@ -157,6 +166,10 @@ enhancement_mutations = [
     ('wait-past-deadline', 'nowMs - startedAtMs < budgetMs', 'nowMs - startedAtMs <= budgetMs'),
     ('probe-boundary-off-by-one', 'nowMs - suspendedSinceMs >= backoffMs', 'nowMs - suspendedSinceMs > backoffMs'),
     ('probe-underflow-guard-dropped', 'nowMs >= suspendedSinceMs && nowMs', 'nowMs'),
+    ('staging-budget-ignores-source-frame', 'double budget = sourceFrameMs;', 'double budget = displayFrameMs + 0.0 * sourceFrameMs;'),
+    ('staging-budget-service-floor-dropped', 'if (budget < 8.0) {\n        budget = 8.0;\n    }', '(void)budget;'),
+    ('staging-budget-unknown-rate-refuses', 'return 16;', 'return 0;'),
+
 ]
 for name, before, after in enhancement_mutations:
     assert enhancement_header.count(before) == 1, name
