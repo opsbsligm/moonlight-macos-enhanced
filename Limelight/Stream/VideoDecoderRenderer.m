@@ -4596,7 +4596,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 self->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
                                 [self logActiveFrameInterpolationEngine:self->_activeFrameInterpolationEngine
                                     report:MLVideoFrameInterpolationReportPausedForProcessing
-                                    reason:@"VT frame interpolation paused after processing failure or overload; presenting source frames and will retry after a cooldown"];
+                                    reason:[NSString stringWithFormat:@"VT frame interpolation paused after processing failure or overload (%.0fms call over a %.0fms budget); presenting source frames and will retry after a cooldown",
+                                            (double)processElapsedMs, (double)budgetMs]];
                             } else {
                                 // A healthy probe cleared the breaker: forget the backoff.
                                 self->_interpolationProbeBackoffMs = 0;
