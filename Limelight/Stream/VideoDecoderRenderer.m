@@ -3556,8 +3556,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             previousInterpolationSourceFrame != NULL) {
             _interpolationStagingSequence = sourceSequence;
             _interpolationStagingStartedAtMs = LiGetMillis();
-            _interpolationStagingBudgetMs = MAX((uint64_t)1, (uint64_t)floor(1000.0 /
-                MAX(_lastDisplayRefreshRate, (double)MAX(self.frameRate, 1))));
+            _interpolationStagingBudgetMs =
+                MLEnhancementStagingBudgetMs(_lastDisplayRefreshRate, self.frameRate);
         }
     }
 
@@ -4590,6 +4590,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 self->_interpolationOverloadStrikes, interpolatedFrame != NULL, processElapsedMs, budgetMs);
                             self->_interpolationSuspended = self->_interpolationOverloadStrikes >= 3;
                             if (self->_interpolationSuspended) {
+                                // The engine never left None while the breaker held, so
+                                // the engine-change log below cannot be trusted to carry
+                                // the first trip: name the measured cost here, unconditionally.
+                                Log(LOG_W, @"[video] VT frame interpolation breaker tripped: %.0fms call over a %llums budget (strike %u)",
+                                    (double)processElapsedMs, (unsigned long long)budgetMs,
+                                    self->_interpolationOverloadStrikes);
                                 self->_interpolationSuspendedSinceMs = LiGetMillis();
                                 self->_interpolationProbeBackoffMs = MLEnhancementNextBackoff(
                                     self->_interpolationProbeBackoffMs, processElapsedMs);
