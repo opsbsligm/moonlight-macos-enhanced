@@ -57,3 +57,38 @@ tail -f ~/Library/Logs/Moonlight/moonlight-debug.log | grep --line-buffered "Act
 # 解析
 python3 <本仓库>/scripts/frame-time-baseline-parse.py /tmp/group.log
 ```
+
+## Addendum (same day): breaker fix verified on the acceptance machine
+
+The baseline above captured the failure: every group showed interpolated=0
+because the staging budget was one display period (~5ms on the 180Hz panel) and
+VTLLFI calls cost 18-41ms on measured dynamic content, so the breaker opened on
+the first three frames of every scene.
+
+Three commits fixed the shape of the deadline:
+- `fix(video): fund the interpolation deadline with a whole source frame` —
+  the fixed window is one source frame (never below a display period, never
+  below 8ms), and the trip logs its measured cost unconditionally, because the
+  engine-change log swallowed the first reason.
+- `fix(video): score only gross overruns and fund them with measurements` —
+  a publish late inside two budgets charges nothing (the measured engine always
+  pays it); only a call at twice the deadline scores. The window is raised by
+  the EMA of finished calls, bounded at two source frames.
+- `test(video): lift the working report from its own state label` — the status
+  harness had started lifting the breaker sentence as the success text, which
+  is what turned CI red after the diagnostic commit.
+
+Real-client verification (same machine, same 1080p90 stream over VPN, VT FI,
+MetalFX quality set, mouse drags for content motion):
+- `interpolated=1396..1629` per 128-sample window — the interpolated path now
+  produces and presents frames (was 0 in every baseline group);
+- presented `fps≈55-61` with `frameP95=33.3ms`, i.e. the doubled 30fps source
+  frames land at a whole-refresh cadence on the 180Hz panel;
+- `breaker tripped: 0` lines for the session (was: every cooldown probe);
+- evidence: `docs/evidence/frame-time-2026-10-15/post-fix-session.log`.
+
+Boundary, stated plainly: this stream negotiated 90 FPS but the host's locked
+screen sent ~30 FPS of real content, and the fixed floor at 90 FPS (11ms) still
+sits under a cold-start call — the first probes can strike until the EMA lifts
+the window to the measured cost. A 90 FPS stream with sustained host-side
+motion is the configuration this addendum did not re-measure.
