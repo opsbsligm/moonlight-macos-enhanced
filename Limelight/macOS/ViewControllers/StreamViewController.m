@@ -1015,6 +1015,11 @@ highFreqMotor:(unsigned short)highFreqMotor {
     // previous machine's offer be shown about a machine that was never asked.
     self.usbMenuHostClaim = MLUSBMenuHostClaimNotAsked;
     self.usbMenuHostClaimInFlight = NO;
+    // Zero is a real capability (this build cannot load the driver), so a fresh controller must not
+    // start out already "having reported" it -- otherwise the very first caption a player ever sees
+    // is the one state the log never records, and a support thread has a screenshot with no line to
+    // match it against. -1 means "no state reported yet" here and nowhere else.
+    self.usbMenuLastLoggedCapability = -1;
     [self releaseClipboardSyncOwnershipWithUnbind:NO];
     self.clipboardRuntimeConnection = nil;
     LiSetThreadConnectionContext(NULL);
