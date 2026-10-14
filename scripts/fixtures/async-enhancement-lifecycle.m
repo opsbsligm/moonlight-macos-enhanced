@@ -188,7 +188,9 @@ int main(void) { @autoreleasepool {
         assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
         dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
         assert(p.calls==1 && !r->_enhancementResultFrame && !r->_previousEnhancedOutputFrame && !r->_previousEnhancedSourceFrame);
-        assert((inputKind?r->_enhancementFailedInterpolatedSequence:r->_enhancementFailedSequence)==7 && r->_enhancementOverloadStrikes==1 && !r->_enhancementSuspended);
+        // A call that lands inside the deadline is late, not gross: it must
+        // not publish, seed history, or charge the breaker.
+        assert((inputKind?r->_enhancementFailedInterpolatedSequence:r->_enhancementFailedSequence)==7 && r->_enhancementOverloadStrikes==0 && !r->_enhancementSuspended);
         CVImageBufferRef result=[r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:engine scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:inputKind warmupPending:&w processingPending:&pending waitForOutput:&wait];
         assert(!result && pending && !wait && p.calls==1 && !r->_enhancementProcessInFlight);
         [r teardownEnhancementProcessor];dispatch_sync(r->_vtEnhancementQueue,^{});
@@ -234,13 +236,13 @@ int main(void) { @autoreleasepool {
         CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;
     }
     puts("ok: eight SR source/midpoint failure-isolation scenarios, same input never requeues");
-    // Three mild consecutive overruns pause; an in-budget call resets strikes.
+    // Three consecutive gross overruns pause; an in-budget call resets strikes.
     for(int recover=0;recover<2;recover++) {
         Probe *r=freshProbe();VTFrameProcessor *p=r->_frameProcessor;
         BOOL w=NO,pending=NO,wait=NO;
         for(int task=0;task<3;task++) {
             @synchronized(r) {r->_currentFrameSequence=7+task;}
-            p.elapsedMs=(recover && task==1)?4:6;
+            p.elapsedMs=(recover && task==1)?4:10;
             [r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTLowLatencySuperResolution scaleFactor:2 frameSequence:7+task presentationTimeStamp:CMTimeMake(7+task,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
             assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
             dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
