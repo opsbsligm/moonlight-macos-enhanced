@@ -54,15 +54,31 @@ int main(void) {
     assert(!MLEnhancementShouldWait(true,100,99,10));
     assert(!MLEnhancementShouldWait(true,100,100,0));
     assert(MLEnhancementOverloadStrikes(0,true,4,5)==0);
-    assert(MLEnhancementOverloadStrikes(0,true,5,5)==1);
-    assert(MLEnhancementOverloadStrikes(0,true,6,5)==1);
-    assert(MLEnhancementOverloadStrikes(1,true,6,5)==2);
-    assert(MLEnhancementOverloadStrikes(2,true,6,5)==3);
+    // Missing the publish deadline alone is a late publish, not an overrun: the
+    // measured engine costs 1.6x-3.7x a source frame, so striking 1x-2x opens the
+    // breaker on every dynamic scene. A call at twice the deadline taxes the next
+    // frame and scores; four times the deadline is the pace that cannot coexist.
+    assert(MLEnhancementOverloadStrikes(0,true,5,5)==0);
+    assert(MLEnhancementOverloadStrikes(0,true,9,5)==0);
+    assert(MLEnhancementOverloadStrikes(2,true,9,5)==0);
+    assert(MLEnhancementOverloadStrikes(0,true,10,5)==1);
+    assert(MLEnhancementOverloadStrikes(1,true,10,5)==2);
+    assert(MLEnhancementOverloadStrikes(2,true,10,5)==3);
     assert(MLEnhancementOverloadStrikes(2,true,4,5)==0);
     assert(MLEnhancementOverloadStrikes(0,true,20,5)==3);
     assert(MLEnhancementOverloadStrikes(0,false,0,5)==3);
     assert(MLEnhancementOverloadStrikes(0,true,1,0)==3);
     assert(MLEnhancementOverloadStrikes(0,true,UINT64_MAX,5)==3);
+    // An adaptive deadline may raise the window to meet a measured engine, up to
+    // two source frames; it may never go below the honest fixed window, and an
+    // engine measured out of that ceiling earns strikes instead of forgiveness.
+    assert(MLEnhancementAdaptiveBudgetMs(0,180,60)==16);
+    // A cheap engine may not pull the window under the honest fixed floor.
+    assert(MLEnhancementAdaptiveBudgetMs(1,180,60)==16);
+    assert(MLEnhancementAdaptiveBudgetMs(20,180,60)==26);
+    assert(MLEnhancementAdaptiveBudgetMs(30,180,60)==32);
+    assert(MLEnhancementAdaptiveBudgetMs(100,180,60)==32);
+    assert(MLEnhancementAdaptiveBudgetMs(20,0,0)==26);
     // The staging deadline must be a window the work can honestly fit: one
     // source frame, never below a display period, never below a service floor.
     assert(MLEnhancementStagingBudgetMs(180,60)==16);
@@ -153,7 +169,8 @@ for name, before, after in mutations:
 enhancement_mutations = [
     ('ignore-probe-compute-cost', 'elapsedMs * 8', 'elapsedMs * 0'),
     ('stop-growing-probe-backoff', 'previousMs * 2', 'previousMs'),
-    ('deadline-equality-resets-overload', 'elapsedMs >= budgetMs', 'elapsedMs > budgetMs'),
+    ('deadline-equality-resets-overload', 'elapsedMs / budgetMs >= 2', 'elapsedMs / budgetMs > 2'),
+    ('strike-the-late-publish-again', 'elapsedMs / budgetMs >= 2', 'elapsedMs >= budgetMs'),
     ('ignore-failed-process', '!processed || budgetMs == 0', '(budgetMs == 0 && processed)'),
     ('ignore-severe-overload', 'elapsedMs / budgetMs >= 4', 'elapsedMs / budgetMs >= 400'),
     ('never-stop-mild-overload', 'previous >= 2 ? 3 : previous + 1', 'previous >= 2 ? 2 : previous + 1'),
@@ -169,6 +186,8 @@ enhancement_mutations = [
     ('staging-budget-ignores-source-frame', 'double budget = sourceFrameMs;', 'double budget = displayFrameMs + 0.0 * sourceFrameMs;'),
     ('staging-budget-service-floor-dropped', 'if (budget < 8.0) {\n        budget = 8.0;\n    }', '(void)budget;'),
     ('staging-budget-unknown-rate-refuses', 'return 16;', 'return 0;'),
+    ('adaptive-budget-can-shrink', 'measured > frameBudget ? measured : frameBudget', 'measured'),
+    ('adaptive-budget-ignores-its-ceiling', 'uint64_t ceiling = 2 * frameBudget;', 'uint64_t ceiling = frameBudget;'),
 
 ]
 for name, before, after in enhancement_mutations:
