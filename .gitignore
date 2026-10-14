@@ -110,3 +110,7 @@ spikes/**/*.bin
 
 # Manually downloaded CI artifacts used for local distribution verification.
 dist-verify/
+
+# Frame-time evidence logs are tracked on purpose; the blanket rule above is
+# for crash and runtime logs.
+!docs/evidence/**/*.log
