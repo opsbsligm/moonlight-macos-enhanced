@@ -2982,6 +2982,30 @@ check("(a report never asks a host)" in devices_body
 check("[self devicesSection]" in report_builder,
       "the devices section is assembled into the report rather than merely built")
 
+# --- the sidebar's own caption has to be recoverable from a log -------------
+# The sidebar states which precondition is still missing, and a screenshot is the only copy of
+# that answer a support thread usually gets. The line beside it names the same state, printed
+# when the state changes rather than on every hover, so a caption and a log line can be matched
+# instead of guessed. That only holds while "no state reported yet" is a value no state can
+# have: BuildCannotLoadDriver is the enum's zero, so a stream page that begins at zero has
+# already "reported" the one caption the adhoc build shows on every machine, and the first
+# screenshot a player ever posts is the one with nothing to match it against. The reset has to
+# sit where the session's other USB memory is forgotten, or a second host inherits the first
+# host's silence.
+stream_page = open(os.path.join(root, "Limelight/macOS/ViewControllers/"
+                                 "StreamViewController.m"), encoding="utf-8").read()
+prepare_body = method_body(stream_page, "- (void)prepareForStreaming")
+check("self.usbMenuHostClaim = MLUSBMenuHostClaimNotAsked;" in prepare_body and
+      "self.usbMenuLastLoggedCapability = -1;" in prepare_body,
+      "a new stream session forgets the last host's answer and has not reported a state yet")
+sidebar_menu = open(os.path.join(root, "Limelight/macOS/ViewControllers/"
+                                 "StreamViewController+MenuUI.m"), encoding="utf-8").read()
+capability_body = method_body(sidebar_menu,
+    "- (MLUSBMenuCapability)usbMenuCapabilityWithModel:(MLDeviceRedirectionPanelModel *)model")
+check("usbMenuLastLoggedCapability" in capability_body and "[usb] sidebar capability="
+      in capability_body,
+      "the sidebar prints the machine name of the state it is showing, once per change")
+
 # --- the report may not claim more than the tree supports -------------------
 # The permissions section prints one yes/no for screen recording. Two honest readings of a
 # "not granted" differ completely: the player refused a prompt, or this build never asked.
