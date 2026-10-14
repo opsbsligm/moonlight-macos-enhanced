@@ -81,7 +81,9 @@ Three commits fixed the shape of the deadline:
 Real-client verification (same machine, same 1080p90 stream over VPN, VT FI,
 MetalFX quality set, mouse drags for content motion):
 - `interpolated=1396..1629` per 128-sample window — the interpolated path now
-  produces and presents frames (was 0 in every baseline group);
+  produces and presents frames (was 0 in every baseline group), and the
+  cumulative counter grew monotonically to `interpolated=65816` over a
+  forty-minute session (`1422..65816` across the stored windows);
 - presented `fps≈55-61` with `frameP95=33.3ms`, i.e. the doubled 30fps source
   frames land at a whole-refresh cadence on the 180Hz panel;
 - `breaker tripped: 0` lines for the session (was: every cooldown probe);
@@ -92,8 +94,8 @@ Two boundaries, stated plainly:
 1. This stream negotiated 90 FPS but the host's locked screen sent ~30 FPS of
    real content, so the run proves the pipeline (VT produces, the renderer
    presents, the breaker stays closed) at the frame rate the source actually
-   carried. Over a twenty-minute session the interpolated counter grew
-   monotonically to 37225 at a steady ~58 FPS, so this is sustained behaviour,
+   carried. Over a forty-minute session the interpolated counter grew
+   monotonically to 65816 at a steady ~58 FPS, so this is sustained behaviour,
    not one window. A 90 FPS stream with sustained host-side motion needs the
    host unlocked (owner-held PIN) and is recorded as not yet acceptance-tested,
    not as passing.
