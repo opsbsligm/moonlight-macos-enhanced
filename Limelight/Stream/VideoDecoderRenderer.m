@@ -1514,6 +1514,12 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     uint64_t _interpolationProbeBackoffMs;
     uint64_t _interpolationStagingStartedAtMs;
     uint64_t _interpolationStagingBudgetMs;
+    // Exponential mean of finished VTLLFI calls in ms. The staging deadline is
+    // raised to meet it (bounded), so a lawful engine is refused by measurement
+    // rather than by a display-period guess. It survives the breaker: a paused
+    // engine should re-test under the same honest window, and it resets with the
+    // processor configuration that produced the measurement.
+    uint64_t _interpolationCallEmaMs;
     NSUInteger _enhancementProcessGeneration;
     BOOL _enhancementProcessInFlight;
     CVImageBufferRef _enhancementTaskSourceFrame; // borrowed from the retained task
@@ -2017,6 +2023,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         _interpolationSuspended = NO;
         _interpolationSuspendedSinceMs = 0;
         _interpolationProbeBackoffMs = 0;
+        _interpolationCallEmaMs = 0;
         _frameInterpolationWarmupGeneration += 1;
         _frameInterpolationWarmupInFlight = NO;
         _frameInterpolationWarmupWidth = 0;
@@ -3556,8 +3563,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             previousInterpolationSourceFrame != NULL) {
             _interpolationStagingSequence = sourceSequence;
             _interpolationStagingStartedAtMs = LiGetMillis();
-            _interpolationStagingBudgetMs =
-                MLEnhancementStagingBudgetMs(_lastDisplayRefreshRate, self.frameRate);
+            _interpolationStagingBudgetMs = MLEnhancementAdaptiveBudgetMs(
+                _interpolationCallEmaMs, _lastDisplayRefreshRate, self.frameRate);
         }
     }
 
@@ -4586,6 +4593,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                         // processor/configuration which actually ran the call.
                         if (runTask && processor == self->_frameInterpolationProcessor &&
                             generation == self->_interpolationProcessGeneration) {
+                            if (processElapsedMs != UINT64_MAX) {
+                                self->_interpolationCallEmaMs = self->_interpolationCallEmaMs == 0
+                                    ? processElapsedMs
+                                    : (self->_interpolationCallEmaMs * 3 + processElapsedMs) / 4;
+                            }
                             self->_interpolationOverloadStrikes = MLEnhancementOverloadStrikes(
                                 self->_interpolationOverloadStrikes, interpolatedFrame != NULL, processElapsedMs, budgetMs);
                             self->_interpolationSuspended = self->_interpolationOverloadStrikes >= 3;

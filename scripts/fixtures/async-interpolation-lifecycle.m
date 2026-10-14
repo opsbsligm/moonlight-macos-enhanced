@@ -79,7 +79,7 @@ static NSString *MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpola
     CMTime _currentFramePresentationTimeStamp, _previousInterpolationSourcePresentationTimeStamp;
     CMTime _pendingInterpolatedPresentationTimeStamp;
     uint64_t _currentFrameSequence, _lastPresentedFrameSequence, _interpolationStagingSequence;
-    uint64_t _interpolationStagingStartedAtMs, _interpolationStagingBudgetMs;
+    uint64_t _interpolationStagingStartedAtMs, _interpolationStagingBudgetMs, _interpolationCallEmaMs;
     uint64_t _pendingInterpolatedEnqueueTimeMs, _pendingInterpolatedForSourceSequence, _deferredCurrentSourceSequence;
     uint32_t _pendingInterpolatedFrameNumber;
     BOOL _pendingInterpolatedPresented;
@@ -163,7 +163,10 @@ int main(void) { @autoreleasepool {
     // Preparatory staging also expires, without requiring a task to have been admitted.
     r=freshProbe(NO);atomic_store(&testClock,105);[r expireInterpolationStagingIfNeeded];
     assert(r->_interpolationStagingSequence==0);dispose(r);
-    // Severe/three mild overruns stop compute; in-budget work resets mild strikes.
+    // Severe/gross overruns stop compute; in-budget work resets gross strikes. A
+    // late-but-under-twice call publishes nothing and charges nothing (the
+    // breaker must not kill an engine for the calendar), so this loop drives the
+    // gross multiplier that the measured VT cost actually reaches.
     for(int mode=0;mode<3;mode++) {
         r=freshProbe(NO);p=r->_frameInterpolationProcessor;
         int tasks=mode==0?1:3;
@@ -172,7 +175,7 @@ int main(void) { @autoreleasepool {
                 r->_currentFrameSequence=7+task;r->_interpolationStagingSequence=7+task;
                 r->_interpolationStagingStartedAtMs=LiGetMillis();
             }
-            p.elapsedMs=mode==0?900:((mode==2 && task==1)?4:6);
+            p.elapsedMs=mode==0?900:((mode==2 && task==1)?4:10);
             assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:7+task enqueueTimeMs:90 frameNumber:42 displayRefreshRate:180]);
             waitFor(r.finished);
         }
