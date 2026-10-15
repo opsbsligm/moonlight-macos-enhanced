@@ -103,15 +103,19 @@ struct DevicesView: View {
             set: { panel.featureEnabled = $0; panelRevision += 1 }))
         busSection
         rulesSection
-        DisclosureGroup(languageManager.localize("USB advanced permissions")) {
+        DisclosureCard(storageKey: "settings.devices.advancedPermissionsExpanded") {
           switchesSection
+        } label: {
+          Text(languageManager.localize("USB advanced permissions"))
         }
-        DisclosureGroup(languageManager.localize("Technical details")) {
+        DisclosureCard(storageKey: "settings.devices.technicalDetailsExpanded") {
           readinessSection
           Text(panel.auditLine)
             .font(.system(.caption, design: .monospaced))
             .foregroundColor(.secondary)
             .textSelection(.enabled)
+        } label: {
+          Text(languageManager.localize("Technical details"))
         }
       }
       .padding()
@@ -273,8 +277,10 @@ struct DevicesView: View {
             Divider()
           }
         }
-        DisclosureGroup(languageManager.localize("USB manual permission rule")) {
+        DisclosureCard(storageKey: "settings.devices.manualRuleExpanded") {
           ruleEditor
+        } label: {
+          Text(languageManager.localize("USB manual permission rule"))
         }
         if panel.unreadableStoredRuleCount > 0 {
           Divider()
@@ -381,13 +387,13 @@ struct DevicesView: View {
           deviceCard(row)
         }
         if !hubs.isEmpty {
-          DisclosureGroup {
+          DisclosureCard(storageKey: "settings.devices.hubsExpanded") {
             SettingDescriptionRow(textKey: "USB hubs grouping detail")
             ForEach(Array(hubs.enumerated()), id: \.offset) { _, row in
               deviceCard(row)
             }
           } label: {
-            HStack {
+            HStack(spacing: 6) {
               Text(languageManager.localize("USB hubs"))
               Text("\(hubs.count)")
                 .foregroundColor(.secondary)
