@@ -150,7 +150,7 @@ struct InputView: View {
 
       Divider()
 
-      DisclosureGroup(
+      DisclosureCard(
         isExpanded: $mouseTuningExpanded,
         content: {
           VStack(alignment: .leading, spacing: 16) {
@@ -316,7 +316,7 @@ struct InputView: View {
 
       Divider()
 
-      DisclosureGroup(
+      DisclosureCard(
         isExpanded: $mouseAdvancedExpanded,
         content: {
           AdvancedSettingsCard {
@@ -430,7 +430,7 @@ struct InputView: View {
 
       Divider()
 
-      DisclosureGroup(
+      DisclosureCard(
         isExpanded: $controllerAdvancedExpanded,
         content: {
           AdvancedSettingsCard {
