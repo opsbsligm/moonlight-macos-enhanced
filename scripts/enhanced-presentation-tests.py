@@ -4,9 +4,7 @@
 Compiles the shipping decision functions. Mutations must fail the same replay.
 Wiring checks ensure both the draw and refresh callback consult that decision.
 """
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import os
 import subprocess
 import tempfile
 import importlib.util
@@ -165,33 +163,9 @@ mutations = [
     ('accept-late-midpoint', 'result != submittedSource', '(result != UINT64_MAX || submittedSource == 0)'),
     ('lose-pressure-retry', 'if (midpointSource == current && !midpointSubmitted) return true;', 'if (midpointSource == current && !midpointSubmitted) return false;'),
 ]
-# Each mutation is one compile-and-run of the replay, and this gate is itself the
-# referee of a mutation battery that calls it once per planted regression -- 101
-# times on CI, where the same 32 compiles then run 3,232 times in a row. The
-# compiles wait on a child process, so they overlap: a worker per runner core
-# turns a serial line of builds into one build round. Coverage is unchanged;
-# every mutation is still compiled, still run, and still refused when it survives.
-MUTATION_WORKERS = max(1, min(8, os.cpu_count() or 2))
-
-
-def refute_mutations(kind, items):
-    # An item is (name, anchor-header, before, after, replay-args-with-the-
-    # mutated-header-first). The anchor count reads the file the mutation edits;
-    # replay gets the header family the shipping replay needs, with every other
-    # header left shipping. That is the serial loops' wiring, one compile each.
-    judged = []
-    for name, target, before, after, args in items:
-        assert target.count(before) == 1, name
-        judged.append((name, args))
-    with ThreadPoolExecutor(max_workers=MUTATION_WORKERS) as pool:
-        verdicts = list(pool.map(lambda pair: (pair[0], replay(*pair[1])), judged))
-    survived = [name for name, code in verdicts if code == 0]
-    assert not survived, '%s mutation survived: %s' % (kind, survived[0])
-
-
-refute_mutations('presentation',
-                 [(name, header, before, after, (header.replace(before, after),))
-                  for name, before, after in mutations])
+for name, before, after in mutations:
+    assert header.count(before) == 1, name
+    assert replay(header.replace(before,after)) != 0, name + ' survived'
 enhancement_mutations = [
     ('ignore-probe-compute-cost', 'elapsedMs * 8', 'elapsedMs * 0'),
     ('stop-growing-probe-backoff', 'previousMs * 2', 'previousMs'),
@@ -216,10 +190,9 @@ enhancement_mutations = [
     ('adaptive-budget-ignores-its-ceiling', 'uint64_t ceiling = 2 * frameBudget;', 'uint64_t ceiling = frameBudget;'),
 
 ]
-refute_mutations('enhancement',
-                 [(name, enhancement_header, before, after,
-                   (header, enhancement_header.replace(before, after)))
-                  for name, before, after in enhancement_mutations])
+for name, before, after in enhancement_mutations:
+    assert enhancement_header.count(before) == 1, name
+    assert replay(header, enhancement_header.replace(before, after)) != 0, name + ' survived'
 actual_mutations = [
     ('old-drawable-enters-new-session', 'generation != state->generation', 'generation > state->generation'),
     ('zero-time-counts-as-presented', 'if (time == 0.0)', 'if (time < 0.0)'),
@@ -228,10 +201,9 @@ actual_mutations = [
     ('callbacks-assumed-ordered', 'qsort(times, state->count, sizeof(double), MLActualPresentationCompare);', '(void)times;'),
     ('counts-a-submit-instead-of-present', 'state->presented++;', 'state->presented += 2;'),
 ]
-refute_mutations('observation',
-                 [(name, actual_header, before, after,
-                   (header, enhancement_header, actual_header.replace(before, after)))
-                  for name, before, after in actual_mutations])
+for name, before, after in actual_mutations:
+    assert actual_header.count(before) == 1, name
+    assert replay(header, enhancement_header, actual_header.replace(before,after)) != 0, name + ' survived'
 source = (ROOT/'Limelight/Stream/VideoDecoderRenderer.m').read_text()
 def section(start, end):
     return source[source.index(start):source.index(end,source.index(start))]
