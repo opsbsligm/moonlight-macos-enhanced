@@ -76,6 +76,10 @@ struct LiquidGlassSettingsView: View {
     // below the title bar belongs to us alone, so the tab bar and the optional
     // back row stack inside that inset and the content scrolls under them.
     ScrollView(.vertical, showsIndicators: true) {
+      // Every section card and fold on this page is its own glass surface, so they share one
+      // container: the system then samples, culls and morphs them together instead of giving each
+      // card an independent backdrop, which is what makes a stack of cards read as one material.
+      GlassEffectContainer(spacing: 16) {
       VStack(spacing: 16) {
         Group {
           switch effectivePane {
@@ -108,6 +112,7 @@ struct LiquidGlassSettingsView: View {
           }
         }
         .environmentObject(settingsModel)
+      }
       }
       .frame(maxWidth: 920)
       .padding(.horizontal, 24)

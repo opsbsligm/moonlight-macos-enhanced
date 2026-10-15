@@ -30,7 +30,7 @@ struct StreamRiskSummarySection: View {
 
   var body: some View {
     FormSection(title: "Profile Assessment") {
-      DisclosureGroup(isExpanded: $isExpanded) {
+      DisclosureCard(isExpanded: $isExpanded) {
         VStack(alignment: .leading, spacing: 8) {
           Text(languageManager.localize("Profile assessment hint"))
             .font(.footnote)
@@ -389,19 +389,34 @@ struct DimensionsInputView: View {
 /// than a stray list. The open/closed choice is stored, because a player who opened a section to
 /// check one thing expects it to still be open next time they look.
 struct DisclosureCard<Label: View, Content: View>: View {
-  private let storageKey: String
   private let content: Content
   private let label: Label
-  @AppStorage private var expanded: Bool
+  private let expansionBinding: Binding<Bool>?
+  @AppStorage private var storedExpansion: Bool
   @ObservedObject var languageManager = LanguageManager.shared
+
+  /// The open/closed state either lives in the card's own defaults key or is handed in by a pane
+  /// that already stores it (and reads it back for its own labels or legacy collapse logic).
+  private var expanded: Binding<Bool> { expansionBinding ?? $storedExpansion }
 
   init(
     storageKey: String,
     @ViewBuilder content: () -> Content,
     @ViewBuilder label: () -> Label
   ) {
-    self.storageKey = storageKey
-    self._expanded = AppStorage(wrappedValue: false, storageKey)
+    self.expansionBinding = nil
+    self._storedExpansion = AppStorage(wrappedValue: false, storageKey)
+    self.content = content()
+    self.label = label()
+  }
+
+  init(
+    isExpanded: Binding<Bool>,
+    @ViewBuilder content: () -> Content,
+    @ViewBuilder label: () -> Label
+  ) {
+    self.expansionBinding = isExpanded
+    self._storedExpansion = AppStorage(wrappedValue: false, "settings.disclosure.unmanaged")
     self.content = content()
     self.label = label()
   }
@@ -409,13 +424,17 @@ struct DisclosureCard<Label: View, Content: View>: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       Button {
-        withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+        // One shared duration for every glass transition in this window, so a card opens at the
+        // same speed the tab pill slides and the page reads as one instrument instead of several.
+        withAnimation(.easeOut(duration: TabBarConfig.animationDuration)) {
+          expanded.wrappedValue.toggle()
+        }
       } label: {
         HStack(spacing: 8) {
           Image(systemName: "chevron.right")
             .font(.caption.weight(.semibold))
             .foregroundColor(.secondary)
-            .rotationEffect(.degrees(expanded ? 90 : 0))
+            .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
           label
           Spacer(minLength: 0)
         }
@@ -425,7 +444,7 @@ struct DisclosureCard<Label: View, Content: View>: View {
       .padding(.vertical, 8)
       .padding(.horizontal, 10)
 
-      if expanded {
+      if expanded.wrappedValue {
         Divider()
           .padding(.horizontal, 10)
         VStack(alignment: .leading, spacing: 8) {
@@ -438,14 +457,7 @@ struct DisclosureCard<Label: View, Content: View>: View {
         .transition(.opacity)
       }
     }
-    .background(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .fill(Color.primary.opacity(expanded ? 0.05 : 0.0))
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
-    )
+    .glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))
   }
 }
 
@@ -460,25 +472,25 @@ struct FormSection<Content: View>: View {
   }
 
   var body: some View {
-    GroupBox(
-      content: {
-        VStack {
-          Group {
-            content
-          }
-          .padding([.top], 1)
+    VStack(alignment: .leading, spacing: 0) {
+      Text(languageManager.localize(title))
+        .font(
+          .system(.body, design: .rounded)
+            .weight(.semibold)
+        )
+        .padding(.bottom, 6)
+      VStack {
+        Group {
+          content
         }
-        .padding([.top, .bottom], 6)
-        .padding([.leading, .trailing], 6)
-      },
-      label: {
-        Text(languageManager.localize(title))
-          .font(
-            .system(.body, design: .rounded)
-              .weight(.semibold)
-          )
-          .padding(.bottom, 6)
-      })
+        .padding([.top], 1)
+      }
+      .padding([.top, .bottom], 6)
+      .padding([.leading, .trailing], 6)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .padding(10)
+    .glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))
   }
 }
 

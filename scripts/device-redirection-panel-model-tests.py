@@ -1301,7 +1301,14 @@ def main():
     body = pane.split("var body: some View {", 1)[1].split("// MARK:", 1)[0]
     check('USB permissions scope' in body and 'USB advanced permissions' in body,
           "settings separates permission scope from advanced diagnostics")
-    check('DisclosureGroup' in body and 'readinessSection' in body,
+    # The readout has to stay reachable behind a fold: the Apple-disclosure spelling it used to pin
+    # is gone on purpose, because the system control drew a second frame inside the glass card. What
+    # the rule guards is the fold plus the readout living inside it, so deleting either one still
+    # fails, and swapping the fold back for a plain always-visible section fails too.
+    check('DisclosureCard(storageKey: "settings.devices.technicalDetailsExpanded")' in body
+          and 'readinessSection' in body
+          and body.index('DisclosureCard(storageKey: "settings.devices.technicalDetailsExpanded")')
+              < body.index('readinessSection'),
           "driver preconditions remain accessible without dominating the settings page")
     check('USB allow this model' in pane and 'hasPermissionRule(row)' in pane and 'family: false' in pane,
           "device permission authoring uses exact model IDs and avoids duplicate rules")
