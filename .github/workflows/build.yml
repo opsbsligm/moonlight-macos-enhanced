@@ -34,8 +34,10 @@ concurrency:
 jobs:
   # Cheap repository audits that do not need Xcode. They gate every build job
   # so a broken tree fails in seconds instead of after a full matrix build.
+  # Since run 38757472022 this job is the fast half only: the mutation battery
+  # that used to live inside it is the job below with its own ceiling.
   audit:
-    timeout-minutes: 120
+    timeout-minutes: 20
     # Run 38122563239 reached this old 25-minute ceiling inside the complete
     # mutation battery (2026-10-11), before any build could start. Preserve the
     # battery; allow bounded headroom as source-backed gates grow. Do not treat
@@ -58,6 +60,18 @@ jobs:
     # hit a ninety-minute ceiling still inside the same step. Overlapping four builds
     # on a shared runner costs more than the line it removes. Serial, plus a ceiling
     # the measured 61 minutes can sit inside with room for a slower runner.
+    # Raising the ceiling a fourth time stopped being the answer: runs
+    # 38721692726, 38741092974 and 38757472022 were each cancelled between 66 and
+    # 71 minutes in -- past the 120-minute ceiling's cousin, the hosted runner's
+    # own patience ("lost communication with the runner"), not our timeout at all.
+    # Local measurement on a clean tree separates the two things the job was
+    # doing: every non-battery audit with the history scan included answers in
+    # under three minutes (fast audits 52s, history scan 79s), while the battery
+    # alone runs 71 minutes (146/146 caught, exit 0). The split is the fix: this
+    # job keeps the fast audits with --no-battery --history and a ceiling they
+    # cannot approach, and the battery gets mutation_battery below. A step that
+    # silently grows past this ceiling again is caught by constraints-audit,
+    # which now requires the --no-battery flag on this job's audit step.
     name: Repository audits
     runs-on: ubuntu-latest
     steps:
@@ -102,7 +116,10 @@ jobs:
       run: python3 scripts/source-membership-audit.py
 
     - name: Verify project constraints
-      run: python3 scripts/constraints-audit.py
+      # --no-battery: the 71-minute mutation battery is its own job below.
+      # --history: with the battery gone from this job, this is the only pass on
+      # every push that walks old commits for a credential shape.
+      run: python3 scripts/constraints-audit.py --no-battery --history
 
     - name: Verify the liquid glass rules
       # A glass look can be faked with a blur and a material, and the fake passes
@@ -174,6 +191,47 @@ jobs:
           bash -n "$script"
           echo "shell syntax ok: $script"
         done
+
+  # The mutation battery: 146 planted regressions, each judged by a real gate.
+  # It lives here, and not inside the audit job above, because it is a different
+  # shape of work: the fast audits answer in under three minutes and must gate
+  # the builds in minutes, while the battery compiles and judges mutations for
+  # the better part of ninety. Kept in one job, the long half made the short
+  # half's job hit runner-level cancellations (runs 38721692726, 38741092974,
+  # 38757472022) and the build gate reported the skips as its own red. Split,
+  # each job gets a ceiling its own measured cost can sit inside, and neither
+  # cancellation story can happen to the other's results.
+  mutation_battery:
+    timeout-minutes: 150
+    # Local measurement on a clean tree: 71 minutes for 146/146 cases. Hosted
+    # runners measured the same step between 61 and 88 minutes across runs
+    # 38599412999 through 38683656986, so the ceiling carries the slowest
+    # observed runner plus headroom, and a cancellation still leaves a job log
+    # that says which step it died in. constraints-audit refuses this job if
+    # assertion-battery.py ever moves back into the fast audit job.
+    name: Mutation battery
+    needs: audit
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Set up Python for the battery
+      # Same pinned interpreter as the audit job: the battery shells out to the
+      # same audit scripts, and a parser that differs between the two jobs makes
+      # a green mean different things in each.
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+
+    - name: Install the parser used by the audits
+      run: python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
+
+    - name: Run the full mutation battery
+      # Standalone, the battery runs every gate with --no-battery itself, so
+      # there is no recursion; the AUDIT_GATE referee inside it is the fast
+      # aggregate, which is exactly what the 71-minute measurement timed.
+      run: python3 scripts/assertion-battery.py
 
   build_arch:
     timeout-minutes: 45  # a cross-compile, seven harnesses and a DMG
@@ -1349,7 +1407,7 @@ jobs:
   build:
     timeout-minutes: 10  # it reads three job results and prints them
     name: build
-    needs: [build_arch, build_universal, analyze]
+    needs: [build_arch, build_universal, analyze, mutation_battery]
     runs-on: ubuntu-latest
     if: always()
 
@@ -1359,6 +1417,7 @@ jobs:
         echo "build_arch result: ${{ needs.build_arch.result }}"
         echo "build_universal result: ${{ needs.build_universal.result }}"
         echo "analyze result: ${{ needs.analyze.result }}"
+        echo "mutation_battery result: ${{ needs.mutation_battery.result }}"
 
         if [ "${{ needs.build_arch.result }}" != "success" ]; then
           echo "build_arch did not succeed"
@@ -1372,6 +1431,11 @@ jobs:
 
         if [ "${{ needs.analyze.result }}" != "success" ]; then
           echo "the static analyzer job did not succeed"
+          exit 1
+        fi
+
+        if [ "${{ needs.mutation_battery.result }}" != "success" ]; then
+          echo "the mutation battery did not succeed"
           exit 1
         fi
 
