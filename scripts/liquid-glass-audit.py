@@ -265,6 +265,115 @@ PANELS_STILL_ON_VIBRANCY = {}
 # material at all -- not glass, not vibrancy. The card floating in it is the glass.
 RECONNECT_SCRIM = ("self.reconnectOverlayContainer = [[NSView alloc] initWithFrame:",)
 
+# --- the settings surface --------------------------------------------------
+# The stream panels get their glass from GlassOverlayContainer; the settings page gets it
+# straight from .glassEffect, one surface per section card and per fold. That makes it the
+# part of the app most likely to quietly regress, because every regression here still renders
+# and still looks like a card in a screenshot: a GroupBox walks back in, a system
+# DisclosureGroup reappears inside a glass card and draws a second frame, or a card keeps
+# its glass but leaves the container so the stack stops sampling as one material.
+SETTINGS_FILES = ("ViewControllers/SettingsSharedControls.swift",
+                  "ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift")
+# The spellings the settings page moved away from on purpose. Each one still compiles and
+# still looks acceptable, which is exactly why they need a rule and not a reviewer.
+RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", "DisclosureGroup(")
+
+
+def settings_surface_problems(texts):
+    """problems with the settings glass, given {settings file: source}."""
+    problems = []
+    for name in SETTINGS_FILES:
+        if name not in texts:
+            problems.append("%s is gone, so nothing is holding the settings glass to its rules" % name)
+    if problems:
+        return problems
+    # The card draws the glass and the page supplies the container, so the pairing is only
+    # meaningful across the whole surface: one container for all of it is what makes the cards
+    # sample one material, and it has to be somewhere in the surface that shows them.
+    surface = "\n".join(strip_comments(texts[name]) for name in SETTINGS_FILES)
+    if ".glassEffect(" not in surface:
+        problems.append("the settings page has no native .glassEffect at all, so every card "
+                        "on it is standing in for the system material again")
+    if ".glassEffect(" in surface and "GlassEffectContainer(" not in surface:
+        problems.append("the settings page has glass surfaces outside a GlassEffectContainer, "
+                        "so the settings cards stop bending the page as one material")
+    for name in SETTINGS_FILES:
+        body = strip_comments(texts[name])
+        for needle in RETIRED_SETTINGS_CONTAINERS:
+            if needle in body:
+                problems.append("%s puts %s back on the settings page, which draws its own "
+                                "frame inside the glass card" % (name, needle))
+        for line in body.split("\n"):
+            if DURATION.search(line) and "TabBarConfig.animationDuration" not in line:
+                problems.append("%s gives a glass transition its own duration: %s"
+                                % (name, line.strip()))
+                break
+    return problems
+
+
+def settings_self_test(repo):
+    """Prove each settings rule fires, using the shipped tree as the compliant baseline."""
+    texts = {}
+    for name in SETTINGS_FILES:
+        path = os.path.join(repo, "Limelight", "macOS", name)
+        if not os.path.isfile(path):
+            print("FAIL the settings self-test cannot read %s" % name)
+            return 1
+        texts[name] = open(path, encoding="utf-8").read()
+
+    def edited(name, old, new):
+        copy = dict(texts)
+        if old not in copy[name]:
+            raise SystemExit("the settings self-test lost its anchor in %s" % name)
+        copy[name] = copy[name].replace(old, new, 1)
+        return copy
+
+    def all_edits(name, old, new):
+        # A rule that survives a partial regression is not a rule: a surface with one card left
+        # on glass still has to be refused by the rule that asks for the glass in the first place.
+        copy = dict(texts)
+        if old not in copy[name]:
+            raise SystemExit("the settings self-test lost its anchor in %s" % name)
+        copy[name] = copy[name].replace(old, new)
+        return copy
+
+    shared = "ViewControllers/SettingsSharedControls.swift"
+    page = "ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift"
+    cases = [
+        ("the shipped settings surface", texts, False),
+        ("a section card back in a GroupBox",
+         edited(shared, "VStack(alignment: .leading, spacing: 0) {\n      Text(languageManager.localize(title))",
+                "GroupBox(\n      content: {\n      VStack(alignment: .leading, spacing: 0) {\n      Text(languageManager.localize(title))"),
+         True),
+        ("a system disclosure put back on a pane",
+         edited(shared, "  var body: some View {\n    VStack(alignment: .leading, spacing: 0) {\n      Button {",
+                "  var body: some View {\n"
+                "    DisclosureGroup(isExpanded: expanded) {\n      VStack(alignment: .leading, spacing: 0) {\n        Button {"),
+         True),
+        ("the card glass with no container around the page",
+         edited(page, "GlassEffectContainer(spacing: 16) {", "VStack(spacing: 16) {"),
+         True),
+        ("the settings surface with no glass at all",
+         all_edits(shared, ".glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))",
+                   ".background(.background)"),
+         True),
+        ("a fold with a duration of its own",
+         edited(shared, "withAnimation(.easeOut(duration: TabBarConfig.animationDuration))",
+                "withAnimation(.easeOut(duration: 0.15))"),
+         True),
+    ]
+    failures = 0
+    for what, files, expect_problem in cases:
+        problems = settings_surface_problems(files)
+        if bool(problems) != expect_problem:
+            failures += 1
+            print("FAIL %-46s expected %s, got %s"
+                  % (what, "a violation" if expect_problem else "clean", problems))
+        else:
+            print("ok   %-46s %s" % (what, "refused" if problems else "accepted"))
+    return failures
+
+
 PANEL_FILES = ("ViewControllers/StreamViewController+Diagnostics.m",
                "ViewControllers/StreamViewController+MenuUI.m")
 
@@ -374,6 +483,8 @@ def main():
     if args.self_test:
         failures = self_test()
         failures += panel_self_test(args.repo)
+        print("-- settings surface --")
+        failures += settings_self_test(args.repo)
         print("%d liquid glass audit self-test failures in all" % failures)
         return 1 if failures else 0
 
@@ -386,6 +497,12 @@ def main():
         if name.endswith(".swift"):
             files[name] = open(os.path.join(root, name), encoding="utf-8").read()
     problems = check(files)
+    settings_texts = {}
+    for name in SETTINGS_FILES:
+        path = os.path.join(args.repo, "Limelight", "macOS", name)
+        if os.path.isfile(path):
+            settings_texts[name] = open(path, encoding="utf-8").read()
+    problems += settings_surface_problems(settings_texts)
     texts = {}
     for name in PANEL_FILES:
         path = os.path.join(args.repo, "Limelight", "macOS", name)
@@ -404,8 +521,9 @@ def main():
                             "so no build ever sets it")
     for problem in problems:
         print("violation: %s" % problem)
-    print("%d liquid glass violations across %d files, %d panels checked"
-          % (len(problems), len(files) + len(PANEL_FILES), len(GLASS_PANELS)))
+    print("%d liquid glass violations across %d files, %d panels and %d settings surfaces checked"
+          % (len(problems), len(files) + len(PANEL_FILES) + len(SETTINGS_FILES),
+             len(GLASS_PANELS), len(SETTINGS_FILES)))
     return 1 if problems else 0
 
 
