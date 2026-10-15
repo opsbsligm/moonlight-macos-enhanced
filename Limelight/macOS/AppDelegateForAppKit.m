@@ -352,9 +352,9 @@ static void MLProbeCollectAppKitAXNodes(id element, NSUInteger depth, NSUInteger
 }
 
 // The same tree walk, collecting the controls that open a collapsed section instead
-// of the text. The capability matrix lives inside a DisclosureGroup that ships
+// of the text. The capability matrix lives inside a collapsed DisclosureCard that ships
 // collapsed (`settings.app.videoCapabilityStatusExpanded` defaults to false) and
-// SwiftUI vends nothing inside a collapsed group: measured on a clean launch every
+// SwiftUI vends nothing inside a collapsed disclosure: measured on a clean launch every
 // matrix row and all three of its segments are absent from the accessibility tree,
 // while on a machine where the section had once been opened by hand they are all
 // present. A check that only reads what is on screen would then pass or fail

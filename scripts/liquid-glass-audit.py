@@ -272,8 +272,19 @@ RECONNECT_SCRIM = ("self.reconnectOverlayContainer = [[NSView alloc] initWithFra
 # and still looks like a card in a screenshot: a GroupBox walks back in, a system
 # DisclosureGroup reappears inside a glass card and draws a second frame, or a card keeps
 # its glass but leaves the container so the stack stops sampling as one material.
-SETTINGS_FILES = ("ViewControllers/SettingsSharedControls.swift",
-                  "ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift")
+# The list covers the settings panes, the page that hosts them, and the first-run permission
+# sheet: a player meets that sheet before any settings page, and it draws the same cards.
+# Surfaces, not files: the settings page and the first-run sheet are separate windows, so each
+# needs its own container, and the card that draws the glass and the page that supplies the
+# container are different files inside one surface. A container shared across two windows would
+# be as wrong as one card left outside its own.
+SETTINGS_SURFACES = (
+    ("settings page", ("ViewControllers/SettingsSharedControls.swift",
+                       "ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift")),
+    ("first-run permission sheet",
+     ("ViewControllers/SettingsHostingController.swift",)),
+)
+SETTINGS_FILES = tuple(sorted({name for _, files in SETTINGS_SURFACES for name in files}))
 # The spellings the settings page moved away from on purpose. Each one still compiles and
 # still looks acceptable, which is exactly why they need a rule and not a reviewer.
 RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", "DisclosureGroup(")
@@ -287,16 +298,14 @@ def settings_surface_problems(texts):
             problems.append("%s is gone, so nothing is holding the settings glass to its rules" % name)
     if problems:
         return problems
-    # The card draws the glass and the page supplies the container, so the pairing is only
-    # meaningful across the whole surface: one container for all of it is what makes the cards
-    # sample one material, and it has to be somewhere in the surface that shows them.
-    surface = "\n".join(strip_comments(texts[name]) for name in SETTINGS_FILES)
-    if ".glassEffect(" not in surface:
-        problems.append("the settings page has no native .glassEffect at all, so every card "
-                        "on it is standing in for the system material again")
-    if ".glassEffect(" in surface and "GlassEffectContainer(" not in surface:
-        problems.append("the settings page has glass surfaces outside a GlassEffectContainer, "
-                        "so the settings cards stop bending the page as one material")
+    for surface, names in SETTINGS_SURFACES:
+        body = "\n".join(strip_comments(texts[name]) for name in names if name in texts)
+        if ".glassEffect(" not in body:
+            problems.append("%s has no native .glassEffect at all, so every card on it is "
+                            "standing in for the system material again" % surface)
+        if ".glassEffect(" in body and "GlassEffectContainer(" not in body:
+            problems.append("%s has glass surfaces outside a GlassEffectContainer, so its "
+                            "cards stop bending the page as one material" % surface)
     for name in SETTINGS_FILES:
         body = strip_comments(texts[name])
         for needle in RETIRED_SETTINGS_CONTAINERS:
@@ -328,17 +337,34 @@ def settings_self_test(repo):
         copy[name] = copy[name].replace(old, new, 1)
         return copy
 
-    def all_edits(name, old, new):
-        # A rule that survives a partial regression is not a rule: a surface with one card left
-        # on glass still has to be refused by the rule that asks for the glass in the first place.
+    def surface_edits(surface, old, new):
+        # Strip the glass from every file of one surface at once. A rule that only fires when the
+        # whole app loses its glass is not a rule about this surface.
         copy = dict(texts)
-        if old not in copy[name]:
-            raise SystemExit("the settings self-test lost its anchor in %s" % name)
-        copy[name] = copy[name].replace(old, new)
+        names = dict(SETTINGS_SURFACES)[surface]
+        hits = 0
+        for name in names:
+            if old in copy[name]:
+                copy[name] = copy[name].replace(old, new)
+                hits += 1
+        if not hits:
+            raise SystemExit("the settings self-test lost its anchor in %s" % surface)
+        return copy
+
+    def drop_containers():
+        copy = dict(texts)
+        kept = 0
+        for name, text in copy.items():
+            stripped = text.replace("GlassEffectContainer(", "VStack(")
+            kept += text.count("GlassEffectContainer(")
+            copy[name] = stripped
+        if not kept:
+            raise SystemExit("the settings self-test found no container to remove")
         return copy
 
     shared = "ViewControllers/SettingsSharedControls.swift"
     page = "ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift"
+    sheet = "ViewControllers/SettingsHostingController.swift"
     cases = [
         ("the shipped settings surface", texts, False),
         ("a section card back in a GroupBox",
@@ -350,12 +376,21 @@ def settings_self_test(repo):
                 "  var body: some View {\n"
                 "    DisclosureGroup(isExpanded: expanded) {\n      VStack(alignment: .leading, spacing: 0) {\n        Button {"),
          True),
-        ("the card glass with no container around the page",
-         edited(page, "GlassEffectContainer(spacing: 16) {", "VStack(spacing: 16) {"),
+        ("no container anywhere on the settings surface",
+         drop_containers(),
          True),
-        ("the settings surface with no glass at all",
-         all_edits(shared, ".glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))",
-                   ".background(.background)"),
+        ("the settings page with no glass at all",
+         surface_edits("settings page",
+                       ".glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))",
+                       ".background(.background)"),
+         True),
+        ("the first-run sheet with no glass at all",
+         surface_edits("first-run permission sheet",
+                       ".glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))",
+                       ".background(.background)"),
+         True),
+        ("the first-run sheet with no container",
+         edited(sheet, "GlassEffectContainer(spacing: 20) {", "VStack(spacing: 20) {"),
          True),
         ("a fold with a duration of its own",
          edited(shared, "withAnimation(.easeOut(duration: TabBarConfig.animationDuration))",
@@ -521,9 +556,10 @@ def main():
                             "so no build ever sets it")
     for problem in problems:
         print("violation: %s" % problem)
-    print("%d liquid glass violations across %d files, %d panels and %d settings surfaces checked"
+    print("%d liquid glass violations across %d files, %d panels and %d settings surfaces "
+          "(%d files) checked"
           % (len(problems), len(files) + len(PANEL_FILES) + len(SETTINGS_FILES),
-             len(GLASS_PANELS), len(SETTINGS_FILES)))
+             len(GLASS_PANELS), len(SETTINGS_SURFACES), len(SETTINGS_FILES)))
     return 1 if problems else 0
 
 
