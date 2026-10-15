@@ -383,6 +383,72 @@ struct DimensionsInputView: View {
   }
 }
 
+/// A collapsible card in the image of the device cards it usually contains: the whole header row is
+/// the control, the chevron rotates and the body reveals with the same short ease the rest of the
+/// settings windows use, and the body is inset to the header text so it reads as one object rather
+/// than a stray list. The open/closed choice is stored, because a player who opened a section to
+/// check one thing expects it to still be open next time they look.
+struct DisclosureCard<Label: View, Content: View>: View {
+  private let storageKey: String
+  private let content: Content
+  private let label: Label
+  @AppStorage private var expanded: Bool
+  @ObservedObject var languageManager = LanguageManager.shared
+
+  init(
+    storageKey: String,
+    @ViewBuilder content: () -> Content,
+    @ViewBuilder label: () -> Label
+  ) {
+    self.storageKey = storageKey
+    self._expanded = AppStorage(wrappedValue: false, storageKey)
+    self.content = content()
+    self.label = label()
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Button {
+        withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+      } label: {
+        HStack(spacing: 8) {
+          Image(systemName: "chevron.right")
+            .font(.caption.weight(.semibold))
+            .foregroundColor(.secondary)
+            .rotationEffect(.degrees(expanded ? 90 : 0))
+          label
+          Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .padding(.vertical, 8)
+      .padding(.horizontal, 10)
+
+      if expanded {
+        Divider()
+          .padding(.horizontal, 10)
+        VStack(alignment: .leading, spacing: 8) {
+          content
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .padding(.leading, 10)
+        .padding(.trailing, 10)
+        .transition(.opacity)
+      }
+    }
+    .background(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(Color.primary.opacity(expanded ? 0.05 : 0.0))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
+    )
+  }
+}
+
 struct FormSection<Content: View>: View {
   let title: String
   let content: Content
