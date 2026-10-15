@@ -279,7 +279,7 @@ struct VideoView: View {
 
           Divider()
 
-          DisclosureGroup(
+          DisclosureCard(
             isExpanded: $metalTuningExpanded,
             content: {
               VStack(alignment: .leading, spacing: 14) {

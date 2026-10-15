@@ -276,7 +276,7 @@ struct AppView: View {
           .frame(height: 32)
 
         FormSection(title: "Advanced") {
-          DisclosureGroup(isExpanded: $videoCapabilityStatusExpanded) {
+          DisclosureCard(isExpanded: $videoCapabilityStatusExpanded) {
             VideoCapabilityStatusPanel(matrix: settingsModel.videoCapabilityMatrix)
               .padding(.top, 8)
               .frame(maxWidth: .infinity, alignment: .leading)
