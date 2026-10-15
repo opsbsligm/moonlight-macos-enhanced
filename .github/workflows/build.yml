@@ -35,7 +35,7 @@ jobs:
   # Cheap repository audits that do not need Xcode. They gate every build job
   # so a broken tree fails in seconds instead of after a full matrix build.
   audit:
-    timeout-minutes: 60
+    timeout-minutes: 90
     # Run 38122563239 reached this old 25-minute ceiling inside the complete
     # mutation battery (2026-10-11), before any build could start. Preserve the
     # battery; allow bounded headroom as source-backed gates grow. Do not treat
@@ -46,6 +46,13 @@ jobs:
     # cap cancelled a job that had already printed 0 constraint failures, and the build
     # gate below reported the resulting skips as its own red. A budget with no headroom
     # turns a slow green into a red that has to be read from a cancelled job's log.
+    # Run 38654136202 cancelled at this sixty-minute ceiling with the same shape: the
+    # build gate again reported the skips as its own red, and the cancelled job printed
+    # zero constraint failures. Two runs measured the same step (38599412999 green,
+    # 38654136202 cancelled) over the same 146 battery cases: 101 of them ask the
+    # aggregate gate, whose cost per case rose from 25.2s to 35.3s -- six compile-and-
+    # judge mutations added to the presentation harness, multiplied by 101 referee calls.
+    # The coverage is the part worth keeping, so the ceiling moves and the gate does not.
     name: Repository audits
     runs-on: ubuntu-latest
     steps:
