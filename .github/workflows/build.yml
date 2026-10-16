@@ -1419,24 +1419,31 @@ jobs:
         echo "analyze result: ${{ needs.analyze.result }}"
         echo "mutation_battery result: ${{ needs.mutation_battery.result }}"
 
-        if [ "${{ needs.build_arch.result }}" != "success" ]; then
-          echo "build_arch did not succeed"
-          exit 1
-        fi
+        # A cancelled upstream is not a failed build. The push-concurrency rule cancels
+        # an in-flight run the moment a newer commit lands, and when the cancel lands
+        # while this gate is mid-step, the gate used to see `cancelled` where it wanted
+        # `success` and print a red X over a commit that was superseded, not broken.
+        # A real failure still outranks a cancellation: one failed job is a failed gate
+        # even if a sibling was cancelled on the way down.
+        superseded=no
+        for what_result in "build_arch:${{ needs.build_arch.result }}" \
+                           "build_universal:${{ needs.build_universal.result }}" \
+                           "analyze:${{ needs.analyze.result }}" \
+                           "mutation_battery:${{ needs.mutation_battery.result }}"; do
+          name=${what_result%%:*}
+          result=${what_result#*:}
+          if [ "$result" != "success" ] && [ "$result" != "cancelled" ] && [ "$result" != "skipped" ]; then
+            echo "$name did not succeed ($result)"
+            exit 1
+          fi
+          if [ "$result" = "cancelled" ] || [ "$result" = "skipped" ]; then
+            superseded=yes
+          fi
+        done
 
-        if [ "${{ needs.build_universal.result }}" != "success" ]; then
-          echo "build_universal did not succeed"
-          exit 1
-        fi
-
-        if [ "${{ needs.analyze.result }}" != "success" ]; then
-          echo "the static analyzer job did not succeed"
-          exit 1
-        fi
-
-        if [ "${{ needs.mutation_battery.result }}" != "success" ]; then
-          echo "the mutation battery did not succeed"
-          exit 1
+        if [ "$superseded" = "yes" ]; then
+          echo "an upstream job was cancelled or skipped: the run was superseded, not broken"
+          exit 0
         fi
 
         echo "All required build jobs passed."
