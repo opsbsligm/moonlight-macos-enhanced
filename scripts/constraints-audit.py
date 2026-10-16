@@ -1449,6 +1449,19 @@ check(bool(probe_key) and probe_key.group(1) in app_pane,
       if probe_key and probe_key.group(1) in app_pane
       else "the probe forces %r, which the app page never reads, so the section state it "
            "checks is not the one the page uses" % (probe_key.group(1) if probe_key else None,))
+hubs_key = re.search(r'MLProbeHubsGroupCollapsedKey\s*\n?\s*= @"([^"]+)"', probe_app)
+hubs_pane = open(os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                              "SettingsDevicesPane.swift"), encoding="utf-8").read()
+check(bool(hubs_key) and hubs_key.group(1) in hubs_pane,
+      "the probe pins the same preference the devices page stores the hub group under"
+      if hubs_key and hubs_key.group(1) in hubs_pane
+      else "the probe pins %r, which the devices page never reads, so the hub group it "
+           "starts shut is not the one the page draws" % (hubs_key.group(1) if hubs_key else None,))
+check("settings.devices.hubsExpanded" in probe_app and "previousHubsState" in probe_app,
+      "the hub group is forced shut at entry and the user's choice restored after"
+      if "settings.devices.hubsExpanded" in probe_app and "previousHubsState" in probe_app
+      else "the probe stopped restoring the hub group's stored state, so a pass would "
+           "report its own history instead of the shipped page")
 check("accessibilityPerformPress" in probe_app and "readableContentExpanded" in probe_app
       and 'texts_of(pane, "readableContentExpanded")' in render_probe,
       "the capability claims are checked only against the pass that pressed the section open"
