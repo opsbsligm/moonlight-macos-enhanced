@@ -69,7 +69,7 @@ private struct WelcomePermissionsView: View {
 
         VStack(alignment: .leading, spacing: 8) {
           Text(languageManager.localize("Welcome to Moonlight macOS Enhanced"))
-            .font(.system(size: 28, weight: .semibold, design: .rounded))
+            .font(SettingsGlass.Typography.title)
             // The sheet has a fixed width and the product name is long, so the title wraps onto a
             // second line rather than truncating with an ellipsis on the first launch a player sees.
             .fixedSize(horizontal: false, vertical: true)
