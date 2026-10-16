@@ -10,11 +10,11 @@
         <customObject id="-1" userLabel="First Responder" customClass="FirstResponder"/>
         <customObject id="-3" userLabel="Application" customClass="NSObject"/>
         <customView identifier="HostCell" id="c22-O7-iKe" userLabel="Host Cell View" customClass="HostCellView">
-            <rect key="frame" x="0.0" y="0.0" width="193" height="209"/>
+            <rect key="frame" x="0.0" y="0.0" width="193" height="224"/>
             <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
             <subviews>
                 <customView translatesAutoresizingMaskIntoConstraints="NO" id="uCl-gZ-IFJ" userLabel="Content View">
-                    <rect key="frame" x="0.0" y="0.0" width="193" height="209"/>
+                    <rect key="frame" x="0.0" y="0.0" width="193" height="224"/>
                     <subviews>
                         <customView translatesAutoresizingMaskIntoConstraints="NO" id="7bI-bK-K3N" userLabel="Image Container" customClass="BackgroundColorView">
                             <rect key="frame" x="7" y="53" width="180" height="156"/>
@@ -86,13 +86,13 @@
                     <constraints>
                         <constraint firstItem="pDm-4f-wlV" firstAttribute="centerX" secondItem="uCl-gZ-IFJ" secondAttribute="centerX" id="EHh-mO-cqM"/>
                         <constraint firstAttribute="trailing" relation="greaterThanOrEqual" secondItem="pDm-4f-wlV" secondAttribute="trailing" constant="4" id="Lkf-Oi-gsu"/>
-                        <constraint firstItem="L0K-Hh-p9M" firstAttribute="top" secondItem="pDm-4f-wlV" secondAttribute="bottom" constant="4" id="SLo-5x-TIb"/>
+                        <constraint firstItem="L0K-Hh-p9M" firstAttribute="top" secondItem="pDm-4f-wlV" secondAttribute="bottom" constant="6" id="SLo-5x-TIb"/>
                         <constraint firstItem="7bI-bK-K3N" firstAttribute="centerX" secondItem="uCl-gZ-IFJ" secondAttribute="centerX" id="WG0-PG-XQI"/>
                         <constraint firstItem="pDm-4f-wlV" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="uCl-gZ-IFJ" secondAttribute="leading" constant="4" id="ZfO-4U-dGX"/>
                         <constraint firstItem="L0K-Hh-p9M" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="uCl-gZ-IFJ" secondAttribute="leading" constant="4" id="dc9-b2-R1W"/>
                         <constraint firstAttribute="trailing" relation="greaterThanOrEqual" secondItem="L0K-Hh-p9M" secondAttribute="trailing" constant="4" id="if0-J1-bz1"/>
-                        <constraint firstItem="pDm-4f-wlV" firstAttribute="top" secondItem="7bI-bK-K3N" secondAttribute="bottom" constant="8" id="nOY-eI-gY6"/>
-                        <constraint firstItem="7bI-bK-K3N" firstAttribute="top" secondItem="uCl-gZ-IFJ" secondAttribute="top" id="wx2-4s-i7B"/>
+                        <constraint firstItem="pDm-4f-wlV" firstAttribute="top" secondItem="7bI-bK-K3N" secondAttribute="bottom" constant="4" id="nOY-eI-gY6"/>
+                        <constraint firstItem="7bI-bK-K3N" firstAttribute="top" secondItem="uCl-gZ-IFJ" secondAttribute="top" constant="7" id="wx2-4s-i7B"/>
                     </constraints>
                 </customView>
             </subviews>
