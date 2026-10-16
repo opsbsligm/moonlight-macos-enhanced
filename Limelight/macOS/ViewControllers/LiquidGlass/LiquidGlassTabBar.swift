@@ -6,6 +6,11 @@ enum TabBarConfig {
   static let iconSize: CGFloat = 13
   static let iconTextSpacing: CGFloat = 6
   static let fontSize: CGFloat = 12
+  static let interSpacing: CGFloat = 2
+  // Tint strength of the capsule the bar stands on. The glass itself is the
+  // system's; this only colours it, and the cool accent keeps its read in both
+  // appearances at this weight.
+  static let glassTintOpacity: Double = 0.18
   static let accentCoolBlue = Color(
     .sRGB, red: 0.34, green: 0.62, blue: 0.95, opacity: 1.0
   )
