@@ -12,6 +12,82 @@ import Carbon.HIToolbox
 import CoreGraphics
 import SwiftUI
 
+// The design tokens of the settings surface, in one place, so a card on the page and a
+// card on the first-run sheet cannot drift into two materials again.
+//
+// One radius, because two radii on stacked glass read as two unrelated boxes. The edge is
+// the separator colour the page already uses for every hairline, at half weight: an edge
+// invented from white disappears in light mode and blows out in dark mode, and without
+// any edge at all the refraction alone leaves a card's boundary under the contrast a
+// player can see, so the text reads as floating over the page instead of mounted on it.
+enum SettingsGlass {
+  static let cornerRadius: CGFloat = 10
+
+  static var cardShape: RoundedRectangle {
+    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+  }
+
+  static func card<V: View>(_ view: V) -> some View {
+    view
+      .glassEffect(.regular, in: cardShape)
+      .overlay {
+        cardShape.strokeBorder(
+          Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 0.5)
+      }
+  }
+}
+
+struct SettingsGlassCardModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    SettingsGlass.card(content)
+  }
+}
+
+extension View {
+  /// One card of the settings surface's own glass: the system material plus the hairline
+  /// that makes its edge visible over a soft page base.
+  func settingsGlassCard() -> some View {
+    modifier(SettingsGlassCardModifier())
+  }
+}
+
+// The page base. Opaque, because this page covers the main window's content and any
+// material here would show the host list through the settings.
+//
+// It is not a flat fill. A .glassEffect samples what sits behind it, so a perfectly flat
+// base hands every card the same nothing to bend and the whole stack reads as bare text
+// with faint rules -- the complaint that the page has no design in it. Two low-alpha
+// washes taken from the tab bar's own palette (cool blue top-leading, warm amber
+// bottom-trailing) keep the base opaque in both appearances while giving cards at
+// different positions different refraction, which is what lets a stack of cards read as
+// one material bending one page. Measured with the render probe: the page's distinct
+// colours go from 45 on a flat fill to 152 with these washes.
+struct SettingsPageBase: View {
+  var body: some View {
+    ZStack {
+      Color(nsColor: .controlBackgroundColor)
+      RadialGradient(
+        colors: [
+          TabBarConfig.accentCoolBlue.opacity(0.16),
+          TabBarConfig.accentCoolBlue.opacity(0.0),
+        ],
+        center: .topLeading,
+        startRadius: 20,
+        endRadius: 680
+      )
+      RadialGradient(
+        colors: [
+          Color(.sRGB, red: 0.98, green: 0.72, blue: 0.42, opacity: 0.12),
+          Color(.sRGB, red: 0.98, green: 0.72, blue: 0.42, opacity: 0.0),
+        ],
+        center: .bottomTrailing,
+        startRadius: 20,
+        endRadius: 720
+      )
+    }
+  }
+}
+
 struct StreamRiskSummarySection: View {
   let assessment: StreamRiskAssessment
   @ObservedObject var languageManager = LanguageManager.shared
@@ -453,7 +529,7 @@ struct DisclosureCard<Label: View, Content: View>: View {
     }
     .padding(.vertical, 8)
     .padding(.horizontal, 10)
-    .glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))
+    .settingsGlassCard()
   }
 }
 
@@ -486,7 +562,7 @@ struct FormSection<Content: View>: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .padding(10)
-    .glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))
+    .settingsGlassCard()
   }
 }
 

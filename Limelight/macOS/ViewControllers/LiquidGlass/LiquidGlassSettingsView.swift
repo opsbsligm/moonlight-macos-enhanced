@@ -158,8 +158,13 @@ struct LiquidGlassSettingsView: View {
 
   // MARK: - Embedded chrome
 
+  // The page base lives with the shared controls next to the card it exists for, so the
+  // settings page and the first-run sheet cannot be given two different backgrounds and
+  // the glass directory stays free of hand-made depth: the only glass here is the
+  // system's. Opaque in both appearances, because this page covers the main window's
+  // content, and washed rather than flat, because .glassEffect has to bend something.
   private var opaqueBase: some View {
-    Color(nsColor: .controlBackgroundColor)
+    SettingsPageBase()
   }
 
   // Back control for the embedded page. It uses the built-in glass button
