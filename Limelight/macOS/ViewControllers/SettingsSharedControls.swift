@@ -422,41 +422,37 @@ struct DisclosureCard<Label: View, Content: View>: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Button {
-        // One shared duration for every glass transition in this window, so a card opens at the
-        // same speed the tab pill slides and the page reads as one instrument instead of several.
-        withAnimation(.easeOut(duration: TabBarConfig.animationDuration)) {
-          expanded.wrappedValue.toggle()
-        }
-      } label: {
-        HStack(spacing: 8) {
-          Image(systemName: "chevron.right")
-            .font(.caption.weight(.semibold))
-            .foregroundColor(.secondary)
-            .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
-          label
-          Spacer(minLength: 0)
-        }
-        .contentShape(Rectangle())
+    // A system DisclosureGroup in its default style, inside a glass card. Each half
+    // of this shape was measured, not chosen by taste:
+    //
+    // * A hand-rolled Button header vends no AXDisclosureTriangle at all, so VoiceOver
+    //   loses the control and the render probe cannot open the collapsed capability
+    //   matrix it exists to check -- run 38791001188 refused the push for exactly that.
+    // * A custom DisclosureGroupStyle keeps the triangle, but with a composite label
+    //   (the state word the page puts beside it, which the probe reads to decide
+    //   whether to press) it vends two triangles -- measured on a standalone harness,
+    //   one for the label's own hit path -- and a probe that presses "what is there"
+    //   presses the same group shut again, so the matrix never opens.
+    // * Hiding the label to dedupe the triangle removes the state word the page
+    //   itself advertises, which moves the lie from the tree to the page.
+    //
+    // The default style is the only shape measured to be both single-triangle and
+    // label-readable, so the disclosure chrome stays the system's and the glass is
+    // the card around it.
+    DisclosureGroup(isExpanded: expanded) {
+      Divider()
+        .padding(.horizontal, 10)
+      VStack(alignment: .leading, spacing: 8) {
+        content
       }
-      .buttonStyle(.plain)
-      .padding(.vertical, 8)
-      .padding(.horizontal, 10)
-
-      if expanded.wrappedValue {
-        Divider()
-          .padding(.horizontal, 10)
-        VStack(alignment: .leading, spacing: 8) {
-          content
-        }
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-        .padding(.leading, 10)
-        .padding(.trailing, 10)
-        .transition(.opacity)
-      }
+      .padding(.top, 8)
+      .padding(.bottom, 10)
+      .padding(.leading, 10)
+    } label: {
+      label
     }
+    .padding(.vertical, 8)
+    .padding(.horizontal, 10)
     .glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))
   }
 }
@@ -494,30 +490,37 @@ struct FormSection<Content: View>: View {
   }
 }
 
+/// One labelled row of a settings card. `contentWidth` names the *minimum* width of
+/// the control column, not a fixed one: a fixed width was measured once against one
+/// window size, so a wider window left a dead channel between the label and the
+/// control and a narrower one clipped the control itself. The column now starts at
+/// that width and grows with the card, which is the half of "the cards follow the
+/// window" that the panes cannot each solve for themselves.
 struct FormCell<Content: View>: View {
   let title: String
-  let contentWidth: CGFloat
+  let contentMinWidth: CGFloat
   let content: Content
   @ObservedObject var languageManager = LanguageManager.shared
 
-  init(title: String, contentWidth: CGFloat, @ViewBuilder content: () -> Content) {
+  init(title: String, contentWidth: CGFloat = 0, @ViewBuilder content: () -> Content) {
     self.title = title
-    self.contentWidth = contentWidth
+    self.contentMinWidth = contentWidth
     self.content = content()
   }
 
   var body: some View {
-    HStack {
+    HStack(alignment: .firstTextBaseline) {
       Text(languageManager.localize(title))
+        .layoutPriority(1)
 
-      Spacer()
+      Spacer(minLength: 12)
 
       content
         .if(
-          contentWidth != 0,
+          contentMinWidth != 0,
           transform: { view in
             view
-              .frame(width: contentWidth, alignment: .trailing)
+              .frame(minWidth: contentMinWidth, maxWidth: .infinity, alignment: .trailing)
           })
     }
   }
