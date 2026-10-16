@@ -466,6 +466,14 @@ static NSArray<NSDictionary *> *MLProbeReadableNodes(NSView *root) {
 static NSString *const MLProbeAdvancedSectionCollapsedKey
     = @"settings.app.videoCapabilityStatusExpanded";
 
+// The devices page ships its hub group collapsed, and the pass below presses it open
+// to prove reachability -- which stores the open state. A second pass on the same
+// machine then starts open, "did not start collapsed" fires, and the pass that opens
+// nothing reports its own history rather than the page. Same cure as the Advanced
+// section: force the shipped state at entry, restore the user's own choice after.
+static NSString *const MLProbeHubsGroupCollapsedKey
+    = @"settings.devices.hubsExpanded";
+
 static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *output,
                                NSInteger pane, NSString *name, NSMutableDictionary *report) {
     NSView *content = window.contentView;
@@ -482,10 +490,15 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     NSUserDefaults *probeDefaults = [NSUserDefaults standardUserDefaults];
     id previousAdvancedState = [probeDefaults objectForKey:MLProbeAdvancedSectionCollapsedKey];
     BOOL forcedTheSectionShut = NO;
+    id previousHubsState = [probeDefaults objectForKey:MLProbeHubsGroupCollapsedKey];
     if ([name isEqualToString:@"appPane"]) {
         [probeDefaults setObject:@(NO) forKey:MLProbeAdvancedSectionCollapsedKey];
         [probeDefaults synchronize];
         forcedTheSectionShut = YES;
+    }
+    if ([name isEqualToString:@"devicesPane"]) {
+        [probeDefaults setObject:@(NO) forKey:MLProbeHubsGroupCollapsedKey];
+        [probeDefaults synchronize];
     }
 
     NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
@@ -669,6 +682,11 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
         [probeDefaults setObject:previousAdvancedState forKey:MLProbeAdvancedSectionCollapsedKey];
     } else if (forcedTheSectionShut) {
         [probeDefaults removeObjectForKey:MLProbeAdvancedSectionCollapsedKey];
+    }
+    if (previousHubsState) {
+        [probeDefaults setObject:previousHubsState forKey:MLProbeHubsGroupCollapsedKey];
+    } else if ([name isEqualToString:@"devicesPane"]) {
+        [probeDefaults removeObjectForKey:MLProbeHubsGroupCollapsedKey];
     }
     [probeDefaults synchronize];
     if (previousPane) {

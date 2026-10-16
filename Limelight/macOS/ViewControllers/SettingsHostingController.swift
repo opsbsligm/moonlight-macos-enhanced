@@ -116,7 +116,7 @@ private struct WelcomePermissionsView: View {
         )
       }
       .padding(10)
-      .glassEffect(.regular, in: .rect(cornerRadius: 10, style: .continuous))
+      .settingsGlassCard()
 
       HStack {
         Spacer()
@@ -128,6 +128,7 @@ private struct WelcomePermissionsView: View {
       }
       .padding(24)
       .frame(width: 560)
+      .background(SettingsPageBase())
       .onAppear {
         microphoneManager.refreshPermissionStatus()
         inputMonitoringManager.refreshAuthorizationStatus()
