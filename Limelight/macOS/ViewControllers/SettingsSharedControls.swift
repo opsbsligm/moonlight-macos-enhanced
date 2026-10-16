@@ -35,6 +35,22 @@ enum SettingsGlass {
           Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 0.5)
       }
   }
+
+  // The typographic scale, in the system face: Apple Music's library and apple.com's
+  // product pages both set everything in SF Pro and build hierarchy from size, weight
+  // and colour, never from a rounded display face -- a rounded body reads as an app
+  // theme, while the system face at three weights reads as the platform. The rounded
+  // design was removed wholesale; what is left here is the ladder itself.
+  enum Typography {
+    /// Page title, the way apple.com names a section at the top of a page.
+    static let title = Font.system(size: 22, weight: .bold)
+    /// Card title: Music's group header, a size step larger than its rows.
+    static let headline = Font.system(size: 15, weight: .semibold)
+    /// Group label inside a card, Music's section label above a list.
+    static let groupLabel = Font.system(size: 11, weight: .semibold)
+    /// Card body text, one step below the system body so a description recedes.
+    static let caption = Font.system(size: 11)
+  }
 }
 
 struct SettingsGlassCardModifier: ViewModifier {
@@ -119,7 +135,7 @@ struct StreamRiskSummarySection: View {
             Text(languageManager.localize("Profile Level"))
             Spacer()
             Text(assessment.riskLabel)
-              .font(.system(.body, design: .rounded).weight(.semibold))
+              .font(SettingsGlass.Typography.headline)
               .foregroundColor(riskColor)
           }
 
@@ -345,7 +361,7 @@ struct InlineSectionLabel: View {
 
   var body: some View {
     Text(languageManager.localize(title))
-      .font(.footnote.weight(.semibold))
+      .font(SettingsGlass.Typography.groupLabel)
       .foregroundColor(.secondary)
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.top, 2)
@@ -546,10 +562,7 @@ struct FormSection<Content: View>: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       Text(languageManager.localize(title))
-        .font(
-          .system(.body, design: .rounded)
-            .weight(.semibold)
-        )
+        .font(SettingsGlass.Typography.headline)
         .padding(.bottom, 6)
       VStack {
         Group {
@@ -1299,7 +1312,7 @@ private struct ShortcutTokenRowView: View {
       ForEach(Array(tokens.enumerated()), id: \.offset) { index, key in
         if index > 0 {
           Text("+")
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .font(SettingsGlass.Typography.groupLabel)
             .foregroundColor(.secondary)
         }
 
