@@ -2317,6 +2317,14 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
     mainWC.window.frameAutosaveName = @"Main Window";
     self.mainWindow = mainWC.window;
     [mainWC.window setMinSize:NSMakeSize(650, 350)];
+    // The window paints its whole content area, toolbar included. Without this the
+    // titlebar kept its own opaque strip: on the hosts page it showed as a white cut
+    // at the leading edge where the page wash began below the toolbar, and it made
+    // the hosts and settings windows two different bodies under one tab bar. The
+    // settings overlay already removes and restores this mask around itself, so the
+    // drag region it reserves for the titlebar keeps working either way.
+    mainWC.window.styleMask |= NSWindowStyleMaskFullSizeContentView;
+    mainWC.window.titlebarAppearsTransparent = YES;
     
     [mainWC showWindow:self];
     [mainWC.window makeKeyAndOrderFront:nil];
