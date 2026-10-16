@@ -134,6 +134,15 @@ static NSUserInterfaceItemIdentifier const MLSunshineRefreshDisplaysMenuItemIden
     self.collectionView.dataSource = self;
     [self.collectionView registerNib:[[NSNib alloc] initWithNibNamed:@"AppCell" bundle:nil] forItemWithIdentifier:@"AppCell"];
 
+    // The apps grid sits on the window's page base, the same wash the hosts grid is on --
+    // ContainerViewController owns it and it outlives the navigation between the two. The
+    // collection view and its scroll view have to stop painting their own fills or the
+    // grid meets an opaque rectangle where the page should show through, and the sidebar
+    // beside it turns the split into a two-material window.
+    NSScrollView *appsScroll = self.collectionView.enclosingScrollView;
+    appsScroll.drawsBackground = NO;
+    self.collectionView.backgroundColors = @[[NSColor clearColor]];
+
     self.apps = @[];
     self.cmsIdToId = [NSMutableDictionary dictionary];
 
