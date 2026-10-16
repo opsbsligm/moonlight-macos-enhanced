@@ -20,6 +20,8 @@
 #import "NavigatableAlertView.h"
 #import "AppDelegateForAppKit.h"
 #import "ConnectionEditorViewController.h"
+#import "MLPageBaseView.h"
+#import "GlassOverlayContainer.h"
 
 #import "TemporaryHost.h"
 #import "Moonlight-Swift.h"
@@ -66,6 +68,17 @@
     self.collectionView.dataSource = self;
     self.collectionView.delegate = self;
     [self.collectionView registerNib:[[NSNib alloc] initWithNibNamed:@"HostCell" bundle:nil] forItemWithIdentifier:@"HostCell"];
+
+    // The page base: the same washed opaque base the settings page draws, so the two
+    // halves of this window agree. The collection view goes transparent and the wash
+    // view sits behind it, filling the scroll view. A flat controlBackgroundColor made
+    // every card float on the window itself -- there was nothing behind them to bend.
+    NSScrollView *scroll = self.collectionView.enclosingScrollView;
+    MLPageBaseView *pageBase = [[MLPageBaseView alloc] initWithFrame:scroll.contentView.bounds];
+    pageBase.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [scroll.contentView addSubview:pageBase positioned:NSWindowBelow relativeTo:nil];
+    self.collectionView.backgroundColors = @[[NSColor clearColor]];
+    scroll.drawsBackground = NO;
 
     self.hosts = [NSArray array];
     

@@ -78,6 +78,11 @@ extension View {
 // different positions different refraction, which is what lets a stack of cards read as
 // one material bending one page. Measured with the render probe: the page's distinct
 // colours go from 45 on a flat fill to 152 with these washes.
+//
+// mme-page-wash-v1 is the token the constraints audit matches against MLPageBaseView,
+// the AppKit twin the hosts grid draws. Two implementations of one base exist because
+// the settings page is SwiftUI and the hosts collection view is not; the marker is what
+// stops them drifting into two different pages inside one window.
 struct SettingsPageBase: View {
   var body: some View {
     ZStack {
