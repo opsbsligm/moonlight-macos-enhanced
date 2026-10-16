@@ -11,6 +11,7 @@
 #import "NSApplication+Moonlight.h"
 #import "HostCellView.h"
 #import "NSView+Moonlight.h"
+#import "GlassOverlayContainer.h"
 #import "Moonlight-Swift.h"
 
 #undef NSLocalizedString
@@ -20,6 +21,8 @@
 @property (weak) IBOutlet BackgroundColorView *imageContainer;
 @property (weak) IBOutlet NSView *labelContainer;
 @property (nonatomic) id languageObserver;
+// The cell's own glass, behind every piece of content in the cell.
+@property (nonatomic, strong) GlassOverlayContainer *glassCard;
 
 @end
 
@@ -33,6 +36,29 @@
     self.imageContainer.wantsLayer = YES;
     self.imageContainer.layer.masksToBounds = YES;
     self.imageContainer.layer.cornerRadius = 10;
+
+    // One glass card for the whole cell -- artwork, name and status together -- on the
+    // same system glass the settings cards and the stream panels use. The old look was
+    // a bare icon floating on the page wash with the name and status loose under it:
+    // nothing bounded the cell, so a grid of hosts read as a pile of parts. The card
+    // is built by hand rather than edited into the xib because the xib's image
+    // container carries fixed constraints (180x156, centerX) that no IBOutlet route
+    // can add a bottom-covering subview past. The card frame is a static snapshot of
+    // the xib geometry, taken once: the xib sizes the cell, so nothing moves later.
+    self.glassCard = [GlassOverlayContainer containerWithCornerRadius:10.0];
+    NSRect art = [self.view convertRect:self.imageContainer.bounds fromView:self.imageContainer];
+    NSRect status = [self.view convertRect:self.statusLabel.frame
+                                  fromView:self.statusLabel.superview];
+    // Everything the cell draws, plus an even margin: the artwork is widest, the status
+    // row sits lowest, so their union is the content the card has to cover.
+    NSRect content = NSUnionRect(art, status);
+    NSRect card = NSInsetRect(content, -6.0, -6.0);
+    self.glassCard.frame = card;
+    self.glassCard.autoresizingMask = NSViewMinYMargin;
+    [self.view addSubview:self.glassCard positioned:NSWindowBelow relativeTo:self.imageContainer];
+    // The artwork sits on the glass, so the old flat selection fill behind it goes
+    // clear for good; what it sits on is the card.
+    self.imageContainer.clear = YES;
     self.labelContainer.wantsLayer = YES;
     self.labelContainer.layer.masksToBounds = YES;
     self.labelContainer.layer.cornerRadius = 4;
@@ -117,10 +143,15 @@
 }
 
 - (void)updateSelectedState:(BOOL)selected {
-    self.imageContainer.clear = !selected;
-    
-    self.labelContainer.backgroundColor = selected ? [NSColor selectedContentBackgroundColor] : [NSColor clearColor];
-    self.hostName.textColor = selected ? [NSColor alternateSelectedControlTextColor] : [NSColor textColor];
+    // Selected: the card's own glass takes a tint of the accent the list already uses.
+    // The old expression of selection -- a solid pill behind the name, white text on it
+    // -- is gone: over a tinted card it stacked two "this one" signals, and the pill was
+    // the older of the two. The name keeps its ordinary colour, which the tinted card
+    // still leaves with full contrast (measured on the render probe).
+    self.glassCard.tintColor = selected ? [NSColor.selectedContentBackgroundColor colorWithAlphaComponent:0.35] : nil;
+
+    self.labelContainer.backgroundColor = [NSColor clearColor];
+    self.hostName.textColor = [NSColor textColor];
 }
 
 - (void)setSelected:(BOOL)selected {
