@@ -387,6 +387,91 @@ def settings_surface_problems(texts):
     return problems
 
 
+# --- the host cards ---------------------------------------------------------
+# The list of PCs is the first screen a player meets, and its cells now sit on the same
+# system glass as the settings cards, through the same container the stream panels use.
+# The failures this pins are the ones that still render: a cell that quietly goes back to
+# the flat fill behind the artwork, a selection that returns as a paint-over (the pill or
+# a blue box) instead of a tint folded into the card, or a card left over a page whose
+# wash was removed -- glass with nothing to bend is a grey rectangle that claims a design
+# it does not have.
+HOST_CARD_FILE = "ViewControllers/HostCell.m"
+HOST_CARD_CONTAINER = "[GlassOverlayContainer containerWithCornerRadius:10.0]"
+HOST_CARD_TINT = "self.glassCard.tintColor = selected"
+# The old selected name: a solid accent pill behind the label. Over a tinted card it
+# stacked two "this one" signals and was the older of the two.
+HOST_PILL_BG = "self.labelContainer.backgroundColor = selected"
+HOST_PAGE_WASH = "MLPageBaseView *pageBase"
+
+
+def host_card_problems(texts):
+    """problems with the host-list cards, given {hosts file: source}."""
+    problems = []
+    cell = texts.get(HOST_CARD_FILE)
+    vc = texts.get("ViewControllers/HostsViewController.m")
+    if cell is None or vc is None:
+        return ["the host-card rules lost a file to watch, so the cards are unwatched"]
+    body = strip_comments(cell)
+    if HOST_CARD_CONTAINER not in body:
+        problems.append("the host card no longer asks the container for its background, "
+                        "so the cells are back on a hand-drawn fill")
+    if HOST_CARD_TINT not in body:
+        problems.append("the host card no longer folds selection into the glass tint, so "
+                        "selection is either gone or painted over the material again")
+    if HOST_PILL_BG in body:
+        problems.append("the host cell puts the selected name pill back, which stacks a "
+                        "paint-over on top of the card's own tint")
+    if HOST_PAGE_WASH not in strip_comments(vc):
+        problems.append("the hosts page lost its washed base, so the cards have nothing "
+                        "behind them to bend")
+    return problems
+
+
+def host_card_self_test(repo):
+    """Break the host-card rules on the shipped tree and make sure each break is caught."""
+    texts = {}
+    for name in (HOST_CARD_FILE, "ViewControllers/HostsViewController.m"):
+        path = os.path.join(repo, "Limelight", "macOS", name)
+        if not os.path.isfile(path):
+            print("FAIL the host-card self-test cannot read %s" % name)
+            return 1
+        texts[name] = open(path, encoding="utf-8").read()
+
+    def edited(name, old, new):
+        copy = dict(texts)
+        if old not in copy[name]:
+            raise SystemExit("the host-card self-test lost its anchor in %s" % name)
+        copy[name] = copy[name].replace(old, new, 1)
+        return copy
+
+    cases = [
+        ("the shipped host cards", texts, False),
+        ("the card back on a hand-drawn fill",
+         edited(HOST_CARD_FILE, HOST_CARD_CONTAINER,
+                "[[BackgroundColorView alloc] initWithFrame:NSZeroRect]"), True),
+        ("selection painted over the glass again",
+         edited(HOST_CARD_FILE, HOST_CARD_TINT, "// selection tint removed"), True),
+        ("the selected name pill back on the card",
+         edited(HOST_CARD_FILE,
+                "self.labelContainer.backgroundColor = [NSColor clearColor];",
+                HOST_PILL_BG + " ? [NSColor selectedContentBackgroundColor] : [NSColor clearColor];"),
+         True),
+        ("the page wash pulled out from under the cards",
+         edited("ViewControllers/HostsViewController.m", HOST_PAGE_WASH,
+                "NSView *plainBase"), True),
+    ]
+    failures = 0
+    for what, files, expect_problem in cases:
+        problems = host_card_problems(files)
+        if bool(problems) != expect_problem:
+            failures += 1
+            print("FAIL %-46s expected %s, got %s"
+                  % (what, "a violation" if expect_problem else "clean", problems))
+        else:
+            print("ok   %-46s %s" % (what, "refused" if problems else "accepted"))
+    return failures
+
+
 def settings_self_test(repo):
     """Prove each settings rule fires, using the shipped tree as the compliant baseline."""
     texts = {}
@@ -609,6 +694,8 @@ def main():
         failures += panel_self_test(args.repo)
         print("-- settings surface --")
         failures += settings_self_test(args.repo)
+        print("-- host cards --")
+        failures += host_card_self_test(args.repo)
         print("%d liquid glass audit self-test failures in all" % failures)
         return 1 if failures else 0
 
@@ -630,6 +717,12 @@ def main():
         if os.path.isfile(path):
             settings_texts[name] = open(path, encoding="utf-8").read()
     problems += settings_surface_problems(settings_texts)
+    host_texts = {}
+    for name in (HOST_CARD_FILE, "ViewControllers/HostsViewController.m"):
+        path = os.path.join(args.repo, "Limelight", "macOS", name)
+        if os.path.isfile(path):
+            host_texts[name] = open(path, encoding="utf-8").read()
+    problems += host_card_problems(host_texts)
     texts = {}
     for name in PANEL_FILES:
         path = os.path.join(args.repo, "Limelight", "macOS", name)
@@ -640,9 +733,9 @@ def main():
                                                            "Views", "GlassOverlayContainer.m")))
     for problem in problems:
         print("violation: %s" % problem)
-    print("%d liquid glass violations across %d files, %d panels and %d settings surfaces "
-          "(%d files) checked"
-          % (len(problems), len(files) + len(PANEL_FILES) + len(SETTINGS_FILES),
+    print("%d liquid glass violations across %d files, %d panels, %d settings surfaces "
+          "and the host cards (%d files) checked"
+          % (len(problems), len(files) + len(PANEL_FILES) + len(SETTINGS_FILES) + 1,
              len(GLASS_PANELS), len(SETTINGS_SURFACES), len(SETTINGS_FILES)))
     return 1 if problems else 0
 
