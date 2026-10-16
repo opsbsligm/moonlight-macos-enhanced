@@ -8,6 +8,7 @@
 
 #import "ContainerViewController.h"
 #import "AppsWorkspaceViewController.h"
+#import "MLPageBaseView.h"
 #import "NSWindow+Moonlight.h"
 #import "Helpers.h"
 #import "Localization.h"
@@ -41,6 +42,11 @@
 
 
 @interface ContainerViewController () <NSToolbarDelegate>
+// The page base belongs to the window, not to one page. The hosts grid and the apps grid
+// are two pages of one window, and a base held by the page that happened to install it
+// disappears the moment the app navigates away -- the apps grid then met a bare window
+// under a grey sidebar, the split the screenshots showed. One owner, both pages.
+@property (nonatomic, weak) MLPageBaseView *pageBase;
 @end
 
 @implementation ContainerViewController
@@ -72,6 +78,20 @@ static NSString * const MoonlightSearchToolbarItemIdentifier = @"NewSearchToolba
     [super viewWillAppear];
     
     NSWindow *window = [Helpers getMainWindow];
+
+    // The washed base goes behind everything this controller shows -- the hosts grid and
+    // the apps grid are pages of one window, and the base has to outlive navigation between
+    // them. It sits in the window's content view, not in self.view: the window uses a
+    // full-size content view, so a base pinned here would still start below the toolbar.
+    // Installed once and kept; a re-appearing window reuses it, a replaced one re-installs.
+    NSView *windowHost = window.contentView;
+    if (windowHost != nil && (self.pageBase == nil || self.pageBase.superview != windowHost)) {
+        [self.pageBase removeFromSuperview];
+        MLPageBaseView *pageBase = [[MLPageBaseView alloc] initWithFrame:windowHost.bounds];
+        pageBase.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        [windowHost addSubview:pageBase positioned:NSWindowBelow relativeTo:nil];
+        self.pageBase = pageBase;
+    }
     NSToolbar *toolbar = window.toolbar;
     toolbar.delegate = self;
 

@@ -401,20 +401,33 @@ HOST_CARD_TINT = "self.glassCard.tintColor = selected"
 # The old selected name: a solid accent pill behind the label. Over a tinted card it
 # stacked two "this one" signals and was the older of the two.
 HOST_PILL_BG = "self.labelContainer.backgroundColor = selected"
-# The wash has to be installed where it can reach the titlebar (the window's content
-# view, from viewDidAppear) and the scroll view has to stop drawing over it; pinning
-# only the variable name let the wash shrink back under the toolbar unchallenged.
-HOST_PAGE_WASH = "[host addSubview:pageBase positioned:NSWindowBelow relativeTo:nil]"
+# The wash has to be installed by the controller that owns the window -- Container-
+# ViewController, the one object that outlives the navigation between the hosts grid
+# and the apps grid -- into the window's content view, and every scroll view on a page
+# has to stop drawing over it. Pinning only the variable name let the wash shrink back
+# under the toolbar unchallenged; pinning the page that first shipped it let the apps
+# grid lose its base the moment the app navigated.
+HOST_PAGE_WASH = "[windowHost addSubview:pageBase positioned:NSWindowBelow relativeTo:nil]"
 HOST_SCROLL_TRANSPARENT = "scroll.drawsBackground = NO"
+APPS_SCROLL_TRANSPARENT = "appsScroll.drawsBackground = NO"
+
+
+HOST_WATCHED_FILES = (HOST_CARD_FILE,
+                      "ViewControllers/HostsViewController.m",
+                      "ViewControllers/ContainerViewController.m",
+                      "ViewControllers/AppsViewController.m")
 
 
 def host_card_problems(texts):
-    """problems with the host-list cards, given {hosts file: source}."""
+    """problems with the host-list cards, given {watched file: source}."""
     problems = []
-    cell = texts.get(HOST_CARD_FILE)
-    vc = texts.get("ViewControllers/HostsViewController.m")
-    if cell is None or vc is None:
-        return ["the host-card rules lost a file to watch, so the cards are unwatched"]
+    missing = [name for name in HOST_WATCHED_FILES if texts.get(name) is None]
+    if missing:
+        return ["the host-card rules lost %s, so the cards are unwatched" % ", ".join(missing)]
+    cell = texts[HOST_CARD_FILE]
+    vc = texts["ViewControllers/HostsViewController.m"]
+    container = texts["ViewControllers/ContainerViewController.m"]
+    apps = texts["ViewControllers/AppsViewController.m"]
     body = strip_comments(cell)
     if HOST_CARD_CONTAINER not in body:
         problems.append("the host card no longer asks the container for its background, "
@@ -425,20 +438,22 @@ def host_card_problems(texts):
     if HOST_PILL_BG in body:
         problems.append("the host cell puts the selected name pill back, which stacks a "
                         "paint-over on top of the card's own tint")
-    body_vc = strip_comments(vc)
-    if HOST_PAGE_WASH not in body_vc:
-        problems.append("the hosts page lost its washed base, so the cards have nothing "
-                        "behind them to bend")
-    if HOST_SCROLL_TRANSPARENT not in body_vc:
+    if HOST_PAGE_WASH not in strip_comments(container):
+        problems.append("the window lost its washed base at its owner, so the cards have "
+                        "nothing behind them to bend")
+    if HOST_SCROLL_TRANSPARENT not in strip_comments(vc):
         problems.append("the hosts scroll view draws its own background again, which paints "
                         "over the wash the cards need behind them")
+    if APPS_SCROLL_TRANSPARENT not in strip_comments(apps):
+        problems.append("the apps scroll view draws its own background again, so the grid "
+                        "meets an opaque rectangle where the page should show through")
     return problems
 
 
 def host_card_self_test(repo):
     """Break the host-card rules on the shipped tree and make sure each break is caught."""
     texts = {}
-    for name in (HOST_CARD_FILE, "ViewControllers/HostsViewController.m"):
+    for name in HOST_WATCHED_FILES:
         path = os.path.join(repo, "Limelight", "macOS", name)
         if not os.path.isfile(path):
             print("FAIL the host-card self-test cannot read %s" % name)
@@ -465,11 +480,14 @@ def host_card_self_test(repo):
                 HOST_PILL_BG + " ? [NSColor selectedContentBackgroundColor] : [NSColor clearColor];"),
          True),
         ("the page wash pulled out from under the cards",
-         edited("ViewControllers/HostsViewController.m", HOST_PAGE_WASH,
+         edited("ViewControllers/ContainerViewController.m", HOST_PAGE_WASH,
                 "// wash removed"), True),
-        ("the scroll view painting over the wash again",
+        ("the hosts scroll view painting over the wash again",
          edited("ViewControllers/HostsViewController.m", HOST_SCROLL_TRANSPARENT,
                 "scroll.drawsBackground = YES"), True),
+        ("the apps scroll view painting over the wash again",
+         edited("ViewControllers/AppsViewController.m", APPS_SCROLL_TRANSPARENT,
+                "appsScroll.drawsBackground = YES"), True),
     ]
     failures = 0
     for what, files, expect_problem in cases:
@@ -729,7 +747,7 @@ def main():
             settings_texts[name] = open(path, encoding="utf-8").read()
     problems += settings_surface_problems(settings_texts)
     host_texts = {}
-    for name in (HOST_CARD_FILE, "ViewControllers/HostsViewController.m"):
+    for name in HOST_WATCHED_FILES:
         path = os.path.join(args.repo, "Limelight", "macOS", name)
         if os.path.isfile(path):
             host_texts[name] = open(path, encoding="utf-8").read()
@@ -746,7 +764,7 @@ def main():
         print("violation: %s" % problem)
     print("%d liquid glass violations across %d files, %d panels, %d settings surfaces "
           "and the host cards (%d files) checked"
-          % (len(problems), len(files) + len(PANEL_FILES) + len(SETTINGS_FILES) + 1,
+          % (len(problems), len(files) + len(PANEL_FILES) + len(SETTINGS_FILES) + len(HOST_WATCHED_FILES),
              len(GLASS_PANELS), len(SETTINGS_SURFACES), len(SETTINGS_FILES)))
     return 1 if problems else 0
 
