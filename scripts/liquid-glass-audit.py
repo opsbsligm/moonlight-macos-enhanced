@@ -287,7 +287,14 @@ SETTINGS_SURFACES = (
 SETTINGS_FILES = tuple(sorted({name for _, files in SETTINGS_SURFACES for name in files}))
 # The spellings the settings page moved away from on purpose. Each one still compiles and
 # still looks acceptable, which is exactly why they need a rule and not a reviewer.
-RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", "DisclosureGroup(")
+# GroupBox draws its own frame inside the glass card. A custom DisclosureGroupStyle is the
+# subtler one: measured on a standalone harness and then on the render probe, a style with
+# a composite label vends two disclosure triangles (one per press path), so a checker that
+# presses "every triangle that is there" presses the same group shut again and never sees
+# the collapsed matrix below it. The system's default style is the only shape measured to
+# be single-triangle and label-readable, so the fold's chrome stays the system's and the
+# glass is the card around it.
+RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", ".disclosureGroupStyle(")
 
 
 def settings_surface_problems(texts):
@@ -371,10 +378,9 @@ def settings_self_test(repo):
          edited(shared, "VStack(alignment: .leading, spacing: 0) {\n      Text(languageManager.localize(title))",
                 "GroupBox(\n      content: {\n      VStack(alignment: .leading, spacing: 0) {\n      Text(languageManager.localize(title))"),
          True),
-        ("a system disclosure put back on a pane",
-         edited(shared, "  var body: some View {\n    VStack(alignment: .leading, spacing: 0) {\n      Button {",
-                "  var body: some View {\n"
-                "    DisclosureGroup(isExpanded: expanded) {\n      VStack(alignment: .leading, spacing: 0) {\n        Button {"),
+        ("a fold that restyles the disclosure anyway",
+         edited(shared, "    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .glassEffect(",
+                "    .disclosureGroupStyle(GlassStyleProbe())\n    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .glassEffect("),
          True),
         ("no container anywhere on the settings surface",
          drop_containers(),
@@ -393,8 +399,8 @@ def settings_self_test(repo):
          edited(sheet, "GlassEffectContainer(spacing: 20) {", "VStack(spacing: 20) {"),
          True),
         ("a fold with a duration of its own",
-         edited(shared, "withAnimation(.easeOut(duration: TabBarConfig.animationDuration))",
-                "withAnimation(.easeOut(duration: 0.15))"),
+         edited(shared, "    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .glassEffect(",
+                "    .animation(.easeOut(duration: 0.15), value: expanded.wrappedValue)\n    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .glassEffect("),
          True),
     ]
     failures = 0
