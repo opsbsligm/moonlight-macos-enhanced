@@ -401,7 +401,11 @@ HOST_CARD_TINT = "self.glassCard.tintColor = selected"
 # The old selected name: a solid accent pill behind the label. Over a tinted card it
 # stacked two "this one" signals and was the older of the two.
 HOST_PILL_BG = "self.labelContainer.backgroundColor = selected"
-HOST_PAGE_WASH = "MLPageBaseView *pageBase"
+# The wash has to be installed where it can reach the titlebar (the window's content
+# view, from viewDidAppear) and the scroll view has to stop drawing over it; pinning
+# only the variable name let the wash shrink back under the toolbar unchallenged.
+HOST_PAGE_WASH = "[host addSubview:pageBase positioned:NSWindowBelow relativeTo:nil]"
+HOST_SCROLL_TRANSPARENT = "scroll.drawsBackground = NO"
 
 
 def host_card_problems(texts):
@@ -421,9 +425,13 @@ def host_card_problems(texts):
     if HOST_PILL_BG in body:
         problems.append("the host cell puts the selected name pill back, which stacks a "
                         "paint-over on top of the card's own tint")
-    if HOST_PAGE_WASH not in strip_comments(vc):
+    body_vc = strip_comments(vc)
+    if HOST_PAGE_WASH not in body_vc:
         problems.append("the hosts page lost its washed base, so the cards have nothing "
                         "behind them to bend")
+    if HOST_SCROLL_TRANSPARENT not in body_vc:
+        problems.append("the hosts scroll view draws its own background again, which paints "
+                        "over the wash the cards need behind them")
     return problems
 
 
@@ -458,7 +466,10 @@ def host_card_self_test(repo):
          True),
         ("the page wash pulled out from under the cards",
          edited("ViewControllers/HostsViewController.m", HOST_PAGE_WASH,
-                "NSView *plainBase"), True),
+                "// wash removed"), True),
+        ("the scroll view painting over the wash again",
+         edited("ViewControllers/HostsViewController.m", HOST_SCROLL_TRANSPARENT,
+                "scroll.drawsBackground = YES"), True),
     ]
     failures = 0
     for what, files, expect_problem in cases:
