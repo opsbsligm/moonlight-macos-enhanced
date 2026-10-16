@@ -332,6 +332,18 @@ SETTINGS_FILES = tuple(sorted({name for _, files in SETTINGS_SURFACES for name i
 # be single-triangle and label-readable, so the fold's chrome stays the system's and the
 # glass is the card around it.
 RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", ".disclosureGroupStyle(")
+# The tab bar's own track. The segmented control stopped drawing glass for itself the day
+# it lost role = .tabs, which is what produced the flat grey pill users rejected: the bar
+# read as a stock control sitting on the page instead of a surface cut from it. The bar now
+# stands on one .glassEffect capsule, inside the page's own container, tinted from the tab
+# palette. The three halves are all load bearing: a container without the capsule colours
+# nothing, a capsule outside a container samples the desktop instead of the page, and a
+# capsule tinted from an invented colour drifts warm.
+TAB_BAR_TRACK_CONTAINER = "GlassEffectContainer(spacing: TabBarConfig.interSpacing)"
+TAB_BAR_TRACK_GLASS = re.compile(
+    r"LiquidGlassTabBar\(\s*selection:[^)]*\)\s*\.fixedSize\(\)\s*"
+    r"\.glassEffect\(\s*\.regular\.tint\(\s*TabBarConfig\.accentCoolBlue\s*"
+    r"\.opacity\(\s*TabBarConfig\.glassTintOpacity\s*\)\s*\)\s*,\s*in:\s*Capsule\(\s*\)\s*\)")
 # The settings cards draw their glass through one shared helper rather than repeating the
 # modifier in four places: a card that opts out of the helper gets a different material or
 # loses the edge that makes its boundary visible over the washed base. The rule has two
@@ -384,6 +396,20 @@ def settings_surface_problems(texts):
                 problems.append("%s gives a glass transition its own duration: %s"
                                 % (name, line.strip()))
                 break
+    # The tab bar's track is part of the settings glass, not an optional decoration: without
+    # it the control users click to move between panes is the one surface on the page with
+    # nothing to bend, and it reads as a stock grey pill again.
+    page_body = strip_comments(texts.get(
+        "ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift", ""))
+    folded = re.sub(r"\s+", " ", page_body)
+    if TAB_BAR_TRACK_CONTAINER not in page_body:
+        problems.append("the settings page no longer wraps its tab bar in a "
+                        "GlassEffectContainer(spacing: TabBarConfig.interSpacing), so the "
+                        "track stops bending the page with the cards beside it")
+    if not TAB_BAR_TRACK_GLASS.search(folded):
+        problems.append("the tab bar lost its .glassEffect(.regular.tint(accentCoolBlue"
+                        ".opacity(glassTintOpacity)), in: Capsule()) track, which is the "
+                        "flat grey pill the page was rejected for")
     return problems
 
 
@@ -585,6 +611,13 @@ def settings_self_test(repo):
         ("a fold with a duration of its own",
          edited(shared, "    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()",
                 "    .animation(.easeOut(duration: 0.15), value: expanded.wrappedValue)\n    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()"),
+         True),
+        ("the tab bar track back to a plain fill",
+         edited(page, ".glassEffect(\n              .regular.tint(TabBarConfig.accentCoolBlue\n                .opacity(TabBarConfig.glassTintOpacity)),\n              in: Capsule()\n            )",
+                ".background(.background)"),
+         True),
+        ("the tab bar glass left outside its container",
+         edited(page, "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {", "VStack(spacing: 0) {"),
          True),
     ]
     # The pin has to fire while every card still asks for the helper: cards calling a

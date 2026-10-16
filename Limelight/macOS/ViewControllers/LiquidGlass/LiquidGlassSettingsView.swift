@@ -128,7 +128,15 @@ struct LiquidGlassSettingsView: View {
         } else {
           Color.clear.frame(width: 0, height: 0)
         }
-        LiquidGlassTabBar(selection: selectionBinding, items: tabs).fixedSize()
+        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {
+          LiquidGlassTabBar(selection: selectionBinding, items: tabs)
+            .fixedSize()
+            .glassEffect(
+              .regular.tint(TabBarConfig.accentCoolBlue
+                .opacity(TabBarConfig.glassTintOpacity)),
+              in: Capsule()
+            )
+        }
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 14)
