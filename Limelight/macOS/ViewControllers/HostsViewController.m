@@ -55,6 +55,14 @@
 @property (nonatomic, copy) NSString *pairingFallbackAddress;
 @property (nonatomic, assign) BOOL pairingFallbackAttempted;
 @property (nonatomic, assign) BOOL pairingInProgress;
+// The scroll view whose transparency the page base depends on, kept so the base can be
+// rebuilt when the view moves between windows.
+@property (nonatomic, weak) NSScrollView *collectionScroll;
+// The wash itself. It lives in the window's content view, not the clip view: pinned to the
+// clip view it started *below* the toolbar, so the titlebar kept an opaque white strip and
+// the page read as a card stuck under a band. Apple Music's library wash runs the full
+// height of the window and its toolbar controls float on it; that is the shape here.
+@property (nonatomic, weak) MLPageBaseView *pageBase;
 
 @end
 
@@ -74,11 +82,9 @@
     // view sits behind it, filling the scroll view. A flat controlBackgroundColor made
     // every card float on the window itself -- there was nothing behind them to bend.
     NSScrollView *scroll = self.collectionView.enclosingScrollView;
-    MLPageBaseView *pageBase = [[MLPageBaseView alloc] initWithFrame:scroll.contentView.bounds];
-    pageBase.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    [scroll.contentView addSubview:pageBase positioned:NSWindowBelow relativeTo:nil];
     self.collectionView.backgroundColors = @[[NSColor clearColor]];
     scroll.drawsBackground = NO;
+    self.collectionScroll = scroll;
 
     self.hosts = [NSArray array];
     
@@ -88,6 +94,33 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshHostDiscovery:) name:@"MoonlightRequestHostDiscovery" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleDiscoveryPreferencesChanged:) name:@"MoonlightDiscoveryPreferencesChanged" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleHostAutoAddressSwitched:) name:@"HostAutoAddressSwitched" object:nil];
+}
+
+- (void)viewDidAppear {
+    [super viewDidAppear];
+    NSView *host = self.view.window.contentView;
+    if (host == nil) {
+        return;
+    }
+    if (self.pageBase != nil && self.pageBase.superview == host) {
+        return;
+    }
+    [self.pageBase removeFromSuperview];
+    MLPageBaseView *pageBase = [[MLPageBaseView alloc] initWithFrame:host.bounds];
+    pageBase.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [host addSubview:pageBase positioned:NSWindowBelow relativeTo:nil];
+    self.pageBase = pageBase;
+
+    // Discovery used to have its own viewDidAppear; a file may only carry one.
+    [self.discMan startDiscovery];
+}
+
+- (void)viewWillDisappear {
+    [super viewWillDisappear];
+    // The base belongs to this window; a detached copy would keep painting under a
+    // window that moved on.
+    [self.pageBase removeFromSuperview];
+    self.pageBase = nil;
 }
 
 - (void)dealloc {
@@ -209,12 +242,6 @@
     
     self.getSearchField.delegate = self;
     self.getSearchField.placeholderString = NSLocalizedString(@"Search Hosts", @"Search Hosts");
-}
-
-- (void)viewDidAppear {
-    [super viewDidAppear];
-    
-    [self.discMan startDiscovery];
 }
 
 - (void)viewDidDisappear {
