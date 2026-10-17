@@ -17,8 +17,11 @@ enum TabBarConfig {
   static let fontSize: CGFloat = 12
   static let interSpacing: CGFloat = 2
   // Tint strength of the selected capsule. The glass itself is the system's; this only
-  // colours it, and the cool accent keeps its read in both appearances at this weight.
-  static let glassTintOpacity: Double = 0.18
+  // colours it. At the old 0.18 the capsule measured indistinguishable from its track
+  // in a live screen photograph (blue-minus-red 2..3 where the approved reference sits
+  // at 30) -- a wash that only survives a window-layer capture is a wash the user
+  // never sees. At this weight the frost holds the reference's blue in both pipelines.
+  static let glassTintOpacity: Double = 0.38
   // The bar lays out at the system control's metrics: 13pt labels, 28pt row, 3pt track
   // inset, capsule ends.
   static let labelFontSize: CGFloat = 13

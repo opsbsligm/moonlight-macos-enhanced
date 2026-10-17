@@ -93,7 +93,7 @@ struct SettingsPageBase: View {
           TabBarConfig.accentCoolBlue.opacity(0.0),
         ],
         center: .topLeading,
-        startRadius: 20,
+        startRadius: 0, // a starting disc clipped by the window corner read as a white blob
         endRadius: 680
       )
       RadialGradient(
@@ -102,7 +102,7 @@ struct SettingsPageBase: View {
           Color(.sRGB, red: 0.98, green: 0.72, blue: 0.42, opacity: 0.0),
         ],
         center: .bottomTrailing,
-        startRadius: 20,
+        startRadius: 0, // see the cool wash above
         endRadius: 720
       )
     }
