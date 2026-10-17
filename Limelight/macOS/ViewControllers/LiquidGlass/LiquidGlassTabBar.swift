@@ -16,9 +16,14 @@ enum TabBarConfig {
   static let iconTextSpacing: CGFloat = 6
   static let fontSize: CGFloat = 12
   static let interSpacing: CGFloat = 2
-  // Tint strength of the selected capsule. The glass itself is the system's; this only
-  // colours it, and the cool accent keeps its read in both appearances at this weight.
-  static let glassTintOpacity: Double = 0.18
+  // The selected capsule's tint, measured off the system's own tab pickers (Activity
+  // Monitor's functional areas): a light neutral frost, not the accent. A blue-tinted
+  // capsule read as "not the system's" and was rejected twice; the one place colour may
+  // appear is the label. Neutral means the channels agree: the audit refuses a tint
+  // whose channels drift apart, so a regression to blue has to pass a measurement first.
+  static let selectedGlassTint = Color(
+    .sRGB, red: 0.55, green: 0.60, blue: 0.68, opacity: 0.28
+  )
   // The bar lays out at the system control's metrics: 13pt labels, 28pt row, 3pt track
   // inset, capsule ends.
   static let labelFontSize: CGFloat = 13
@@ -29,16 +34,23 @@ enum TabBarConfig {
   static let accentCoolBlue = Color(
     .sRGB, red: 0.34, green: 0.62, blue: 0.95, opacity: 1.0
   )
-  // The selected label sits on glass over the page, not on a solid chip, so it needs a
-  // colour that reads against both page appearances. The page base is light in Aqua and
-  // near-black in Dark Aqua, so a single blue cannot serve both: deep blue on light,
-  // pale blue on dark, the same pair the system uses for its own tinted-on-glass text.
+  // The selected label sits on a light frost, exactly where the system puts its own:
+  // the system keeps that label dark in Aqua and light in Dark Aqua (measured off
+  // Activity Monitor's selected segment: around (30,30,30) over a light page). A white
+  // label was tried and reads as an accent chip, not a glass slide -- measured 0.99
+  // lightest pixel on the very surface that is supposed to be the point.
   static let selectedLabelColor = Color(nsColor: NSColor(name: nil) { appearance in
     let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     return isDark
-      ? NSColor(srgbRed: 0.55, green: 0.75, blue: 1.0, alpha: 1.0)
-      : NSColor(srgbRed: 0.13, green: 0.42, blue: 0.85, alpha: 1.0)
+      ? NSColor(srgbRed: 0.92, green: 0.92, blue: 0.94, alpha: 1.0)
+      : NSColor(srgbRed: 0.12, green: 0.12, blue: 0.13, alpha: 1.0)
   })
+  // Unselected labels keep the system's own primary label colour: the system's tab
+  // picker does not dim them into greyed-out secondary text, and neither does this bar.
+  static let unselectedLabelColor = Color(nsColor: .labelColor)
+  // The hairline between two unselected segments, the way the system's picker separates
+  // its segments; the selected capsule needs none, its refraction edge is the seam.
+  static let separatorColor = Color(nsColor: .separatorColor)
 
   static let animationDuration: Double = 0.22
   static let curveCP1x: Double = 0.4
@@ -126,8 +138,7 @@ public struct LiquidGlassTabBar: View {
                   .fill(Color.clear)
                   .glassEffect(
                     .regular.interactive()
-                      .tint(TabBarConfig.accentCoolBlue
-                        .opacity(TabBarConfig.glassTintOpacity)),
+                      .tint(TabBarConfig.selectedGlassTint),
                     in: Capsule(style: .continuous)
                   )
                   .matchedGeometryEffect(id: "selectionPill", in: nsMorph)
@@ -148,7 +159,14 @@ public struct LiquidGlassTabBar: View {
       // selection state and the keyboard reaches every pane. .plain keeps them
       // invisible so the glass stays the only chrome.
       HStack(spacing: TabBarConfig.interSpacing) {
-        ForEach(items) { item in
+        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+          if index > 0 && item.id != selection && items[index - 1].id != selection {
+            // The system's picker keeps a hairline between neighbours; the selected
+            // capsule needs none because its refraction edge already is the seam.
+            Rectangle()
+              .fill(TabBarConfig.separatorColor)
+              .frame(width: 1, height: 14)
+          }
           Button {
             if selection != item.id { selection = item.id }
           } label: {
@@ -159,7 +177,7 @@ public struct LiquidGlassTabBar: View {
               .minimumScaleFactor(0.6)
               .allowsTightening(true)
               .foregroundStyle(item.id == selection
-                ? TabBarConfig.selectedLabelColor : Color.secondary)
+                ? TabBarConfig.selectedLabelColor : TabBarConfig.unselectedLabelColor)
               .frame(width: width(for: item), height: TabBarConfig.tabBarHeight)
               .contentShape(Capsule(style: .continuous))
           }
