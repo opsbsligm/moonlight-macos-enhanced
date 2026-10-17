@@ -95,10 +95,25 @@ def check(files):
     if TAB_BAR_SELECTION_GLASS not in bar_folded:
         problems.append("the tab bar's selection is no longer interactive system glass; a "
                         "solid accent chip is the one non-glass thing on a page of glass")
-    if not TAB_BAR_SELECTION_TINT.search(bar_folded):
+    if TAB_BAR_SELECTION_TINT not in bar_folded:
         problems.append("the selected capsule stopped taking its tint from "
-                        "TabBarConfig.accentCoolBlue.opacity(glassTintOpacity), so the "
-                        "accent can drift warm without anyone measuring it again")
+                        "TabBarConfig.selectedGlassTint; the system's own tab picker "
+                        "(Activity Monitor) frosts its slider neutrally, and every "
+                        "accent-tinted variant of this capsule was rejected by the user")
+    tint_match = TAB_BAR_TINT_COLOUR.search(strip_comments(bar))
+    if tint_match is None:
+        problems.append("TabBarConfig.selectedGlassTint is no longer a literal sRGB "
+                        "colour, so the neutral frost cannot be measured")
+    else:
+        r, g, b = (float(tint_match.group(i)) for i in (1, 2, 3))
+        # The accent blue the design rejects has a channel spread of 0.61; a frost may
+        # lean cool the way the system's own material does, so the guard sits at 0.2 --
+        # wide enough for neutral glass, far enough that no accent can hide inside it.
+        if max(abs(r - g), abs(g - b), abs(r - b)) > 0.20:
+            problems.append("the selected capsule's tint drifted colourful (r %.2f g %.2f "
+                            "b %.2f): the channels must agree within 0.20 or the slide "
+                            "reads as an accent chip, which is the rejected look"
+                            % (r, g, b))
     if TAB_BAR_REAL_BUTTONS not in bar_folded:
         problems.append("the tab bar's segments stopped being real Buttons, so VoiceOver "
                         "and the keyboard lose the panes behind the glass")
@@ -151,11 +166,13 @@ FIXTURE = {
           Capsule(style: .continuous)
             .fill(Color.clear)
             .glassEffect(.regular, in: Capsule(style: .continuous))
-          Capsule(style: .continuous)
+        static let selectedGlassTint = Color(
+          .sRGB, red: 0.55, green: 0.60, blue: 0.68, opacity: 0.28
+        )
+        Capsule(style: .continuous)
             .glassEffect(
               .regular.interactive()
-                .tint(TabBarConfig.accentCoolBlue
-                  .opacity(TabBarConfig.glassTintOpacity)),
+                .tint(TabBarConfig.selectedGlassTint),
               in: Capsule(style: .continuous)
             )
         }
@@ -236,9 +253,16 @@ def self_test():
     invented_tint = dict(FIXTURE)
     invented_tint["LiquidGlassTabBar.swift"] = mutate(
         FIXTURE["LiquidGlassTabBar.swift"],
-        ".tint(TabBarConfig.accentCoolBlue\n                  .opacity(TabBarConfig.glassTintOpacity))",
+        ".tint(TabBarConfig.selectedGlassTint)",
         ".tint(Color.orange.opacity(0.18))")
     cases.append(("a selection tint invented at the call site", invented_tint, True))
+
+    recoloured = dict(FIXTURE)
+    recoloured["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        "red: 0.55, green: 0.60, blue: 0.68",
+        "red: 0.34, green: 0.62, blue: 0.95")
+    cases.append(("the frost coloured back to the accent", recoloured, True))
 
     no_buttons = dict(FIXTURE)
     no_buttons["LiquidGlassTabBar.swift"] = mutate(
@@ -413,9 +437,10 @@ RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", ".disclosureGroupStyle(")
 TAB_BAR_TRACK_CONTAINER = "GlassEffectContainer(spacing: TabBarConfig.interSpacing)"
 TAB_BAR_TRACK_GLASS = ".glassEffect(.regular, in: Capsule(style: .continuous))"
 TAB_BAR_SELECTION_GLASS = ".regular.interactive()"
-TAB_BAR_SELECTION_TINT = re.compile(
-    r"\.tint\(\s*TabBarConfig\.accentCoolBlue\s*"
-    r"\.opacity\(\s*TabBarConfig\.glassTintOpacity\s*\)\s*\)")
+TAB_BAR_SELECTION_TINT = ".tint(TabBarConfig.selectedGlassTint)"
+TAB_BAR_TINT_COLOUR = re.compile(
+    r"selectedGlassTint\s*=\s*Color\(\s*\.sRGB,\s*red:\s*([0-9.]+),\s*"
+    r"green:\s*([0-9.]+),\s*blue:\s*([0-9.]+)")
 TAB_BAR_REAL_BUTTONS = ".buttonStyle(.plain)"
 # A .plain button with no label vends a nameless AXButton on this SDK (measured:
 # AXDescription nil on all six segments until .accessibilityElement(children: .ignore)
