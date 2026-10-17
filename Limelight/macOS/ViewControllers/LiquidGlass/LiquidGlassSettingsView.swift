@@ -128,15 +128,9 @@ struct LiquidGlassSettingsView: View {
         } else {
           Color.clear.frame(width: 0, height: 0)
         }
-        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {
-          LiquidGlassTabBar(selection: selectionBinding, items: tabs)
-            .fixedSize()
-            .glassEffect(
-              .regular.tint(TabBarConfig.accentCoolBlue
-                .opacity(TabBarConfig.glassTintOpacity)),
-              in: Capsule()
-            )
-        }
+        // The bar owns its glass: the track and the selected capsule are one
+        // GlassEffectContainer inside the component, so the page wraps it in nothing.
+        LiquidGlassTabBar(selection: selectionBinding, items: tabs)
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 14)

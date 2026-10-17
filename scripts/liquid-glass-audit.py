@@ -59,8 +59,7 @@ def check(files):
     problems = []
     combined = "\n".join(strip_comments(t) for t in files.values())
 
-    native_segments = "NSSegmentedControl" in combined and "control.segmentStyle = .rounded" in combined
-    if ".glassEffect(" not in combined and not native_segments:
+    if ".glassEffect(" not in combined:
         problems.append("no native .glassEffect anywhere in the glass surface")
     if ".glassEffect(" in combined and "GlassEffectContainer(" not in combined:
         problems.append("glass elements are not grouped in a GlassEffectContainer, "
@@ -84,6 +83,29 @@ def check(files):
     # that goes white-on-white, so the role stays unset until a system build draws its
     # selected tab with readable text -- and the guard that used to make it compile on one
     # SDK alone is gone with it, because a condition nothing reads is a second way to lie.
+    bar_folded = re.sub(r"\s+", " ", strip_comments(bar))
+    if TAB_BAR_TRACK_CONTAINER not in bar_folded:
+        problems.append("the tab bar no longer owns a GlassEffectContainer"
+                        "(spacing: TabBarConfig.interSpacing), so its glass stops bending "
+                        "the page as one material with the cards beside it")
+    if TAB_BAR_TRACK_GLASS not in bar_folded:
+        problems.append("the tab bar lost its track glass (.glassEffect(.regular, "
+                        "in: Capsule(style: .continuous))), which puts the flat grey pill "
+                        "the page was rejected for back under the user's pointer")
+    if TAB_BAR_SELECTION_GLASS not in bar_folded:
+        problems.append("the tab bar's selection is no longer interactive system glass; a "
+                        "solid accent chip is the one non-glass thing on a page of glass")
+    if not TAB_BAR_SELECTION_TINT.search(bar_folded):
+        problems.append("the selected capsule stopped taking its tint from "
+                        "TabBarConfig.accentCoolBlue.opacity(glassTintOpacity), so the "
+                        "accent can drift warm without anyone measuring it again")
+    if TAB_BAR_REAL_BUTTONS not in bar_folded:
+        problems.append("the tab bar's segments stopped being real Buttons, so VoiceOver "
+                        "and the keyboard lose the panes behind the glass")
+    if TAB_BAR_NAMED_BUTTONS not in bar_folded:
+        problems.append("a tab-bar button lost its explicit accessibility label pairing "
+                        "(.ignore + .accessibilityLabel(Text(...))); on this SDK the label "
+                        "inside the button does not surface, and the segments go nameless")
     role_hit = re.search(r"\.role\s*=\s*\.tabs", strip_comments(bar))
     if role_hit:
         problems.append("the tab bar sets role = .tabs, which renders the selected pane's "
@@ -125,9 +147,22 @@ FIXTURE = {
           .sRGB, red: 0.34, green: 0.62, blue: 0.95, opacity: 1.0
         )
         static let animationDuration: Double = 0.22
-        GlassEffectContainer(spacing: 6) {
-          view.glassEffect(.regular.tint(accentCoolBlue), in: shape)
+        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {
+          Capsule(style: .continuous)
+            .fill(Color.clear)
+            .glassEffect(.regular, in: Capsule(style: .continuous))
+          Capsule(style: .continuous)
+            .glassEffect(
+              .regular.interactive()
+                .tint(TabBarConfig.accentCoolBlue
+                  .opacity(TabBarConfig.glassTintOpacity)),
+              in: Capsule(style: .continuous)
+            )
         }
+        Button { selection = item.id } label: { Text(item.title) }
+          .buttonStyle(.plain)
+          .accessibilityElement(children: .ignore)
+          .accessibilityLabel(Text(item.title))
         """,
     "SettingsOverlayPresenter.swift": """
         context.duration = TabBarConfig.animationDuration
@@ -155,12 +190,6 @@ def self_test():
         "        control.role = .tabs\n        #endif\n        ")
     cases.append(("the role guarded back in by an old build condition", guarded_back, True))
 
-    native = dict(FIXTURE)
-    native["LiquidGlassTabBar.swift"] = native["LiquidGlassTabBar.swift"].replace(
-        "GlassEffectContainer(spacing: 6) {\n          view.glassEffect(.regular.tint(accentCoolBlue), in: shape)\n        }",
-        "let control = NSSegmentedControl()\n        control.segmentStyle = .rounded")
-    cases.append(("system segmented control owns its glass", native, False))
-
     warm = dict(FIXTURE)
     warm["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
                                              "red: 0.34, green: 0.62, blue: 0.95",
@@ -175,8 +204,8 @@ def self_test():
 
     fake = dict(FIXTURE)
     fake["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
-                                             "GlassEffectContainer(spacing: 6) {",
-                                             "NSVisualEffectView()\n        GlassEffectContainer(spacing: 6) {")
+                                             "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {",
+                                             "NSVisualEffectView()\n        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {")
     cases.append(("a hand-made blur replacing the material", fake, True))
 
     # One fixture per prohibited spelling. A single planted blur proves the loop runs
@@ -186,13 +215,53 @@ def self_test():
         planted = dict(FIXTURE)
         planted["LiquidGlassTabBar.swift"] = mutate(
             FIXTURE["LiquidGlassTabBar.swift"],
-            "GlassEffectContainer(spacing: 6) {",
-            "%s\n        GlassEffectContainer(spacing: 6) {" % needle)
+            "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {",
+            "%s\n        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {" % needle)
         cases.append(("planted %s" % needle, planted, True))
+
+    # Each new tab-bar rule proves itself against the shipped fixture shape.
+    no_track_glass = dict(FIXTURE)
+    no_track_glass["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        ".glassEffect(.regular, in: Capsule(style: .continuous))",
+        ".background(.background)")
+    cases.append(("the bar's track back on a plain fill", no_track_glass, True))
+
+    solid_chip = dict(FIXTURE)
+    solid_chip["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        ".regular.interactive()", ".regular")
+    cases.append(("a solid chip standing in for the glass selection", solid_chip, True))
+
+    invented_tint = dict(FIXTURE)
+    invented_tint["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        ".tint(TabBarConfig.accentCoolBlue\n                  .opacity(TabBarConfig.glassTintOpacity))",
+        ".tint(Color.orange.opacity(0.18))")
+    cases.append(("a selection tint invented at the call site", invented_tint, True))
+
+    no_buttons = dict(FIXTURE)
+    no_buttons["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        ".buttonStyle(.plain)", ".modifier(InvisibleTapTarget())")
+    cases.append(("segments that stopped being buttons", no_buttons, True))
+
+    nameless = dict(FIXTURE)
+    nameless["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        ".accessibilityElement(children: .ignore)\n          .accessibilityLabel(Text(item.title))",
+        "")
+    cases.append(("buttons that went nameless in the AX tree", nameless, True))
+
+    containerless = dict(FIXTURE)
+    containerless["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {", "ZStack {")
+    cases.append(("the bar's glass outside its container", containerless, True))
 
     ungrouped = dict(FIXTURE)
     ungrouped["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
-                                                 "GlassEffectContainer(spacing: 6) {", "VStack {")
+                                                 "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {", "VStack {")
     cases.append(("glass elements outside a container", ungrouped, True))
 
     noglass = dict(FIXTURE)
@@ -332,18 +401,26 @@ SETTINGS_FILES = tuple(sorted({name for _, files in SETTINGS_SURFACES for name i
 # be single-triangle and label-readable, so the fold's chrome stays the system's and the
 # glass is the card around it.
 RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", ".disclosureGroupStyle(")
-# The tab bar's own track. The segmented control stopped drawing glass for itself the day
-# it lost role = .tabs, which is what produced the flat grey pill users rejected: the bar
-# read as a stock control sitting on the page instead of a surface cut from it. The bar now
-# stands on one .glassEffect capsule, inside the page's own container, tinted from the tab
-# palette. The three halves are all load bearing: a container without the capsule colours
-# nothing, a capsule outside a container samples the desktop instead of the page, and a
-# capsule tinted from an invented colour drifts warm.
+# The tab bar draws its own liquid glass: a track capsule and a selected capsule inside one
+# GlassEffectContainer of its own. The segmented control it replaced stopped drawing glass
+# the day it lost role = .tabs, which is what produced the flat grey pill the page was
+# rejected for; and the page-level glass wrapper that briefly followed left a solid accent
+# chip as the only non-glass thing a user touches. So the bar is the glass now, and every
+# half of it is load bearing: a container with nothing glass in it colours nothing; a
+# selection that is a solid fill is the chip again; and a glass layer that swallows its
+# labels bleaches them (measured: darkest label pixel 212 inside the container), so the
+# buttons ride above the container as real Buttons.
 TAB_BAR_TRACK_CONTAINER = "GlassEffectContainer(spacing: TabBarConfig.interSpacing)"
-TAB_BAR_TRACK_GLASS = re.compile(
-    r"LiquidGlassTabBar\(\s*selection:[^)]*\)\s*\.fixedSize\(\)\s*"
-    r"\.glassEffect\(\s*\.regular\.tint\(\s*TabBarConfig\.accentCoolBlue\s*"
-    r"\.opacity\(\s*TabBarConfig\.glassTintOpacity\s*\)\s*\)\s*,\s*in:\s*Capsule\(\s*\)\s*\)")
+TAB_BAR_TRACK_GLASS = ".glassEffect(.regular, in: Capsule(style: .continuous))"
+TAB_BAR_SELECTION_GLASS = ".regular.interactive()"
+TAB_BAR_SELECTION_TINT = re.compile(
+    r"\.tint\(\s*TabBarConfig\.accentCoolBlue\s*"
+    r"\.opacity\(\s*TabBarConfig\.glassTintOpacity\s*\)\s*\)")
+TAB_BAR_REAL_BUTTONS = ".buttonStyle(.plain)"
+# A .plain button with no label vends a nameless AXButton on this SDK (measured:
+# AXDescription nil on all six segments until .accessibilityElement(children: .ignore)
+# plus an explicit label made the pane names show up in a raw AXUIElement read).
+TAB_BAR_NAMED_BUTTONS = ".accessibilityElement(children: .ignore) .accessibilityLabel(Text(item.title))"
 # The settings cards draw their glass through one shared helper rather than repeating the
 # modifier in four places: a card that opts out of the helper gets a different material or
 # loses the edge that makes its boundary visible over the washed base. The rule has two
@@ -396,20 +473,6 @@ def settings_surface_problems(texts):
                 problems.append("%s gives a glass transition its own duration: %s"
                                 % (name, line.strip()))
                 break
-    # The tab bar's track is part of the settings glass, not an optional decoration: without
-    # it the control users click to move between panes is the one surface on the page with
-    # nothing to bend, and it reads as a stock grey pill again.
-    page_body = strip_comments(texts.get(
-        "ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift", ""))
-    folded = re.sub(r"\s+", " ", page_body)
-    if TAB_BAR_TRACK_CONTAINER not in page_body:
-        problems.append("the settings page no longer wraps its tab bar in a "
-                        "GlassEffectContainer(spacing: TabBarConfig.interSpacing), so the "
-                        "track stops bending the page with the cards beside it")
-    if not TAB_BAR_TRACK_GLASS.search(folded):
-        problems.append("the tab bar lost its .glassEffect(.regular.tint(accentCoolBlue"
-                        ".opacity(glassTintOpacity)), in: Capsule()) track, which is the "
-                        "flat grey pill the page was rejected for")
     return problems
 
 
@@ -611,13 +674,6 @@ def settings_self_test(repo):
         ("a fold with a duration of its own",
          edited(shared, "    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()",
                 "    .animation(.easeOut(duration: 0.15), value: expanded.wrappedValue)\n    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()"),
-         True),
-        ("the tab bar track back to a plain fill",
-         edited(page, ".glassEffect(\n              .regular.tint(TabBarConfig.accentCoolBlue\n                .opacity(TabBarConfig.glassTintOpacity)),\n              in: Capsule()\n            )",
-                ".background(.background)"),
-         True),
-        ("the tab bar glass left outside its container",
-         edited(page, "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {", "VStack(spacing: 0) {"),
          True),
     ]
     # The pin has to fire while every card still asks for the helper: cards calling a
