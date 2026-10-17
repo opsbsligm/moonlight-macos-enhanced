@@ -43,14 +43,15 @@ def strip_comments(text):
     return "\n".join(out)
 
 
-def project_problems(project_text):
-    """problems with the build settings that could bring a measured-away control back."""
+def project_problems(project_text, bar_text):
+    """problems with the build settings the tab bar's guarded role depends on."""
     problems = []
-    # A dead build condition is how a retired control creeps back: it compiles, ships, and
-    # hides the selected pane again on whoever's machine matches the SDK clause.
-    if "ML_APPKIT_TABS_ROLE" in project_text:
-        problems.append("the project still declares ML_APPKIT_TABS_ROLE, a condition no source "
-                        "reads, so the tabs role can return without anybody measuring it again")
+    # The guard only means something if the project still declares the condition for the
+    # SDK that has the symbol; without it the accepted tabs look silently disappears.
+    if "#if ML_APPKIT_TABS_ROLE" in bar_text:
+        if "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" not in project_text:
+            problems.append("the tabs role waits for a build condition no configuration "
+                            "declares, so no build ever sets it")
     return problems
 
 
@@ -59,7 +60,8 @@ def check(files):
     problems = []
     combined = "\n".join(strip_comments(t) for t in files.values())
 
-    if ".glassEffect(" not in combined:
+    native_segments = "NSSegmentedControl" in combined and "control.segmentStyle = .rounded" in combined
+    if ".glassEffect(" not in combined and not native_segments:
         problems.append("no native .glassEffect anywhere in the glass surface")
     if ".glassEffect(" in combined and "GlassEffectContainer(" not in combined:
         problems.append("glass elements are not grouped in a GlassEffectContainer, "
@@ -83,34 +85,11 @@ def check(files):
     # that goes white-on-white, so the role stays unset until a system build draws its
     # selected tab with readable text -- and the guard that used to make it compile on one
     # SDK alone is gone with it, because a condition nothing reads is a second way to lie.
-    bar_folded = re.sub(r"\s+", " ", strip_comments(bar))
-    if TAB_BAR_TRACK_CONTAINER not in bar_folded:
-        problems.append("the tab bar no longer owns a GlassEffectContainer"
-                        "(spacing: TabBarConfig.interSpacing), so its glass stops bending "
-                        "the page as one material with the cards beside it")
-    if TAB_BAR_TRACK_GLASS not in bar_folded:
-        problems.append("the tab bar lost its track glass (.glassEffect(.regular, "
-                        "in: Capsule(style: .continuous))), which puts the flat grey pill "
-                        "the page was rejected for back under the user's pointer")
-    if TAB_BAR_SELECTION_GLASS not in bar_folded:
-        problems.append("the tab bar's selection is no longer interactive system glass; a "
-                        "solid accent chip is the one non-glass thing on a page of glass")
-    if not TAB_BAR_SELECTION_TINT.search(bar_folded):
-        problems.append("the selected capsule stopped taking its tint from "
-                        "TabBarConfig.accentCoolBlue.opacity(glassTintOpacity), so the "
-                        "accent can drift warm without anyone measuring it again")
-    if TAB_BAR_REAL_BUTTONS not in bar_folded:
-        problems.append("the tab bar's segments stopped being real Buttons, so VoiceOver "
-                        "and the keyboard lose the panes behind the glass")
-    if TAB_BAR_NAMED_BUTTONS not in bar_folded:
-        problems.append("a tab-bar button lost its explicit accessibility label pairing "
-                        "(.ignore + .accessibilityLabel(Text(...))); on this SDK the label "
-                        "inside the button does not surface, and the segments go nameless")
-    role_hit = re.search(r"\.role\s*=\s*\.tabs", strip_comments(bar))
-    if role_hit:
-        problems.append("the tab bar sets role = .tabs, which renders the selected pane's "
-                        "label invisible (measured 0.92 darkest label pixel against a light "
-                        "page, versus 0.12 unset)")
+    # The segmented control draws its own selection: on macOS 27 that is the system's
+    # tabs look, guarded so the macOS 26 SDK CI builds against still compiles. The bar
+    # overlays nothing; hand-drawn stands-ins for that surface were measured and refused.
+    if ".role = " in strip_comments(bar) and "#if ML_APPKIT_TABS_ROLE" not in strip_comments(bar):
+        problems.append("the tabs role compiles unguarded, so the macOS 26 SDK cannot build the tab bar")
     match = COLOUR.search(strip_comments(bar))
     if match is None:
         problems.append("the glass accent colour could not be read from TabBarConfig")
@@ -147,22 +126,9 @@ FIXTURE = {
           .sRGB, red: 0.34, green: 0.62, blue: 0.95, opacity: 1.0
         )
         static let animationDuration: Double = 0.22
-        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {
-          Capsule(style: .continuous)
-            .fill(Color.clear)
-            .glassEffect(.regular, in: Capsule(style: .continuous))
-          Capsule(style: .continuous)
-            .glassEffect(
-              .regular.interactive()
-                .tint(TabBarConfig.accentCoolBlue
-                  .opacity(TabBarConfig.glassTintOpacity)),
-              in: Capsule(style: .continuous)
-            )
+        GlassEffectContainer(spacing: 6) {
+          view.glassEffect(.regular.tint(accentCoolBlue), in: shape)
         }
-        Button { selection = item.id } label: { Text(item.title) }
-          .buttonStyle(.plain)
-          .accessibilityElement(children: .ignore)
-          .accessibilityLabel(Text(item.title))
         """,
     "SettingsOverlayPresenter.swift": """
         context.duration = TabBarConfig.animationDuration
@@ -179,16 +145,22 @@ def self_test():
     cases = []
     cases.append(("the compliant fixture", FIXTURE, False))
 
-    set_role = dict(FIXTURE)
-    set_role["LiquidGlassTabBar.swift"] = FIXTURE["LiquidGlassTabBar.swift"] + (
+    unguarded = dict(FIXTURE)
+    unguarded["LiquidGlassTabBar.swift"] = FIXTURE["LiquidGlassTabBar.swift"] + (
         "\n        let control = NSSegmentedControl()\n        control.role = .tabs\n        ")
-    cases.append(("the tab bar given the invisible role", set_role, True))
+    cases.append(("tabs role compiled without the SDK guard", unguarded, True))
 
-    guarded_back = dict(FIXTURE)
-    guarded_back["LiquidGlassTabBar.swift"] = FIXTURE["LiquidGlassTabBar.swift"] + (
+    guarded = dict(FIXTURE)
+    guarded["LiquidGlassTabBar.swift"] = FIXTURE["LiquidGlassTabBar.swift"] + (
         "\n        let control = NSSegmentedControl()\n        #if ML_APPKIT_TABS_ROLE\n"
         "        control.role = .tabs\n        #endif\n        ")
-    cases.append(("the role guarded back in by an old build condition", guarded_back, True))
+    cases.append(("tabs role behind the SDK guard", guarded, False))
+
+    native = dict(FIXTURE)
+    native["LiquidGlassTabBar.swift"] = native["LiquidGlassTabBar.swift"].replace(
+        "GlassEffectContainer(spacing: 6) {\n          view.glassEffect(.regular.tint(accentCoolBlue), in: shape)\n        }",
+        "let control = NSSegmentedControl()\n        control.segmentStyle = .rounded")
+    cases.append(("system segmented control owns its glass", native, False))
 
     warm = dict(FIXTURE)
     warm["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
@@ -204,8 +176,8 @@ def self_test():
 
     fake = dict(FIXTURE)
     fake["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
-                                             "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {",
-                                             "NSVisualEffectView()\n        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {")
+                                             "GlassEffectContainer(spacing: 6) {",
+                                             "NSVisualEffectView()\n        GlassEffectContainer(spacing: 6) {")
     cases.append(("a hand-made blur replacing the material", fake, True))
 
     # One fixture per prohibited spelling. A single planted blur proves the loop runs
@@ -215,53 +187,13 @@ def self_test():
         planted = dict(FIXTURE)
         planted["LiquidGlassTabBar.swift"] = mutate(
             FIXTURE["LiquidGlassTabBar.swift"],
-            "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {",
-            "%s\n        GlassEffectContainer(spacing: TabBarConfig.interSpacing) {" % needle)
+            "GlassEffectContainer(spacing: 6) {",
+            "%s\n        GlassEffectContainer(spacing: 6) {" % needle)
         cases.append(("planted %s" % needle, planted, True))
-
-    # Each new tab-bar rule proves itself against the shipped fixture shape.
-    no_track_glass = dict(FIXTURE)
-    no_track_glass["LiquidGlassTabBar.swift"] = mutate(
-        FIXTURE["LiquidGlassTabBar.swift"],
-        ".glassEffect(.regular, in: Capsule(style: .continuous))",
-        ".background(.background)")
-    cases.append(("the bar's track back on a plain fill", no_track_glass, True))
-
-    solid_chip = dict(FIXTURE)
-    solid_chip["LiquidGlassTabBar.swift"] = mutate(
-        FIXTURE["LiquidGlassTabBar.swift"],
-        ".regular.interactive()", ".regular")
-    cases.append(("a solid chip standing in for the glass selection", solid_chip, True))
-
-    invented_tint = dict(FIXTURE)
-    invented_tint["LiquidGlassTabBar.swift"] = mutate(
-        FIXTURE["LiquidGlassTabBar.swift"],
-        ".tint(TabBarConfig.accentCoolBlue\n                  .opacity(TabBarConfig.glassTintOpacity))",
-        ".tint(Color.orange.opacity(0.18))")
-    cases.append(("a selection tint invented at the call site", invented_tint, True))
-
-    no_buttons = dict(FIXTURE)
-    no_buttons["LiquidGlassTabBar.swift"] = mutate(
-        FIXTURE["LiquidGlassTabBar.swift"],
-        ".buttonStyle(.plain)", ".modifier(InvisibleTapTarget())")
-    cases.append(("segments that stopped being buttons", no_buttons, True))
-
-    nameless = dict(FIXTURE)
-    nameless["LiquidGlassTabBar.swift"] = mutate(
-        FIXTURE["LiquidGlassTabBar.swift"],
-        ".accessibilityElement(children: .ignore)\n          .accessibilityLabel(Text(item.title))",
-        "")
-    cases.append(("buttons that went nameless in the AX tree", nameless, True))
-
-    containerless = dict(FIXTURE)
-    containerless["LiquidGlassTabBar.swift"] = mutate(
-        FIXTURE["LiquidGlassTabBar.swift"],
-        "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {", "ZStack {")
-    cases.append(("the bar's glass outside its container", containerless, True))
 
     ungrouped = dict(FIXTURE)
     ungrouped["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
-                                                 "GlassEffectContainer(spacing: TabBarConfig.interSpacing) {", "VStack {")
+                                                 "GlassEffectContainer(spacing: 6) {", "VStack {")
     cases.append(("glass elements outside a container", ungrouped, True))
 
     noglass = dict(FIXTURE)
@@ -280,23 +212,26 @@ def self_test():
     cases.append(("an overlay with its own duration", solo, True))
 
     failures = 0
-    # The project-file rule proves itself the same way as the rest: the shipped file has to
-    # pass it and a planted dead condition has to be refused. A rule that never fires is
-    # worse than none, and this one exists only to keep a measured-away control out.
+    # The guard's dependency proves itself like every other rule: the shipped pair passes,
+    # and a project that stopped declaring the condition for the SDK is refused.
     project_path = os.path.join(".", "Moonlight.xcodeproj", "project.pbxproj")
     shipped_project = open(project_path, encoding="utf-8").read() if os.path.isfile(project_path) else ""
-    if project_problems(shipped_project):
+    shipped_bar = open(os.path.join(".", "Limelight", "macOS", "ViewControllers", "LiquidGlass",
+                                    "LiquidGlassTabBar.swift"), encoding="utf-8").read()
+    if project_problems(shipped_project, shipped_bar):
         failures += 1
         print("FAIL %-46s expected clean, got %s"
-              % ("the shipped project file", project_problems(shipped_project)))
+              % ("the shipped project file", project_problems(shipped_project, shipped_bar)))
     else:
         print("ok   %-46s accepted" % "the shipped project file")
-    if not project_problems(shipped_project
-                            + "\n\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = ML_APPKIT_TABS_ROLE;\n"):
+    unconfigured = "\n".join(
+        line for line in shipped_project.split("\n")
+        if "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" not in line)
+    if not project_problems(unconfigured, shipped_bar):
         failures += 1
-        print("FAIL %-46s expected a violation, got clean" % "a planted dead build condition")
+        print("FAIL %-46s expected a violation, got clean" % "a project that dropped the guard's condition")
     else:
-        print("ok   %-46s refused" % "a planted dead build condition")
+        print("ok   %-46s refused" % "a project that dropped the guard's condition")
 
     for what, files, expect_problem in cases:
         problems = check(files)
@@ -401,26 +336,6 @@ SETTINGS_FILES = tuple(sorted({name for _, files in SETTINGS_SURFACES for name i
 # be single-triangle and label-readable, so the fold's chrome stays the system's and the
 # glass is the card around it.
 RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", ".disclosureGroupStyle(")
-# The tab bar draws its own liquid glass: a track capsule and a selected capsule inside one
-# GlassEffectContainer of its own. The segmented control it replaced stopped drawing glass
-# the day it lost role = .tabs, which is what produced the flat grey pill the page was
-# rejected for; and the page-level glass wrapper that briefly followed left a solid accent
-# chip as the only non-glass thing a user touches. So the bar is the glass now, and every
-# half of it is load bearing: a container with nothing glass in it colours nothing; a
-# selection that is a solid fill is the chip again; and a glass layer that swallows its
-# labels bleaches them (measured: darkest label pixel 212 inside the container), so the
-# buttons ride above the container as real Buttons.
-TAB_BAR_TRACK_CONTAINER = "GlassEffectContainer(spacing: TabBarConfig.interSpacing)"
-TAB_BAR_TRACK_GLASS = ".glassEffect(.regular, in: Capsule(style: .continuous))"
-TAB_BAR_SELECTION_GLASS = ".regular.interactive()"
-TAB_BAR_SELECTION_TINT = re.compile(
-    r"\.tint\(\s*TabBarConfig\.accentCoolBlue\s*"
-    r"\.opacity\(\s*TabBarConfig\.glassTintOpacity\s*\)\s*\)")
-TAB_BAR_REAL_BUTTONS = ".buttonStyle(.plain)"
-# A .plain button with no label vends a nameless AXButton on this SDK (measured:
-# AXDescription nil on all six segments until .accessibilityElement(children: .ignore)
-# plus an explicit label made the pane names show up in a raw AXUIElement read).
-TAB_BAR_NAMED_BUTTONS = ".accessibilityElement(children: .ignore) .accessibilityLabel(Text(item.title))"
 # The settings cards draw their glass through one shared helper rather than repeating the
 # modifier in four places: a card that opts out of the helper gets a different material or
 # loses the edge that makes its boundary visible over the washed base. The rule has two
@@ -828,7 +743,7 @@ def main():
     problems = check(files)
     project_path = os.path.join(args.repo, "Moonlight.xcodeproj", "project.pbxproj")
     project_text = open(project_path, encoding="utf-8").read() if os.path.isfile(project_path) else ""
-    problems += project_problems(project_text)
+    problems += project_problems(project_text, files.get("LiquidGlassTabBar.swift", ""))
     settings_texts = {}
     for name in SETTINGS_FILES:
         path = os.path.join(args.repo, "Limelight", "macOS", name)
