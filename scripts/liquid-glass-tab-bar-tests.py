@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Drive the shipped settings tab bar through the accessibility tree, and measure what it costs.
 
-The bar draws its selection as system glass and mounts a real SwiftUI Button per segment.
-The audit proves the glass and the API statically; nothing until now proved the two
-behavioural promises that shape makes -- that a screen reader can say which pane each
+The bar is the system's segmented control: it draws its own selection, vends one
+AXRadioButton per segment inside a tab group, and commits through the binding once per
+click. The audit proves the control and the API statically; nothing until now proved the
+two behavioural promises that shape makes -- that a screen reader can say which pane each
 segment opens, and that one click on one segment produces exactly one selection write and
 no straggler behind it. Those are questions about the accessibility tree AppKit actually
 vends and about what the binding sees at runtime, so this answers them that way.
@@ -162,12 +163,14 @@ func name(_ el: AXUIElement) -> String {
     (copyAttr(el, kAXDescriptionAttribute as String) as? String) ?? ""
 }
 func selected(_ el: AXUIElement) -> Bool {
-    // Read the value, not the presence: with the shipping bar every segment answers
-    // AXSelected -- true on the selected one, false on the rest -- and the trait moves
-    // with the selection. Presence-only reading once served as a proxy (unselected
-    // segments used to withhold the attribute entirely) and stopped being true the
-    // moment the bar started answering the question instead of refusing it.
-    (copyAttr(el, kAXSelectedAttribute as String) as? Bool) == true
+    // The native control answers the selection question with AXValue -- a segment is
+    // selected when its value is one (CFBoolean bridges to both readings below); the
+    // hand-drawn bar that preceded it answered AXSelected instead. Accept either so
+    // the verdict is about the control keeping one selected segment, not about which
+    // attribute a particular implementation chose to carry it on.
+    if let v = copyAttr(el, "AXValue") as? Bool { return v }
+    if let v = copyAttr(el, "AXValue") as? Int { return v == 1 }
+    return (copyAttr(el, kAXSelectedAttribute as String) as? Bool) == true
 }
 func cgPoint(_ el: AXUIElement) -> CGPoint {
     var point = CGPoint.zero
@@ -184,8 +187,11 @@ func cgSize(_ el: AXUIElement) -> CGSize {
     return size
 }
 func buttons(_ el: AXUIElement) -> [AXUIElement] {
+    // A segment is an AXRadioButton on the native control (the tab-group shape every
+    // screen reader expects) and was an AXButton on the hand-drawn bar; collect either
+    // so "one element per segment" keeps its meaning across the swap.
     var out: [AXUIElement] = []
-    if role(el) == "AXButton" { out.append(el) }
+    if role(el) == "AXButton" || role(el) == "AXRadioButton" { out.append(el) }
     for k in kids(el) { out += buttons(k) }
     return out
 }
@@ -304,15 +310,16 @@ exit(0)
 '''
 
 MUTATIONS = {
-    # Deleting the pairing alone no longer loses the name on a live tree -- a plain
-    # button vends its Text child as AXDescription once a client holds the tree open.
-    # The regression that does go nameless is an explicit label whose text was washed
-    # out, which is what a careless localisation refactor produces.
-    "nameless": ("          .accessibilityLabel(Text(item.title))",
-                 "          .accessibilityLabel(Text(\"\"))",
+    # The native control vends a segment's label as its AX name; the regression that
+    # goes nameless is a washed-out label at the call site, which is what a careless
+    # localisation refactor produces.
+    "nameless": ("control.setLabel(item.title, forSegment: index)",
+                 "control.setLabel(\"\", forSegment: index)",
                  "segments whose AX names were washed out"),
-    "double-write": ("            if selection != item.id { selection = item.id }",
-                     "            selection = item.id\n            selection = item.id",
+    # The coordinator commits once, guarded by an inequality; a mutation that writes
+    # twice must show as two binding writes for one click.
+    "double-write": ("if self.parent.selection != selection { self.parent.selection = selection }",
+                     "if self.parent.selection != selection { self.parent.selection = selection\n          self.parent.selection = selection }",
                      "a segment that writes the pane twice for one click"),
 }
 
@@ -381,7 +388,7 @@ def evaluate(inspected, app_output, label, expected=True):
         return False
     found = [line for line in lines.splitlines() if line.startswith("BUTTONS ")]
     count = int(found[0].split()[1]) if found else -1
-    check(count == 3, "%s: the bar vends one AXButton per segment (%d found)" % (label, count))
+    check(count == 3, "%s: the bar vends one AX element per segment (%d found)" % (label, count))
     check("NAMING ok" in lines,
           "%s: every segment names the pane it opens in the AX tree" % label)
     check("SELECTION ok" in lines,
