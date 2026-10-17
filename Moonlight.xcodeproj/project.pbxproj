@@ -482,6 +482,7 @@
 				// this, `#if DEBUG` in a .swift file silently compiles to nothing, which is how
 				// a Debug-only probe expectation class disappeared from Release-visible headers.
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" = "DEBUG ML_APPKIT_TABS_ROLE";
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
@@ -542,6 +543,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac2;
 				PRODUCT_NAME = MoonlightEnhanced;
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Moonlight-Swift.h";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" = ML_APPKIT_TABS_ROLE;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
