@@ -26,6 +26,14 @@ enum TabBarConfig {
   static let outerPadding: CGFloat = 3
   static let minimumSegmentWidth: CGFloat = 66
 
+  // A translucent white under the track glass. The track's material bends whatever
+  // the window lets through it -- including a dark desktop behind the window -- and
+  // over a dusk wallpaper that pull turned the track dirty grey (measured 220,216,213)
+  // while the approved reference keeps it a bright wash of the page's own colours
+  // (240,245,252 cool, 255,250,246 warm). The backing isolates the pull from the
+  // desktop: at this weight the page's wash still bleeds through, the dark wallpaper
+  // does not. A flat translucent fill is chrome, not fake glass -- it bends nothing.
+  static let trackBackingColor = Color.white.opacity(0.55)
   static let accentCoolBlue = Color(
     .sRGB, red: 0.34, green: 0.62, blue: 0.95, opacity: 1.0
   )
@@ -143,6 +151,12 @@ public struct LiquidGlassTabBar: View {
           .animation(reduceMotion ? nil : fluidAnimation, value: selection)
         }
       }
+      // Backing under the glass (see trackBackingColor): a .background, so the
+      // container folds only glass, never the fill.
+      .background(
+        Capsule(style: .continuous)
+          .fill(TabBarConfig.trackBackingColor)
+      )
 
       // Buttons on top of the glass: real Buttons, so VoiceOver hears a button with a
       // selection state and the keyboard reaches every pane. .plain keeps them
