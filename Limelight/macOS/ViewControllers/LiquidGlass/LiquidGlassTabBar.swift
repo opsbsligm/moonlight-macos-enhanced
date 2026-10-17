@@ -17,13 +17,29 @@ enum TabBarConfig {
   static let fontSize: CGFloat = 12
   static let interSpacing: CGFloat = 2
   // The selected capsule's tint, measured off the system's own tab pickers (Activity
-  // Monitor's functional areas): a light neutral frost, not the accent. A blue-tinted
-  // capsule read as "not the system's" and was rejected twice; the one place colour may
-  // appear is the label. Neutral means the channels agree: the audit refuses a tint
+  // Monitor's functional areas): the slide rides *lighter* than its track (measured:
+  // the system's track sits at 235 grey and its selected capsule at 252), so the tint
+  // is a near-white frost pushed hard, not a neutral mid-grey. A mid-grey tint darkens
+  // the glass over a light page -- measured 212 under a 246 track -- and a darkened
+  // slide reads as a sunken smudge, which is the version the user rejected as "not
+  // restored at all". Neutral still means the channels agree: the audit refuses a tint
   // whose channels drift apart, so a regression to blue has to pass a measurement first.
   static let selectedGlassTint = Color(
-    .sRGB, red: 0.55, green: 0.60, blue: 0.68, opacity: 0.28
+    .sRGB, red: 0.95, green: 0.96, blue: 0.98, opacity: 0.85
   )
+  // The track's own tint, measured off the same reference: Activity Monitor's track
+  // sits at 235 grey under a white slide at 252 -- the track is *darker* than what
+  // rides on it. A track with no tint copies the page (measured: 246 over the washed
+  // base) and a white slide on a near-white track is invisible, which is the flat bar
+  // the user threw back as "not restored". A neutral grey pull puts the depth back.
+  static let trackGlassTint = Color(
+    .sRGB, red: 0.45, green: 0.46, blue: 0.48, opacity: 0.30
+  )
+  // The slide is raised, not painted on: the system's picker keeps a soft shadow under
+  // the selected capsule, and the refraction edge alone did not read as depth over the
+  // light page. A shadow is chrome, not fake glass -- it bends nothing and colours
+  // nothing, it only sits the capsule above the track.
+  static let selectionShadowColor = Color.black.opacity(0.18)
   // The bar lays out at the system control's metrics: 13pt labels, 28pt row, 3pt track
   // inset, capsule ends.
   static let labelFontSize: CGFloat = 13
@@ -39,12 +55,13 @@ enum TabBarConfig {
   // Activity Monitor's selected segment: around (30,30,30) over a light page). A white
   // label was tried and reads as an accent chip, not a glass slide -- measured 0.99
   // lightest pixel on the very surface that is supposed to be the point.
-  static let selectedLabelColor = Color(nsColor: NSColor(name: nil) { appearance in
-    let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-    return isDark
-      ? NSColor(srgbRed: 0.92, green: 0.92, blue: 0.94, alpha: 1.0)
-      : NSColor(srgbRed: 0.12, green: 0.12, blue: 0.13, alpha: 1.0)
-  })
+  // One dark for both appearances, because the slide is one bright frost in both:
+  // the white capsule over a dark track measured unreadable with the light label this
+  // used to pick in Dark Aqua (white on white). The system's picker keeps the slide's
+  // label dark wherever the slide frosts light, and this slide always frosts light.
+  static let selectedLabelColor = Color(
+    .sRGB, red: 0.12, green: 0.12, blue: 0.13, opacity: 1.0
+  )
   // Unselected labels keep the system's own primary label colour: the system's tab
   // picker does not dim them into greyed-out secondary text, and neither does this bar.
   static let unselectedLabelColor = Color(nsColor: .labelColor)
@@ -125,7 +142,9 @@ public struct LiquidGlassTabBar: View {
           // Track: the bar's own glass, bending the page base underneath it.
           Capsule(style: .continuous)
             .fill(Color.clear)
-            .glassEffect(.regular, in: Capsule(style: .continuous))
+            .glassEffect(
+              .regular.tint(TabBarConfig.trackGlassTint),
+              in: Capsule(style: .continuous))
             .zIndex(0)
 
           // Selection: a second glass capsule inside the same container, so the system
@@ -141,6 +160,8 @@ public struct LiquidGlassTabBar: View {
                       .tint(TabBarConfig.selectedGlassTint),
                     in: Capsule(style: .continuous)
                   )
+                  .shadow(color: TabBarConfig.selectionShadowColor,
+                          radius: 2.5, y: 1)
                   .matchedGeometryEffect(id: "selectionPill", in: nsMorph)
                   .frame(width: width(for: item), height: TabBarConfig.tabBarHeight)
               } else {
