@@ -468,18 +468,17 @@ jobs:
       # glass, which is what makes the availability branch a behaviour and not a claim.
       run: python3 scripts/liquid-glass-overlay-tests.py
 
-    - name: Verify the tab bar answers to a drag the way the accepted UI needs
+    - name: Verify the tab bar answers to a click the way the accepted UI needs
       # The audit reads for the glass API and the overlay container proves the panels;
-      # neither answers the behavioural half the objective asks: who owns the pointer
-      # over the bar, whether a pane commit can land while native tracking still holds
-      # the pointer (the shape that makes a drag feel stuck), how many writes one
-      # release produces, and what the deferral costs. This compiles the shipping
-      # LiquidGlassTabBar.swift -- the real file -- into a throwaway AppKit program
-      # that hit-tests the real geometry, drives the tracking-end boundary AppKit
-      # actually reaches (synthetic mouse-downs cannot enter the cell's private
-      # tracking loop, and the harness says so out loud), and measures the commit
-      # delay. No claims about 120/180 FPS are made here; only what is measured.
-      run: python3 scripts/liquid-glass-tab-drag-tests.py
+      # neither answers the behavioural half: can a screen reader say which pane each
+      # segment opens, and does one click produce exactly one selection with the tree
+      # agreeing. This compiles the shipping LiquidGlassTabBar.swift -- the real file --
+      # into an app with a real window, reads it over accessibility from a separate
+      # process (the tree only exists for out-of-process clients), clicks the segment
+      # for real through the window server, and reports what the binding and the tree
+      # each saw. It skips out loud on a host with no GUI session. Only what is
+      # measured is claimed.
+      run: python3 scripts/liquid-glass-tab-bar-tests.py
 
     - name: Verify a multi-notch wheel event is worth the notches it carries
       # HIDScrollEventDiscreteDeltaForAxis reads the notch count out of the event's own
