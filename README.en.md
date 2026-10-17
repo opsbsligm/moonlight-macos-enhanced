@@ -1,27 +1,32 @@
 # Moonlight for macOS — Enhanced Edition
 
 [![Build](https://github.com/opsbsligm/moonlight-macos-enhanced/actions/workflows/build.yml/badge.svg)](https://github.com/opsbsligm/moonlight-macos-enhanced/actions/workflows/build.yml)
-[![Release](https://github.com/opsbsligm/moonlight-macos-enhanced)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest)
+[![Release](https://img.shields.io/github/v/release/opsbsligm/moonlight-macos-enhanced?label=release&color=blue)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/opsbsligm/moonlight-macos-enhanced/total)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases)
 [![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey)](https://developer.apple.com/macos/)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 
-A standalone enhanced macOS client derived from the [Moonlight Game Streaming Project](https://github.com/moonlight-stream), historically originating from [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced). Since October 2026 this repository is the independent mainline and no longer syncs with any upstream.
+A standalone enhanced macOS client historically originating from [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) which itself derives from the [Moonlight Game Streaming Project](https://github.com/moonlight-stream). Since October 2026 this repository is the independent mainline and no longer syncs with any upstream. The upstream author rejected this fork's PR; the repository now evolves independently with its own direction.
 
-**What differs from the original, in one line**: keyboard and mouse input follow the same industrial-standard mapping used by Parsec, UU Remote and Steam Link, and that mapping is testable and diagnosable. Everything else — codecs, HDR, audio, controllers — comes from upstream. The mapping table, the design rules and the root causes behind the fixed issues are in [`docs/input-mapping-design.md`](docs/input-mapping-design.md); the head-to-head comparison is in [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md).
+**What differs from the original, in one line**: keyboard and mouse input follow the same industrial-standard mapping used by Parsec, UU Remote and Steam Link, and that mapping is testable and diagnosable. Everything else — codecs, HDR, audio, controllers — is continuously enhanced on top. The mapping table, the design rules and the root causes behind the fixed issues are in [`docs/input-mapping-design.md`](docs/input-mapping-design.md); the head-to-head comparison is in [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md).
 
 ## What it does
 
-- GameStream / Sunshine host discovery and pairing
-- H.265/HEVC and AV1 hardware decoding
-- HDR, with a choice of HDR→SDR tone-mapping strategies (including a `No Exposure Shift` option)
-- Multi-channel audio plus microphone streaming
-- Virtual Xbox 360 controller, with device-identification fixes for Xbox Elite 2 and Betop Zeus pads
-- Core HID high-precision mouse input, in both locked and free-pointer modes
-- **A streaming control bar docked on one screen edge**: a handle that stays visible at the edge (14×48 points while idle) and can be dragged to any of the four edges. In free-pointer or explicitly released mode a local pointer dwelling 12pt inward for 120ms only *lights the handle* - the game keeps the pointer and nothing opens - and **clicking the lit handle** is what expands the bar, against the same rectangle that was drawn (in remote-desktop mode the capture flag stays on while the local pointer remains authoritative, so the handle lights and takes that click there too). **In locked game mode there is no local pointer to hover and the remote cursor position is never guessed** — there the open-control-center shortcut (`⌃⌥C` by default) always opens the sidebar and closes it again on the next press (never while the handle is being dragged), and the release-mouse shortcut hands the pointer back so the handle can be lit and clicked like any other arrival. Nothing at the edge opens the bar on its own while locked: the two-flick gesture that once stood in for arrival completed during ordinary aiming and took the pointer out of the game every time, so it is deleted rather than retuned. A bar whose handle the pointer never reached returns the pointer to the game after about 2500ms; once the pointer has been on it, it collapses 450ms after leaving. Detection is in local pointer and window points, never scaled by stream resolution (entry design, pointer ownership and field evidence in [`docs/edge-sidebar-locked-entry-2026-09-28.md`](docs/edge-sidebar-locked-entry-2026-09-28.md))
-- A live performance overlay, plus the real state of the video pipeline — whether MetalFX and VideoToolbox frame interpolation actually took effect
-- Chinese and English interfaces: menus, permission prompts and the log panel are all localised
-- **A devices pane**: lists what is on the local USB bus, attributes each device to a specific reason (reserved class / local input device / no matching rule / precondition unmet), reports whether *this* build's signature could load a driver extension at all, and reads the host's claim as one of four answers — offered, refused, unreachable, or never asked. `unreachable` is deliberately not a refusal: no route, an error status, or an answer signed by a different machine all land there, and calling it a refusal would be reporting a decision nobody heard.
+- **Core streaming**: GameStream / Sunshine host discovery and pairing; H.265/HEVC & AV1 hardware decoding; HDR with multi-strategy HDR→SDR tone mapping (including `No Exposure Shift`); multi-channel audio plus microphone streaming
+- **Video enhancement pipeline**: MetalFX super-resolution and scaling (quality/performance/off), VideoToolbox low-latency frame interpolation, **forced interpolation** (bypasses the display-refresh ≥2× stream-FPS gate, trades 4:4:4 for working FI), runtime-observable render path and engine attachment state
+- **Input system**: Core HID high-precision mouse (locked/free-pointer dual modes), fully-repaired industrial-standard keyboard mapping (benchmarked against Parsec/UU Remote/Steam Link), virtual Xbox 360 controller with device identification fixes (Xbox Elite 2, Betop Zeus), clipboard sync
+- **Streaming control bar (edge sidebar)**: A handle dockable on any of four edges (14×48pt when collapsed), smart glow/click-to-open/shortcut activation, locked-mode toggle via ⌃⌥C, no remote cursor guessing, auto-timeout return
+- **Performance diagnostics**: Real-time performance overlay, video pipeline runtime status panel, input diagnostics recorder, one-tap diagnostics report export
+- **USB device diagnostics pane**: Enumerates the local USB bus, attributes each device to a specific reason (reserved class / local input device / no matching rule / precondition unmet), reports whether this build's signature could load a driver extension, reads the host's claim as one of four states (offered / refused / unreachable / never asked)
+- **Interface**: Bilingual Chinese/English (menus, permission prompts, log panel, host cards all localised), macOS 27 Liquid Glass frosted-glass design language, Activity-Monitor-style native tab navigation
+- **Quality gates**: 60+ behavioural constraint audits (memory leaks, reference cycles, keyboard conflicts, resource leaks, build warnings, etc.), each gate carries its own self-test decoy
+
+## Current limitations
+
+- **No USB device redirection**. The devices pane diagnoses only. Redirection still needs a Developer ID signature ($99/year Apple Developer Program) and a host-side virtual bus (DriverKit DExt) — neither is in place. The trade-off is documented in [`docs/usb-redirection-design.md`](docs/usb-redirection-design.md).
+- **macOS 26.0+ required at runtime**. `MACOSX_DEPLOYMENT_TARGET = 26.0` because the Liquid Glass window layer needs it.
+- **Ad-hoc signed builds**. Every build needs a first-run allowance under System Settings → Privacy & Security. Notarised Developer ID builds are currently unavailable.
+- **Real-world interpolation/SR tuning**. The video enhancement pipeline architecture is complete, but 90fps dynamic interpolation needs ongoing real-stream polishing.
 
 ## Host compatibility
 
@@ -29,49 +34,39 @@ A standalone enhanced macOS client derived from the [Moonlight Game Streaming Pr
 |---------------|---------------|-------|
 | [Foundation Sunshine](https://github.com/qiin2333/foundation-sunshine) | ⭐ Recommended | Best support for microphone uplink, YUV 4:4:4, multi-channel audio and two-way clipboard for text and single images |
 | [Sunshine (LizardByte)](https://github.com/LizardByte/Sunshine) | ✅ Supported | Most features work; some advanced paths are limited |
-| GeForce Experience | ⚠️ Basic | Deprecated, and missing newer features such as microphone uplink |
-
-## What it does not do yet
-
-- **No USB device redirection.** The devices pane diagnoses only. Redirection still needs a Developer ID signature and a host-side virtual bus, and neither is in place, so it promises no handover will succeed. The trade-off is in [`docs/usb-redirection-design.md`](docs/usb-redirection-design.md) and the host side would have to agree to [`docs/usb-redirection-host-contract.md`](docs/usb-redirection-host-contract.md).
-- **macOS 26.0 or newer at runtime.** `MACOSX_DEPLOYMENT_TARGET = 26.0`, because the Liquid Glass window layer needs it. What supporting macOS 15/12 would take (upstream issue #26) is in [`docs/contributing.md`](docs/contributing.md).
-- **Every build carries an install step.** These builds are ad-hoc signed, so the first launch needs an allowance under System Settings → Privacy & Security.
+| GeForce Experience | ⚠️ Basic | Deprecated, missing newer features such as microphone uplink |
 
 ## Download and install
 
-1. Take the newest image from [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest): `Moonlight-macOS-Enhanced-{arm64,x86_64,universal}.dmg`, each with a matching `.sha256`. Images are named per architecture rather than per version — the version is checked inside the image against the build number CI computed, not against a filename. If you are unsure, take `universal`.
-2. Open the DMG and drag `MoonlightEnhanced.app` into Applications. In Finder, the Dock and the Force Quit list it appears as 「Moonlight 增强版」.
+1. Take the newest image from [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest): `Moonlight-macOS-Enhanced-{arm64,x86_64,universal}.dmg`, each with a matching `.sha256`.
+2. Open the DMG and drag `MoonlightEnhanced.app` into Applications.
 3. On first launch, allow it under System Settings → Privacy & Security.
 
-> ℹ️ This build installs as `MoonlightEnhanced.app`, so it no longer replaces the Qt client's `Moonlight.app` (issue #41) and the two can live side by side. If `/Applications` still holds a `Moonlight.app` installed by an earlier build of *this* repository, delete it first: both carry the same bundle identifier (`std.skyhua.MoonlightMac2`), so LaunchServices may keep launching the stale copy and the permissions follow the old path.
+> ℹ️ This build installs as `MoonlightEnhanced.app`, so it does not replace the Qt client's `Moonlight.app` (issue #41) and the two can coexist. If `/Applications` still holds a `Moonlight.app` installed by an earlier build of *this* repository, delete it first: both carry the same bundle identifier (`std.skyhua.MoonlightMac2`), so LaunchServices may keep launching the stale copy and permissions follow the old path.
 
 ## Building from source
 
 ```bash
 git clone --recurse-submodules <repo-url>
 cd moonlight-macos-enhanced
-scripts/download-frameworks.sh   # FFmpeg / SDL2 / OpenSSL — required before the first build
-scripts/build.sh
+scripts/download-frameworks.sh   # required before the first build
+scripts/build.sh                 # or open Moonlight.xcodeproj in Xcode
 scripts/package-dmg.sh
 ```
 
-Skipping `download-frameworks.sh` makes common-c fail to compile, because `libs/` is gitignored by design. Xcode and deployment-target requirements are in [`docs/contributing.md`](docs/contributing.md).
+Skipping `download-frameworks.sh` makes common-c fail to compile. Xcode and deployment-target requirements are in [`docs/contributing.md`](docs/contributing.md).
 
 ## Reporting a problem
 
-**Copy the diagnostics report first.** `Settings → App → Debug Log → Copy Diagnostics Report…` puts a paste-ready report on the clipboard, and the pairing-failure popup carries the same button. If a mouse stopped moving, turn on `Settings → App → Debug Log → Input Diagnostics`, reproduce once, then copy — the switch has to be on during the reproduction, because the ledger records the session that was being watched.
+1. **Copy the diagnostics report first.** `Settings → App → Debug Log → Copy Diagnostics Report…` puts a paste-ready report on the clipboard, and the pairing-failure popup carries the same button.
+2. **If a mouse stopped moving, turn on `Settings → App → Debug Log → Input Diagnostics`, reproduce once, then copy.** The switch has to be on during the reproduction because the ledger only records the session being watched.
+3. Then add: which host software and version, whether Mos/BetterMouse/SteerMouse or another pointer utility is running, and the steps next to what you expected.
 
-Then add: which host software and version (Sunshine or GeForce Experience), whether Mos / BetterMouse / SteerMouse or another pointer utility is running, and the steps you took next to what you expected. What the report contains, why the switch comes first, and what is redacted before anything leaves the machine is in [`docs/diagnostics-report.md`](docs/diagnostics-report.md).
+What the report contains and what is redacted is in [`docs/diagnostics-report.md`](docs/diagnostics-report.md).
 
 ## Documentation
 
-[`docs/README.md`](docs/README.md) indexes every document by reader, and [`docs/contributing.md`](docs/contributing.md) covers the gates — each one ships with a self-test, because a gate that has never failed is not evidence. Per-release detail with root causes is in [`CHANGELOG.md`](CHANGELOG.md), and the content archived off this page is in [`docs/history/rounds.md`](docs/history/rounds.md).
-
-> Written in English: `input-mapping-benchmark.md`, `upstream-issue-status.md`,
-> `windows-auto-signin-design.md`. Written in Chinese: `docs/README.md` and
-> `contributing.md`, `diagnostics-report.md`, `input-mapping-design.md` and the two
-> `usb-redirection-*.md` documents. A translation pull request for that second group would
-> be genuinely welcome rather than politely declined.
+[`docs/README.md`](docs/README.md) indexes every document by reader; [`docs/contributing.md`](docs/contributing.md) covers the gates — each one ships with a self-test, because a gate that has never failed is not evidence. Per-release detail with root causes is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Screenshots
 
@@ -89,22 +84,16 @@ Then add: which host software and version (Sunshine or GeForce Experience), whet
 
 ## Contributing
 
-Fork → feature branch → commit in [Conventional Commits](https://www.conventional-commits.org/) form → pull request. Gate list, commit types and the version/tag convention are in [`docs/contributing.md`](docs/contributing.md).
+Fork → feature branch → commit in [Conventional Commits](https://www.conventionalcommits.org/) form → pull request. The gate list (60+ behavioural constraints, each with its own self-test decoy), commit types and version/tag conventions are in [`docs/contributing.md`](docs/contributing.md). CI/CD runs the full gate suite on every push; the release gate blocks publishing until all checks pass.
 
-## Contact
+## Licence
 
-- 🐙 Issues: [opsbsligm/moonlight-macos-enhanced](https://github.com/opsbsligm/moonlight-macos-enhanced/issues) — please attach a diagnostic report, see [How to report](README.md).
-
-This project is maintained independently; the contact details of the original author it
-originated from are no longer the channel for this codebase.
+GPL-3.0 — see [LICENSE](LICENSE). Bundled third-party components: moonlight-common-c (GPLv3, as a Git submodule), OpenSSL (Apache 2.0), FFmpeg (LGPLv2.1+), SDL2 (zlib), MASPreferences (BSD-2-Clause), Roboto Font (Apache 2.0).
 
 ## Acknowledgements
 
 - [Moonlight Game Streaming Project](https://github.com/moonlight-stream) — the original upstream
 - [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — the origin this project started from (now independent)
+- [opsbsligm/moonlight-macos-enhanced](https://github.com/opsbsligm/moonlight-macos-enhanced) — the current independent home
 - [Parsec](https://parsec.app) — reference for keyboard-mapping practice
 - Every contributor and test player
-
-## License
-
-GPL-3.0 — see [LICENSE](LICENSE). Bundled third-party components: moonlight-common-c (GPLv3), OpenSSL (Apache 2.0), FFmpeg (LGPLv2.1+), SDL2 (zlib), MASPreferences (BSD-2-Clause), Roboto Font (Apache 2.0).

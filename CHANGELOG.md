@@ -7,6 +7,159 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 视频管线
+- feat(video): observe actual drawable presentation timing
+- feat(video): hold 4:4:4 back when interpolation is forced
+- feat(video): force frame interpolation past the cadence gate
+- fix(video): score only gross overruns and fund them with measurements
+- fix(video): fund the interpolation deadline with a whole source frame
+- fix(video): scale recovery cooldown with actual processing cost
+- fix(video): retry a paused enhancement engine after a growing cooldown
+- fix(video): isolate SR failures for source and generated frames
+- fix(video): bound queued SR work by the total presentation deadline
+- fix(video): distinguish paused super resolution from frame budget retry
+- fix(video): stop repeated interpolation failure and deadline overruns
+- fix(video): pause repeated VT enhancement overload and failures
+- fix(video): bound asynchronous VT interpolation and retire safely
+- fix(video): process VT super resolution off the draw thread
+- fix(video): retry bounded presents before costly enhancement
+- fix(video): keep the frame processor's own output pixel format
+- fix(video): hand-merge the interpolation output pool attributes
+- test(video): lift the working report from its own state label
+- test(video): reject regressions in cost-aware recovery cooldown
+- test(video): isolate native VT doubles from system runtime classes
+- test(video): replay pool reset and cached suspension lifecycle
+- test(video): wire VT report checks into the macOS CI driver
+- test(video): register VT probe report verifier driver
+- test(video): capture real VT output and processing cost evidence
+- test(video): use the shared native toolchain for async lifecycle
+- test(video): keep cache lifetime mutation valid inside draw scope
+- test(video): register presentation replay in aggregate reachability
+- test(video): tier submit checks to what the host pipeline can prove
+- docs(video): extend the interpolation evidence to a forty-minute session
+- docs(video): name the cadence room a high-refresh panel leaves to VT
+- docs(video): record the post-fix interpolation evidence on real hardware
+- docs(video): four-group frame-time baseline, FI breaker evidence
+- docs(video): second root cause - the output pool never built
+- docs(video): live force-gate verified; VT rejects YUV444 source format
+- docs(video): force-interpolation design and unverified live status
+- chore(video): name call cost and budget when the FI breaker trips
+
+### USB 设备
+- feat(usb): name the missing precondition instead of one shared refusal
+- feat(usb): group pure hubs behind permission disclosure
+- feat(usb): show each device as a card a player can recognise and act on
+- fix(usb): report the first sidebar state, not only its successors
+- fix(usb): reject device requests after host slots are exhausted
+- fix(usb): preserve composed device names and remove display controls
+- fix(usb): require exact numeric acknowledgments
+- fix(usb): reject incomplete snapshots during registry invalidation
+- fix(usb): show local permissions separately from session readiness
+- fix(usb): fold pure hubs in the streaming sidebar
+- fix(usb): read host metadata without leaking application graphs
+- fix(usb): observe host changes without deprecated SwiftUI overload
+- fix(usb): isolate host capability callbacks and require pairing
+- fix(usb): enumerate settings devices off the UI thread
+- fix(usb): move stream menu enumeration off the presentation thread
+- fix(usb): record the activation ask before the port is touched
+- refactor(usb): separate permissions from stream sidebar operations
+- test(usb): let the live acceptance read the sidebar's own words
+- test(usb): validate device scans in settings leak sweeps
+- test(usb): retain negative fixtures for scan visit acceptance
+- test(usb): require a completed scan for every device page visit
+- test(usb): await completed device scans after app launch
+- test(usb): walk the whole host chain over a real socket, parser included
+- docs(usb): correct client identity in host pairing diagnostics
+- docs(usb): record device page lifecycle acceptance evidence
+- docs(usb): correct the current host capability query boundary
+- docs(usb): pin the host patch proposal to the loopback-proven shape
+
+### 串流控制栏
+- feat(edge): let the dock open the moment the dwell arrives
+- feat(edge): locked-mode flick entry with INFO diagnostics and i18n
+- fix(edge): top dock keeps its strip; matrix tooling stops faking flakes
+- fix(edge): windowed mode gets the edge tab; pill shrinks to a badge
+- test(edge): anchor acceptance to the dock's edge when windowed
+- test(edge): pump event-tracking mode until the dwell answers
+- test(edge): released-precondition guard and single-event flick injection
+- test(edge): docked-edge detector covers top/bottom, helper gains drag
+- test(edge): focus-loss recovery passes on hardware (8/0)
+- test(edge): menu and press-through rows pass on hardware
+- test(edge): released-mode hover x30 passes on real hardware
+- test(edge): the ctrl-opt-c row now judges itself from frame diffs
+- test(edge): the environment speaks for itself
+- test(edge): trust the harness before blaming the app
+- test(edge): armed means growth, not a wide band
+- test(edge): live acceptance measures the handle, not memory
+- test(edge): the summon gate replays its negative controls
+- docs(edge): titlebar-badge removal verified green on CI
+- docs(edge): queue the interpolation force-switch as the next target
+- docs(edge): four-edge matrix closed; CI flake root-caused
+- docs(edge): folding finding, flick 30/30, focus-row premise fix
+- docs(edge): locked-flick session notes and probe plan
+- docs(edge): left-dock matrix green; top/bottom await a free stream
+- docs(edge): full released matrix green on hardware (7/0)
+- docs(edge): record green CI and local unlock blocker
+- docs(edge): session state at re-lock; stream survived the lock screen
+
+### 设置
+- feat(settings): grey the VT upscaling rows the scaler cannot honour
+- feat(settings): tell the player which sources the VT scaler can rebuild
+- fix(settings): restore the system disclosure and let rows resize
+- fix(settings): give the devices page disclosures a card of their own
+- fix(settings): disable host check until a paired host is selected
+- fix(settings): stop retaining full application graphs per visit
+- refactor(settings): draw the first-run sheet on the same glass
+- refactor(settings): put every section card on the system glass
+- test(settings): include USB pages in memory visit cycles
+- style(settings): let the system's own tab picker draw the selection
+- style(settings): return the tab bar byte-for-byte to the approved build
+- style(settings): keep the desktop out of the track's glass bend
+- style(settings): restore the floating glass slide the user approved
+- style(settings): lift the tab slide out of a track it can read against
+- style(settings): frost the tab selection like the system's own picker
+- style(settings): let the tab bar draw its selection as system glass
+- style(settings): put the tab bar back on a glass track
+- style(settings): set the whole surface in the system face
+
+### 界面
+- fix(ui): kill the corner blob and give the slide a tint the eye can see
+- fix(ui): drop the invisible tabs role and give the glass a page to bend
+- test(ui): render USB permission pane and restore saved selection
+
+### 数据库
+- fix(database): annotate header pointers for nullability completeness
+- fix(database): break the host/app retain cycle with a weak pointer
+- fix(database): preserve the library when persistent store opening fails
+- fix(database): preserve legacy nullability alongside metadata lookup
+- test(database): register preservation gate in CI reachability audit
+
+### 构建
+- fix(build): stamp local builds with the CI build number
+- fix(build): bash exec and re-sign steps in framework download
+- ci(build): a cancelled upstream supersedes the gate, it does not fail it
+
+### CI
+- fix(ci): stream mutation progress and report per-gate duration
+- fix(ci): make interpolation worker self capture explicit
+- fix(ci): link the cadence driver against libm on Linux runners
+
+### 部署
+- fix(deploy): serialize installation reports with atomic replacement
+- fix(deploy): restore the previous app when installation fails
+
+### 测试
+- fix(qa): isolate debug library and correct product repository links
+
+### 仓库
+- docs(repo): stand on its own, no longer a fork
+- chore(repo): track frame-time evidence logs
+
+### 主机管理
+- feat(hosts): paint the hosts page on the same washed base
+- style(hosts): run the page wash full-height behind the unified toolbar
+- style(hosts): mount each host on one glass card
+
 ## [1.6.0-build1720] - 2026-09-29
 
 

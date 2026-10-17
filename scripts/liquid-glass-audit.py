@@ -77,6 +77,19 @@ def check(files):
             problems.append("%s uses an overshooting curve (%s)" % (name, hit.group(0).strip()))
 
     bar = files.get("LiquidGlassTabBar.swift", "")
+    # The user's accepted look is macOS 27's own tabs rendering: the bar is the native
+    # segmented control and the system draws the selection. Every hand-drawn slide that
+    # preceded this decision was rejected after shipping -- measurements of grey and
+    # blue glass kept losing to the system's own material -- so the file may not own a
+    # glass surface again, and it must keep the native control it was frozen to.
+    if "NSSegmentedControl" not in bar:
+        problems.append("the tab bar is no longer the system's segmented control; the "
+                        "accepted selection is the native tabs rendering, and every "
+                        "hand-drawn stand-in for it has been rejected by the user")
+    if ".glassEffect(" in strip_comments(bar):
+        problems.append("the tab bar draws its own glass again; the selection belongs "
+                        "to the native control, and the overlays that tried to draw it "
+                        "are the exact surface the user threw back")
     # NSSegmentedControl.role = .tabs hides the selected segment's label. Measured inside a
     # real key window over a light page base: the darkest pixel in the selected segment's
     # label band is 0.12 without a role and 0.92 with .tabs, under every combination of
@@ -126,12 +139,14 @@ FIXTURE = {
           .sRGB, red: 0.34, green: 0.62, blue: 0.95, opacity: 1.0
         )
         static let animationDuration: Double = 0.22
-        GlassEffectContainer(spacing: 6) {
-          view.glassEffect(.regular.tint(accentCoolBlue), in: shape)
-        }
+        let control = NSSegmentedControl()
+        control.segmentStyle = .rounded
         """,
     "SettingsOverlayPresenter.swift": """
         context.duration = TabBarConfig.animationDuration
+        GlassEffectContainer(spacing: 6) {
+          view.glassEffect(.regular.tint(accentCoolBlue), in: shape)
+        }
         """,
 }
 
@@ -156,11 +171,17 @@ def self_test():
         "        control.role = .tabs\n        #endif\n        ")
     cases.append(("tabs role behind the SDK guard", guarded, False))
 
-    native = dict(FIXTURE)
-    native["LiquidGlassTabBar.swift"] = native["LiquidGlassTabBar.swift"].replace(
-        "GlassEffectContainer(spacing: 6) {\n          view.glassEffect(.regular.tint(accentCoolBlue), in: shape)\n        }",
-        "let control = NSSegmentedControl()\n        control.segmentStyle = .rounded")
-    cases.append(("system segmented control owns its glass", native, False))
+    redrawn = dict(FIXTURE)
+    redrawn["LiquidGlassTabBar.swift"] = FIXTURE["LiquidGlassTabBar.swift"] + (
+        "\n        GlassEffectContainer(spacing: 2) {\n"
+        "          Capsule().glassEffect(.regular, in: Capsule())\n        }\n        ")
+    cases.append(("a hand-drawn selection slide back in the bar", redrawn, True))
+
+    handcrafted = dict(FIXTURE)
+    handcrafted["LiquidGlassTabBar.swift"] = FIXTURE["LiquidGlassTabBar.swift"].replace(
+        "let control = NSSegmentedControl()\n        control.segmentStyle = .rounded",
+        "someOtherBarView()")
+    cases.append(("a bar that stopped being the system's control", handcrafted, True))
 
     warm = dict(FIXTURE)
     warm["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
@@ -175,7 +196,7 @@ def self_test():
     cases.append(("a retimed shared transition", slow, True))
 
     fake = dict(FIXTURE)
-    fake["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
+    fake["SettingsOverlayPresenter.swift"] = mutate(FIXTURE["SettingsOverlayPresenter.swift"],
                                              "GlassEffectContainer(spacing: 6) {",
                                              "NSVisualEffectView()\n        GlassEffectContainer(spacing: 6) {")
     cases.append(("a hand-made blur replacing the material", fake, True))
@@ -185,20 +206,22 @@ def self_test():
     # undetected while this rule was reported as covering gradients.
     for needle in FAKE_GLASS:
         planted = dict(FIXTURE)
-        planted["LiquidGlassTabBar.swift"] = mutate(
-            FIXTURE["LiquidGlassTabBar.swift"],
+        planted["SettingsOverlayPresenter.swift"] = mutate(
+            FIXTURE["SettingsOverlayPresenter.swift"],
             "GlassEffectContainer(spacing: 6) {",
             "%s\n        GlassEffectContainer(spacing: 6) {" % needle)
         cases.append(("planted %s" % needle, planted, True))
 
     ungrouped = dict(FIXTURE)
-    ungrouped["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
+    ungrouped["SettingsOverlayPresenter.swift"] = mutate(FIXTURE["SettingsOverlayPresenter.swift"],
                                                  "GlassEffectContainer(spacing: 6) {", "VStack {")
     cases.append(("glass elements outside a container", ungrouped, True))
 
     noglass = dict(FIXTURE)
-    noglass["LiquidGlassTabBar.swift"] = mutate(FIXTURE["LiquidGlassTabBar.swift"],
+    noglass["SettingsOverlayPresenter.swift"] = mutate(FIXTURE["SettingsOverlayPresenter.swift"],
                                                ".glassEffect(", ".tint(")
+    noglass["LiquidGlassTabBar.swift"] = noglass["LiquidGlassTabBar.swift"].replace(
+        "control.segmentStyle = .rounded", "customChrome.draw()")
     cases.append(("no native glass at all", noglass, True))
 
     springy = dict(FIXTURE)
@@ -347,6 +370,9 @@ SHARED_CARD_HELPER = "func settingsGlassCard()"
 # every card on every surface spells its request this way, and a surface is allowed to stop
 # drawing glass directly only as long as it keeps asking.
 SHARED_CARD_CALL = ".settingsGlassCard()"
+# Every RadialGradient in a settings file with its start radius captured; the page base
+# owes a point origin (see the rule that reads this).
+PAGE_BASE_START_RADIUS = re.compile(r"startRadius:\s*([0-9.]+)")
 SHARED_CARD_GLASS = ".glassEffect(.regular, in: cardShape)"
 
 
@@ -375,6 +401,13 @@ def settings_surface_problems(texts):
                             "cards stop bending the page as one material" % surface)
     for name in SETTINGS_FILES:
         body = strip_comments(texts[name])
+        for hit in PAGE_BASE_START_RADIUS.finditer(body):
+            if hit.group(1) != "0":
+                problems.append("%s opens a page wash at radius %s; a starting disc "
+                                "clipped by the window's rounded corner reads as a white "
+                                "blob welded to the header (measured on the live screen), "
+                                "so the wash must fade from a point"
+                                % (name, hit.group(1)))
         if SHARED_CARD_HELPER in body and SHARED_CARD_GLASS not in body:
             problems.append("%s exposes %s without %s inside it, so the shared settings card "
                             "is no longer the system material it hands out"
@@ -589,6 +622,9 @@ def settings_self_test(repo):
         ("a fold with a duration of its own",
          edited(shared, "    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()",
                 "    .animation(.easeOut(duration: 0.15), value: expanded.wrappedValue)\n    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()"),
+         True),
+        ("a page wash opened back at a starting disc",
+         edited(shared, "startRadius: 0,", "startRadius: 20,"),
          True),
     ]
     # The pin has to fire while every card still asks for the helper: cards calling a
