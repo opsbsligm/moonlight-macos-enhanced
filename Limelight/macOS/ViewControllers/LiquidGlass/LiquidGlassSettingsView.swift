@@ -114,7 +114,7 @@ struct LiquidGlassSettingsView: View {
         .environmentObject(settingsModel)
       }
       }
-      .frame(maxWidth: 920)
+      .frame(maxWidth: .infinity).frame(minWidth: 400, idealWidth: 680, maxWidth: 800)
       .padding(.horizontal, 24)
       .padding(.top, 20)
       .padding(.bottom, 20)

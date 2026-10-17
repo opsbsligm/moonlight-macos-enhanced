@@ -67,7 +67,9 @@
     self.statusLightView.layer.masksToBounds = YES;
     self.statusLightView.layer.cornerRadius = self.statusLightView.bounds.size.width / 2;
     self.statusLightView.backgroundColor = [NSColor systemGrayColor];
-    self.statusLightView.alphaValue = 0.66;
+    self.statusLightView.alphaValue = 1.0;
+    self.statusLightView.layer.borderWidth = 1.0;
+    self.statusLightView.layer.borderColor = [[NSColor separatorColor] CGColor];
     
     ((HostCellView *)self.view).delegate = self;
 
@@ -214,6 +216,7 @@
 
     // Update UI elements
     self.statusLightView.backgroundColor = statusColor;
+    self.statusLightView.alphaValue = 1.0;
     self.statusLabel.stringValue = statusText;
 }
 
