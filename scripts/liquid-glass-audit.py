@@ -89,9 +89,26 @@ def check(files):
                         "(spacing: TabBarConfig.interSpacing), so its glass stops bending "
                         "the page as one material with the cards beside it")
     if TAB_BAR_TRACK_GLASS not in bar_folded:
-        problems.append("the tab bar lost its track glass (.glassEffect(.regular, "
-                        "in: Capsule(style: .continuous))), which puts the flat grey pill "
-                        "the page was rejected for back under the user's pointer")
+        problems.append("the tab bar lost its tinted track glass (.glassEffect(.regular"
+                        ".tint(TabBarConfig.trackGlassTint), in: Capsule(style: "
+                        ".continuous))), which puts the flat bar back: a track that copies "
+                        "the page hides the white slide under it")
+    track_match = TAB_BAR_TRACK_TINT_COLOUR.search(strip_comments(bar))
+    if track_match is None:
+        problems.append("TabBarConfig.trackGlassTint is no longer a literal sRGB colour, "
+                        "so the track's depth pull cannot be measured")
+    else:
+        tr, tg, tb = (float(track_match.group(i)) for i in (1, 2, 3))
+        if max(abs(tr - tg), abs(tg - tb), abs(tr - tb)) > 0.20:
+            problems.append("the track's tint drifted colourful (r %.2f g %.2f b %.2f): "
+                            "the depth pull has to stay neutral grey" % (tr, tg, tb))
+        if max(tr, tg, tb) > 0.70:
+            problems.append("the track's tint washed out (r %.2f g %.2f b %.2f): the "
+                            "system's track sits *below* its slide (235 under 252), and a "
+                            "wash-white track hides the slide again" % (tr, tg, tb))
+    if TAB_BAR_SELECTION_SHADOW not in strip_comments(bar):
+        problems.append("the selected capsule lost its drop shadow: the system's slide is "
+                        "a raised capsule, and refraction alone did not read as depth")
     if TAB_BAR_SELECTION_GLASS not in bar_folded:
         problems.append("the tab bar's selection is no longer interactive system glass; a "
                         "solid accent chip is the one non-glass thing on a page of glass")
@@ -113,6 +130,16 @@ def check(files):
             problems.append("the selected capsule's tint drifted colourful (r %.2f g %.2f "
                             "b %.2f): the channels must agree within 0.20 or the slide "
                             "reads as an accent chip, which is the rejected look"
+                            % (r, g, b))
+        # The system's slide rides lighter than its track (measured 252 over 235). A
+        # mid-grey tint darkens the glass over a light page (measured 212 under 246)
+        # and the slide sank into a smudge the user rejected outright, so the tint's
+        # channels must sit in the light band for the slide to stay a raised frost.
+        if min(r, g, b) < 0.80:
+            problems.append("the selected capsule's tint left the light band (r %.2f g "
+                            "%.2f b %.2f): the system's own slide frosts lighter than "
+                            "its track, and a tint below 0.80 on any channel darkens "
+                            "the glass into the sunken smudge that was rejected"
                             % (r, g, b))
     if TAB_BAR_REAL_BUTTONS not in bar_folded:
         problems.append("the tab bar's segments stopped being real Buttons, so VoiceOver "
@@ -165,9 +192,15 @@ FIXTURE = {
         GlassEffectContainer(spacing: TabBarConfig.interSpacing) {
           Capsule(style: .continuous)
             .fill(Color.clear)
-            .glassEffect(.regular, in: Capsule(style: .continuous))
+            .glassEffect(
+              .regular.tint(TabBarConfig.trackGlassTint),
+              in: Capsule(style: .continuous))
+        static let trackGlassTint = Color(
+          .sRGB, red: 0.45, green: 0.46, blue: 0.48, opacity: 0.30
+        )
+        static let selectionShadowColor = Color.black.opacity(0.18)
         static let selectedGlassTint = Color(
-          .sRGB, red: 0.55, green: 0.60, blue: 0.68, opacity: 0.28
+          .sRGB, red: 0.95, green: 0.96, blue: 0.98, opacity: 0.85
         )
         Capsule(style: .continuous)
             .glassEffect(
@@ -175,6 +208,7 @@ FIXTURE = {
                 .tint(TabBarConfig.selectedGlassTint),
               in: Capsule(style: .continuous)
             )
+            .shadow(color: TabBarConfig.selectionShadowColor, radius: 2.5, y: 1)
         }
         Button { selection = item.id } label: { Text(item.title) }
           .buttonStyle(.plain)
@@ -240,7 +274,8 @@ def self_test():
     no_track_glass = dict(FIXTURE)
     no_track_glass["LiquidGlassTabBar.swift"] = mutate(
         FIXTURE["LiquidGlassTabBar.swift"],
-        ".glassEffect(.regular, in: Capsule(style: .continuous))",
+        ".glassEffect(\n              .regular.tint(TabBarConfig.trackGlassTint),\n"
+        "              in: Capsule(style: .continuous))",
         ".background(.background)")
     cases.append(("the bar's track back on a plain fill", no_track_glass, True))
 
@@ -260,9 +295,30 @@ def self_test():
     recoloured = dict(FIXTURE)
     recoloured["LiquidGlassTabBar.swift"] = mutate(
         FIXTURE["LiquidGlassTabBar.swift"],
-        "red: 0.55, green: 0.60, blue: 0.68",
+        "red: 0.95, green: 0.96, blue: 0.98",
         "red: 0.34, green: 0.62, blue: 0.95")
     cases.append(("the frost coloured back to the accent", recoloured, True))
+
+    sunk = dict(FIXTURE)
+    sunk["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        "red: 0.95, green: 0.96, blue: 0.98",
+        "red: 0.55, green: 0.56, blue: 0.58")
+    cases.append(("a neutral but mid-grey frost that sinks the slide", sunk, True))
+
+    washed_track = dict(FIXTURE)
+    washed_track["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        "red: 0.45, green: 0.46, blue: 0.48",
+        "red: 0.95, green: 0.96, blue: 0.98")
+    cases.append(("a wash-white track that hides the slide", washed_track, True))
+
+    flat_slide = dict(FIXTURE)
+    flat_slide["LiquidGlassTabBar.swift"] = mutate(
+        FIXTURE["LiquidGlassTabBar.swift"],
+        ".shadow(color: TabBarConfig.selectionShadowColor, radius: 2.5, y: 1)",
+        "")
+    cases.append(("a slide with no shadow sitting flat on the track", flat_slide, True))
 
     no_buttons = dict(FIXTURE)
     no_buttons["LiquidGlassTabBar.swift"] = mutate(
@@ -435,7 +491,11 @@ RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", ".disclosureGroupStyle(")
 # labels bleaches them (measured: darkest label pixel 212 inside the container), so the
 # buttons ride above the container as real Buttons.
 TAB_BAR_TRACK_CONTAINER = "GlassEffectContainer(spacing: TabBarConfig.interSpacing)"
-TAB_BAR_TRACK_GLASS = ".glassEffect(.regular, in: Capsule(style: .continuous))"
+TAB_BAR_TRACK_GLASS = ".glassEffect( .regular.tint(TabBarConfig.trackGlassTint), in: Capsule(style: .continuous))"
+TAB_BAR_TRACK_TINT_COLOUR = re.compile(
+    r"trackGlassTint\s*=\s*Color\(\s*\.sRGB,\s*red:\s*([0-9.]+),\s*"
+    r"green:\s*([0-9.]+),\s*blue:\s*([0-9.]+)")
+TAB_BAR_SELECTION_SHADOW = ".shadow(color: TabBarConfig.selectionShadowColor"
 TAB_BAR_SELECTION_GLASS = ".regular.interactive()"
 TAB_BAR_SELECTION_TINT = ".tint(TabBarConfig.selectedGlassTint)"
 TAB_BAR_TINT_COLOUR = re.compile(
