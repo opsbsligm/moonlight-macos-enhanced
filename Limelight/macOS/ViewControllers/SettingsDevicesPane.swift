@@ -94,7 +94,9 @@ struct DevicesView: View {
             .font(.title2.weight(.semibold))
           Text(languageManager.localize("USB permissions scope"))
             .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity)
         ToggleCell(
           title: "USB device redirection",
           hintKey: "USB permission switch detail",
@@ -411,32 +413,69 @@ struct DevicesView: View {
   /// One device, one card: picture, name, what it is, whether it can move, and why not -- in that
   /// order, because that is the order the questions arrive in a player's head.
   private func deviceCard(_ row: MLDeviceRedirectionPanelRow) -> some View {
-    HStack(spacing: 12) {
-      Image(systemName: row.categorySymbolName)
-        .font(.title3)
-        .foregroundColor(.secondary)
-        .frame(width: 26)
-        .accessibilityHidden(true)
-      VStack(alignment: .leading, spacing: 3) {
-        Text(row.displayName ?? languageManager.localize(row.categoryNameKey ?? "USB class vendor specific"))
-          .font(.body.weight(.medium))
-        Text(languageManager.localize(row.categoryNameKey ?? "USB class vendor specific") + " · " + row.identifiersLine)
-          .font(.caption)
+    HStack(spacing: 14) {
+      // Device type icon in a pill container, Citrix Horizon VDI style
+      ZStack {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+          .fill(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+          .frame(width: 40, height: 40)
+        Image(systemName: row.categorySymbolName)
+          .font(.title3)
           .foregroundColor(.secondary)
-        if row.hasReservedInterface {
-          Text(languageManager.localize("Device stays with this Mac"))
+      }
+      .accessibilityHidden(true)
+
+      // Device info: name, type, identifiers
+      VStack(alignment: .leading, spacing: 4) {
+        Text(row.displayName ?? languageManager.localize(row.categoryNameKey ?? "USB class vendor specific"))
+          .font(.system(size: 13, weight: .semibold))
+          .lineLimit(1)
+        HStack(spacing: 6) {
+          Text(languageManager.localize(row.categoryNameKey ?? "USB class vendor specific"))
             .font(.caption)
             .foregroundColor(.secondary)
+          Text("·")
+            .foregroundColor(Color(nsColor: .tertiaryLabelColor))
+          Text(row.identifiersLine)
+            .font(.caption2)
+            .foregroundColor(Color(nsColor: .tertiaryLabelColor))
+        }
+        // Verdict chip: green/orange/grey badge
+        verdictChip(row)
+      }
+
+      Spacer(minLength: 8)
+
+      // Allow button - Citrix style "toggle" look
+      if !row.hasReservedInterface && row.identity?.vendorID != nil && row.identity?.productID != nil {
+        if hasPermissionRule(row) {
+          Image(systemName: "checkmark.circle.fill")
+            .foregroundColor(.green)
+            .font(.title3)
+        } else {
+          Button(action: { addPermissionRule(row) }) {
+            Text(languageManager.localize("Allow"))
+              .font(.caption.weight(.semibold))
+              .padding(.horizontal, 12)
+              .padding(.vertical, 5)
+              .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+              .foregroundColor(.accentColor)
+              .overlay(Capsule().stroke(Color.accentColor.opacity(0.3), lineWidth: 1))
+          }
+          .buttonStyle(.plain)
         }
       }
-      Spacer(minLength: 8)
-      Button(languageManager.localize(hasPermissionRule(row) ? "USB permission already listed" : "USB allow this model")) {
-        addPermissionRule(row)
-      }
-      .disabled(row.hasReservedInterface || row.identity?.vendorID == nil ||
-                row.identity?.productID == nil || hasPermissionRule(row))
     }
-    .padding(.vertical, 8)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 10)
+    .background(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .fill(Color(nsColor: .controlBackgroundColor).opacity(0.3))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .stroke(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 0.5)
+    )
   }
 
   // A VID/PID rule authorizes a model, not one serial-numbered physical unit.
@@ -465,14 +504,25 @@ struct DevicesView: View {
     return chip(languageManager.localize(textKey), colour: colour)
   }
 
+  /// A compact visual indicator for the device state, matching VDI client conventions.
+  private func miniDot(_ colour: Color) -> some View {
+    Circle()
+      .fill(colour)
+      .frame(width: 7, height: 7)
+      .overlay(Circle().stroke(Color.white.opacity(0.5), lineWidth: 0.5))
+  }
+
   private func chip(_ text: String, colour: Color) -> some View {
-    Text(text)
-      .font(.caption2.weight(.semibold))
-      .padding(.horizontal, 8)
-      .padding(.vertical, 3)
-      .background(Capsule().fill(colour.opacity(0.15)))
-      .foregroundColor(colour)
-      .overlay(Capsule().stroke(colour.opacity(0.45), lineWidth: 1))
+    HStack(spacing: 4) {
+      miniDot(colour)
+      Text(text)
+        .font(.caption2.weight(.semibold))
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 3)
+    .background(Capsule().fill(colour.opacity(0.12)))
+    .foregroundColor(colour)
+    .overlay(Capsule().stroke(colour.opacity(0.3), lineWidth: 0.5))
   }
 
   // MARK: - Actions
