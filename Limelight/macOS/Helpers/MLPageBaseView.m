@@ -37,7 +37,10 @@
     CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
 
     // Cool blue (sRGB 0.34, 0.62, 0.95 -- the tab bar's accent) from the top-leading
-    // corner, which in this view's unflipped geometry is (0, height).
+    // corner, which in this view's unflipped geometry is (0, height). The start
+    // radius is zero: a disc of any size reads, clipped by the window's rounded
+    // corner, as a pale blob welded to the header (a 20pt one did -- the user's
+    // "白圈"), while a point origin fades as the wash the comment above promises.
     const CGFloat blue[] = { 0.34, 0.62, 0.95, 0.16,   // start: the tab accent at 16%
                              0.34, 0.62, 0.95, 0.0 };  // end: same hue, transparent
     const CGFloat blueLocations[] = { 0.0, 1.0 };
@@ -45,7 +48,7 @@
     CGContextSaveGState(ctx);
     CGContextClipToRect(ctx, bounds);
     CGPoint blueCentre = CGPointMake(0.0, NSMaxY(bounds));
-    CGContextDrawRadialGradient(ctx, blueGrad, blueCentre, 20.0,
+    CGContextDrawRadialGradient(ctx, blueGrad, blueCentre, 0.0,
                                 blueCentre, 680.0,
                                 kCGGradientDrawsAfterEndLocation);
     CGContextRestoreGState(ctx);
@@ -59,7 +62,7 @@
     CGContextSaveGState(ctx);
     CGContextClipToRect(ctx, bounds);
     CGPoint amberCentre = CGPointMake(NSMaxX(bounds), 0.0);
-    CGContextDrawRadialGradient(ctx, amberGrad, amberCentre, 20.0,
+    CGContextDrawRadialGradient(ctx, amberGrad, amberCentre, 0.0,
                                 amberCentre, 720.0,
                                 kCGGradientDrawsAfterEndLocation);
     CGContextRestoreGState(ctx);
