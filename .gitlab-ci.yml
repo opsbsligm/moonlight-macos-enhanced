@@ -222,6 +222,27 @@ package-dmg:
     - if: '$CI_COMMIT_TAG'
     - if: '$CI_COMMIT_BRANCH == "main"'
 
+# --- GitHub mirror sync (best practice: GitLab = source of truth) ------------
+# Runs on the untagged VM runner (linux has git + ssh, and the VM can reach
+# github.com). Pushes the full mirror via the repo deploy key (GH_DEPLOY_KEY,
+# file variable, write-enabled). Runs after the gates in earlier stages.
+publish-github:
+  stage: package
+  dependencies: []
+  script:
+    - umask 077
+    - mkdir -p ~/.ssh && cat "$GH_DEPLOY_KEY" > ~/.ssh/gh_deploy
+    - chmod 600 ~/.ssh/gh_deploy
+    - |
+      cat > ~/.ssh/config <<EOF
+      Host github.com
+        HostName github.com
+        IdentityFile ~/.ssh/gh_deploy
+        StrictHostKeyChecking accept-new
+      EOF
+    - git remote add github git@github.com:opsbsligm/moonlight-macos-enhanced.git
+    - git push github --mirror
+
 # --- Notarize (placeholder) --------------------------------------------------
 # Enable once a Developer ID Application certificate is available as CI/CD
 # Variables (DEVELOPER_IDENTITY / APPLE_ID / APPLE_TEAM_ID / APP_SPECIFIC_PASSWORD).
