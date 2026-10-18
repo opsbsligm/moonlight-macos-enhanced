@@ -240,12 +240,13 @@ publish-github:
         IdentityFile ~/.ssh/gh_deploy
         StrictHostKeyChecking accept-new
       EOF
-    - git remote add github git@github.com:opsbsligm/moonlight-macos-enhanced.git
-    # One-way mirror (GitLab = source of truth). Push local heads+tags only,
-    # force (GitHub is a read-only mirror, never holds unique commits), and
-    # prune branches that no longer exist upstream. Explicit refs avoid the
-    # refs/remotes/origin/* push that a plain --mirror would attempt here.
-    - git push github --force --prune "refs/heads/*:refs/heads/*"
+    - git remote add github git@github.com:opsbsligm/moonlight-macos-enhanced.git 2>/dev/null || git remote set-url github git@github.com:opsbsligm/moonlight-macos-enhanced.git
+    # One-way mirror (GitLab = source of truth). Fetch every GitLab head/tag into a
+    # dedicated namespace, then force-push + prune to GitHub. Explicit refspecs avoid
+    # both the refs/remotes/origin/* push and the branch-deletion of a plain --mirror,
+    # and work even when the CI clone is single-branch/shallow.
+    - git fetch --prune origin "+refs/heads/*:refs/gh-mirror/*" "+refs/tags/*:refs/tags/*"
+    - git push github --force --prune "refs/gh-mirror/*:refs/heads/*"
     - git push github --force "refs/tags/*:refs/tags/*"
 
 # --- Notarize (placeholder) --------------------------------------------------
