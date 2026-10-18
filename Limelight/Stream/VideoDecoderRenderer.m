@@ -9,7 +9,8 @@
 #import "VideoDecoderRenderer.h"
 #include "Limelight-internal.h"
 #import "RendererLayerContainer.h"
-#import "MLFramePacer.h"
+#import <Foundation/Foundation.h>
+@class MLFramePacer;
 #import "InterpolationCadencePolicy.h"
 #include "EnhancedPresentationPolicy.h"
 #include "ActualPresentationMetrics.h"
@@ -1418,6 +1419,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     return viewport;
 }
 
+#import "MLFramePacer.h"
 @implementation VideoDecoderRenderer {
     OSView *_view;
 
