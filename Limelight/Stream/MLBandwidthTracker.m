@@ -31,15 +31,15 @@
     free(_buckets);
 }
 
-static uint64_t s_machBase = 0;
-static mach_timebase_info_data_t s_timebase = {0};
-
 /// Nanoseconds since first call, monotonic.
 static inline uint64_t ml_nanos(void) {
-    if (__builtin_expect(s_machBase == 0, 0)) {
+    static dispatch_once_t s_onceToken;
+    static mach_timebase_info_data_t s_timebase;
+    static uint64_t s_machBase;
+    dispatch_once(&s_onceToken, ^{
         mach_timebase_info(&s_timebase);
         s_machBase = mach_absolute_time();
-    }
+    });
     uint64_t raw = mach_absolute_time() - s_machBase;
     return (raw * s_timebase.numer) / s_timebase.denom;
 }
