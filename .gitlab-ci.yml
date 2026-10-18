@@ -16,10 +16,13 @@
 # Dual-hosting: CI/CD job token (scoped) cannot cross projects for submodule
 # fetches, so rewrite the relative submodule URL to an authenticated one using
 # the group-scoped runner token (GRP_CI_JOB_TOKEN, file variable).
-before_script:
+# GIT_SUBMODULE_STRATEGY=none: the runner must not touch submodules at clone
+# time (no auth configured yet); macos jobs pull them via fetch_submodules.
+.fetch_submodules: &fetch_submodules
   - |
     git config --global url."http://oauth2:${GRP_CI_JOB_TOKEN}@172.16.130.6/moonlight/moonlight-common-c.git".insteadOf "../moonlight-common-c.git"
-    git config --global url."http://oauth2:${GRP_CI_JOB_TOKEN}@172.16.130.6/moonlight/moonlight-common-c.git".insteadOf "https://gitlab/opsbsligm/moonlight-common-c.git"
+    git submodule sync --recursive
+    git submodule update --init --recursive
 
 
 stages:
@@ -35,7 +38,7 @@ variables:
   # the build then fails on the first enet include. Verified locally by
   # building with an uninitialized tree: Limelight-internal.h cannot find
   # ../enet/include/enet/enet.h.
-  GIT_SUBMODULE_STRATEGY: recursive
+  GIT_SUBMODULE_STRATEGY: none
   DERIVED_DATA_PATH: "build/xcode/derivedData"
   XCODE_PROJECT: "Moonlight.xcodeproj"
   XCODE_SCHEME: "Moonlight for macOS"
@@ -109,6 +112,9 @@ cache:
   policy: pull-push
 
 download-deps:
+  before_script:
+    - *fetch_submodules
+
   stage: deps
   tags: [macos]
   script:
@@ -124,6 +130,9 @@ download-deps:
 
 # --- Build -------------------------------------------------------------------
 build-app:
+  before_script:
+    - *fetch_submodules
+
   stage: build
   tags: [macos]
   dependencies:
@@ -160,6 +169,9 @@ build-app:
 
 # --- Test --------------------------------------------------------------------
 test-app:
+  before_script:
+    - *fetch_submodules
+
   stage: test
   tags: [macos]
   dependencies:
@@ -180,6 +192,9 @@ test-app:
 # --- Package -----------------------------------------------------------------
 # Produce a DMG only for tags (releases) and main branch pushes (nightly smoke).
 package-dmg:
+  before_script:
+    - *fetch_submodules
+
   stage: package
   tags: [macos]
   dependencies:
