@@ -3,6 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/opsbsligm/moonlight-macos-enhanced?label=release&color=blue)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey)](https://developer.apple.com/macos/)
+[![macOS](https://img.shields.io/badge/macOS-27%20beta-supported-blue)](https://developer.apple.com/macos/)
 [![Standalone](https://img.shields.io/badge/status-independent%20project-green)](https://github.com/opsbsligm/moonlight-macos-enhanced)
 
 Moonlight macOS 客户端的独立增强实现，衍生自 [Moonlight Game Streaming Project](https://github.com/moonlight-stream)，历史起点为 [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced)。本仓库自 2026-10 起是完全独立的主仓库，不再与任何上游同步。本仓库专注于低延迟串流体验与工业标准键盘映射。
@@ -22,11 +23,16 @@ Moonlight macOS 客户端的独立增强实现，衍生自 [Moonlight Game Strea
 - 实时性能叠加层，以及视频管线的运行时状态（MetalFX、VideoToolbox 插帧是否真的生效）
 - **强制插帧开关**：开启后插帧不再要求显示器刷新率≥2 倍串流帧率（如 180Hz 屏跑 120FPS 串流也允许挂载）；插帧只接受 4:2:0 源，强制开启期间即使主机支持也不协商 YUV444（以 4:4:4 画质换插帧生效），运行时徽章如实报告引擎挂载/拒绝原因，见 [`docs/force-interpolation-2026-10-01.md`](docs/force-interpolation-2026-10-01.md)
 - 中英双语界面（菜单、权限弹窗、日志面板都是本地化的）
-- **设备页**：列出本机 USB 总线上的设备，把每台归因到具体原因（保留类别 / 本地输入设备 / 未匹配规则 / 前置条件未满足），报告当前这个包的签名能不能加载驱动扩展，并把主机声明读成四态（支持 / 不支持 / **无法到达** / 还没问过）——「无法到达」不等于「主机拒绝」：请求没走通、状态码是错、或答复由别的机器签名，都落在这一态，而把它说成拒绝会把用户支去翻一台根本没作答复的主机的设置
+- **USB 设备诊断页**：Citrix Horizon VDI 风格设备卡片布局（40×40 圆角图标 + 三行设备层级 + 颜色编码状态芯片），列出本机 USB 总线设备，归因到具体原因（保留类别 / 本地输入设备 / 未匹配规则 / 前置条件未满足），报告签名能否加载驱动扩展，主机声明四态（支持 / 不支持 / **无法到达** / 还没问过）
+- **原生 macOS 分段控件页签**：采用 NSSegmentedControl 替代自绘液态玻璃滑块，页签切换跟随系统外观，Activity Monitor 风格——选中段为磨砂玻璃滑块 + 深色文字，未选中段为系统 labelColor + 发丝线分隔
+- **Liquid Glass 设计语言**：全设置面板统一采用系统玻璃材质（`.glassEffect`）+ 磨砂卡片布局，首页主机卡片同样玻璃化
+
+- **实时性能叠加层**，以及视频管线的运行时状态（MetalFX、VideoToolbox 插帧是否真的生效）
 
 ## 当前边界（不能做什么）
 
-- **USB 设备重定向不做**：设备页只做诊断，重定向本身还需要 Developer ID 签名与主机侧虚拟总线，两者都未到位，所以它不承诺任何一次交接会成功（取舍见 [`docs/usb-redirection-design.md`](docs/usb-redirection-design.md)，主机侧契约见 [`docs/usb-redirection-host-contract.md`](docs/usb-redirection-host-contract.md)）
+- **USB 设备重定向不做**：设备页只做可视化诊断和前置条件检测，实际的重定向还需要 Developer ID 签名与主机侧虚拟总线，两者都未到位。USB 重定向功能已冻结，待 Apple Developer Program 账号就绪后再推进
+- **无上游依赖，完全独立**：本仓库不再是任何上游的 fork，已删除所有上游 remote，不与 moonlight-stream 或 skyhua0224 同步。上游 PR 被拒后不再跟进，所有开发方向自主决定
 - **运行时需 macOS 26.0+**：`MACOSX_DEPLOYMENT_TARGET = 26.0`，Liquid Glass 窗口层依赖该版本；要支持 macOS 15/12（upstream Issue #26）需要的工作见 [`docs/contributing.md`](docs/contributing.md)
 - **每个版本都带安装前提**：本构建是 ad-hoc 签名，首次运行需在「系统设置 → 隐私与安全性」里允许
 
@@ -76,6 +82,14 @@ Xcode 与 deployment target 的要求见 [`docs/contributing.md`](docs/contribut
 
 全部文档的读者与目的见 [`docs/README.md`](docs/README.md)。逐轮变更记录见 [`CHANGELOG.md`](CHANGELOG.md)；从本页归档出去的历史内容见 [`docs/history/rounds.md`](docs/history/rounds.md)。
 
+## 技术栈
+
+- **构建**：Xcode 27 beta + macOS 27 SDK，`MACOSX_DEPLOYMENT_TARGET = 26.0`
+- **UI**：SwiftUI + AppKit 混编，Liquid Glass 玻璃材质（`.glassEffect`），NSSegmentedControl 分段控件
+- **串流管线**：VideoToolbox 解码 + Metal 渲染 + MetalFX 超分 + VT 低延迟插帧
+- **输入**：CoreHID 高精度鼠标 + IOKit 键盘事件拦截 + 虚拟手柄驱动
+- **审计**：60+ 条约束审计，覆盖 Liquid Glass 视觉效果、页签行为、内存泄漏、凭证扫描、国际化、CI 完整性
+
 ## 贡献
 
 Fork → 特性分支 → 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 提交 → PR。
@@ -96,6 +110,6 @@ Fork → 特性分支 → 遵循 [Conventional Commits](https://www.conventional
 ## 致谢
 
 - [Moonlight Game Streaming Project](https://github.com/moonlight-stream) — 原始上游项目
-- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — 本项目的历史起点（已独立，不再同步）
+- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — 本项目的历史起点（**已完全独立，不再同步**）
 - [Parsec](https://parsec.app) — 键盘映射最佳实践参考
 - 所有贡献者与测试用户
