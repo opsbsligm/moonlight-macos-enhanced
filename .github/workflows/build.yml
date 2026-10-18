@@ -287,14 +287,6 @@ jobs:
       with:
         xcode-version: latest-stable
 
-    - name: Show Build Environment
-      run: |
-        xcodebuild -version
-        swift --version
-        uname -m
-        echo "Available schemes:"
-        xcodebuild -list -project Moonlight.xcodeproj || true
-
     - name: Prepare vendored dependencies
       # Run the same script a developer runs. This step used to duplicate the
       # xcframework download inline, which drifted away from the script and left
@@ -306,6 +298,14 @@ jobs:
         ls -la xcframeworks/
         ls -la Packages/OpenSSL.xcframework/
         ls -la libs/
+
+    - name: Show Build Environment
+      run: |
+        xcodebuild -version
+        swift --version
+        uname -m
+        echo "Available schemes:"
+        xcodebuild -list -project Moonlight.xcodeproj || true
 
     - name: Resolve build number
       # build-number.sh is a scheme PreAction and command-line xcodebuild ignores
