@@ -1310,7 +1310,7 @@ def main():
           and body.index('DisclosureCard(storageKey: "settings.devices.technicalDetailsExpanded")')
               < body.index('readinessSection'),
           "driver preconditions remain accessible without dominating the settings page")
-    check('USB allow this model' in pane and 'hasPermissionRule(row)' in pane and 'family: false' in pane,
+    check('USB allowed models' in pane and 'hasPermissionRule(row)' in pane and 'family: false' in pane,
           "device permission authoring uses exact model IDs and avoids duplicate rules")
     check('usbItem.submenu = usbMenu;' in menu and '[self.streamMenu addItem:usbItem]' in menu,
           "session USB choices are reachable from the stream sidebar menu")
