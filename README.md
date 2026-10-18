@@ -1,115 +1,221 @@
 # Moonlight for macOS — Enhanced Edition
 
-[![Release](https://img.shields.io/github/v/release/opsbsligm/moonlight-macos-enhanced?label=release&color=blue)](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest)
-[![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey)](https://developer.apple.com/macos/)
-[![macOS](https://img.shields.io/badge/macOS-27%20beta-supported-blue)](https://developer.apple.com/macos/)
-[![Standalone](https://img.shields.io/badge/status-independent%20project-green)](https://github.com/opsbsligm/moonlight-macos-enhanced)
+<p align="center">
+  <a href="https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest"><img src="https://img.shields.io/github/v/release/opsbsligm/moonlight-macos-enhanced?label=release&color=blue" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-green" alt="License"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/macOS-27%20beta-supported-blue" alt="macOS 27 beta">
+  <img src="https://img.shields.io/badge/status-independent%20project-brightgreen" alt="Independent">
+  <a href="https://github.com/opsbsligm/moonlight-macos-enhanced/actions"><img src="https://img.shields.io/github/actions/workflow/status/opsbsligm/moonlight-macos-enhanced/build.yml?branch=main" alt="CI"></a>
+</p>
 
-Moonlight macOS 客户端的独立增强实现，衍生自 [Moonlight Game Streaming Project](https://github.com/moonlight-stream)，历史起点为 [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced)。本仓库自 2026-10 起是完全独立的主仓库，不再与任何上游同步。本仓库专注于低延迟串流体验与工业标准键盘映射。
+**Moonlight macOS 客户端的独立增强实现** — 完全脱离上游 fork 关系，专注 macOS 平台，对标 Parsec / Steam Link 工业标准的低延迟串流体验。
 
-**与上游原版的差异，一句话**：把键盘/鼠标输入做成与 Parsec、UU 远程、Steam Link 同一套工业标准映射并让它可测试、可诊断，其余能力（编解码、HDR、音频、手柄）沿用上游。
-映射表、设计原则与已修复问题的根因见 [`docs/input-mapping-design.md`](docs/input-mapping-design.md)，逐项对标结论见 [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md)。
+本仓库始于 [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced)（其上游为 [Moonlight Game Streaming Project](https://github.com/moonlight-stream)）。自 2026-10 起**完全独立**，删除所有上游 remote，不再同步任何上游更改，所有开发方向自主决定。
 
-## 能做什么
+---
 
-- GameStream / Sunshine 主机发现与配对
-- H.265/HEVC & AV1 硬件解码
-- HDR 支持，以及 HDR→SDR 的 tone mapping 策略选择（含 `No Exposure Shift` 档）
-- 多声道音频 + 麦克风传输
-- 虚拟手柄 (Xbox 360)，含 Xbox Elite 2 / Betop Zeus 等设备识别修正
-- Core HID 高精度鼠标输入，锁鼠/自由鼠标两种模式
-- **串流中控制栏（边缘把手）**：贴在画面一边缘的把手常驻可见（收起态露出 14×48 逻辑点），可拖到四条边重新停靠。自由鼠标或主动释放下，本地光标向内 12pt 停留 120ms 只会**点亮把手**——指针仍属于游戏，不展开任何面板；**点击点亮的把手**才展开控制栏，命中区域就是看得见的那条把手本身（桌面/远程模式下捕获标志仍在，但本地光标依然是权威指针，把手同样点亮、同样接得住点击）；**锁定游戏鼠标时本地没有可悬停的光标，也绝不估算远端光标位置**——此时打开控制中心快捷键（默认 `⌃⌥C`）必定唤起侧边栏，再按一次收起（拖动把手期间不抢）；主动释放快捷键交还指针后，把手即与其他边缘抵达一样可点亮、可点击。锁定态边缘不做任何自动弹开：曾用于替代感应的“连拨两下”会在正常瞄准时反复完成并抢走指针，已按用户实机反馈删除，而不是改成一个更“聪明”的猜测。指针始终没触达控制栏时约 2500ms 自动把指针交还游戏，触达过则离开后 450ms 收起；感应以本地光标与窗口逻辑点为准，不随串流分辨率放大（入口设计、状态归属与真机取证见 [`docs/edge-sidebar-locked-entry-2026-09-28.md`](docs/edge-sidebar-locked-entry-2026-09-28.md)）
-- 实时性能叠加层，以及视频管线的运行时状态（MetalFX、VideoToolbox 插帧是否真的生效）
-- **强制插帧开关**：开启后插帧不再要求显示器刷新率≥2 倍串流帧率（如 180Hz 屏跑 120FPS 串流也允许挂载）；插帧只接受 4:2:0 源，强制开启期间即使主机支持也不协商 YUV444（以 4:4:4 画质换插帧生效），运行时徽章如实报告引擎挂载/拒绝原因，见 [`docs/force-interpolation-2026-10-01.md`](docs/force-interpolation-2026-10-01.md)
-- 中英双语界面（菜单、权限弹窗、日志面板都是本地化的）
-- **USB 设备诊断页**：Citrix Horizon VDI 风格设备卡片布局（40×40 圆角图标 + 三行设备层级 + 颜色编码状态芯片），列出本机 USB 总线设备，归因到具体原因（保留类别 / 本地输入设备 / 未匹配规则 / 前置条件未满足），报告签名能否加载驱动扩展，主机声明四态（支持 / 不支持 / **无法到达** / 还没问过）
-- **原生 macOS 分段控件页签**：采用 NSSegmentedControl 替代自绘液态玻璃滑块，页签切换跟随系统外观，Activity Monitor 风格——选中段为磨砂玻璃滑块 + 深色文字，未选中段为系统 labelColor + 发丝线分隔
-- **Liquid Glass 设计语言**：全设置面板统一采用系统玻璃材质（`.glassEffect`）+ 磨砂卡片布局，首页主机卡片同样玻璃化
+## ✨ 核心特性
 
-- **实时性能叠加层**，以及视频管线的运行时状态（MetalFX、VideoToolbox 插帧是否真的生效）
+### 🎮 串流引擎
+| 特性 | 说明 |
+|------|------|
+| GameStream / Sunshine 发现与配对 | 自动发现局域网主机，支持配对码配对 |
+| H.265/HEVC & AV1 硬件解码 | 利用 VideoToolbox 进行 GPU 加速解码 |
+| HDR 支持 | HDR→SDR tone mapping 策略可配置（含 No Exposure Shift 档） |
+| 多声道音频 + 麦克风传输 | 支持 7.1 声道及语音回传 |
+| 帧节奏控制（Pacer） | 双队列 + vsync 对齐 + 自适应丢帧，平滑输出 |
+| 90/120 FPS 支持 | 高帧率串流，需 Sunshine 端配合 |
 
-## 当前边界（不能做什么）
+### 🎯 画质增强
+- **MetalFX 超分辨率** — 在解码后画面放大时使用 GPU 重建细节，支持画质/性能档位
+- **VideoToolbox 低延迟插帧** — 显示器刷新率高于串流帧率时自动启用
+- **强制插帧开关** — 允许 180Hz 屏跑 120FPS 串流时也挂载插帧，详见 [`docs/force-interpolation-2026-10-01.md`](docs/force-interpolation-2026-10-01.md)
+- **运行时状态监控** — 实时显示渲染路径、实际缩放引擎、实际插帧引擎及帧率数据
 
-- **USB 设备重定向不做**：设备页只做可视化诊断和前置条件检测，实际的重定向还需要 Developer ID 签名与主机侧虚拟总线，两者都未到位。USB 重定向功能已冻结，待 Apple Developer Program 账号就绪后再推进
-- **无上游依赖，完全独立**：本仓库不再是任何上游的 fork，已删除所有上游 remote，不与 moonlight-stream 或 skyhua0224 同步。上游 PR 被拒后不再跟进，所有开发方向自主决定
-- **运行时需 macOS 26.0+**：`MACOSX_DEPLOYMENT_TARGET = 26.0`，Liquid Glass 窗口层依赖该版本；要支持 macOS 15/12（upstream Issue #26）需要的工作见 [`docs/contributing.md`](docs/contributing.md)
-- **每个版本都带安装前提**：本构建是 ad-hoc 签名，首次运行需在「系统设置 → 隐私与安全性」里允许
+### ⌨️ 输入系统（核心差异化）
+| 特性 | 说明 |
+|------|------|
+| CoreHID 高精度鼠标 | 1000Hz 回报率支持，自由鼠标/锁定鼠标两种模式 |
+| 工业标准键盘映射 | 与 Parsec、UU 远程、Steam Link 同一套映射标准 |
+| 双键并发支持 | W+Space（行走+跳跃）等组合键正确握持 |
+| 手柄模拟 | Xbox 360 虚拟手柄，支持 Xbox Elite 2 / Betop Zeus 识别修正 |
+| 修饰键可靠性 | Ctrl/Shift/Alt/Win 映射正确，快捷键冲突已修复 |
+| 详细文档 | 映射表与已修复问题根因见 [`docs/input-mapping-design.md`](docs/input-mapping-design.md)，对标结论见 [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md) |
 
-## 下载与安装
+### 🪟 串流中控制栏（边缘把手）
+- 常驻贴在画面边缘（收起态 14×48 逻辑点），可拖拽重新停靠四边
+- 锁定鼠标模式下快捷键 `⌃⌥C` 唤起
+- 自由鼠标模式下光标悬停 120ms 点亮把手，点击展开
+- 离开后 450ms 自动收起，始终未触达时 2500ms 交还指针
+- 设计与真机取证详见 [`docs/edge-sidebar-locked-entry-2026-09-28.md`](docs/edge-sidebar-locked-entry-2026-09-28.md)
 
-1. 从 [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest) 下载最新镜像：`Moonlight-macOS-Enhanced-{arm64,x86_64,universal}.dmg`，每个都附带同名 `.sha256`。文件名按架构而不是按版本——版本在镜像内部核对，`dmg-audit.py` 会把它和 CI 算出的构建号对上，不靠文件名对账
-2. 打开 DMG，将 `MoonlightEnhanced.app` 拖入 Applications（访达、Dock 与「强制退出」列表里显示为「Moonlight 增强版」）
-3. 首次运行时，在「系统设置 → 隐私与安全性」中允许运行
+### 🎨 Liquid Glass 设计语言
+- 全设置面板系统玻璃材质（`.glassEffect`）+ 磨砂卡片布局
+- 首页主机卡片液态玻璃化
+- 原生 NSSegmentedControl 页签，Activity Monitor 风格 — 选中段磨砂玻璃滑块 + 深色文字
 
-> ℹ️ 本构建的 bundle 名是 `MoonlightEnhanced.app`，与 Qt 客户端的 `Moonlight.app` 不再是同一个文件，安装不会互相替换（issue #41），两者可以并存。若 `/Applications` 里还留着本仓库早期版本装的 `Moonlight.app`，请先删除它：两者 bundle 标识符相同（`std.skyhua.MoonlightMac2`），同时存在时 LaunchServices 可能仍启动旧的那一份，权限授予也会跟着旧路径走。
+### 🔌 USB 设备诊断
+- Citrix Horizon VDI 风格设备卡片布局
+- 40×40 圆角图标 + 三行设备层级 + 颜色编码状态芯片
+- 归因到具体原因（保留类别/本地输入设备/未匹配规则/前置条件未满足）
+- 主机声明四态：支持 / 不支持 / 无法到达 / 还没问过
 
-## 快速开始（从源码构建）
+### 🌐 其他
+- 中英双语界面（菜单、权限弹窗、日志面板本地化）
+- 实时性能叠加层
+- 诊断报告一键导出
+
+---
+
+## 🚧 当前边界
+
+| 项目 | 状态 | 备注 |
+|------|------|------|
+| **USB 设备重定向** | ❌ 冻结 | 需 Developer ID 签名 + 主机侧虚拟总线 |
+| **自动更新** | ❌ 待实现 | 需 Developer ID 证书 + Sparkle 框架 |
+| **macOS 15/12 兼容** | ❌ 不支持 | 需 Liquid Glass 窗口层，见 `docs/contributing.md` |
+| **Linux/Windows** | ❌ 不关注 | 本项目专注 macOS 平台 |
+
+---
+
+## 📦 下载与安装
+
+从 [Releases](https://github.com/opsbsligm/moonlight-macos-enhanced/releases/latest) 下载最新 DMG 镜像：
+
+```
+Moonlight-macOS-Enhanced-{arm64,x86_64,universal}.dmg
+```
+
+1. 打开 DMG，将 `MoonlightEnhanced.app` 拖入 Applications
+2. 首次运行 → 系统设置 → 隐私与安全性 → 允许运行
+
+> ⚠️ 本构建是 ad-hoc 签名。bundle 名为 `MoonlightEnhanced.app`，与 Qt 客户端的 `Moonlight.app` 可并存。如需清理旧版：删除 `/Applications/Moonlight.app`。
+
+---
+
+## 🔧 从源码构建
+
+### 前置要求
+- macOS 26.0+
+- Xcode 27 beta（macOS 27 SDK）
+- 命令行工具：`xcode-select --install`
+
+### 快速构建
 
 ```bash
-# 克隆仓库
-git clone --recurse-submodules <repo-url>
+# 克隆
+git clone --recurse-submodules https://github.com/opsbsligm/moonlight-macos-enhanced.git
 cd moonlight-macos-enhanced
 
-# 下载依赖框架（FFmpeg / SDL2 / OpenSSL）
+# 下载依赖（FFmpeg / SDL2 / OpenSSL）
 scripts/download-frameworks.sh
 
-# 编译
+# Debug 构建
 scripts/build.sh
+
+# Release 构建
+scripts/build.sh --release
 
 # 打包 DMG
 scripts/package-dmg.sh
 ```
 
-首次构建前必须执行 `scripts/download-frameworks.sh`，否则 common-c 编译失败（原因见 [`docs/contributing.md`](docs/contributing.md)）。
+### 手动 Xcode 构建
 
-Xcode 与 deployment target 的要求见 [`docs/contributing.md`](docs/contributing.md)。
+```bash
+xcodebuild -project Moonlight.xcodeproj \
+  -scheme "Moonlight for macOS" \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO \
+  build
+```
 
-## 如何反馈
+---
 
-**先拷贝诊断报告。** `设置 → 应用 → 调试日志 → 拷贝诊断报告…` 会把一份可直接粘贴的报告放进剪贴板；配对失败的弹窗里也有同一个按钮。
+## ✅ CI/CD 质量门禁
 
-**如果问题是鼠标不动，请先打开 `设置 → 应用 → 调试日志 → 输入诊断（Input Diagnostics）` 再复现一次，然后拷贝报告。**
+每个提交经过四阶段自动化门禁：
 
-在此基础上请补充：
-- 主机端软件与版本（Sunshine 或 GeForce Experience）
-- 是否启用了 Mos / BetterMouse / SteerMouse 等第三方鼠标工具
-- 复现步骤，以及你期望看到的结果
+```
+audit → build_arch(both slices) → build_universal → verify
+```
 
-报告里具体有哪些字段、为什么鼠标问题必须先开开关、以及离开本机前如何脱敏，见 [`docs/diagnostics-report.md`](docs/diagnostics-report.md)。
+### 审计体系（98 个脚本）
+| 类别 | 数量 | 说明 |
+|------|------|------|
+| 约束审计 | 60+ | 液态玻璃视觉效果、页签行为、内存泄漏、凭证扫描、国际化、CI 完整性 |
+| 输入系统测试 | 20+ | 键盘并发、修饰键映射、鼠标状态、游戏手柄迁移 |
+| USB 虚拟化测试 | 5+ | 设备枚举、策略引擎、总线快照 |
+| 视频管线测试 | 8+ | 渲染模式、增强可用性、HDR 曝光 |
+| 静态分析审计 | 3+ | 引用泄漏、定时器泄漏、分析基线对比 |
 
-## 文档
+### 提交规范
+- [Conventional Commits](https://www.conventionalcommits.org/)
+- Subject ≤ 72 字符
+- 类型：`feat` / `fix` / `style` / `refactor` / `ci` / `docs` / `test`
+- 每个提交必须通过所有本地审计
 
-全部文档的读者与目的见 [`docs/README.md`](docs/README.md)。逐轮变更记录见 [`CHANGELOG.md`](CHANGELOG.md)；从本页归档出去的历史内容见 [`docs/history/rounds.md`](docs/history/rounds.md)。
+---
 
-## 技术栈
+## 📚 文档索引
 
-- **构建**：Xcode 27 beta + macOS 27 SDK，`MACOSX_DEPLOYMENT_TARGET = 26.0`
-- **UI**：SwiftUI + AppKit 混编，Liquid Glass 玻璃材质（`.glassEffect`），NSSegmentedControl 分段控件
-- **串流管线**：VideoToolbox 解码 + Metal 渲染 + MetalFX 超分 + VT 低延迟插帧
-- **输入**：CoreHID 高精度鼠标 + IOKit 键盘事件拦截 + 虚拟手柄驱动
-- **审计**：60+ 条约束审计，覆盖 Liquid Glass 视觉效果、页签行为、内存泄漏、凭证扫描、国际化、CI 完整性
+| 文档 | 说明 |
+|------|------|
+| [`docs/input-mapping-design.md`](docs/input-mapping-design.md) | 键盘/鼠标映射设计原则与已修复问题 |
+| [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md) | Parsec/UU/Steam 对标结论 |
+| [`docs/edge-sidebar-locked-entry-2026-09-28.md`](docs/edge-sidebar-locked-entry-2026-09-28.md) | 串流控制栏边缘把手设计 |
+| [`docs/force-interpolation-2026-10-01.md`](docs/force-interpolation-2026-10-01.md) | 强制插帧开关设计与限制 |
+| [`docs/diagnostics-report.md`](docs/diagnostics-report.md) | 诊断报告字段说明 |
+| [`docs/contributing.md`](docs/contributing.md) | 贡献指南与质量门控清单 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 逐轮变更记录 |
+| [`docs/README.md`](docs/README.md) | 全部文档索引 |
 
-## 贡献
+---
 
-Fork → 特性分支 → 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 提交 → PR。
-质量门控清单、Commit 类型与版本号/tag 约定见 [`docs/contributing.md`](docs/contributing.md)。
+## 📋 开发路线图
 
-## 许可证
+| 优先级 | 模块 | 状态 |
+|--------|------|------|
+| P0 🔴 | CI 门禁、README、仓库配置 | 进行中 |
+| P1 🟡 | 自适应码率、解码探测对齐、控制栏体验 | 待开始 |
+| P2 🟢 | 首页卡片响应式、USB 诊断侧边栏、文案优化 | 待开始 |
+| P3 ⚪ | USB 重定向、自动更新 | 依赖 Developer ID |
+
+---
+
+## 🐛 如何反馈
+
+1. 打开 `设置 → 应用 → 调试日志 → 拷贝诊断报告…`
+2. 粘贴报告，补充以下信息：
+   - 主机端软件与版本（Sunshine / GeForce Experience）
+   - 是否使用了 Mos / BetterMouse / SteerMouse 等第三方工具
+   - 复现步骤与预期结果
+
+> 鼠标类问题请先开启 `设置 → 应用 → 调试日志 → 输入诊断（Input Diagnostics）` 再复现。
+
+---
+
+## 📄 许可证
 
 本项目基于 [GPL-3.0](LICENSE) 许可证发布。
 
-包含的第三方组件：
-- moonlight-common-c (GPLv3)
-- OpenSSL (Apache 2.0)
-- FFmpeg (LGPLv2.1+)
-- SDL2 (zlib)
-- MASPreferences (BSD-2-Clause)
-- Roboto Font (Apache 2.0)
+### 第三方组件
+| 组件 | 许可证 |
+|------|--------|
+| moonlight-common-c | GPLv3 |
+| OpenSSL | Apache 2.0 |
+| FFmpeg | LGPLv2.1+ |
+| SDL2 | zlib |
+| MASPreferences | BSD-2-Clause |
+| Roboto Font | Apache 2.0 |
 
-## 致谢
+---
 
-- [Moonlight Game Streaming Project](https://github.com/moonlight-stream) — 原始上游项目
-- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — 本项目的历史起点（**已完全独立，不再同步**）
-- [Parsec](https://parsec.app) — 键盘映射最佳实践参考
+## 🙏 致谢
+
+- [Moonlight Game Streaming Project](https://github.com/moonlight-stream) — 原始上游
+- [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced) — 历史起点（已完全独立）
+- [Parsec](https://parsec.app) — 键盘映射参考
 - 所有贡献者与测试用户
