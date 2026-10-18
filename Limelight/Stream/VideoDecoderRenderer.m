@@ -9,6 +9,7 @@
 #import "VideoDecoderRenderer.h"
 #include "Limelight-internal.h"
 #import "RendererLayerContainer.h"
+#import "MLFramePacer.h"
 #import "InterpolationCadencePolicy.h"
 #include "EnhancedPresentationPolicy.h"
 #include "ActualPresentationMetrics.h"
@@ -1538,6 +1539,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     CMTime _previousEnhancedPresentationTimeStamp;
 
     BOOL _frameInterpolationForceAdmission;
+    MLFramePacer *_pacer;
     BOOL _frameInterpolationCadenceForced;
     BOOL _frameInterpolationWarmupInFlight;
     NSUInteger _frameInterpolationWarmupGeneration;
@@ -1686,6 +1688,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _vtWarmupQueue = dispatch_queue_create("std.skyhua.moonlight.video.vt-warmup", DISPATCH_QUEUE_SERIAL);
     _vtEnhancementQueue = dispatch_queue_create("std.skyhua.moonlight.video.vt-enhancement", DISPATCH_QUEUE_SERIAL);
     _vtInterpolationQueue = dispatch_queue_create("std.skyhua.moonlight.video.vt-interpolation", DISPATCH_QUEUE_SERIAL);
+
+    _pacer = [[MLFramePacer alloc] initWithDelegate:(id<MLFramePacerDelegate>)self videoStats:&_activeWndVideoStats];
 
     return self;
 }
@@ -2103,6 +2107,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 
 - (void)prepareNativePresentationResources
 {
+    [self->_pacer stop];
     [self teardownNativePresentationResources];
 
     _nativeDisplayColorSpace = MLCreateTransferColorSpace(_enableHdr ? _hdrTransferMode : MLHDRTransferModeSDR);
@@ -3424,6 +3429,14 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     if (displayLayer == nil) {
         return;
     }
+
+    // Submit to frame pacer for pacing/vsync tracking
+    [self->_pacer submitPixelBuffer:imageBuffer
+                      enqueueTimeUs:(LiGetMillis() * 1000)
+                      receiveTimeMs:frameContext ? frameContext->enqueueTimeMs : 0
+                 presentationTimeMs:0
+                       frameNumber:frameContext ? frameContext->frameNumber : 0
+                     isInterpolated:NO];
 
     if (_activeRendererMode == MLActiveVideoRendererModeNative &&
         displayLayer.status == AVQueuedSampleBufferRenderingStatusFailed) {
@@ -5885,6 +5898,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
                                           void *displayLinkContext)
 {
     VideoDecoderRenderer *self = (__bridge VideoDecoderRenderer *)displayLinkContext;
+    [self->_pacer signalVsync];
     PML_DEPACKETIZER_CONTEXT depacketizerCtx = (PML_DEPACKETIZER_CONTEXT)self.depacketizerContext;
     if (depacketizerCtx == NULL) {
         return kCVReturnSuccess;
@@ -6085,6 +6099,27 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     return kCVReturnSuccess;
 }
 
+#pragma mark - MLFramePacerDelegate
+
+- (void)pacerRenderFrame:(CVPixelBufferRef)pixelBuffer
+           enqueueTimeUs:(uint64_t)enqueueTimeUs
+             interpolated:(BOOL)interpolated
+{
+    // The pacer signals that this frame should be displayed now.
+    // Forward to the existing render path.
+    [self recordRenderedFrameSampleAtTimeMs:LiGetMillis()
+                              enqueueTimeMs:enqueueTimeUs / 1000];
+    _activeWndVideoStats.renderedFrames++;
+    if (interpolated) {
+        _activeWndVideoStats.interpolatedFrames++;
+    }
+}
+
+- (void)pacerCleanupRenderContext
+{
+    // No additional cleanup needed - handled by stop/dealloc.
+}
+
 - (void)stop
 {
     if (_displayLink != NULL) {
@@ -6095,7 +6130,6 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     }
 
     [self clearCurrentFrame];
-    // Hand the cache over to a draw that is still in flight rather than killing it underneath:
     // the pointer moves under the lock the draw path snapshots it with, and the release happens
     // after the lock, so a mid-flight frame keeps the cache alive until its own textures are gone.
     CVMetalTextureCacheRef retiredCache = NULL;
@@ -6113,6 +6147,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     [self teardownEnhancementProcessor];
     [self teardownFrameInterpolationProcessor];
     [self teardownHDRPresentationResources];
+    [self->_pacer stop];
     [self teardownNativePresentationResources];
     _intermediateTexture = nil;
     _metalDrawScheduled = NO;
