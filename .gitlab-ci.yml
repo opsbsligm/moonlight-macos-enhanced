@@ -13,6 +13,15 @@
 # omitted here (no Developer ID configured yet); add a `notarize` stage once
 # signing credentials are available as CI/CD Variables.
 
+# Dual-hosting: CI/CD job token (scoped) cannot cross projects for submodule
+# fetches, so rewrite the relative submodule URL to an authenticated one using
+# the group-scoped runner token (GRP_CI_JOB_TOKEN, file variable).
+before_script:
+  - |
+    git config --global url."http://oauth2:${GRP_CI_JOB_TOKEN}@172.16.130.6/moonlight/moonlight-common-c.git".insteadOf "../moonlight-common-c.git"
+    git config --global url."http://oauth2:${GRP_CI_JOB_TOKEN}@172.16.130.6/moonlight/moonlight-common-c.git".insteadOf "https://gitlab/opsbsligm/moonlight-common-c.git"
+
+
 stages:
   - lint
   - deps
