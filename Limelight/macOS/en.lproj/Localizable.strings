@@ -1406,3 +1406,8 @@
 "USB permission class missing" = "Device class not allowed in Settings";
 "USB permission rule disabled" = "Matching permission rule is disabled";
 "Allow" = "Allow";
+
+"USB permission not granted" = "Not yet authorized";
+"Pre-auth" = "Pre-auth";
+"USB pre-auth help" = "Pre-authorize this device model now; it will be ready when USB redirection is available.";
+"Allowed" = "Allowed";
