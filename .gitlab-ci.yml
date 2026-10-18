@@ -14,13 +14,14 @@
 # signing credentials are available as CI/CD Variables.
 
 # Dual-hosting: CI/CD job token (scoped) cannot cross projects for submodule
-# fetches, so rewrite the relative submodule URL to an authenticated one using
-# the group-scoped runner token (GRP_CI_JOB_TOKEN, file variable).
+# fetches, so rewrite the RESOLVED submodule URL to an authenticated one
+# using the group-scoped project token (GRP_CI_JOB_TOKEN, file variable). Note:
+# insteadOf must match the resolved absolute URL, not the relative .gitmodules path.
 # GIT_SUBMODULE_STRATEGY=none: the runner must not touch submodules at clone
 # time (no auth configured yet); macos jobs pull them via fetch_submodules.
 .fetch_submodules: &fetch_submodules
   - |
-    git config --global url."http://oauth2:${GRP_CI_JOB_TOKEN}@172.16.130.6/moonlight/moonlight-common-c.git".insteadOf "../moonlight-common-c.git"
+    git config --global url."http://oauth2:${GRP_CI_JOB_TOKEN}@172.16.130.6/moonlight/moonlight-common-c.git".insteadOf "http://172.16.130.6/moonlight/moonlight-common-c.git"
     git submodule sync --recursive
     git submodule update --init --recursive
 
