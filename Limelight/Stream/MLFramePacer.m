@@ -7,6 +7,23 @@
 //  Licensed under GPL-3.0.
 //
 
+// Standalone microsecond clock for environments (e.g. CI static analyzer) where
+// moonlight-common-c's LiGetMicroseconds() is not available during pure-SDK
+// type-checking. Uses mach_absolute_time for high-resolution monotonic time.
+#import <mach/mach_time.h>
+static uint64_t ml_pacer_get_microseconds(void) {
+    static mach_timebase_info_data_t timebase = {0};
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        mach_timebase_info(&timebase);
+    });
+    uint64_t raw = mach_absolute_time();
+    uint64_t nanos = raw * timebase.numer / timebase.denom;
+    return nanos / 1000;
+}
+
+
+
 #import "MLFramePacer.h"
 
 // Queue depth history window: 500ms of entries.
@@ -210,7 +227,7 @@ static const NSUInteger kMLPacerHistoryWindowEntries = 0; // computed from displ
 
 - (void)renderPacedFrame:(MLPacedFrame *)frame
 {
-    uint64_t beforeRender = LiGetMicroseconds();
+    uint64_t beforeRender = ml_pacer_get_microseconds();
     
     // Track pacer queue time
     if (frame.enqueueTimeUs != 0 && beforeRender >= frame.enqueueTimeUs) {
@@ -222,7 +239,7 @@ static const NSUInteger kMLPacerHistoryWindowEntries = 0; // computed from displ
                    enqueueTimeUs:frame.enqueueTimeUs
                      interpolated:frame.isInterpolated];
     
-    uint64_t afterRender = LiGetMicroseconds();
+    uint64_t afterRender = ml_pacer_get_microseconds();
     if (_videoStats) {
         _videoStats->totalRenderTime += afterRender - beforeRender;
         _videoStats->renderedFrames++;
