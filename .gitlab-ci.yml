@@ -26,6 +26,10 @@
     git submodule update --init --recursive
 
 
+concurrency:
+  group: $CI_PROJECT_PATH
+  cancel-in-progress: true
+
 stages:
   - lint
   - deps
