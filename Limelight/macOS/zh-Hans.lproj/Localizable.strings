@@ -1404,3 +1404,4 @@
 "USB permission input protected" = "键鼠保护已启用";
 "USB permission class missing" = "设置未允许该设备类别";
 "USB permission rule disabled" = "匹配的许可规则已停用";
+"Allow" = "允许";

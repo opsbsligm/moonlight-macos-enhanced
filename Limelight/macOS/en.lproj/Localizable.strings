@@ -1405,3 +1405,4 @@
 "USB permission input protected" = "Keyboard/mouse protection is enabled";
 "USB permission class missing" = "Device class not allowed in Settings";
 "USB permission rule disabled" = "Matching permission rule is disabled";
+"Allow" = "Allow";
