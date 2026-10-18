@@ -43,6 +43,15 @@
     return self;
 }
 
+// Called automatically when the effective appearance changes (Light/Dark mode switch),
+// so the handle colours update without needing KVO or notification observation.
+- (void)viewDidChangeEffectiveAppearance {
+    [super viewDidChangeEffectiveAppearance];
+    [self updateVisualStyle];
+    [self setNeedsLayout:YES];
+}
+
+
 - (NSImageView *)iconView {
     return _iconView;
 }
@@ -211,6 +220,14 @@
     // drawn in the accent colour and nothing else changes: no panel, no pointer.
     BOOL armed = self.armedAppearance && self.compactAppearance;
 
+    // Use system colours that adapt to Light and Dark appearances, so the handle
+    // never reads as paper glued over the video or as a dead pixel on OLED panels.
+    // The old fixed RGB values looked fine on Light and invisible on Dark (or vice
+    // versa), and a handle a player cannot see is a handle they cannot press.
+        // Determine if the system is in Dark Mode using the appearance name comparison.
+    // The name is a constant string; comparing with isEqual: avoids SDK availability issues.
+    BOOL isDark = [[self.effectiveAppearance.name lowercaseString] hasSuffix:@"dark"];
+
     self.layer.borderWidth = 0.0;
     self.layer.borderColor = NSColor.clearColor.CGColor;
     self.layer.shadowColor = [NSColor colorWithRed:0.0 green:0.0 blue:0.0 alpha:0.44].CGColor;
@@ -218,24 +235,36 @@
     self.layer.shadowRadius = 0.0f;
     self.layer.shadowOffset = CGSizeZero;
 
-
-    _plateShadowLayer.shadowColor = [NSColor colorWithWhite:0.0 alpha:0.26].CGColor;
-    _plateShadowLayer.shadowOpacity = (active || armed) ? 0.24f : 0.18f;
+    _plateShadowLayer.shadowColor = [NSColor colorWithWhite:0.0 alpha:isDark ? 0.40 : 0.26].CGColor;
+    _plateShadowLayer.shadowOpacity = (active || armed) ? 0.32f : 0.20f;
     _plateShadowLayer.shadowRadius = (active || armed) ? 16.0f : 12.0f;
     _plateShadowLayer.shadowOffset = CGSizeMake(0.0, 3.0);
 
-    _plateLayer.backgroundColor = [NSColor colorWithRed:0.96 green:0.97 blue:0.99 alpha:0.98].CGColor;
+    _plateLayer.backgroundColor = (isDark
+        ? [NSColor colorWithRed:0.18 green:0.19 blue:0.21 alpha:0.96].CGColor
+        : [NSColor colorWithRed:0.96 green:0.97 blue:0.99 alpha:0.98].CGColor);
     _plateLayer.borderWidth = armed ? 2.0 : 1.0;
-    _plateLayer.borderColor = armed ? [NSColor colorWithRed:0.15 green:0.47 blue:0.98 alpha:0.95].CGColor
-                                    : [NSColor colorWithWhite:1.0 alpha:0.78].CGColor;
+    _plateLayer.borderColor = armed
+        ? [NSColor.selectedContentBackgroundColor colorWithAlphaComponent:isDark ? 0.90 : 0.95].CGColor
+        : (isDark
+            ? [NSColor colorWithWhite:0.08 alpha:0.50].CGColor
+            : [NSColor colorWithWhite:1.0 alpha:0.78].CGColor);
 
     _plateInnerLayer.backgroundColor = (armed
-        ? [NSColor colorWithRed:0.80 green:0.90 blue:1.0 alpha:0.95]
-        : [NSColor colorWithRed:0.89 green:0.91 blue:0.95 alpha:0.92]).CGColor;
+        ? (isDark
+            ? [NSColor.selectedContentBackgroundColor colorWithAlphaComponent:0.30].CGColor
+            : [NSColor colorWithRed:0.80 green:0.90 blue:1.0 alpha:0.95].CGColor)
+        : (isDark
+            ? [NSColor colorWithRed:0.12 green:0.13 blue:0.15 alpha:0.90].CGColor
+            : [NSColor colorWithRed:0.89 green:0.91 blue:0.95 alpha:0.92].CGColor));
     _plateInnerLayer.borderWidth = 1.0;
-    _plateInnerLayer.borderColor = [NSColor colorWithWhite:0.72 alpha:0.42].CGColor;
+    _plateInnerLayer.borderColor = (isDark
+        ? [NSColor colorWithWhite:0.00 alpha:0.55].CGColor
+        : [NSColor colorWithWhite:0.72 alpha:0.42].CGColor);
 
-    _iconView.contentTintColor = [NSColor colorWithRed:0.12 green:0.15 blue:0.20 alpha:0.98];
+    _iconView.contentTintColor = (isDark
+        ? [NSColor colorWithRed:0.85 green:0.86 blue:0.88 alpha:0.98]
+        : [NSColor colorWithRed:0.12 green:0.15 blue:0.20 alpha:0.98]);
 }
 
 - (void)setHidden:(BOOL)hidden {
