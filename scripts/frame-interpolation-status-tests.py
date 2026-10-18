@@ -61,6 +61,7 @@ DISPATCHER = "- (NSString *)runtimeDetailKeyForFrameInterpolationReport:"
 # The first line of the signature only: the shipping source wraps the rest, and a
 # constant spelling it out would be a claim about whitespace, not about the method.
 GATE = "- (BOOL)shouldUseFrameInterpolationForDisplayRefreshRate:(double)displayRefreshRate"
+FORMAT_MARK = "stringWithFormat:"
 SLOT_REASON = "static const char *MLInterpolationSlotReason("
 REPORT_FOR_VERDICT = ("static MLVideoFrameInterpolationReport "
                       "MLVideoFrameInterpolationReportForSlotVerdict(")
@@ -71,7 +72,6 @@ STAGING = ("- (BOOL)stageInterpolatedFrameFromPreviousSource:"
 # a format string, and the transient one is the only reason handed to the logger as a
 # literal rather than through a variable.
 WARMUP_MARK = "_frameInterpolationWarmupInFlight"
-FORMAT_MARK = "stringWithFormat:"
 WAITING_SHAPE = r'reason:(@"[^"]*")\];[^@]{0,90}\[self requestEnhancedDraw\]'
 
 HEAD = "#import <Foundation/Foundation.h>\n"
@@ -431,16 +431,35 @@ def working_report_literal(staging):
     string handed to the logger directly under the active report label. The literal is
     lifted where it is written either way.
     """
-    for match in re.finditer(r"report:MLVideoFrameInterpolationReportActive\b", staging):
-        found = LITERAL.search(staging, match.end())
-        if found is None:
-            continue
-        # Only text between the report label and the reason can belong to the reason.
-        if staging[match.end():found.start()].count("reason:") != 1:
-            continue
-        if "stringWithFormat" in staging[match.end():found.start()]:
-            return found.group(0)
-        return found.group(0)
+    anchor = staging.find(FORMAT_MARK)
+    while anchor >= 0:
+        # Walk back to the logger call that carries this format string. The
+        # success sentence is the one logged through the engine logger; a format
+        # string that only a bare Log() call carries (the breaker trip naming the
+        # measured cost) belongs to no state the page renders, and lifting it
+        # would dress the breaker's numbers in the success row's clothes.
+        call = staging.rfind("logActiveFrameInterpolationEngine:", 0, anchor)
+        if call >= 0:
+            between = staging[call:anchor]
+            state = re.search(r"report:(MLVideoFrameInterpolationReport[A-Za-z]*)\b", between)
+            if between.count("reason:") == 1 and \
+                    state is not None and state.group(1) == "MLVideoFrameInterpolationReportActive":
+                found = LITERAL.search(staging, anchor)
+                if found is not None and anchor - found.start() < 40:
+                    return found.group(0), state.group(1)
+        anchor = staging.find(FORMAT_MARK, anchor + 1)
+    # No format string sits under the plain active report anymore -- the state may
+    # have been renamed away (a known-bad shape). Fall back to the first format
+    # string and lift the state from beside it, so the sweep names the wrong state
+    # instead of crashing before the known-bad rows can be judged.
+    anchor = staging.find(FORMAT_MARK)
+    if anchor >= 0:
+        found = LITERAL.search(staging, anchor)
+        if found is not None:
+            window = staging[max(0, anchor - 300):found.end() + 300]
+            named = REPORT_LABEL.search(window)
+            if named is not None:
+                return found.group(0), named.group(1)
     raise SystemExit("the working report has no reason text to lift")
 
 
@@ -465,7 +484,11 @@ def lifted_literals(source):
             raise SystemExit("the staging branch answers with %s twice" % slot)
         texts[slot + "Reason"] = reason_literal
         labels[slot + "Report"] = report_label
-    working, _ = literal_after(staging, staging.find(FORMAT_MARK), "the working report")
+    # The success sentence must be lifted from under its own report label, not
+    # from the first format string in the method: the breaker trip and the pause
+    # sentence are format strings too, and an extractor that only asks "where is
+    # the first stringWithFormat" hands back whichever of them was written first.
+    working, working_report = working_report_literal(staging)
     waiting_matches = re.findall(WAITING_SHAPE, source)
     if len(waiting_matches) != 1:
         raise SystemExit("the transient report was found %d times, expected exactly 1"
@@ -476,7 +499,7 @@ def lifted_literals(source):
         staging, "MLVideoFrameInterpolationReportActiveForced")
     labels["kForcedReport"] = "MLVideoFrameInterpolationReportActiveForced"
     texts["kWaitingReason"] = waiting
-    labels["kWorkingReport"] = label_of(staging, working, "kWorkingFormat")
+    labels["kWorkingReport"] = working_report
     labels["kWaitingReport"] = label_of(source, waiting, "kWaitingReason")
     return texts, labels
 

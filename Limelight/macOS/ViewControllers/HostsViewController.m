@@ -20,6 +20,8 @@
 #import "NavigatableAlertView.h"
 #import "AppDelegateForAppKit.h"
 #import "ConnectionEditorViewController.h"
+#import "MLPageBaseView.h"
+#import "GlassOverlayContainer.h"
 
 #import "TemporaryHost.h"
 #import "Moonlight-Swift.h"
@@ -53,6 +55,10 @@
 @property (nonatomic, copy) NSString *pairingFallbackAddress;
 @property (nonatomic, assign) BOOL pairingFallbackAttempted;
 @property (nonatomic, assign) BOOL pairingInProgress;
+// The scroll view whose transparency the page base depends on. The wash itself belongs to
+// ContainerViewController, the window's owner; pinning it to this page made the apps grid
+// lose its base the moment the app navigated away.
+@property (nonatomic, weak) NSScrollView *collectionScroll;
 
 @end
 
@@ -67,6 +73,15 @@
     self.collectionView.delegate = self;
     [self.collectionView registerNib:[[NSNib alloc] initWithNibNamed:@"HostCell" bundle:nil] forItemWithIdentifier:@"HostCell"];
 
+    // The page base: the same washed opaque base the settings page draws, so the two
+    // halves of this window agree. The collection view goes transparent and the wash
+    // view sits behind it, filling the scroll view. A flat controlBackgroundColor made
+    // every card float on the window itself -- there was nothing behind them to bend.
+    NSScrollView *scroll = self.collectionView.enclosingScrollView;
+    self.collectionView.backgroundColors = @[[NSColor clearColor]];
+    scroll.drawsBackground = NO;
+    self.collectionScroll = scroll;
+
     self.hosts = [NSArray array];
     
     [self prepareDiscovery];
@@ -75,6 +90,15 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshHostDiscovery:) name:@"MoonlightRequestHostDiscovery" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleDiscoveryPreferencesChanged:) name:@"MoonlightDiscoveryPreferencesChanged" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleHostAutoAddressSwitched:) name:@"HostAutoAddressSwitched" object:nil];
+}
+
+- (void)viewDidAppear {
+    [super viewDidAppear];
+
+    // The page base is installed by ContainerViewController, which owns the window and
+    // outlives the navigation between the hosts grid and the apps grid; this page only
+    // keeps its own scroll view from painting over it.
+    [self.discMan startDiscovery];
 }
 
 - (void)dealloc {
@@ -196,12 +220,6 @@
     
     self.getSearchField.delegate = self;
     self.getSearchField.placeholderString = NSLocalizedString(@"Search Hosts", @"Search Hosts");
-}
-
-- (void)viewDidAppear {
-    [super viewDidAppear];
-    
-    [self.discMan startDiscovery];
 }
 
 - (void)viewDidDisappear {

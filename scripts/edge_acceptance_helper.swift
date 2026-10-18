@@ -183,6 +183,62 @@ case "combo":
     ku(k, alt)
     ku(58, ctrl)                      // option up (control still down)
     ku(59)                            // control up
+case "ax":
+    // ax <pid>: dump every UI element text of that process's windows and menus,
+    // one line per element. The live acceptance needs the sidebar's own captions
+    // -- the status line above the device list is a claim about a state machine,
+    // and a screenshot-only check cannot assert its wording without a human eye.
+    guard args.count == 3, let pid = Int32(args[2]) else { die("ax <pid>") }
+    let app = NSRunningApplication(processIdentifier: pid)
+    guard app != nil else { die("no such process") }
+    let ref = AXUIElementCreateApplication(pid)
+    func text(_ el: AXUIElement, _ attr: String) -> String? {
+        var v: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, attr as CFString, &v) == .success {
+            if let s = v as? String { return s }
+            if let n = v as? NSNumber { return n.stringValue }
+        }
+        return nil
+    }
+    func children(_ el: AXUIElement) -> [AXUIElement] {
+        var v: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &v) == .success,
+           let arr = v as? [AXUIElement] { return arr }
+        return []
+    }
+    func walk(_ el: AXUIElement, depth: Int) {
+        if depth > 24 { return }
+        let role = text(el, kAXRoleAttribute as String) ?? "?"
+        let title = text(el, kAXTitleAttribute as String) ?? ""
+        let desc = text(el, kAXDescriptionAttribute as String) ?? ""
+        let value = text(el, kAXValueAttribute as String) ?? ""
+        var geom = ""
+        var pv: CFTypeRef?
+        var sv: CFTypeRef?
+        if AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &pv) == .success,
+           AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sv) == .success,
+           let pv = pv {
+            var pt = CGPoint.zero; var sz = CGSize.zero
+            AXValueGetValue(pv as! AXValue, .cgPoint, &pt)
+            AXValueGetValue(sv as! AXValue, .cgSize, &sz)
+            geom = String(format: "@%.0f,%.0f %.0fx%.0f", pt.x, pt.y, sz.width, sz.height)
+        }
+        let line = [role, title, desc, value].filter { !$0.isEmpty }.joined(separator: "|") + geom
+        if line != "" { print(String(repeating: "  ", count: depth) + line) }
+        for c in children(el) {
+            // The app element reports itself among its own children; walking it
+            // re-expands the menu bar 2^depth times (measured: 6.9M lines, one pass).
+            if (text(c, kAXRoleAttribute as String) ?? "") == "AXApplication" { continue }
+            walk(c, depth: depth + 1)
+        }
+    }
+    var roots: [AXUIElement] = []
+    for attr in [kAXWindowsAttribute as String, kAXMenuBarAttribute as String] {
+        var v: CFTypeRef?
+        if AXUIElementCopyAttributeValue(ref, attr as CFString, &v) == .success,
+           let arr = v as? [AXUIElement] { roots.append(contentsOf: arr) }
+    }
+    for r in roots { walk(r, depth: 0) }
 case "key":
     // key <keyCode> <flags> : down then up with the given CGEventFlags mask.
     // maskShift 0x20000, maskControl 0x40000, maskAlternate 0x80000, maskCommand 0x100000. The pure-modifier release

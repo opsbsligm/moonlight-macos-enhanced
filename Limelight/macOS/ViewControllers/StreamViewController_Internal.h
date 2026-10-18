@@ -23,6 +23,7 @@
 #import "Moonlight-Swift.h"
 #import "LogBuffer.h"
 #import "USBBusSnapshot.h"
+#import "USBMenuStatus.h"
 
 #import <IOKit/pwr_mgt/IOPMLib.h>
 #import <Carbon/Carbon.h>
@@ -516,6 +517,19 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) BOOL usbMenuScanInFlight;
 @property (nonatomic) NSUInteger usbMenuSnapshotGeneration;
 @property (nonatomic) NSTimeInterval usbMenuScannedAt;
+// What this session's host answered when asked whether it offers USB redirection, held as an
+// MLUSBMenuHostClaim and never inferred from the video connection being up. NotAsked is the state
+// before the first question and after a host change; an answer belongs to one machine.
+@property (nonatomic) NSInteger usbMenuHostClaim;
+// One capability question per host per session at a time, because a host's answer does not expire
+// on a timer: a menu rebuild that has already heard something must not ask again.
+@property (nonatomic) BOOL usbMenuHostClaimInFlight;
+// The stream generation the in-flight question was asked on, so a completion from a session that
+// has already ended cannot credit its answer to whoever is streaming now.
+@property (nonatomic) NSUInteger usbMenuHostClaimGeneration;
+// The capability the sidebar last printed, kept only so the log records a transition instead of a
+// hover. -1 until the first state is reported.
+@property (nonatomic) NSInteger usbMenuLastLoggedCapability;
 
 
 @property (nonatomic, strong) GlassOverlayContainer *controlCenterPill;

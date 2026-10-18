@@ -304,6 +304,46 @@ check("scripts/release-gate.py --self-test" in workflow,
 check("scripts/liquid-glass-audit.py" in workflow,
       "CI checks the glass surface instead of relying on review memory")
 
+# The audit/build split is a cost decision, not a style choice: the mutation
+# battery measured 71 minutes standalone (146/146 caught) against under three
+# minutes for everything else, and runs 38721692726, 38741092974 and
+# 38757472022 each lost the combined job to a runner-level cancellation between
+# 66 and 71 minutes in. The split only holds while the fast job keeps
+# --no-battery on its constraints step and the battery stays in its own job, so
+# both halves are now shape rules with planted decoys, same as the release gate.
+# Decoy 1: the flag quietly dropped from the fast job's step.
+decoy_fast = ("  audit:\n"
+              "    steps:\n"
+              "    - name: Verify project constraints\n"
+              "      run: python3 scripts/constraints-audit.py\n"
+              "  mutation_battery:\n"
+              "    steps:\n"
+              "    - run: python3 scripts/assertion-battery.py\n")
+fast_body = job_body(decoy_fast, "audit")
+check("--no-battery" not in fast_body
+      and "--no-battery" in job_body(workflow, "audit")
+      and "assertion-battery.py" in job_body(workflow, "mutation_battery"),
+      "a constraints step that dropped --no-battery in the fast job is refused"
+      if ("--no-battery" not in fast_body) else
+      "the audit job's constraints step must carry --no-battery")
+# Decoy 2: the battery call moved back into the fast job's own text. The rule
+# reads each job body on its own, so a battery step anywhere else in the file
+# cannot answer for mutation_battery, and one inside audit is refused.
+decoy_moved = ("  audit:\n"
+               "    steps:\n"
+               "    - run: python3 scripts/constraints-audit.py --no-battery --history\n"
+               "    - run: python3 scripts/assertion-battery.py\n"
+               "  mutation_battery:\n"
+               "    steps:\n"
+               "    - run: echo the battery moved out\n")
+check("assertion-battery.py" in job_body(decoy_moved, "audit")
+      and "assertion-battery.py" not in job_body(decoy_moved, "mutation_battery")
+      and "assertion-battery.py" not in job_body(workflow, "audit")
+      and "assertion-battery.py" in job_body(workflow, "mutation_battery"),
+      "the battery step belongs to mutation_battery, not the fast audit job"
+      if ("assertion-battery.py" not in job_body(workflow, "audit")) else
+      "assertion-battery.py runs in the fast audit job again")
+
 check("scripts/video-enhancement-tests.py" in workflow,
       "CI measures the video enhancement paths instead of trusting object creation")
 
@@ -1409,6 +1449,19 @@ check(bool(probe_key) and probe_key.group(1) in app_pane,
       if probe_key and probe_key.group(1) in app_pane
       else "the probe forces %r, which the app page never reads, so the section state it "
            "checks is not the one the page uses" % (probe_key.group(1) if probe_key else None,))
+hubs_key = re.search(r'MLProbeHubsGroupCollapsedKey\s*\n?\s*= @"([^"]+)"', probe_app)
+hubs_pane = open(os.path.join(root, "Limelight", "macOS", "ViewControllers",
+                              "SettingsDevicesPane.swift"), encoding="utf-8").read()
+check(bool(hubs_key) and hubs_key.group(1) in hubs_pane,
+      "the probe pins the same preference the devices page stores the hub group under"
+      if hubs_key and hubs_key.group(1) in hubs_pane
+      else "the probe pins %r, which the devices page never reads, so the hub group it "
+           "starts shut is not the one the page draws" % (hubs_key.group(1) if hubs_key else None,))
+check("settings.devices.hubsExpanded" in probe_app and "previousHubsState" in probe_app,
+      "the hub group is forced shut at entry and the user's choice restored after"
+      if "settings.devices.hubsExpanded" in probe_app and "previousHubsState" in probe_app
+      else "the probe stopped restoring the hub group's stored state, so a pass would "
+           "report its own history instead of the shipped page")
 check("accessibilityPerformPress" in probe_app and "readableContentExpanded" in probe_app
       and 'texts_of(pane, "readableContentExpanded")' in render_probe,
       "the capability claims are checked only against the pass that pressed the section open"
@@ -2982,6 +3035,30 @@ check("(a report never asks a host)" in devices_body
 check("[self devicesSection]" in report_builder,
       "the devices section is assembled into the report rather than merely built")
 
+# --- the sidebar's own caption has to be recoverable from a log -------------
+# The sidebar states which precondition is still missing, and a screenshot is the only copy of
+# that answer a support thread usually gets. The line beside it names the same state, printed
+# when the state changes rather than on every hover, so a caption and a log line can be matched
+# instead of guessed. That only holds while "no state reported yet" is a value no state can
+# have: BuildCannotLoadDriver is the enum's zero, so a stream page that begins at zero has
+# already "reported" the one caption the adhoc build shows on every machine, and the first
+# screenshot a player ever posts is the one with nothing to match it against. The reset has to
+# sit where the session's other USB memory is forgotten, or a second host inherits the first
+# host's silence.
+stream_page = open(os.path.join(root, "Limelight/macOS/ViewControllers/"
+                                 "StreamViewController.m"), encoding="utf-8").read()
+prepare_body = method_body(stream_page, "- (void)prepareForStreaming")
+check("self.usbMenuHostClaim = MLUSBMenuHostClaimNotAsked;" in prepare_body and
+      "self.usbMenuLastLoggedCapability = -1;" in prepare_body,
+      "a new stream session forgets the last host's answer and has not reported a state yet")
+sidebar_menu = open(os.path.join(root, "Limelight/macOS/ViewControllers/"
+                                 "StreamViewController+MenuUI.m"), encoding="utf-8").read()
+capability_body = method_body(sidebar_menu,
+    "- (MLUSBMenuCapability)usbMenuCapabilityWithModel:(MLDeviceRedirectionPanelModel *)model")
+check("usbMenuLastLoggedCapability" in capability_body and "[usb] sidebar capability="
+      in capability_body,
+      "the sidebar prints the machine name of the state it is showing, once per change")
+
 # --- the report may not claim more than the tree supports -------------------
 # The permissions section prints one yes/no for screen recording. Two honest readings of a
 # "not granted" differ completely: the player refused a prompt, or this build never asked.
@@ -3256,14 +3333,18 @@ check(analyzer.returncode == 0, "the analyzer gate can tell a clean tree from a 
 # The whole history is walked once per full pass, not once per gate: the battery
 # runs this file ninety-seven times, and twenty-four seconds times ninety-seven
 # is a battery nobody waits for. Under --no-battery the tree scan still runs, so
-# the mutation battery still sees a secret-shaped file in the tree.
+# the mutation battery still sees a secret-shaped file in the tree. The CI fast
+# job now passes --history explicitly: since the battery moved to its own job,
+# the fast job is the only thing on every push that can see a secret in an older
+# commit, and the history walk costs 79 measured seconds there, not 97x anything.
+scan_flags = ["--history"] if (run_battery or "--history" in flags) else []
 credential = subprocess.run(
     [sys.executable, os.path.join(root, "scripts", "credential-scan-audit.py")]
-    + (["--history"] if run_battery else []),
+    + scan_flags,
     capture_output=True, text=True, cwd=root)
 check(credential.returncode == 0,
       "no credential shape is in the tree"
-      + (" or anywhere in the history" if run_battery else "")
+      + (" or anywhere in the history" if "--history" in scan_flags else "")
       if credential.returncode == 0 else
       "the credential scan refused the tree:\n" + credential.stdout[-700:])
 
@@ -3456,7 +3537,7 @@ if run_battery:
                           os.path.join("scripts", "interpolation-output-pool-tests.py"),
                           os.path.join("scripts", "scaling-output-evidence-tests.py"),
                           os.path.join("scripts", "liquid-glass-overlay-tests.py"),
-                          os.path.join("scripts", "liquid-glass-tab-drag-tests.py"),
+                          os.path.join("scripts", "liquid-glass-tab-bar-tests.py"),
                           os.path.join("scripts", "shortcut-menu-key-tests.py"),
                           os.path.join("scripts", "command-to-control-tests.py"),
                           os.path.join("scripts", "gamepad-menu-gesture-tests.py"),

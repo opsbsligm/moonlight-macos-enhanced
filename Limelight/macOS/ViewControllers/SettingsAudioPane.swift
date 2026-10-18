@@ -170,8 +170,13 @@ struct AudioView: View {
             }
           }
 
-          VStack(alignment: .center) {
+          // Left-aligned label above the slider, the way Music sits its volume control
+          // under its own caption. A centered label in a VStack that is otherwise
+          // full-width floats in the middle of the card with nothing to anchor it.
+          VStack(alignment: .leading, spacing: 4) {
             Text(languageManager.localize("Volume"))
+              .font(SettingsGlass.Typography.groupLabel)
+              .foregroundColor(.secondary)
 
             let volume = Int(settingsModel.volumeLevel * 100)
             Slider(value: $settingsModel.volumeLevel, in: 0.0...1.0) {

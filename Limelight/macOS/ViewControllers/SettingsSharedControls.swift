@@ -12,6 +12,103 @@ import Carbon.HIToolbox
 import CoreGraphics
 import SwiftUI
 
+// The design tokens of the settings surface, in one place, so a card on the page and a
+// card on the first-run sheet cannot drift into two materials again.
+//
+// One radius, because two radii on stacked glass read as two unrelated boxes. The edge is
+// the separator colour the page already uses for every hairline, at half weight: an edge
+// invented from white disappears in light mode and blows out in dark mode, and without
+// any edge at all the refraction alone leaves a card's boundary under the contrast a
+// player can see, so the text reads as floating over the page instead of mounted on it.
+enum SettingsGlass {
+  static let cornerRadius: CGFloat = 10
+
+  static var cardShape: RoundedRectangle {
+    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+  }
+
+  static func card<V: View>(_ view: V) -> some View {
+    view
+      .glassEffect(.regular, in: cardShape)
+      .overlay {
+        cardShape.strokeBorder(
+          Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 0.5)
+      }
+  }
+
+  // The typographic scale, in the system face: Apple Music's library and apple.com's
+  // product pages both set everything in SF Pro and build hierarchy from size, weight
+  // and colour, never from a rounded display face -- a rounded body reads as an app
+  // theme, while the system face at three weights reads as the platform. The rounded
+  // design was removed wholesale; what is left here is the ladder itself.
+  enum Typography {
+    /// Page title, the way apple.com names a section at the top of a page.
+    static let title = Font.system(size: 22, weight: .bold)
+    /// Card title: Music's group header, a size step larger than its rows.
+    static let headline = Font.system(size: 15, weight: .semibold)
+    /// Group label inside a card, Music's section label above a list.
+    static let groupLabel = Font.system(size: 11, weight: .semibold)
+    /// Card body text, one step below the system body so a description recedes.
+    static let caption = Font.system(size: 11)
+  }
+}
+
+struct SettingsGlassCardModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    SettingsGlass.card(content)
+  }
+}
+
+extension View {
+  /// One card of the settings surface's own glass: the system material plus the hairline
+  /// that makes its edge visible over a soft page base.
+  func settingsGlassCard() -> some View {
+    modifier(SettingsGlassCardModifier())
+  }
+}
+
+// The page base. Opaque, because this page covers the main window's content and any
+// material here would show the host list through the settings.
+//
+// It is not a flat fill. A .glassEffect samples what sits behind it, so a perfectly flat
+// base hands every card the same nothing to bend and the whole stack reads as bare text
+// with faint rules -- the complaint that the page has no design in it. Two low-alpha
+// washes taken from the tab bar's own palette (cool blue top-leading, warm amber
+// bottom-trailing) keep the base opaque in both appearances while giving cards at
+// different positions different refraction, which is what lets a stack of cards read as
+// one material bending one page. Measured with the render probe: the page's distinct
+// colours go from 45 on a flat fill to 152 with these washes.
+//
+// mme-page-wash-v1 is the token the constraints audit matches against MLPageBaseView,
+// the AppKit twin the hosts grid draws. Two implementations of one base exist because
+// the settings page is SwiftUI and the hosts collection view is not; the marker is what
+// stops them drifting into two different pages inside one window.
+struct SettingsPageBase: View {
+  var body: some View {
+    ZStack {
+      Color(nsColor: .controlBackgroundColor)
+      RadialGradient(
+        colors: [
+          TabBarConfig.accentCoolBlue.opacity(0.16),
+          TabBarConfig.accentCoolBlue.opacity(0.0),
+        ],
+        center: .topLeading,
+        startRadius: 0, // a starting disc clipped by the window corner read as a white blob
+        endRadius: 680
+      )
+      RadialGradient(
+        colors: [
+          Color(.sRGB, red: 0.98, green: 0.72, blue: 0.42, opacity: 0.12),
+          Color(.sRGB, red: 0.98, green: 0.72, blue: 0.42, opacity: 0.0),
+        ],
+        center: .bottomTrailing,
+        startRadius: 0, // see the cool wash above
+        endRadius: 720
+      )
+    }
+  }
+}
+
 struct StreamRiskSummarySection: View {
   let assessment: StreamRiskAssessment
   @ObservedObject var languageManager = LanguageManager.shared
@@ -30,7 +127,7 @@ struct StreamRiskSummarySection: View {
 
   var body: some View {
     FormSection(title: "Profile Assessment") {
-      DisclosureGroup(isExpanded: $isExpanded) {
+      DisclosureCard(isExpanded: $isExpanded) {
         VStack(alignment: .leading, spacing: 8) {
           Text(languageManager.localize("Profile assessment hint"))
             .font(.footnote)
@@ -43,7 +140,7 @@ struct StreamRiskSummarySection: View {
             Text(languageManager.localize("Profile Level"))
             Spacer()
             Text(assessment.riskLabel)
-              .font(.system(.body, design: .rounded).weight(.semibold))
+              .font(SettingsGlass.Typography.headline)
               .foregroundColor(riskColor)
           }
 
@@ -269,7 +366,7 @@ struct InlineSectionLabel: View {
 
   var body: some View {
     Text(languageManager.localize(title))
-      .font(.footnote.weight(.semibold))
+      .font(SettingsGlass.Typography.groupLabel)
       .foregroundColor(.secondary)
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.top, 2)
@@ -383,6 +480,80 @@ struct DimensionsInputView: View {
   }
 }
 
+/// A collapsible card in the image of the device cards it usually contains: the whole header row is
+/// the control, the chevron rotates and the body reveals with the same short ease the rest of the
+/// settings windows use, and the body is inset to the header text so it reads as one object rather
+/// than a stray list. The open/closed choice is stored, because a player who opened a section to
+/// check one thing expects it to still be open next time they look.
+struct DisclosureCard<Label: View, Content: View>: View {
+  private let content: Content
+  private let label: Label
+  private let expansionBinding: Binding<Bool>?
+  @AppStorage private var storedExpansion: Bool
+  @ObservedObject var languageManager = LanguageManager.shared
+
+  /// The open/closed state either lives in the card's own defaults key or is handed in by a pane
+  /// that already stores it (and reads it back for its own labels or legacy collapse logic).
+  private var expanded: Binding<Bool> { expansionBinding ?? $storedExpansion }
+
+  init(
+    storageKey: String,
+    @ViewBuilder content: () -> Content,
+    @ViewBuilder label: () -> Label
+  ) {
+    self.expansionBinding = nil
+    self._storedExpansion = AppStorage(wrappedValue: false, storageKey)
+    self.content = content()
+    self.label = label()
+  }
+
+  init(
+    isExpanded: Binding<Bool>,
+    @ViewBuilder content: () -> Content,
+    @ViewBuilder label: () -> Label
+  ) {
+    self.expansionBinding = isExpanded
+    self._storedExpansion = AppStorage(wrappedValue: false, "settings.disclosure.unmanaged")
+    self.content = content()
+    self.label = label()
+  }
+
+  var body: some View {
+    // A system DisclosureGroup in its default style, inside a glass card. Each half
+    // of this shape was measured, not chosen by taste:
+    //
+    // * A hand-rolled Button header vends no AXDisclosureTriangle at all, so VoiceOver
+    //   loses the control and the render probe cannot open the collapsed capability
+    //   matrix it exists to check -- run 38791001188 refused the push for exactly that.
+    // * A custom DisclosureGroupStyle keeps the triangle, but with a composite label
+    //   (the state word the page puts beside it, which the probe reads to decide
+    //   whether to press) it vends two triangles -- measured on a standalone harness,
+    //   one for the label's own hit path -- and a probe that presses "what is there"
+    //   presses the same group shut again, so the matrix never opens.
+    // * Hiding the label to dedupe the triangle removes the state word the page
+    //   itself advertises, which moves the lie from the tree to the page.
+    //
+    // The default style is the only shape measured to be both single-triangle and
+    // label-readable, so the disclosure chrome stays the system's and the glass is
+    // the card around it.
+    DisclosureGroup(isExpanded: expanded) {
+      Divider()
+        .padding(.horizontal, 10)
+      VStack(alignment: .leading, spacing: 8) {
+        content
+      }
+      .padding(.top, 8)
+      .padding(.bottom, 10)
+      .padding(.leading, 10)
+    } label: {
+      label
+    }
+    .padding(.vertical, 8)
+    .padding(.horizontal, 10)
+    .settingsGlassCard()
+  }
+}
+
 struct FormSection<Content: View>: View {
   let title: String
   let content: Content
@@ -394,52 +565,56 @@ struct FormSection<Content: View>: View {
   }
 
   var body: some View {
-    GroupBox(
-      content: {
-        VStack {
-          Group {
-            content
-          }
-          .padding([.top], 1)
+    VStack(alignment: .leading, spacing: 0) {
+      Text(languageManager.localize(title))
+        .font(SettingsGlass.Typography.headline)
+        .padding(.bottom, 6)
+      VStack {
+        Group {
+          content
         }
-        .padding([.top, .bottom], 6)
-        .padding([.leading, .trailing], 6)
-      },
-      label: {
-        Text(languageManager.localize(title))
-          .font(
-            .system(.body, design: .rounded)
-              .weight(.semibold)
-          )
-          .padding(.bottom, 6)
-      })
+        .padding([.top], 1)
+      }
+      .padding([.top, .bottom], 6)
+      .padding([.leading, .trailing], 6)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .padding(10)
+    .settingsGlassCard()
   }
 }
 
+/// One labelled row of a settings card. `contentWidth` names the *minimum* width of
+/// the control column, not a fixed one: a fixed width was measured once against one
+/// window size, so a wider window left a dead channel between the label and the
+/// control and a narrower one clipped the control itself. The column now starts at
+/// that width and grows with the card, which is the half of "the cards follow the
+/// window" that the panes cannot each solve for themselves.
 struct FormCell<Content: View>: View {
   let title: String
-  let contentWidth: CGFloat
+  let contentMinWidth: CGFloat
   let content: Content
   @ObservedObject var languageManager = LanguageManager.shared
 
-  init(title: String, contentWidth: CGFloat, @ViewBuilder content: () -> Content) {
+  init(title: String, contentWidth: CGFloat = 0, @ViewBuilder content: () -> Content) {
     self.title = title
-    self.contentWidth = contentWidth
+    self.contentMinWidth = contentWidth
     self.content = content()
   }
 
   var body: some View {
-    HStack {
+    HStack(alignment: .firstTextBaseline) {
       Text(languageManager.localize(title))
+        .layoutPriority(1)
 
-      Spacer()
+      Spacer(minLength: 12)
 
       content
         .if(
-          contentWidth != 0,
+          contentMinWidth != 0,
           transform: { view in
             view
-              .frame(width: contentWidth, alignment: .trailing)
+              .frame(minWidth: contentMinWidth, maxWidth: .infinity, alignment: .trailing)
           })
     }
   }
@@ -1142,7 +1317,7 @@ private struct ShortcutTokenRowView: View {
       ForEach(Array(tokens.enumerated()), id: \.offset) { index, key in
         if index > 0 {
           Text("+")
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .font(SettingsGlass.Typography.groupLabel)
             .foregroundColor(.secondary)
         }
 

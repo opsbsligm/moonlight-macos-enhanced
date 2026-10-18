@@ -76,6 +76,10 @@ struct LiquidGlassSettingsView: View {
     // below the title bar belongs to us alone, so the tab bar and the optional
     // back row stack inside that inset and the content scrolls under them.
     ScrollView(.vertical, showsIndicators: true) {
+      // Every section card and fold on this page is its own glass surface, so they share one
+      // container: the system then samples, culls and morphs them together instead of giving each
+      // card an independent backdrop, which is what makes a stack of cards read as one material.
+      GlassEffectContainer(spacing: 16) {
       VStack(spacing: 16) {
         Group {
           switch effectivePane {
@@ -109,7 +113,8 @@ struct LiquidGlassSettingsView: View {
         }
         .environmentObject(settingsModel)
       }
-      .frame(maxWidth: 920)
+      }
+      .frame(maxWidth: .infinity).frame(minWidth: 400, idealWidth: 680, maxWidth: 800)
       .padding(.horizontal, 24)
       .padding(.top, 20)
       .padding(.bottom, 20)
@@ -123,7 +128,9 @@ struct LiquidGlassSettingsView: View {
         } else {
           Color.clear.frame(width: 0, height: 0)
         }
-        LiquidGlassTabBar(selection: selectionBinding, items: tabs).fixedSize()
+        // The bar owns its glass: the track and the selected capsule are one
+        // GlassEffectContainer inside the component, so the page wraps it in nothing.
+        LiquidGlassTabBar(selection: selectionBinding, items: tabs)
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 14)
@@ -153,8 +160,13 @@ struct LiquidGlassSettingsView: View {
 
   // MARK: - Embedded chrome
 
+  // The page base lives with the shared controls next to the card it exists for, so the
+  // settings page and the first-run sheet cannot be given two different backgrounds and
+  // the glass directory stays free of hand-made depth: the only glass here is the
+  // system's. Opaque in both appearances, because this page covers the main window's
+  // content, and washed rather than flat, because .glassEffect has to bend something.
   private var opaqueBase: some View {
-    Color(nsColor: .controlBackgroundColor)
+    SettingsPageBase()
   }
 
   // Back control for the embedded page. It uses the built-in glass button
