@@ -241,7 +241,12 @@ publish-github:
         StrictHostKeyChecking accept-new
       EOF
     - git remote add github git@github.com:opsbsligm/moonlight-macos-enhanced.git
-    - git push github --mirror
+    # One-way mirror (GitLab = source of truth). Push local heads+tags only,
+    # force (GitHub is a read-only mirror, never holds unique commits), and
+    # prune branches that no longer exist upstream. Explicit refs avoid the
+    # refs/remotes/origin/* push that a plain --mirror would attempt here.
+    - git push github --force --prune "refs/heads/*:refs/heads/*"
+    - git push github --force "refs/tags/*:refs/tags/*"
 
 # --- Notarize (placeholder) --------------------------------------------------
 # Enable once a Developer ID Application certificate is available as CI/CD
