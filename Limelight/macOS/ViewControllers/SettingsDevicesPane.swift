@@ -449,9 +449,31 @@ struct DevicesView: View {
       // Allow button - Citrix style "toggle" look
       if !row.hasReservedInterface && row.identity?.vendorID != nil && row.identity?.productID != nil {
         if hasPermissionRule(row) {
-          Image(systemName: "checkmark.circle.fill")
-            .foregroundColor(.green)
-            .font(.title3)
+          HStack(spacing: 4) {
+            Image(systemName: "checkmark.circle.fill")
+              .foregroundColor(.green)
+              .font(.caption)
+            Text(languageManager.localize("Allowed"))
+              .font(.caption.weight(.semibold))
+              .foregroundColor(.green)
+          }
+          .padding(.horizontal, 10)
+          .padding(.vertical, 3)
+          .background(Capsule().fill(Color.green.opacity(0.10)))
+          .overlay(Capsule().stroke(Color.green.opacity(0.25), lineWidth: 0.5))
+        } else if !panel.mayBecomeActive && !panel.signatureProfile.mayAttemptDriverExtension {
+          // Build cannot load driver extension, show pre-auth in muted style
+          Button(action: { addPermissionRule(row) }) {
+            Text(languageManager.localize("Pre-auth"))
+              .font(.caption.weight(.semibold))
+              .padding(.horizontal, 12)
+              .padding(.vertical, 5)
+              .background(Capsule().fill(Color.secondary.opacity(0.10)))
+              .foregroundColor(.secondary)
+              .overlay(Capsule().stroke(Color.secondary.opacity(0.25), lineWidth: 0.5))
+          }
+          .buttonStyle(.plain)
+          .help(languageManager.localize("USB pre-auth help"))
         } else {
           Button(action: { addPermissionRule(row) }) {
             Text(languageManager.localize("Allow"))
@@ -499,8 +521,11 @@ struct DevicesView: View {
   private func verdictChip(_ row: MLDeviceRedirectionPanelRow) -> some View {
     let textKey = row.allowed
       ? "Device ready to redirect"
-      : (row.hasReservedInterface ? "Device stays with this Mac" : "Device not ready yet")
-    let colour: Color = row.allowed ? .green : (row.hasReservedInterface ? .secondary : .orange)
+      : (row.hasReservedInterface ? "Device stays with this Mac" 
+            : (row.identity?.vendorID != nil && row.identity?.productID != nil 
+                ? "USB permission not granted" 
+                : "Device not ready yet"))
+    let colour: Color = row.allowed ? .green : (row.hasReservedInterface ? .secondary : (row.identity?.vendorID != nil && row.identity?.productID != nil ? .orange : .secondary))
     return chip(languageManager.localize(textKey), colour: colour)
   }
 
