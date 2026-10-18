@@ -58,9 +58,12 @@ workflow:
 
 # --- Security scanning (Auto-DevOps templates) -------------------------------
 include:
-  - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Secret-Detection.gitlab-ci.yml
-  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  # Security scanning templates need a Docker image with /analyzer; the
+  # shell-executor runners (Linux VM + macOS) cannot run them. Re-enable
+  # with docker executor, or run Semgrep/TruffleHog locally in pre-push.
+  # - template: Security/SAST.gitlab-ci.yml
+  # - template: Security/Secret-Detection.gitlab-ci.yml
+  # - template: Security/Dependency-Scanning.gitlab-ci.yml
 
 # --- Lint --------------------------------------------------------------------
 lint:swiftlint:
