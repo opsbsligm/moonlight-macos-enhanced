@@ -7,12 +7,14 @@
 //
 
 #import "AboutViewController.h"
+#import "GlassOverlayContainer.h"
 #import "Helpers.h"
 #import "Moonlight-Swift.h"
 
 @interface AboutViewController ()
-@property (weak) IBOutlet NSVisualEffectView *backgroundEffectView;
+@property (weak) IBOutlet NSView *backgroundEffectView;
 @property (weak) IBOutlet NSImageView *appIconImageView;
+@property (nonatomic, strong) GlassOverlayContainer *glassOverlay;
 @property (weak) IBOutlet NSTextField *versionNumberTextField;
 @property (weak) IBOutlet NSTextField *copyrightTextField;
 @property (weak) IBOutlet NSTextField *githubTextFieldLink;
@@ -33,9 +35,17 @@ static NSString * const MoonlightEnhancedReadmeURL = @"https://github.com/opsbsl
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    self.backgroundEffectView.material = NSVisualEffectMaterialMenu;
-
     [self setPreferredContentSize:NSMakeSize(self.view.bounds.size.width, self.view.bounds.size.height)];
+
+    // Replace the xib's plain visual-effect view with a GlassOverlayContainer
+    // so the About panel matches every other glass panel in the app.
+    self.glassOverlay = [GlassOverlayContainer containerWithCornerRadius:0.0];
+    self.glassOverlay.frame = self.backgroundEffectView.bounds;
+    self.glassOverlay.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [self.backgroundEffectView.superview addSubview:self.glassOverlay
+                                          positioned:NSWindowBelow
+                                          relativeTo:self.backgroundEffectView];
+    self.backgroundEffectView.hidden = YES;
 
     self.appIconImageView.image = [NSApp applicationIconImage];
 
