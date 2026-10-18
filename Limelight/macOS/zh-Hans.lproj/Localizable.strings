@@ -1405,3 +1405,8 @@
 "USB permission class missing" = "设置未允许该设备类别";
 "USB permission rule disabled" = "匹配的许可规则已停用";
 "Allow" = "允许";
+
+"USB permission not granted" = "尚未授权";
+"Pre-auth" = "预授权";
+"USB pre-auth help" = "预先授权此设备型号；当 USB 重定向就绪时即可使用。";
+"Allowed" = "已授权";
