@@ -276,7 +276,7 @@ struct AppView: View {
           .frame(height: 32)
 
         FormSection(title: "Advanced") {
-          DisclosureGroup(isExpanded: $videoCapabilityStatusExpanded) {
+          DisclosureCard(isExpanded: $videoCapabilityStatusExpanded) {
             VideoCapabilityStatusPanel(matrix: settingsModel.videoCapabilityMatrix)
               .padding(.top, 8)
               .frame(maxWidth: .infinity, alignment: .leading)
@@ -876,7 +876,7 @@ private struct DebugLogCategoryBadge: View {
 
   var body: some View {
     Text(category.badgeText)
-      .font(.system(size: 10, weight: .semibold, design: .rounded))
+      .font(SettingsGlass.Typography.groupLabel)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)
       .foregroundColor(color)
@@ -899,7 +899,7 @@ private struct DebugLogStatBadge: View {
         .fill(color)
         .frame(width: 7, height: 7)
       Text("\(label) \(value)")
-        .font(.system(size: 11, weight: .medium, design: .rounded))
+        .font(SettingsGlass.Typography.caption)
         .foregroundColor(.secondary)
     }
     .padding(.horizontal, 8)
@@ -1368,7 +1368,7 @@ private struct DebugLogLiveView: View {
 
       HStack(spacing: 8) {
         Text(currentModeDisplayName)
-          .font(.system(size: 11, weight: .semibold, design: .rounded))
+          .font(SettingsGlass.Typography.groupLabel)
           .foregroundColor(.secondary)
           .padding(.horizontal, 10)
           .padding(.vertical, 4)
@@ -1376,7 +1376,7 @@ private struct DebugLogLiveView: View {
 
         if let selectedCategorySummary {
           Text(selectedCategorySummary)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .font(SettingsGlass.Typography.caption)
             .foregroundColor(.secondary)
             .lineLimit(1)
         }

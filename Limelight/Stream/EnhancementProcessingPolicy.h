@@ -15,11 +15,70 @@ static inline bool MLEnhancementShouldWait(bool sameInput, uint64_t startedAtMs,
 
 // Current-session circuit breaker: isolated mild overruns can recover, but a
 // failed call or a four-period task must not continually occupy the accelerator.
+// Missing the publish deadline alone is not an overrun the engine can be killed
+// for: measured on the acceptance machine, one 1080p VTLLFI call costs 18-41ms
+// against an 11ms source-frame deadline, and every such call still lands inside
+// the doubled cadence's own recovery room. Striking those charges the engine for
+// the calendar, not the compute, and opens the breaker on the first three frames
+// of every dynamic scene. A call at twice the deadline is a different answer --
+// that is the pace at which the single-flight task stops being an addition to
+// the frame and starts being a tax on it -- so gross overruns accumulate and the
+// severe multiplier still trips at once.
 static inline uint32_t MLEnhancementOverloadStrikes(uint32_t previous, bool processed,
                                                    uint64_t elapsedMs, uint64_t budgetMs) {
     if (!processed || budgetMs == 0 || elapsedMs / budgetMs >= 4) return 3;
-    if (elapsedMs >= budgetMs) return previous >= 2 ? 3 : previous + 1;
+    if (elapsedMs / budgetMs >= 2) return previous >= 2 ? 3 : previous + 1;
     return 0;
+}
+
+// The staging deadline one interpolation task may hold presentation. A display
+// period alone is the wrong shape of answer: VT low-latency interpolation is
+// lawful work whose cost is set by the image, not by the panel, so a 180Hz
+// display period (~5ms) sits below any honest VTLLFI call and opens the breaker
+// on the first three frames -- a budget that cannot be met is a refusal wearing
+// the breaker's clothes. The deadline is one source frame period: the instant
+// the next source supersedes this task's input, so work finished later cannot
+// reach a present that still wants it, and MLEnhancementMayPublish already
+// refuses that publication. It is still a deadline the task is charged against:
+// a call over the budget scores a strike and a call at four times the budget
+// trips the breaker at once, so an engine that cannot keep up still stops.
+static inline uint64_t MLEnhancementStagingBudgetMs(double refreshHz, int sourceFps) {
+    if (refreshHz <= 0.0 || sourceFps <= 0) {
+        return 16;
+    }
+    const double sourceFrameMs = 1000.0 / (double)sourceFps;
+    const double displayFrameMs = 1000.0 / refreshHz;
+    double budget = sourceFrameMs;
+    if (budget < displayFrameMs) {
+        budget = displayFrameMs;
+    }
+    // A service window below this cannot hold a real call at any resolution, so
+    // a high refresh rate must not squeeze it away.
+    if (budget < 8.0) {
+        budget = 8.0;
+    }
+    uint64_t floored = (uint64_t)budget;
+    return floored < 1 ? 1 : floored;
+}
+
+// The same deadline again, once the engine has shown what a call costs. A fixed
+// window guesses; a measured one knows. The EMA of finished calls sets the
+// window at a quarter above the typical call, and the window may never exceed
+// two source frames -- past that the task no longer describes the stream it
+// came from, and a call that slow should earn strikes under the multiplier
+// rules above rather than be forgiven by a budget that grew out of all reason.
+static inline uint64_t MLEnhancementAdaptiveBudgetMs(uint64_t emaCallMs,
+                                                    double refreshHz, int sourceFps) {
+    const uint64_t frameBudget = MLEnhancementStagingBudgetMs(refreshHz, sourceFps);
+    if (emaCallMs == 0) {
+        return frameBudget;
+    }
+    uint64_t measured = emaCallMs + emaCallMs / 4 + 1;
+    uint64_t ceiling = 2 * frameBudget;
+    if (measured > ceiling) {
+        measured = ceiling;
+    }
+    return measured > frameBudget ? measured : frameBudget;
 }
 
 // Cooldown probe: a paused engine re-tests one frame after a growing backoff.

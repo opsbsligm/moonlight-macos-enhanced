@@ -53,6 +53,13 @@ NS_ASSUME_NONNULL_BEGIN
 /// glass path and on systems that have no interactive glass.
 @property (nonatomic) BOOL glassIsInteractive;
 
+/// A colour to fold into the glass behind the content. Selection state on a card is a
+/// property of the card's own glass -- tinting the material is how a system card says
+/// "this one" without a blue rectangle painted over the material, which is what the
+/// list cells used to do. Ignored off the glass path, where a tint over vibrancy is a
+/// colour wash, not a fold.
+@property (nonatomic, copy, nullable) NSColor *tintColor;
+
 /// The material the vibrancy path uses, exposed so the gate can assert the fallback is
 /// still the one the panels shipped with before glass existed.
 + (NSVisualEffectMaterial)fallbackMaterial;

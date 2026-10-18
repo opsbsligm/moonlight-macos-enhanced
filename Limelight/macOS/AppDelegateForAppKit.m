@@ -352,9 +352,9 @@ static void MLProbeCollectAppKitAXNodes(id element, NSUInteger depth, NSUInteger
 }
 
 // The same tree walk, collecting the controls that open a collapsed section instead
-// of the text. The capability matrix lives inside a DisclosureGroup that ships
+// of the text. The capability matrix lives inside a collapsed DisclosureCard that ships
 // collapsed (`settings.app.videoCapabilityStatusExpanded` defaults to false) and
-// SwiftUI vends nothing inside a collapsed group: measured on a clean launch every
+// SwiftUI vends nothing inside a collapsed disclosure: measured on a clean launch every
 // matrix row and all three of its segments are absent from the accessibility tree,
 // while on a machine where the section had once been opened by hand they are all
 // present. A check that only reads what is on screen would then pass or fail
@@ -466,6 +466,14 @@ static NSArray<NSDictionary *> *MLProbeReadableNodes(NSView *root) {
 static NSString *const MLProbeAdvancedSectionCollapsedKey
     = @"settings.app.videoCapabilityStatusExpanded";
 
+// The devices page ships its hub group collapsed, and the pass below presses it open
+// to prove reachability -- which stores the open state. A second pass on the same
+// machine then starts open, "did not start collapsed" fires, and the pass that opens
+// nothing reports its own history rather than the page. Same cure as the Advanced
+// section: force the shipped state at entry, restore the user's own choice after.
+static NSString *const MLProbeHubsGroupCollapsedKey
+    = @"settings.devices.hubsExpanded";
+
 static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *output,
                                NSInteger pane, NSString *name, NSMutableDictionary *report) {
     NSView *content = window.contentView;
@@ -482,10 +490,15 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     NSUserDefaults *probeDefaults = [NSUserDefaults standardUserDefaults];
     id previousAdvancedState = [probeDefaults objectForKey:MLProbeAdvancedSectionCollapsedKey];
     BOOL forcedTheSectionShut = NO;
+    id previousHubsState = [probeDefaults objectForKey:MLProbeHubsGroupCollapsedKey];
     if ([name isEqualToString:@"appPane"]) {
         [probeDefaults setObject:@(NO) forKey:MLProbeAdvancedSectionCollapsedKey];
         [probeDefaults synchronize];
         forcedTheSectionShut = YES;
+    }
+    if ([name isEqualToString:@"devicesPane"]) {
+        [probeDefaults setObject:@(NO) forKey:MLProbeHubsGroupCollapsedKey];
+        [probeDefaults synchronize];
     }
 
     NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
@@ -669,6 +682,11 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
         [probeDefaults setObject:previousAdvancedState forKey:MLProbeAdvancedSectionCollapsedKey];
     } else if (forcedTheSectionShut) {
         [probeDefaults removeObjectForKey:MLProbeAdvancedSectionCollapsedKey];
+    }
+    if (previousHubsState) {
+        [probeDefaults setObject:previousHubsState forKey:MLProbeHubsGroupCollapsedKey];
+    } else if ([name isEqualToString:@"devicesPane"]) {
+        [probeDefaults removeObjectForKey:MLProbeHubsGroupCollapsedKey];
     }
     [probeDefaults synchronize];
     if (previousPane) {
@@ -2299,6 +2317,14 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
     mainWC.window.frameAutosaveName = @"Main Window";
     self.mainWindow = mainWC.window;
     [mainWC.window setMinSize:NSMakeSize(650, 350)];
+    // The window paints its whole content area, toolbar included. Without this the
+    // titlebar kept its own opaque strip: on the hosts page it showed as a white cut
+    // at the leading edge where the page wash began below the toolbar, and it made
+    // the hosts and settings windows two different bodies under one tab bar. The
+    // settings overlay already removes and restores this mask around itself, so the
+    // drag region it reserves for the titlebar keeps working either way.
+    mainWC.window.styleMask |= NSWindowStyleMaskFullSizeContentView;
+    mainWC.window.titlebarAppearsTransparent = YES;
     
     [mainWC showWindow:self];
     [mainWC.window makeKeyAndOrderFront:nil];
