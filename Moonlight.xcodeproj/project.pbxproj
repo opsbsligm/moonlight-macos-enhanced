@@ -203,6 +203,8 @@
 				Stream/StreamManager.m,
 				Stream/VideoDecoderRenderer.m,
 				Stream/MLFramePacer.m,
+				Stream/MLBandwidthTracker.m,
+				Stream/MLBandwidthTracker.h,
 				Stream/MLFramePacer.h,
 				Utility/LogBuffer.m,
 				Utility/Logger.m,

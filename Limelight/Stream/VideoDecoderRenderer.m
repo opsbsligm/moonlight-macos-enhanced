@@ -12,6 +12,7 @@
 #import <Foundation/Foundation.h>
 @class MLFramePacer;
 #import "InterpolationCadencePolicy.h"
+#import "MLBandwidthTracker.h"
 #include "EnhancedPresentationPolicy.h"
 #include "ActualPresentationMetrics.h"
 #include "EnhancementProcessingPolicy.h"
@@ -204,6 +205,7 @@ typedef struct MLDecodeFrameContext MLDecodeFrameContext;
 
 @interface VideoDecoderRenderer () <MTKViewDelegate>
 @property (nonatomic) int frameRate;
+@property (nonatomic, strong) MLBandwidthTracker *bandwidthTracker;
 - (void)resetVideoParameterSetState;
 - (BOOL)loadSharedMetalPipelineForPixelFormat:(MTLPixelFormat)pixelFormat
                                         error:(NSError **)errorOut;
@@ -1692,6 +1694,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _vtInterpolationQueue = dispatch_queue_create("std.skyhua.moonlight.video.vt-interpolation", DISPATCH_QUEUE_SERIAL);
 
     _pacer = [[MLFramePacer alloc] initWithDelegate:(id<MLFramePacerDelegate>)self videoStats:&_activeWndVideoStats];
+    _bandwidthTracker = [[MLBandwidthTracker alloc] initWithWindowSeconds:10 bucketIntervalMs:250];
 
     return self;
 }
@@ -5997,6 +6000,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
 
         if (fullLengthBytes > 0) {
             self->_activeWndVideoStats.receivedBytes += (uint64_t)fullLengthBytes;
+            [self->_bandwidthTracker addBytes:(NSUInteger)fullLengthBytes];
         }
 
         // RFC3550-style jitter estimate using frame timing deltas.
