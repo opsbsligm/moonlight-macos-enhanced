@@ -43,12 +43,6 @@
     },
     {
       "count": 1,
-      "file": "Limelight/Stream/MLFramePacer.m",
-      "checker": "unknown",
-      "shape": "unused variable X [-Wunused-const-variable]"
-    },
-    {
-      "count": 1,
       "file": "Limelight/Stream/VideoDecoderRenderer.m",
       "checker": "nullability.NullPassedToNonnull",
       "shape": "Null passed to a callee that requires a non-null 2nd parameter"
