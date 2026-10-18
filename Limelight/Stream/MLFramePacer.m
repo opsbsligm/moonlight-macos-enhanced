@@ -27,7 +27,7 @@ static uint64_t ml_pacer_get_microseconds(void) {
 #import "MLFramePacer.h"
 
 // Queue depth history window: 500ms of entries.
-static const NSUInteger kMLPacerHistoryWindowEntries = 0; // computed from displayFps
+
 
 @interface MLFramePacer ()
 {
