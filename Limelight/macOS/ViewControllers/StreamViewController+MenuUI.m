@@ -6,6 +6,12 @@
 #import "StreamViewController_Internal.h"
 #import "DeviceRedirectionPanelModel.h"
 #import "USBScanPolicy.h"
+#import "USBMenuStatus.h"
+#import "DeviceRedirectionPolicy.h"
+#import "HttpManager.h"
+#import "ServerInfoResponse.h"
+#import "ConnectionEndpointStore.h"
+#import "IdManager.h"
 
 // Group only the model's proven pure hubs; composite and unreadable devices stay visible.
 static void MLAppendUSBMenuDevice(NSMenu *devices, NSMenu *hubs,
@@ -1541,6 +1547,120 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
     });
 }
 
+// Ask this session's host once whether it offers USB redirection, away from the frame thread.
+//
+// The video connection is not evidence here: a host that streams video and a host that will accept
+// a USB device are two claims, and the second one belongs to the host. So the sidebar asks the same
+// question the settings page asks, over the same /serverinfo, and stores only the answer.
+//
+// Not retried on a timer. A host's capability does not expire while a session runs, and a menu that
+// rebuilt on every hover would turn a two-line caption into periodic background HTTP.
+- (void)askUSBMenuHostClaimOnce {
+    NSAssert(NSThread.isMainThread, @"USB menu state belongs to the main thread");
+    if (self.usbMenuHostClaimInFlight) return;
+    if (self.stopStreamInProgress) return;
+    if (self.usbMenuHostClaim != MLUSBMenuHostClaimNotAsked) return;
+    TemporaryHost *host = self.app.host;
+    if (host.pairState != PairStatePaired) return;  // Nothing to credit an answer to.
+    NSString *address = [ConnectionEndpointStore allEndpointsForHost:host].firstObject;
+    if (address.length == 0) {
+        // No address to ask is a host we could not have reached, not a host that declined.
+        self.usbMenuHostClaim = MLUSBMenuHostClaimUnreachable;
+        return;
+    }
+
+    self.usbMenuHostClaimInFlight = YES;
+    NSUInteger generation = self.activeStreamGeneration;
+    self.usbMenuHostClaimGeneration = generation;
+    NSString *expectedUuid = [(host.uuid ?: @"")
+        stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSData *serverCert = [host.serverCert copy];
+    NSString *uniqueId = [[IdManager getUniqueId] copy];
+    NSString *capabilityTag = [MLDeviceRedirectionServerInfoTagName() copy];
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        @autoreleasepool {
+            // Only the observed facts are collected here. Which of them decides the caption is the
+            // replayed function's job, so that a menu edit cannot quietly rewrite the priority.
+            MLUSBMenuHostAnswer answer;
+            answer.transport_failed = 0;
+            answer.document_parsed = 0;
+            answer.status_code = 0;
+            answer.answered_uuid = 0;
+            answer.state_says_busy = 0;
+            answer.advertised = 0;
+            ServerInfoResponse *serverInfo = [[ServerInfoResponse alloc] init];
+            HttpManager *http = [[HttpManager alloc] initWithHost:address
+                                                        uniqueId:uniqueId
+                                                      serverCert:serverCert];
+            if (http == nil) {
+                answer.transport_failed = 1;
+            } else {
+                HttpRequest *request = [HttpRequest requestForResponse:serverInfo
+                                                        withUrlRequest:[http newServerInfoRequest:true]
+                                                         fallbackError:401
+                                                       fallbackRequest:[http newHttpServerInfoRequest:true]];
+                [http executeRequestSynchronously:request];
+                // A status code below 100 is an NSURLError that never became a document, so a body
+                // left over from a fallback attempt cannot be quoted as this host's answer.
+                answer.document_parsed = serverInfo.data.length > 0 &&
+                    serverInfo.statusCode >= 100 && serverInfo.statusCode <= 599;
+                answer.status_code = (int)serverInfo.statusCode;
+                NSString *answeredUuid = [([serverInfo getStringTag:TAG_UNIQUE_ID] ?: @"")
+                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                answer.answered_uuid = expectedUuid.length > 0 &&
+                    [answeredUuid isEqualToString:expectedUuid];
+                NSString *state = [serverInfo getStringTag:TAG_STATE] ?: @"";
+                answer.state_says_busy = [state hasSuffix:@"_SERVER_BUSY"];
+                NSString *advertisedValue = [serverInfo getStringTag:capabilityTag];
+                answer.advertised = [MLDeviceRedirectionPolicy
+                    hostAdvertisesDeviceRedirectionInServerInfo:
+                        (advertisedValue != nil ? @{ capabilityTag : advertisedValue } : @{})];
+            }
+            NSInteger claim = MLUSBMenuHostClaimFromAnswer(answer);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                if (!strongSelf) return;
+                strongSelf.usbMenuHostClaimInFlight = NO;
+                // The answer belongs to one host on one session. A late reply from either,
+                // including this session's own reconnect, is dropped rather than credited.
+                if (![strongSelf isActiveStreamGeneration:generation]) return;
+                if (strongSelf.usbMenuHostClaimGeneration != generation) return;
+                NSString *currentUuid = strongSelf.app.host.uuid ?: @"";
+                if (expectedUuid.length == 0 || ![currentUuid isEqualToString:expectedUuid]) return;
+                strongSelf.usbMenuHostClaim = claim;
+                // Do not mutate a menu under its current pointer.
+                if (!strongSelf.edgeMenuMenuVisible) [strongSelf rebuildStreamMenu];
+            });
+        }
+    });
+}
+
+// The first precondition still standing between the device list and a handover, decided from what
+// this process actually knows: this binary's signature, this player's switch, this host's answer.
+// The machine name of that state goes to the log beside it, so a screenshot's caption and a log
+// line can be matched without guessing which "unavailable" somebody saw.
+- (MLUSBMenuCapability)usbMenuCapabilityWithModel:(MLDeviceRedirectionPanelModel *)model
+                                       hostPaired:(BOOL)hostPaired {
+    MLUSBMenuCapability capability = MLUSBMenuCapabilityForInputs(
+        model.signatureProfile.mayAttemptDriverExtension,
+        model.featureEnabled,
+        hostPaired,
+        (int)self.usbMenuHostClaim,
+        // Slot occupancy is a fact about an open redirection session, which this menu never opens;
+        // guessing it here would report a number the client never asked for.
+        MLUSBMenuSlotsUnknown);
+    // Logged when the state changes, not on every decision: rebuilding the menu is what a hover
+    // does, and a caption written to the log on each one is a flood that hides the transition a
+    // support thread would actually need. -1 is "not reported yet", which is also a first state.
+    if ((NSInteger)capability != self.usbMenuLastLoggedCapability) {
+        Log(LOG_I, @"[usb] sidebar capability=%s claim=%ld",
+            MLUSBMenuCapabilityName(capability), (long)self.usbMenuHostClaim);
+        self.usbMenuLastLoggedCapability = (NSInteger)capability;
+    }
+    return capability;
+}
+
 - (void)refreshUSBDevicesFromMenu:(NSMenuItem *)sender {
     [self refreshUSBMenuSnapshotForced:YES];
 }
@@ -2001,8 +2121,10 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
     [self.streamMenu addItem:audioItem];
 
     [self refreshUSBMenuSnapshotForced:NO];
+    [self askUSBMenuHostClaimOnce];
     BOOL hasUSBSnapshot = self.usbMenuDeviceSnapshot != nil &&
                           self.usbMenuSnapshotGeneration == self.activeStreamGeneration;
+    BOOL usbHostPaired = self.app.host.pairState == PairStatePaired;
     // Session operations live in the stream dock, never in permission settings.
     NSMenuItem *usbItem = [[NSMenuItem alloc] initWithTitle:MLString(@"USB devices", nil) action:nil keyEquivalent:@""];
     setSymbol(usbItem, @"cable.connector");
@@ -2011,14 +2133,20 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
     NSMenu *usbHubsMenu = [[NSMenu alloc] initWithTitle:MLString(@"USB hubs", nil)];
     usbHubsMenu.autoenablesItems = NO;
     MLDeviceRedirectionPanelModel *usbPermissions = [[MLDeviceRedirectionPanelModel alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
-    // No host capability is inferred from a video connection. UNLOCK(stage3):
-    // until a real host channel and loadable driver exist, no menu action may claim connection.
-    NSMenuItem *usbStatus = [[NSMenuItem alloc] initWithTitle:MLString(@"USB session unavailable", nil) action:nil keyEquivalent:@""];
+    // The caption names the first precondition that is actually missing, from this binary's own
+    // signature, this player's own switch, and this host's own answer. No host capability is
+    // inferred from a video connection: UNLOCK(stage3) still stands for a menu action claiming a
+    // connection, but it never licensed describing four different gaps as one sentence.
+    MLUSBMenuCapability usbCapability =
+        [self usbMenuCapabilityWithModel:usbPermissions hostPaired:usbHostPaired];
+    NSMenuItem *usbStatus = [[NSMenuItem alloc] initWithTitle:MLString(
+        [NSString stringWithUTF8String:MLUSBMenuCapabilityKey(usbCapability)], nil)
+        action:nil keyEquivalent:@""];
     usbStatus.enabled = NO;
     [usbMenu addItem:usbStatus];
     NSArray<MLDeviceRedirectionPanelRow *> *usbRows = [MLDeviceRedirectionPanelRow displayOrderedRows:
         [usbPermissions rowsForDevices:hasUSBSnapshot ? self.usbMenuDeviceSnapshot : @[]
-                          hostIsPaired:self.app.host.pairState == PairStatePaired]];
+                          hostIsPaired:usbHostPaired]];
     [usbMenu addItem:[NSMenuItem separatorItem]];
     for (MLDeviceRedirectionPanelRow *row in usbRows) {
         NSString *name = row.displayName ?: MLString(row.categoryNameKey ?: @"USB class vendor specific", nil);
@@ -2040,9 +2168,13 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
         NSMenuItem *connect = [[NSMenuItem alloc] initWithTitle:MLString(@"USB connect to this session", nil) action:nil keyEquivalent:@""];
         connect.enabled = NO;
         [deviceMenu addItem:connect];
-        NSMenuItem *reason = [[NSMenuItem alloc] initWithTitle:
-            MLString(row.hasReservedInterface ? @"Device stays with this Mac" :
-                (!usbPermissions.featureEnabled ? @"USB permissions disabled" : @"USB runtime required"), nil)
+        // A reserved class has its own reason, because no setting of the player's can change it.
+        // Every other gap is the one the header names: a second spelling of the same missing
+        // precondition is how two lines start disagreeing about one device.
+        NSString *rowReasonKey = row.hasReservedInterface ? @"Device stays with this Mac" :
+            (usbCapability == MLUSBMenuCapabilityReady ? @"USB runtime required" :
+                [NSString stringWithUTF8String:MLUSBMenuCapabilityKey(usbCapability)]);
+        NSMenuItem *reason = [[NSMenuItem alloc] initWithTitle:MLString(rowReasonKey, nil)
             action:nil keyEquivalent:@""];
         reason.enabled = NO;
         [deviceMenu addItem:reason];

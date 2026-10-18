@@ -109,6 +109,18 @@ static void MLSetGlassInteractivity(NSView *glass, BOOL interactive) {
     return _requestedInteractivity;
 }
 
+- (void)setTintColor:(NSColor *)tintColor {
+    _tintColor = [tintColor copy];
+    if (!self.usesSystemGlass) {
+        // Vibrancy has no fold to put a colour into; a wash over it is the fake this
+        // container exists to stop, so the tint is simply not applied off the glass.
+        return;
+    }
+    if (@available(macOS 26.0, *)) {
+        ((NSGlassEffectView *)self.backgroundView).tintColor = _tintColor;
+    }
+}
+
 - (void)setCornerRadius:(CGFloat)cornerRadius {
     _cornerRadius = cornerRadius;
     if (@available(macOS 26.0, *)) {

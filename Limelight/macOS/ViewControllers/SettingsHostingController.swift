@@ -55,7 +55,11 @@ private struct WelcomePermissionsView: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 20) {
+    // One container for the whole sheet: the permission card bends the same material the settings
+    // page bends afterwards, and the titled window behind this view is opaque, so the glass has a
+    // page to sample rather than the desktop.
+    GlassEffectContainer(spacing: 20) {
+      VStack(alignment: .leading, spacing: 20) {
       HStack(alignment: .top, spacing: 16) {
         Image(nsImage: NSApp.applicationIconImage)
           .resizable()
@@ -65,7 +69,11 @@ private struct WelcomePermissionsView: View {
 
         VStack(alignment: .leading, spacing: 8) {
           Text(languageManager.localize("Welcome to Moonlight macOS Enhanced"))
-            .font(.system(size: 28, weight: .semibold, design: .rounded))
+            .font(SettingsGlass.Typography.title)
+            // The sheet has a fixed width and the product name is long, so the title wraps onto a
+            // second line rather than truncating with an ellipsis on the first launch a player sees.
+            .fixedSize(horizontal: false, vertical: true)
+            .lineLimit(2)
           Text(languageManager.localize("Welcome Permissions Subtitle"))
             .foregroundColor(.secondary)
 
@@ -74,40 +82,41 @@ private struct WelcomePermissionsView: View {
         }
       }
 
-      GroupBox {
-        VStack(alignment: .leading, spacing: 16) {
-          if inputMonitoringManager.authorizationState != .unsupported {
-            permissionRow(
-              title: "Input Monitoring",
-              subtitle: "Input Monitoring detail",
-              stateLabel: inputStatusText,
-              isGranted: inputMonitoringManager.isGranted,
-              supplementalMessageKey: inputMonitoringManager.supplementalStatusMessageKey,
-              actionTitle: inputActionTitle,
-              action: inputAction
-            )
-          }
-
+      // The permission list is one card of the same glass the settings page uses, so the first
+      // screen a new player sees is drawn from the same material as every screen after it.
+      VStack(alignment: .leading, spacing: 16) {
+        if inputMonitoringManager.authorizationState != .unsupported {
           permissionRow(
-            title: "AWDL Stability Helper",
-            subtitle: "Welcome AWDL detail",
-            stateLabel: awdlStatusText,
-            isGranted: awdlGrantedState,
-            actionTitle: awdlActionTitle,
-            action: awdlAction
-          )
-
-          permissionRow(
-            title: "Microphone",
-            subtitle: "Microphone Permission detail",
-            stateLabel: microphoneStatusText,
-            isGranted: microphoneStatus == .authorized,
-            actionTitle: microphoneActionTitle,
-            action: microphoneAction
+            title: "Input Monitoring",
+            subtitle: "Input Monitoring detail",
+            stateLabel: inputStatusText,
+            isGranted: inputMonitoringManager.isGranted,
+            supplementalMessageKey: inputMonitoringManager.supplementalStatusMessageKey,
+            actionTitle: inputActionTitle,
+            action: inputAction
           )
         }
-        .padding(.vertical, 8)
+
+        permissionRow(
+          title: "AWDL Stability Helper",
+          subtitle: "Welcome AWDL detail",
+          stateLabel: awdlStatusText,
+          isGranted: awdlGrantedState,
+          actionTitle: awdlActionTitle,
+          action: awdlAction
+        )
+
+        permissionRow(
+          title: "Microphone",
+          subtitle: "Microphone Permission detail",
+          stateLabel: microphoneStatusText,
+          isGranted: microphoneStatus == .authorized,
+          actionTitle: microphoneActionTitle,
+          action: microphoneAction
+        )
       }
+      .padding(10)
+      .settingsGlassCard()
 
       HStack {
         Spacer()
@@ -116,13 +125,15 @@ private struct WelcomePermissionsView: View {
         }
         .keyboardShortcut(.defaultAction)
       }
-    }
-    .padding(24)
-    .frame(width: 560)
-    .onAppear {
-      microphoneManager.refreshPermissionStatus()
-      inputMonitoringManager.refreshAuthorizationStatus()
-      awdlManager.refreshAuthorizationStatus()
+      }
+      .padding(24)
+      .frame(width: 560)
+      .background(SettingsPageBase())
+      .onAppear {
+        microphoneManager.refreshPermissionStatus()
+        inputMonitoringManager.refreshAuthorizationStatus()
+        awdlManager.refreshAuthorizationStatus()
+      }
     }
   }
 

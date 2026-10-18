@@ -103,6 +103,7 @@
 				"macOS/Helpers/Functional/NSDictionary+F.m",
 				"macOS/Helpers/Functional/NSNumber+F.m",
 				macOS/Helpers/Helpers.m,
+				macOS/Helpers/MLPageBaseView.m,
 				macOS/Helpers/ImageFader.m,
 				macOS/Helpers/LanguageManager.swift,
 				macOS/Helpers/MASPreferences/MASPreferencesWindow.xib,
@@ -201,6 +202,8 @@
 				Stream/StreamConfiguration.m,
 				Stream/StreamManager.m,
 				Stream/VideoDecoderRenderer.m,
+				Stream/MLFramePacer.m,
+				Stream/MLFramePacer.h,
 				Utility/LogBuffer.m,
 				Utility/Logger.m,
 				Utility/Utils.m,
@@ -481,10 +484,6 @@
 				// this, `#if DEBUG` in a .swift file silently compiles to nothing, which is how
 				// a Debug-only probe expectation class disappeared from Release-visible headers.
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				// Named, not inferred: `NSSegmentedControl.role` exists only in the macOS 27 SDK, so an
-				// `#available` check alone cannot compile against the macOS 26 SDK this project also
-				// builds with (CI). The condition is declared only for the SDK that has the symbol, and
-				// DEBUG is repeated rather than inherited so the condition above keeps answering here.
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" = "DEBUG ML_APPKIT_TABS_ROLE";
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -546,9 +545,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = std.skyhua.MoonlightMac2;
 				PRODUCT_NAME = MoonlightEnhanced;
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Moonlight-Swift.h";
-				PROVISIONING_PROFILE_SPECIFIER = "";
-				// See the Debug configuration: the tabs role compiles only where the SDK declares it.
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" = ML_APPKIT_TABS_ROLE;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = "Limelight/Moonlight-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};

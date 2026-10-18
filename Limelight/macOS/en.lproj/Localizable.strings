@@ -1355,7 +1355,17 @@
 "USB devices available" = "Local devices";
 "USB device scan failed" = "Unable to read USB devices";
 "USB devices" = "USB devices";
-"USB session unavailable" = "USB redirection unavailable in this build";
+/* Stream sidebar: the first precondition still missing, one line per state. The sidebar used to
+   print one sentence for all of these, which sent players to their PC's settings over a signature
+   this build has never had. */
+"USB blocked by this build" = "This build cannot load a USB driver";
+"USB permissions disabled here" = "USB redirection is off in Settings";
+"USB host unreachable" = "The PC did not answer the USB capability question";
+"USB host not asked" = "This PC has not been asked about USB redirection";
+"USB host refused" = "The PC does not offer USB redirection";
+"USB host has no free slots" = "The PC has no free USB slots right now";
+"USB host busy" = "The PC is busy and is not answering right now";
+"USB ready to connect devices" = "Ready: this PC accepts a USB device";
 "USB connect to this session" = "Connect to this session";
 "USB permissions disabled" = "Enable USB permissions in Settings first";
 "USB runtime required" = "Requires a compatible host channel and USB driver";
@@ -1395,3 +1405,4 @@
 "USB permission input protected" = "Keyboard/mouse protection is enabled";
 "USB permission class missing" = "Device class not allowed in Settings";
 "USB permission rule disabled" = "Matching permission rule is disabled";
+"Allow" = "Allow";

@@ -43,6 +43,18 @@ def strip_comments(text):
     return "\n".join(out)
 
 
+def project_problems(project_text, bar_text):
+    """problems with the build settings the tab bar's guarded role depends on."""
+    problems = []
+    # The guard only means something if the project still declares the condition for the
+    # SDK that has the symbol; without it the accepted tabs look silently disappears.
+    if "#if ML_APPKIT_TABS_ROLE" in bar_text:
+        if "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" not in project_text:
+            problems.append("the tabs role waits for a build condition no configuration "
+                            "declares, so no build ever sets it")
+    return problems
+
+
 def check(files):
     """files maps basename to raw source. Returns human readable violations."""
     problems = []
@@ -65,9 +77,17 @@ def check(files):
             problems.append("%s uses an overshooting curve (%s)" % (name, hit.group(0).strip()))
 
     bar = files.get("LiquidGlassTabBar.swift", "")
-    # NSSegmentedControl.role is not in the macOS 26 SDK this project also builds against
-    # (that is the SDK CI builds with), so an unguarded assignment is a build break there,
-    # not a style preference. #available alone does not help: the symbol must not compile.
+    # NSSegmentedControl.role = .tabs hides the selected segment's label. Measured inside a
+    # real key window over a light page base: the darkest pixel in the selected segment's
+    # label band is 0.12 without a role and 0.92 with .tabs, under every combination of
+    # segmentStyle, borderShape, controlSize and per-segment widths tried, including a bare
+    # control with no overrides. The tab naming the page the user is reading is the one tab
+    # that goes white-on-white, so the role stays unset until a system build draws its
+    # selected tab with readable text -- and the guard that used to make it compile on one
+    # SDK alone is gone with it, because a condition nothing reads is a second way to lie.
+    # The segmented control draws its own selection: on macOS 27 that is the system's
+    # tabs look, guarded so the macOS 26 SDK CI builds against still compiles. The bar
+    # overlays nothing; hand-drawn stands-ins for that surface were measured and refused.
     if ".role = " in strip_comments(bar) and "#if ML_APPKIT_TABS_ROLE" not in strip_comments(bar):
         problems.append("the tabs role compiles unguarded, so the macOS 26 SDK cannot build the tab bar")
     match = COLOUR.search(strip_comments(bar))
@@ -192,6 +212,27 @@ def self_test():
     cases.append(("an overlay with its own duration", solo, True))
 
     failures = 0
+    # The guard's dependency proves itself like every other rule: the shipped pair passes,
+    # and a project that stopped declaring the condition for the SDK is refused.
+    project_path = os.path.join(".", "Moonlight.xcodeproj", "project.pbxproj")
+    shipped_project = open(project_path, encoding="utf-8").read() if os.path.isfile(project_path) else ""
+    shipped_bar = open(os.path.join(".", "Limelight", "macOS", "ViewControllers", "LiquidGlass",
+                                    "LiquidGlassTabBar.swift"), encoding="utf-8").read()
+    if project_problems(shipped_project, shipped_bar):
+        failures += 1
+        print("FAIL %-46s expected clean, got %s"
+              % ("the shipped project file", project_problems(shipped_project, shipped_bar)))
+    else:
+        print("ok   %-46s accepted" % "the shipped project file")
+    unconfigured = "\n".join(
+        line for line in shipped_project.split("\n")
+        if "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" not in line)
+    if not project_problems(unconfigured, shipped_bar):
+        failures += 1
+        print("FAIL %-46s expected a violation, got clean" % "a project that dropped the guard's condition")
+    else:
+        print("ok   %-46s refused" % "a project that dropped the guard's condition")
+
     for what, files, expect_problem in cases:
         problems = check(files)
         if bool(problems) != expect_problem:
@@ -264,6 +305,316 @@ PANELS_STILL_ON_VIBRANCY = {}
 # The reconnect scrim dims the whole picture rather than being a panel, so it carries no
 # material at all -- not glass, not vibrancy. The card floating in it is the glass.
 RECONNECT_SCRIM = ("self.reconnectOverlayContainer = [[NSView alloc] initWithFrame:",)
+
+# --- the settings surface --------------------------------------------------
+# The stream panels get their glass from GlassOverlayContainer; the settings page gets it
+# straight from .glassEffect, one surface per section card and per fold. That makes it the
+# part of the app most likely to quietly regress, because every regression here still renders
+# and still looks like a card in a screenshot: a GroupBox walks back in, a system
+# DisclosureGroup reappears inside a glass card and draws a second frame, or a card keeps
+# its glass but leaves the container so the stack stops sampling as one material.
+# The list covers the settings panes, the page that hosts them, and the first-run permission
+# sheet: a player meets that sheet before any settings page, and it draws the same cards.
+# Surfaces, not files: the settings page and the first-run sheet are separate windows, so each
+# needs its own container, and the card that draws the glass and the page that supplies the
+# container are different files inside one surface. A container shared across two windows would
+# be as wrong as one card left outside its own.
+SETTINGS_SURFACES = (
+    ("settings page", ("ViewControllers/SettingsSharedControls.swift",
+                       "ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift")),
+    ("first-run permission sheet",
+     ("ViewControllers/SettingsHostingController.swift",)),
+)
+SETTINGS_FILES = tuple(sorted({name for _, files in SETTINGS_SURFACES for name in files}))
+# The spellings the settings page moved away from on purpose. Each one still compiles and
+# still looks acceptable, which is exactly why they need a rule and not a reviewer.
+# GroupBox draws its own frame inside the glass card. A custom DisclosureGroupStyle is the
+# subtler one: measured on a standalone harness and then on the render probe, a style with
+# a composite label vends two disclosure triangles (one per press path), so a checker that
+# presses "every triangle that is there" presses the same group shut again and never sees
+# the collapsed matrix below it. The system's default style is the only shape measured to
+# be single-triangle and label-readable, so the fold's chrome stays the system's and the
+# glass is the card around it.
+RETIRED_SETTINGS_CONTAINERS = ("GroupBox(", ".disclosureGroupStyle(")
+# The settings cards draw their glass through one shared helper rather than repeating the
+# modifier in four places: a card that opts out of the helper gets a different material or
+# loses the edge that makes its boundary visible over the washed base. The rule has two
+# halves, and the second is the one that stops the first from being a rubber stamp: the
+# helper itself has to stay a glassEffect, because .settingsGlassCard() over a
+# Color.background is a rule that approves its own removal.
+SHARED_CARD_HELPER = "func settingsGlassCard()"
+# Where a card asks for the shared glass. The definition of the helper lives in one file;
+# every card on every surface spells its request this way, and a surface is allowed to stop
+# drawing glass directly only as long as it keeps asking.
+SHARED_CARD_CALL = ".settingsGlassCard()"
+SHARED_CARD_GLASS = ".glassEffect(.regular, in: cardShape)"
+
+
+def settings_surface_problems(texts):
+    """problems with the settings glass, given {settings file: source}."""
+    problems = []
+    for name in SETTINGS_FILES:
+        if name not in texts:
+            problems.append("%s is gone, so nothing is holding the settings glass to its rules" % name)
+    if problems:
+        return problems
+    shared = strip_comments(texts.get("ViewControllers/SettingsSharedControls.swift", ""))
+    helper_is_glass = SHARED_CARD_HELPER in shared and SHARED_CARD_GLASS in shared
+    for surface, names in SETTINGS_SURFACES:
+        body = "\n".join(strip_comments(texts[name]) for name in names if name in texts)
+        # A surface may draw its glass directly or hand out the shared card, but it has to do
+        # one of the two, and whichever it does it still needs its own container. Skipping the
+        # container check for a surface that moved to the helper is how a card ends up glass
+        # and stranded: it samples the desktop instead of the page.
+        has_glass = ".glassEffect(" in body or (SHARED_CARD_CALL in body and helper_is_glass)
+        if not has_glass:
+            problems.append("%s has no native .glassEffect at all, so every card on it is "
+                            "standing in for the system material again" % surface)
+        if has_glass and "GlassEffectContainer(" not in body:
+            problems.append("%s has glass surfaces outside a GlassEffectContainer, so its "
+                            "cards stop bending the page as one material" % surface)
+    for name in SETTINGS_FILES:
+        body = strip_comments(texts[name])
+        if SHARED_CARD_HELPER in body and SHARED_CARD_GLASS not in body:
+            problems.append("%s exposes %s without %s inside it, so the shared settings card "
+                            "is no longer the system material it hands out"
+                            % (name, SHARED_CARD_HELPER, SHARED_CARD_GLASS))
+        for needle in RETIRED_SETTINGS_CONTAINERS:
+            if needle in body:
+                problems.append("%s puts %s back on the settings page, which draws its own "
+                                "frame inside the glass card" % (name, needle))
+        for line in body.split("\n"):
+            if DURATION.search(line) and "TabBarConfig.animationDuration" not in line:
+                problems.append("%s gives a glass transition its own duration: %s"
+                                % (name, line.strip()))
+                break
+    return problems
+
+
+# --- the host cards ---------------------------------------------------------
+# The list of PCs is the first screen a player meets, and its cells now sit on the same
+# system glass as the settings cards, through the same container the stream panels use.
+# The failures this pins are the ones that still render: a cell that quietly goes back to
+# the flat fill behind the artwork, a selection that returns as a paint-over (the pill or
+# a blue box) instead of a tint folded into the card, or a card left over a page whose
+# wash was removed -- glass with nothing to bend is a grey rectangle that claims a design
+# it does not have.
+HOST_CARD_FILE = "ViewControllers/HostCell.m"
+HOST_CARD_CONTAINER = "[GlassOverlayContainer containerWithCornerRadius:10.0]"
+HOST_CARD_TINT = "self.glassCard.tintColor = selected"
+# The old selected name: a solid accent pill behind the label. Over a tinted card it
+# stacked two "this one" signals and was the older of the two.
+HOST_PILL_BG = "self.labelContainer.backgroundColor = selected"
+# The wash has to be installed by the controller that owns the window -- Container-
+# ViewController, the one object that outlives the navigation between the hosts grid
+# and the apps grid -- into the window's content view, and every scroll view on a page
+# has to stop drawing over it. Pinning only the variable name let the wash shrink back
+# under the toolbar unchallenged; pinning the page that first shipped it let the apps
+# grid lose its base the moment the app navigated.
+HOST_PAGE_WASH = "[windowHost addSubview:pageBase positioned:NSWindowBelow relativeTo:nil]"
+HOST_SCROLL_TRANSPARENT = "scroll.drawsBackground = NO"
+APPS_SCROLL_TRANSPARENT = "appsScroll.drawsBackground = NO"
+
+
+HOST_WATCHED_FILES = (HOST_CARD_FILE,
+                      "ViewControllers/HostsViewController.m",
+                      "ViewControllers/ContainerViewController.m",
+                      "ViewControllers/AppsViewController.m")
+
+
+def host_card_problems(texts):
+    """problems with the host-list cards, given {watched file: source}."""
+    problems = []
+    missing = [name for name in HOST_WATCHED_FILES if texts.get(name) is None]
+    if missing:
+        return ["the host-card rules lost %s, so the cards are unwatched" % ", ".join(missing)]
+    cell = texts[HOST_CARD_FILE]
+    vc = texts["ViewControllers/HostsViewController.m"]
+    container = texts["ViewControllers/ContainerViewController.m"]
+    apps = texts["ViewControllers/AppsViewController.m"]
+    body = strip_comments(cell)
+    if HOST_CARD_CONTAINER not in body:
+        problems.append("the host card no longer asks the container for its background, "
+                        "so the cells are back on a hand-drawn fill")
+    if HOST_CARD_TINT not in body:
+        problems.append("the host card no longer folds selection into the glass tint, so "
+                        "selection is either gone or painted over the material again")
+    if HOST_PILL_BG in body:
+        problems.append("the host cell puts the selected name pill back, which stacks a "
+                        "paint-over on top of the card's own tint")
+    if HOST_PAGE_WASH not in strip_comments(container):
+        problems.append("the window lost its washed base at its owner, so the cards have "
+                        "nothing behind them to bend")
+    if HOST_SCROLL_TRANSPARENT not in strip_comments(vc):
+        problems.append("the hosts scroll view draws its own background again, which paints "
+                        "over the wash the cards need behind them")
+    if APPS_SCROLL_TRANSPARENT not in strip_comments(apps):
+        problems.append("the apps scroll view draws its own background again, so the grid "
+                        "meets an opaque rectangle where the page should show through")
+    return problems
+
+
+def host_card_self_test(repo):
+    """Break the host-card rules on the shipped tree and make sure each break is caught."""
+    texts = {}
+    for name in HOST_WATCHED_FILES:
+        path = os.path.join(repo, "Limelight", "macOS", name)
+        if not os.path.isfile(path):
+            print("FAIL the host-card self-test cannot read %s" % name)
+            return 1
+        texts[name] = open(path, encoding="utf-8").read()
+
+    def edited(name, old, new):
+        copy = dict(texts)
+        if old not in copy[name]:
+            raise SystemExit("the host-card self-test lost its anchor in %s" % name)
+        copy[name] = copy[name].replace(old, new, 1)
+        return copy
+
+    cases = [
+        ("the shipped host cards", texts, False),
+        ("the card back on a hand-drawn fill",
+         edited(HOST_CARD_FILE, HOST_CARD_CONTAINER,
+                "[[BackgroundColorView alloc] initWithFrame:NSZeroRect]"), True),
+        ("selection painted over the glass again",
+         edited(HOST_CARD_FILE, HOST_CARD_TINT, "// selection tint removed"), True),
+        ("the selected name pill back on the card",
+         edited(HOST_CARD_FILE,
+                "self.labelContainer.backgroundColor = [NSColor clearColor];",
+                HOST_PILL_BG + " ? [NSColor selectedContentBackgroundColor] : [NSColor clearColor];"),
+         True),
+        ("the page wash pulled out from under the cards",
+         edited("ViewControllers/ContainerViewController.m", HOST_PAGE_WASH,
+                "// wash removed"), True),
+        ("the hosts scroll view painting over the wash again",
+         edited("ViewControllers/HostsViewController.m", HOST_SCROLL_TRANSPARENT,
+                "scroll.drawsBackground = YES"), True),
+        ("the apps scroll view painting over the wash again",
+         edited("ViewControllers/AppsViewController.m", APPS_SCROLL_TRANSPARENT,
+                "appsScroll.drawsBackground = YES"), True),
+    ]
+    failures = 0
+    for what, files, expect_problem in cases:
+        problems = host_card_problems(files)
+        if bool(problems) != expect_problem:
+            failures += 1
+            print("FAIL %-46s expected %s, got %s"
+                  % (what, "a violation" if expect_problem else "clean", problems))
+        else:
+            print("ok   %-46s %s" % (what, "refused" if problems else "accepted"))
+    return failures
+
+
+def settings_self_test(repo):
+    """Prove each settings rule fires, using the shipped tree as the compliant baseline."""
+    texts = {}
+    for name in SETTINGS_FILES:
+        path = os.path.join(repo, "Limelight", "macOS", name)
+        if not os.path.isfile(path):
+            print("FAIL the settings self-test cannot read %s" % name)
+            return 1
+        texts[name] = open(path, encoding="utf-8").read()
+
+    def edited(name, old, new):
+        copy = dict(texts)
+        if old not in copy[name]:
+            raise SystemExit("the settings self-test lost its anchor in %s" % name)
+        copy[name] = copy[name].replace(old, new, 1)
+        return copy
+
+    def surface_edits(surface, old, new):
+        # Strip the glass from every file of one surface at once. A rule that only fires when the
+        # whole app loses its glass is not a rule about this surface.
+        copy = dict(texts)
+        names = dict(SETTINGS_SURFACES)[surface]
+        hits = 0
+        for name in names:
+            if old in copy[name]:
+                copy[name] = copy[name].replace(old, new)
+                hits += 1
+        if not hits:
+            raise SystemExit("the settings self-test lost its anchor in %s" % surface)
+        return copy
+
+    def without_shared_card():
+        # The page's cards get their glass from the shared helper, so taking the page's glass
+        # away means taking both halves: the material inside the helper and the calls that
+        # hand it out. Only the calls going missing is the quieter regression, and the helper
+        # pin below covers that one.
+        copy = dict(texts)
+        body = copy[shared_file]
+        if SHARED_CARD_GLASS not in body or SHARED_CARD_CALL not in body:
+            raise SystemExit("the settings self-test lost its anchor in the shared card")
+        copy[shared_file] = (body.replace(SHARED_CARD_GLASS, ".background(.background)")
+                                 .replace(SHARED_CARD_CALL, ".background(.background)"))
+        return copy
+
+    def drop_containers():
+        copy = dict(texts)
+        kept = 0
+        for name, text in copy.items():
+            stripped = text.replace("GlassEffectContainer(", "VStack(")
+            kept += text.count("GlassEffectContainer(")
+            copy[name] = stripped
+        if not kept:
+            raise SystemExit("the settings self-test found no container to remove")
+        return copy
+
+    shared_file = "ViewControllers/SettingsSharedControls.swift"
+    shared = shared_file
+    page = "ViewControllers/LiquidGlass/LiquidGlassSettingsView.swift"
+    sheet = "ViewControllers/SettingsHostingController.swift"
+    cases = [
+        ("the shipped settings surface", texts, False),
+        ("a section card back in a GroupBox",
+         edited(shared, "VStack(alignment: .leading, spacing: 0) {\n      Text(languageManager.localize(title))",
+                "GroupBox(\n      content: {\n      VStack(alignment: .leading, spacing: 0) {\n      Text(languageManager.localize(title))"),
+         True),
+        ("a fold that restyles the disclosure anyway",
+         edited(shared, "    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()",
+                "    .disclosureGroupStyle(GlassStyleProbe())\n    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()"),
+         True),
+        ("no container anywhere on the settings surface",
+         drop_containers(),
+         True),
+        ("the settings page with no glass at all",
+         without_shared_card(),
+         True),
+        ("the first-run sheet with no glass at all",
+         edited(sheet, SHARED_CARD_CALL, ".background(.background)"),
+         True),
+        ("the first-run sheet with no container",
+         edited(sheet, "GlassEffectContainer(spacing: 20) {", "VStack(spacing: 20) {"),
+         True),
+        ("a fold with a duration of its own",
+         edited(shared, "    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()",
+                "    .animation(.easeOut(duration: 0.15), value: expanded.wrappedValue)\n    .padding(.vertical, 8)\n    .padding(.horizontal, 10)\n    .settingsGlassCard()"),
+         True),
+    ]
+    # The pin has to fire while every card still asks for the helper: cards calling a
+    # helper that stopped being glass is the regression a call-site check cannot see.
+    pin_probe = dict(texts)
+    pin_probe[shared_file] = texts[shared_file].replace(SHARED_CARD_GLASS, ".background(.background)", 1)
+    pin_problems = settings_surface_problems(pin_probe)
+
+    failures = 0
+    if not any("system material it hands out" in problem for problem in pin_problems):
+        failures += 1
+        print("FAIL %-46s expected the helper pin to fire, got %s"
+              % ("the shared card handed out empty", pin_problems))
+    else:
+        print("ok   %-46s refused" % "the shared card handed out empty")
+
+    for what, files, expect_problem in cases:
+        problems = settings_surface_problems(files)
+        if bool(problems) != expect_problem:
+            failures += 1
+            print("FAIL %-46s expected %s, got %s"
+                  % (what, "a violation" if expect_problem else "clean", problems))
+        else:
+            print("ok   %-46s %s" % (what, "refused" if problems else "accepted"))
+    return failures
+
 
 PANEL_FILES = ("ViewControllers/StreamViewController+Diagnostics.m",
                "ViewControllers/StreamViewController+MenuUI.m")
@@ -374,6 +725,10 @@ def main():
     if args.self_test:
         failures = self_test()
         failures += panel_self_test(args.repo)
+        print("-- settings surface --")
+        failures += settings_self_test(args.repo)
+        print("-- host cards --")
+        failures += host_card_self_test(args.repo)
         print("%d liquid glass audit self-test failures in all" % failures)
         return 1 if failures else 0
 
@@ -386,6 +741,21 @@ def main():
         if name.endswith(".swift"):
             files[name] = open(os.path.join(root, name), encoding="utf-8").read()
     problems = check(files)
+    project_path = os.path.join(args.repo, "Moonlight.xcodeproj", "project.pbxproj")
+    project_text = open(project_path, encoding="utf-8").read() if os.path.isfile(project_path) else ""
+    problems += project_problems(project_text, files.get("LiquidGlassTabBar.swift", ""))
+    settings_texts = {}
+    for name in SETTINGS_FILES:
+        path = os.path.join(args.repo, "Limelight", "macOS", name)
+        if os.path.isfile(path):
+            settings_texts[name] = open(path, encoding="utf-8").read()
+    problems += settings_surface_problems(settings_texts)
+    host_texts = {}
+    for name in HOST_WATCHED_FILES:
+        path = os.path.join(args.repo, "Limelight", "macOS", name)
+        if os.path.isfile(path):
+            host_texts[name] = open(path, encoding="utf-8").read()
+    problems += host_card_problems(host_texts)
     texts = {}
     for name in PANEL_FILES:
         path = os.path.join(args.repo, "Limelight", "macOS", name)
@@ -394,18 +764,12 @@ def main():
     problems += panel_problems(texts,
                                os.path.isfile(os.path.join(args.repo, "Limelight", "macOS",
                                                            "Views", "GlassOverlayContainer.m")))
-    # The guard only means something if the project still declares the condition for the
-    # SDK that has the symbol; without it the accepted tabs look silently disappears.
-    if "#if ML_APPKIT_TABS_ROLE" in files.get("LiquidGlassTabBar.swift", ""):
-        project_path = os.path.join(args.repo, "Moonlight.xcodeproj", "project.pbxproj")
-        project = open(project_path, encoding="utf-8").read() if os.path.isfile(project_path) else ""
-        if "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" not in project:
-            problems.append("the tabs role waits for a build condition no configuration declares, "
-                            "so no build ever sets it")
     for problem in problems:
         print("violation: %s" % problem)
-    print("%d liquid glass violations across %d files, %d panels checked"
-          % (len(problems), len(files) + len(PANEL_FILES), len(GLASS_PANELS)))
+    print("%d liquid glass violations across %d files, %d panels, %d settings surfaces "
+          "and the host cards (%d files) checked"
+          % (len(problems), len(files) + len(PANEL_FILES) + len(SETTINGS_FILES) + len(HOST_WATCHED_FILES),
+             len(GLASS_PANELS), len(SETTINGS_SURFACES), len(SETTINGS_FILES)))
     return 1 if problems else 0
 
 

@@ -34,8 +34,10 @@ concurrency:
 jobs:
   # Cheap repository audits that do not need Xcode. They gate every build job
   # so a broken tree fails in seconds instead of after a full matrix build.
+  # Since run 38757472022 this job is the fast half only: the mutation battery
+  # that used to live inside it is the job below with its own ceiling.
   audit:
-    timeout-minutes: 60
+    timeout-minutes: 20
     # Run 38122563239 reached this old 25-minute ceiling inside the complete
     # mutation battery (2026-10-11), before any build could start. Preserve the
     # battery; allow bounded headroom as source-backed gates grow. Do not treat
@@ -46,6 +48,30 @@ jobs:
     # cap cancelled a job that had already printed 0 constraint failures, and the build
     # gate below reported the resulting skips as its own red. A budget with no headroom
     # turns a slow green into a red that has to be read from a cancelled job's log.
+    # Run 38654136202 cancelled at this sixty-minute ceiling with the same shape: the
+    # build gate again reported the skips as its own red, and the cancelled job printed
+    # zero constraint failures. Two runs measured the same step (38599412999 green,
+    # 38654136202 cancelled) over the same 146 battery cases: 101 of them ask the
+    # aggregate gate, whose cost per case rose from 25.2s to 35.3s -- six compile-and-
+    # judge mutations added to the presentation harness, multiplied by 101 referee calls.
+    # The coverage is the part worth keeping, so the ceiling moves and the gate does not.
+    # Run 38683656986 then tested the other lever: compiling those mutations side by
+    # side, so the battery finished no sooner than eighty-eight minutes in and the job
+    # hit a ninety-minute ceiling still inside the same step. Overlapping four builds
+    # on a shared runner costs more than the line it removes. Serial, plus a ceiling
+    # the measured 61 minutes can sit inside with room for a slower runner.
+    # Raising the ceiling a fourth time stopped being the answer: runs
+    # 38721692726, 38741092974 and 38757472022 were each cancelled between 66 and
+    # 71 minutes in -- past the 120-minute ceiling's cousin, the hosted runner's
+    # own patience ("lost communication with the runner"), not our timeout at all.
+    # Local measurement on a clean tree separates the two things the job was
+    # doing: every non-battery audit with the history scan included answers in
+    # under three minutes (fast audits 52s, history scan 79s), while the battery
+    # alone runs 71 minutes (146/146 caught, exit 0). The split is the fix: this
+    # job keeps the fast audits with --no-battery --history and a ceiling they
+    # cannot approach, and the battery gets mutation_battery below. A step that
+    # silently grows past this ceiling again is caught by constraints-audit,
+    # which now requires the --no-battery flag on this job's audit step.
     name: Repository audits
     runs-on: ubuntu-latest
     steps:
@@ -90,7 +116,10 @@ jobs:
       run: python3 scripts/source-membership-audit.py
 
     - name: Verify project constraints
-      run: python3 scripts/constraints-audit.py
+      # --no-battery: the 71-minute mutation battery is its own job below.
+      # --history: with the battery gone from this job, this is the only pass on
+      # every push that walks old commits for a credential shape.
+      run: python3 scripts/constraints-audit.py --no-battery --history
 
     - name: Verify the liquid glass rules
       # A glass look can be faked with a blur and a material, and the fake passes
@@ -163,6 +192,47 @@ jobs:
           echo "shell syntax ok: $script"
         done
 
+  # The mutation battery: 146 planted regressions, each judged by a real gate.
+  # It lives here, and not inside the audit job above, because it is a different
+  # shape of work: the fast audits answer in under three minutes and must gate
+  # the builds in minutes, while the battery compiles and judges mutations for
+  # the better part of ninety. Kept in one job, the long half made the short
+  # half's job hit runner-level cancellations (runs 38721692726, 38741092974,
+  # 38757472022) and the build gate reported the skips as its own red. Split,
+  # each job gets a ceiling its own measured cost can sit inside, and neither
+  # cancellation story can happen to the other's results.
+  mutation_battery:
+    timeout-minutes: 150
+    # Local measurement on a clean tree: 71 minutes for 146/146 cases. Hosted
+    # runners measured the same step between 61 and 88 minutes across runs
+    # 38599412999 through 38683656986, so the ceiling carries the slowest
+    # observed runner plus headroom, and a cancellation still leaves a job log
+    # that says which step it died in. constraints-audit refuses this job if
+    # assertion-battery.py ever moves back into the fast audit job.
+    name: Mutation battery
+    needs: audit
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Set up Python for the battery
+      # Same pinned interpreter as the audit job: the battery shells out to the
+      # same audit scripts, and a parser that differs between the two jobs makes
+      # a green mean different things in each.
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+
+    - name: Install the parser used by the audits
+      run: python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
+
+    - name: Run the full mutation battery
+      # Standalone, the battery runs every gate with --no-battery itself, so
+      # there is no recursion; the AUDIT_GATE referee inside it is the fast
+      # aggregate, which is exactly what the 71-minute measurement timed.
+      run: python3 scripts/assertion-battery.py
+
   build_arch:
     timeout-minutes: 45  # a cross-compile, seven harnesses and a DMG
     name: Build ${{ matrix.variant }}
@@ -217,14 +287,6 @@ jobs:
       with:
         xcode-version: latest-stable
 
-    - name: Show Build Environment
-      run: |
-        xcodebuild -version
-        swift --version
-        uname -m
-        echo "Available schemes:"
-        xcodebuild -list -project Moonlight.xcodeproj || true
-
     - name: Prepare vendored dependencies
       # Run the same script a developer runs. This step used to duplicate the
       # xcframework download inline, which drifted away from the script and left
@@ -236,6 +298,14 @@ jobs:
         ls -la xcframeworks/
         ls -la Packages/OpenSSL.xcframework/
         ls -la libs/
+
+    - name: Show Build Environment
+      run: |
+        xcodebuild -version
+        swift --version
+        uname -m
+        echo "Available schemes:"
+        xcodebuild -list -project Moonlight.xcodeproj || true
 
     - name: Resolve build number
       # build-number.sh is a scheme PreAction and command-line xcodebuild ignores
@@ -398,18 +468,17 @@ jobs:
       # glass, which is what makes the availability branch a behaviour and not a claim.
       run: python3 scripts/liquid-glass-overlay-tests.py
 
-    - name: Verify the tab bar answers to a drag the way the accepted UI needs
+    - name: Verify the tab bar answers to a click the way the accepted UI needs
       # The audit reads for the glass API and the overlay container proves the panels;
-      # neither answers the behavioural half the objective asks: who owns the pointer
-      # over the bar, whether a pane commit can land while native tracking still holds
-      # the pointer (the shape that makes a drag feel stuck), how many writes one
-      # release produces, and what the deferral costs. This compiles the shipping
-      # LiquidGlassTabBar.swift -- the real file -- into a throwaway AppKit program
-      # that hit-tests the real geometry, drives the tracking-end boundary AppKit
-      # actually reaches (synthetic mouse-downs cannot enter the cell's private
-      # tracking loop, and the harness says so out loud), and measures the commit
-      # delay. No claims about 120/180 FPS are made here; only what is measured.
-      run: python3 scripts/liquid-glass-tab-drag-tests.py
+      # neither answers the behavioural half: can a screen reader say which pane each
+      # segment opens, and does one click produce exactly one selection with the tree
+      # agreeing. This compiles the shipping LiquidGlassTabBar.swift -- the real file --
+      # into an app with a real window, reads it over accessibility from a separate
+      # process (the tree only exists for out-of-process clients), clicks the segment
+      # for real through the window server, and reports what the binding and the tree
+      # each saw. It skips out loud on a host with no GUI session. Only what is
+      # measured is claimed.
+      run: python3 scripts/liquid-glass-tab-bar-tests.py
 
     - name: Verify a multi-notch wheel event is worth the notches it carries
       # HIDScrollEventDiscreteDeltaForAxis reads the notch count out of the event's own
@@ -1337,7 +1406,7 @@ jobs:
   build:
     timeout-minutes: 10  # it reads three job results and prints them
     name: build
-    needs: [build_arch, build_universal, analyze]
+    needs: [build_arch, build_universal, analyze, mutation_battery]
     runs-on: ubuntu-latest
     if: always()
 
@@ -1347,20 +1416,33 @@ jobs:
         echo "build_arch result: ${{ needs.build_arch.result }}"
         echo "build_universal result: ${{ needs.build_universal.result }}"
         echo "analyze result: ${{ needs.analyze.result }}"
+        echo "mutation_battery result: ${{ needs.mutation_battery.result }}"
 
-        if [ "${{ needs.build_arch.result }}" != "success" ]; then
-          echo "build_arch did not succeed"
-          exit 1
-        fi
+        # A cancelled upstream is not a failed build. The push-concurrency rule cancels
+        # an in-flight run the moment a newer commit lands, and when the cancel lands
+        # while this gate is mid-step, the gate used to see `cancelled` where it wanted
+        # `success` and print a red X over a commit that was superseded, not broken.
+        # A real failure still outranks a cancellation: one failed job is a failed gate
+        # even if a sibling was cancelled on the way down.
+        superseded=no
+        for what_result in "build_arch:${{ needs.build_arch.result }}" \
+                           "build_universal:${{ needs.build_universal.result }}" \
+                           "analyze:${{ needs.analyze.result }}" \
+                           "mutation_battery:${{ needs.mutation_battery.result }}"; do
+          name=${what_result%%:*}
+          result=${what_result#*:}
+          if [ "$result" != "success" ] && [ "$result" != "cancelled" ] && [ "$result" != "skipped" ]; then
+            echo "$name did not succeed ($result)"
+            exit 1
+          fi
+          if [ "$result" = "cancelled" ] || [ "$result" = "skipped" ]; then
+            superseded=yes
+          fi
+        done
 
-        if [ "${{ needs.build_universal.result }}" != "success" ]; then
-          echo "build_universal did not succeed"
-          exit 1
-        fi
-
-        if [ "${{ needs.analyze.result }}" != "success" ]; then
-          echo "the static analyzer job did not succeed"
-          exit 1
+        if [ "$superseded" = "yes" ]; then
+          echo "an upstream job was cancelled or skipped: the run was superseded, not broken"
+          exit 0
         fi
 
         echo "All required build jobs passed."
