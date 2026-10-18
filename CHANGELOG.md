@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Tab bar 改为 macOS 原生 NSSegmentedControl 分段控件**：废弃自绘液态玻璃滑块方案，采用系统标准分段控件，页签切换跟随系统外观（Activity Monitor 风格），解决连续视觉否决问题
+- **USB 设备卡片重新设计**：采用 Citrix Horizon VDI 风格布局，40×40 圆角设备图标容器 + 三行设备层级信息（名称 × 类别 · 标识符）+ 颜色编码状态芯片 + 允许/已授权胶囊按钮
+- **首页主机状态指示灯修复**：提高 alpha 值至 1.0 + 添加 separatorColor 边框，消除浅色玻璃背景上的白色圆圈
+
+### Added
+- 新增 "Allow"/"允许" 本地化键，覆盖 USB 设备页允许按钮翻译
+
+### Fixed
+- 设置窗口卡片布局响应式：`.frame(maxWidth: .infinity)` + 弹性宽度范围（minWidth: 400, idealWidth: 680, maxWidth: 800）
+- l10n 全覆盖修复：1284 个键值对中英文对称，无遗漏
+
 ## [1.6.0-build1720] - 2026-09-29
 
 

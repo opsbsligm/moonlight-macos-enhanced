@@ -865,6 +865,273 @@ def usb_host_metadata_tests():
           "metadata fetch does not inflate the full-library read counter")
 
 
+def usb_menu_status_tests():
+    """Execute the sidebar's status decision, and refuse a caption that invents its own reason.
+
+    The sidebar used to carry one hard-coded caption. It was written when one obstacle existed and
+    stayed after eight did, so "this binary cannot load a driver", "you turned this off", "we never
+    asked this PC", "this PC says no", "this PC did not answer", "this PC is full", and "this PC is
+    busy" all reached the player as the same five words -- and four of those seven send a player to
+    a different place. The decision now lives in USBMenuStatus.h so it can be replayed case by case
+    and planted with defects, the way the scan policy beside it already is; what is checked here
+    besides the behavior is that the menu actually asks that function instead of typing a sentence.
+    """
+    import shutil
+
+    status_h = read(STREAM + "USBMenuStatus.h")
+    driver = r"""
+#include "USBMenuStatus.h"
+#include <assert.h>
+#include <string.h>
+
+static MLUSBMenuHostAnswer answer(int transport_failed, int parsed, int status,
+                                 int uuid, int busy, int advertised) {
+    MLUSBMenuHostAnswer a;
+    a.transport_failed = transport_failed;
+    a.document_parsed = parsed;
+    a.status_code = status;
+    a.answered_uuid = uuid;
+    a.state_says_busy = busy;
+    a.advertised = advertised;
+    return a;
+}
+
+int main(void) {
+    int asked = MLUSBMenuHostClaimOffered;
+
+    /* The order of the preconditions is the whole content of this file, so each step of it gets
+       its own case: a build that cannot load a driver answers before the player's own switch, and
+       the player's own switch before a question asked of somebody else's machine. */
+    assert(MLUSBMenuCapabilityForInputs(false, true, true, asked, -1)
+           == MLUSBMenuCapabilityBuildCannotLoadDriver);
+    assert(MLUSBMenuCapabilityForInputs(true, false, true, asked, -1)
+           == MLUSBMenuCapabilityFeatureDisabled);
+    assert(MLUSBMenuCapabilityForInputs(true, true, false, asked, -1)
+           == MLUSBMenuCapabilityHostNotAsked);
+    assert(MLUSBMenuCapabilityForInputs(true, true, true, MLUSBMenuHostClaimBusy, -1)
+           == MLUSBMenuCapabilityHostBusy);
+    assert(MLUSBMenuCapabilityForInputs(true, true, true, MLUSBMenuHostClaimUnreachable, -1)
+           == MLUSBMenuCapabilityHostUnreachable);
+    assert(MLUSBMenuCapabilityForInputs(true, true, true, MLUSBMenuHostClaimNotAsked, -1)
+           == MLUSBMenuCapabilityHostNotAsked);
+    assert(MLUSBMenuCapabilityForInputs(true, true, true, MLUSBMenuHostClaimRefused, -1)
+           == MLUSBMenuCapabilityHostRefused);
+    assert(MLUSBMenuCapabilityForInputs(true, true, true, asked, 0)
+           == MLUSBMenuCapabilityHostOutOfSlots);
+    assert(MLUSBMenuCapabilityForInputs(true, true, true, asked, -1)
+           == MLUSBMenuCapabilityReady);
+    assert(MLUSBMenuCapabilityForInputs(true, true, true, asked, 3)
+           == MLUSBMenuCapabilityReady);
+
+    /* Every state needs a sentence and a log name, and two states may not share either: a caption
+       that repeats is the conflation this file replaced, arriving back through the door. */
+    MLUSBMenuCapability all[] = {
+        MLUSBMenuCapabilityBuildCannotLoadDriver, MLUSBMenuCapabilityFeatureDisabled,
+        MLUSBMenuCapabilityHostUnreachable, MLUSBMenuCapabilityHostNotAsked,
+        MLUSBMenuCapabilityHostRefused, MLUSBMenuCapabilityHostOutOfSlots,
+        MLUSBMenuCapabilityHostBusy, MLUSBMenuCapabilityReady };
+    for (unsigned i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+        for (unsigned j = i + 1; j < sizeof(all) / sizeof(all[0]); j++) {
+            assert(strcmp(MLUSBMenuCapabilityKey(all[i]), MLUSBMenuCapabilityKey(all[j])) != 0);
+            assert(strcmp(MLUSBMenuCapabilityName(all[i]), MLUSBMenuCapabilityName(all[j])) != 0);
+        }
+        /* The fallback for an out-of-range state may not be a state the switch can produce, or a
+           host that answered nothing would be reported in another host's words. */
+        assert(MLUSBMenuCapabilityKey((MLUSBMenuCapability)99)
+               == MLUSBMenuCapabilityKey(MLUSBMenuCapabilityHostNotAsked));
+    }
+
+    /* The claim derivation: what an exchange may be reported as, given only what was observed. */
+    MLUSBMenuHostAnswer none = answer(1, 0, 0, 0, 0, 0);
+    assert(MLUSBMenuHostClaimFromAnswer(none) == MLUSBMenuHostClaimUnreachable);
+    /* A connection that opened and returned nothing answerable is the same gap as no connection:
+       nobody answered, so nobody may be quoted. */
+    MLUSBMenuHostAnswer empty = answer(0, 0, 0, 0, 0, 0);
+    assert(MLUSBMenuHostClaimFromAnswer(empty) == MLUSBMenuHostClaimUnreachable);    /* The exchange reported itself as failed even though bytes arrived -- a truncated reply, a
+       timeout after a partial read. Bytes that arrived inside a failed exchange are not an answer,
+       and a client that quotes them is crediting a document it just said it could not trust. */
+    MLUSBMenuHostAnswer partial = answer(1, 1, 200, 1, 0, 1);
+    assert(MLUSBMenuHostClaimFromAnswer(partial) == MLUSBMenuHostClaimUnreachable);
+    /* Something on that address answered, but not this host. Crediting a stranger's capability bit
+       would hand devices to a machine that never offered them. */
+    MLUSBMenuHostAnswer stranger = answer(0, 1, 200, 0, 0, 1);
+    assert(MLUSBMenuHostClaimFromAnswer(stranger) == MLUSBMenuHostClaimUnreachable);
+    /* The host's own status is not OK and it does not say it is busy: that is a refusal. */
+    MLUSBMenuHostAnswer denied = answer(0, 1, 401, 1, 0, 1);
+    assert(MLUSBMenuHostClaimFromAnswer(denied) == MLUSBMenuHostClaimRefused);
+    /* Not OK and it says busy: reachable, heard, not answering. Neither the network sentence nor
+       the refusal sentence, because both send the player somewhere else to change something. */
+    MLUSBMenuHostAnswer busy = answer(0, 1, 401, 1, 1, 0);
+    assert(MLUSBMenuHostClaimFromAnswer(busy) == MLUSBMenuHostClaimBusy);
+    /* OK and the capability tag absent: the host has the feature not at all, which is neither a
+       network fault nor a temporary no. */
+    MLUSBMenuHostAnswer absent = answer(0, 1, 200, 1, 1, 0);
+    assert(MLUSBMenuHostClaimFromAnswer(absent) == MLUSBMenuHostClaimRefused);
+    /* OK and the tag present: offered, and busy does not override it. This is the case that decides
+       whether the feature is usable at all -- a host mid-session always reports itself busy, and a
+       host mid-session is exactly the host whose sidebar is open. If busy won here, every successful
+       stream would cost the player a "host busy" line, and the one precondition USB redirection does
+       not have would be described as a blocker. */
+    MLUSBMenuHostAnswer offered = answer(0, 1, 200, 1, 1, 1);
+    assert(MLUSBMenuHostClaimFromAnswer(offered) == MLUSBMenuHostClaimOffered);
+    MLUSBMenuHostAnswer plain = answer(0, 1, 200, 1, 0, 1);
+    assert(MLUSBMenuHostClaimFromAnswer(plain) == MLUSBMenuHostClaimOffered);
+
+    /* The numeric agreement with the settings panel's claim enum, pinned rather than assumed: the
+       sidebar stores the panel's values, and a silent renumbering on either side would make one
+       state read as another -- refused as offered being the direction that lies about a feature. */
+    assert(MLUSBMenuHostClaimNotAsked == 0);
+    assert(MLUSBMenuHostClaimRefused == 1);
+    assert(MLUSBMenuHostClaimOffered == 2);
+    assert(MLUSBMenuHostClaimUnreachable == 3);
+    assert(MLUSBMenuSlotsUnknown != 0);
+
+    return 0;
+}
+"""
+
+    compiler = shutil.which("cc") or shutil.which("clang")
+    check(compiler is not None, "USB sidebar status replay has a C compiler; absence is not a pass")
+    if compiler is None:
+        return
+
+    def replay(text, name):
+        with tempfile.TemporaryDirectory(prefix="ml-usb-status-") as d:
+            with open(os.path.join(d, "USBMenuStatus.h"), "w") as f:
+                f.write(text)
+            with open(os.path.join(d, "replay.c"), "w") as f:
+                f.write(driver)
+            exe = os.path.join(d, "replay")
+            built = subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                                    os.path.join(d, "replay.c"), "-o", exe], capture_output=True)
+            check(built.returncode == 0, "USB sidebar status %s compiles before behavior is judged" % name)
+            if built.returncode:
+                print(built.stderr.decode(errors="replace")[:1200])
+                return None
+            return subprocess.run([exe], capture_output=True).returncode
+
+    check(replay(status_h, "control") == 0,
+          "USB sidebar status replay covers all eight states, the precondition order, one sentence "
+          "per state, and every way a host exchange can end")
+
+    # One planted defect per decision edge. Each is written to be plausible -- the kind of edit that
+    # keeps the file compiling and the menu drawing, and only changes which place a player checks.
+    mutations = [
+        ("a driver-less build blamed on the player's switch",
+         "if (!driver_can_load) return MLUSBMenuCapabilityBuildCannotLoadDriver;",
+         "if (driver_can_load) return MLUSBMenuCapabilityBuildCannotLoadDriver;"),
+        ("a disabled feature blamed on the host",
+         "if (!feature_enabled) return MLUSBMenuCapabilityFeatureDisabled;",
+         "if (feature_enabled) return MLUSBMenuCapabilityFeatureDisabled;"),
+        ("an unpaired host credited with the host's answer",
+         "if (!host_paired) return MLUSBMenuCapabilityHostNotAsked;",
+         "if (host_paired) return MLUSBMenuCapabilityHostNotAsked;"),
+        ("a busy host reported as unreachable",
+         "if (host_claim == MLUSBMenuHostClaimBusy) return MLUSBMenuCapabilityHostBusy;",
+         "if (host_claim == MLUSBMenuHostClaimBusy) return MLUSBMenuCapabilityHostUnreachable;"),
+        ("a host that never answered reported as refusing",
+         "if (host_claim == MLUSBMenuHostClaimUnreachable) return MLUSBMenuCapabilityHostUnreachable;",
+         "if (host_claim == MLUSBMenuHostClaimUnreachable) return MLUSBMenuCapabilityHostRefused;"),
+        ("an unasked question reported as offered",
+         "if (host_claim == MLUSBMenuHostClaimNotAsked) return MLUSBMenuCapabilityHostNotAsked;",
+         "if (host_claim == MLUSBMenuHostClaimNotAsked) return MLUSBMenuCapabilityReady;"),
+        ("a refusal read as an offer",
+         "if (host_claim != MLUSBMenuHostClaimOffered) return MLUSBMenuCapabilityHostRefused;",
+         "if (host_claim == MLUSBMenuHostClaimBusy) return MLUSBMenuCapabilityHostRefused;"),
+        ("a full host reported as ready",
+         "if (free_slots == 0) return MLUSBMenuCapabilityHostOutOfSlots;",
+         "if (free_slots < 0) return MLUSBMenuCapabilityHostOutOfSlots;"),
+        ("silence about slots read as a full host",
+         "enum { MLUSBMenuSlotsUnknown = -1 };", "enum { MLUSBMenuSlotsUnknown = 0 };"),
+        ("a busy answer that outranks an offer",
+         "        return answer.state_says_busy ? MLUSBMenuHostClaimBusy : MLUSBMenuHostClaimRefused;",
+         "        return MLUSBMenuHostClaimBusy;"),
+        ("a busy answer folded into a refusal",
+         "        return answer.state_says_busy ? MLUSBMenuHostClaimBusy : MLUSBMenuHostClaimRefused;",
+         "        return MLUSBMenuHostClaimRefused;"),
+        ("a stranger's answer credited to this host",
+         "    if (!answer.answered_uuid) return MLUSBMenuHostClaimUnreachable;",
+         "    if (answer.answered_uuid) return MLUSBMenuHostClaimUnreachable;"),
+        ("an answer with no document credited anyway",
+         "    if (answer.transport_failed || !answer.document_parsed) {",
+         "    if (answer.transport_failed && !answer.document_parsed) {"),
+        ("two states sharing one sentence",
+         'case MLUSBMenuCapabilityHostBusy: return "USB host busy";',
+         'case MLUSBMenuCapabilityHostBusy: return "USB host refused";'),
+    ]
+    for name, before, after in mutations:
+        check(status_h.count(before) == 1, "USB sidebar status mutation for %s has one exact anchor" % name)
+        if status_h.count(before) != 1:
+            continue
+        result = replay(status_h.replace(before, after), name)
+        check(result is not None and result != 0, "USB sidebar status replay rejects %s" % name)
+
+    # The behavior is only half the claim: the menu has to ask this function. A header with a
+    # perfect decision table and a call site that keeps typing its own sentence is the bug itself.
+    menu = read("Limelight/macOS/ViewControllers/StreamViewController+MenuUI.m")
+    rebuild = menu.split("- (void)rebuildStreamMenu {", 1)[1]
+    probe = menu.split("- (void)askUSBMenuHostClaimOnce {", 1)
+    check(len(probe) == 2, "the sidebar asks its host instead of assuming an answer")
+    probe = probe[1].split("- (MLUSBMenuCapability)usbMenuCapabilityWithModel:", 1)[0]
+    check('#import "USBMenuStatus.h"' in menu, "the menu includes the file that owns the decision")
+    check('"USB session unavailable"' not in menu,
+          "no caption in the stream sidebar describes seven gaps as one")
+    check("MLUSBMenuCapabilityKey(" in rebuild and "usbMenuCapabilityWithModel:" in rebuild,
+          "the sidebar's status line comes from the replayed decision")
+    check("[self askUSBMenuHostClaimOnce]" in rebuild,
+          "rebuilding the menu is what asks the host, once")
+    check("MLUSBMenuSlotsUnknown" in menu,
+          "the sidebar declines to report a slot count it never asked for")
+    check("rowReasonKey" in rebuild and rebuild.count("MLUSBMenuCapabilityKey(") >= 2,
+          "a device's reason line is the header's state, not a second invented reason")
+    # The probe: only what it observed, away from the frame thread, credited to nobody else.
+    check("MLUSBMenuHostClaimFromAnswer(answer)" in probe,
+          "the sidebar stores a claim derived by the replayed function, not by the menu")
+    check(probe.index("dispatch_get_global_queue(QOS_CLASS_UTILITY") <
+          probe.index("executeRequestSynchronously") < probe.index("dispatch_get_main_queue()"),
+          "the capability question goes out off the frame thread and returns to main")
+    check("MLUSBScanMayPublish" not in probe and "isActiveStreamGeneration:generation" in probe,
+          "a late answer is dropped by session, and a hover does not re-ask the host")
+    check("expectedUuid.length > 0" in probe and "isEqualToString:expectedUuid" in probe,
+          "an answer is only credited to the host that was asked")
+    check("TAG_STATE" in probe and '_SERVER_BUSY' in probe,
+          "the busy state comes from the host's own reported state, not from a failed connection")
+    check("MLDeviceRedirectionServerInfoTagName()" in probe,
+          "the sidebar asks the same question the policy answers, in one spelling")
+    check("serverInfo.statusCode >= 100" in probe,
+          "a body left by a failed exchange is not quoted as this host's answer")
+    helper = menu.split("- (MLUSBMenuCapability)usbMenuCapabilityWithModel:", 1)[1]
+    check("usbMenuLastLoggedCapability" in helper and helper.index("!=") < helper.index("Log("),
+          "the sidebar logs a state change, not every hover that redraws a caption")
+    internal = read("Limelight/macOS/ViewControllers/StreamViewController_Internal.h")
+    check("usbMenuHostClaim" in internal and "usbMenuHostClaimInFlight" in internal
+          and "usbMenuHostClaimGeneration" in internal,
+          "the claim, its single flight, and its session are held beside the snapshot state")
+    controller = read("Limelight/macOS/ViewControllers/StreamViewController.m")
+    prepare = controller.split("- (void)prepareForStreaming {", 1)[1]
+    check("usbMenuHostClaim = MLUSBMenuHostClaimNotAsked" in prepare,
+          "a new session never shows a previous host's answer about a host it has not asked")
+    # The keys come from the header's own table, so a state cannot gain a sentence in one language
+    # and lose it in the other -- a missing key renders as the key itself, which reads to a player
+    # like a bug report rather than a caption.
+    states = ("BuildCannotLoadDriver", "FeatureDisabled", "HostUnreachable", "HostNotAsked",
+              "HostRefused", "HostOutOfSlots", "HostBusy", "Ready")
+    prefix = 'case MLUSBMenuCapability'
+    keys = []
+    for state in states:
+        marker = '%s%s: return "' % (prefix, state)
+        check(marker in status_h, "every sidebar state declares its own key in the header")
+        keys.append(status_h.split(marker, 1)[1].split('"', 1)[0])
+    check(len(set(keys)) == len(states), "the header hands each sidebar state a distinct key")
+    for table_name, table_path in (("English", "Limelight/macOS/en.lproj/Localizable.strings"),
+                                   ("Chinese", "Limelight/macOS/zh-Hans.lproj/Localizable.strings")):
+        table = read(table_path)
+        missing = [key for key in keys if ('"%s" = "' % key) not in table]
+        check(not missing,
+              "%s can say every sidebar state in the player's language" % table_name
+              if not missing else "%s has no sentence for: %s" % (table_name, ", ".join(missing)))
+
+
 def usb_host_completion_tests():
     pane = read("Limelight/macOS/ViewControllers/SettingsDevicesPane.swift")
     note = pane.split("  private func note(advertised:", 1)[1].split("  /// Reading the bus", 1)[0]
@@ -968,6 +1235,7 @@ int main(void) { @autoreleasepool {
 def main():
     usb_sidebar_grouping_tests()
     usb_scan_policy_tests()
+    usb_menu_status_tests()
     usb_host_completion_tests()
     usb_host_metadata_tests()
     if failures:
@@ -1033,9 +1301,16 @@ def main():
     body = pane.split("var body: some View {", 1)[1].split("// MARK:", 1)[0]
     check('USB permissions scope' in body and 'USB advanced permissions' in body,
           "settings separates permission scope from advanced diagnostics")
-    check('DisclosureGroup' in body and 'readinessSection' in body,
+    # The readout has to stay reachable behind a fold: the Apple-disclosure spelling it used to pin
+    # is gone on purpose, because the system control drew a second frame inside the glass card. What
+    # the rule guards is the fold plus the readout living inside it, so deleting either one still
+    # fails, and swapping the fold back for a plain always-visible section fails too.
+    check('DisclosureCard(storageKey: "settings.devices.technicalDetailsExpanded")' in body
+          and 'readinessSection' in body
+          and body.index('DisclosureCard(storageKey: "settings.devices.technicalDetailsExpanded")')
+              < body.index('readinessSection'),
           "driver preconditions remain accessible without dominating the settings page")
-    check('USB allow this model' in pane and 'hasPermissionRule(row)' in pane and 'family: false' in pane,
+    check('USB allowed models' in pane and 'hasPermissionRule(row)' in pane and 'family: false' in pane,
           "device permission authoring uses exact model IDs and avoids duplicate rules")
     check('usbItem.submenu = usbMenu;' in menu and '[self.streamMenu addItem:usbItem]' in menu,
           "session USB choices are reachable from the stream sidebar menu")

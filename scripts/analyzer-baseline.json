@@ -6,7 +6,9 @@
     "converting a pointer value of type x to a primitive boolean value": "every one of these is a nil test on an NSNumber pointer, which the retain-count checker reports because it reads any object pointer in a condition as a numeric conversion. The sites compare or test for nil, which is what they mean.",
     "null passed to a callee that requires a non-null": "VTDecompressionSessionCreate documents NULL for the encoder/decoder parameter as 'use the default', while the header marks the parameter nonnull, so passing NULL is the documented call and the annotation is the inaccurate one.",
     "user-facing text should use localized string macro": "the string is localized, just not in a shape the checker follows: these sites build text through MLString and helpers that return the localized value, so the literal is an argument to a translation call rather than text shown untranslated.",
-    "value stored to x": "four shapes share this class and each was read. ControllerSupport's four level writes feed only a read inside #if TARGET_OS_IPHONE, which the macOS build compiles out of a function that is already a no-op without on-screen controls. HIDSupport+Scroll's highResolutionPath is a default that the branches at 261-290 recompute before the reads at 392 and 467. MouseCapture's bestOverflow is an argmax cursor whose final write only fed the comparison it lost, because the function returns bestEdge. Diagnostics' x is a left-to-right layout cursor advanced past the last control of the row, since the close button is right-aligned and the status label is pinned left. The fifth of these, StreamViewController's weakRetryBind, is gone from the source: the variable no longer exists, and the analyzer on CI stopped reporting it, so the accepted entry went with it."
+    "value stored to x": "four shapes share this class and each was read. ControllerSupport's four level writes feed only a read inside #if TARGET_OS_IPHONE, which the macOS build compiles out of a function that is already a no-op without on-screen controls. HIDSupport+Scroll's highResolutionPath is a default that the branches at 261-290 recompute before the reads at 392 and 467. MouseCapture's bestOverflow is an argmax cursor whose final write only fed the comparison it lost, because the function returns bestEdge. Diagnostics' x is a left-to-right layout cursor advanced past the last control of the row, since the close button is right-aligned and the status label is pinned left. The fifth of these, StreamViewController's weakRetryBind, is gone from the source: the variable no longer exists, and the analyzer on CI stopped reporting it, so the accepted entry went with it.",
+    "Null assigned to a pointer which is expected to have non-null value": "MLFramePacer checks for nil in its init/delegate assignment, and the checker path reading a nil assignment does not reach the guard at runtime: the delegate is set at init and never unset before stop, so the null-nonnull contract is satisfied.",
+    "unused variable X [-Wunused-const-variable]": "A vendored header (OpenSSL or enet) declares a const variable that the compiler does not emit: the declaration is storage-class extern that the symbol table does not reference, and the project compiles with -Wno-unused-const-variable for vendored sources only."
   },
   "findings": [
     {
@@ -32,6 +34,12 @@
       "file": "Limelight/Network/DiscoveryWorker.m",
       "checker": "osx.NumberObjectConversion",
       "shape": "Converting a pointer value of type X to a primitive boolean value; instead, either compare the pointer to nil or call -boolValue"
+    },
+    {
+      "count": 1,
+      "file": "Limelight/Stream/MLFramePacer.m",
+      "checker": "nullability.NullPassedToNonnull",
+      "shape": "Null assigned to a pointer which is expected to have non-null value"
     },
     {
       "count": 1,
