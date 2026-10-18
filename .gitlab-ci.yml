@@ -34,6 +34,8 @@ stages:
   - package
 
 variables:
+  LANG: en_US.UTF-8
+  LC_ALL: en_US.UTF-8
   # moonlight-common-c is a submodule that carries submodules of its own
   # (enet, nanors). GitLab does not initialize any of them by default, and
   # the build then fails on the first enet include. Verified locally by
