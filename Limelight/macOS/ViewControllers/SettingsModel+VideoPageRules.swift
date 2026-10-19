@@ -44,13 +44,8 @@ extension SettingsModel {
     videoRendererModeIsMetal
   }
 
-  /// The explanation the page must show for frame interpolation. Three states,
-  /// because two answers would be a lie on a Mac that has the API but not the
-  /// slots, and on a Compatibility renderer the control is off for a different
-  /// reason entirely.
-  /// Which sentence the force switch carries. When the display already has cadence
-  /// headroom the switch changes nothing, and the page says so; when it does not, the
-  /// switch is the only way to run interpolation here, and the sentence names the cost.
+  /// Cadence admission and processing capacity are separate: forcing changes
+  /// the former, while runtime overload can still suspend interpolation.
   var frameInterpolationForceHintKey: String {
     let hostId = selectedHost?.id ?? Self.globalHostId
     let measuredRefresh = SettingsClass.videoCadenceMeasuredRefreshHz(for: hostId)

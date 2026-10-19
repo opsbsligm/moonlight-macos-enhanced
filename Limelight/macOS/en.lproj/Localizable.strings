@@ -712,12 +712,13 @@
 "Manual" = "Manual";
 "HDR Manual Luminance Host detail" = "Manual luminance only applies when HDR Metadata Source is set to Hybrid or Client Override.";
 "Frame Interpolation" = "Frame Interpolation";
-"Frame Interpolation detail" = "Metal Renderer cadence assist. Uses VideoToolbox low-latency frame interpolation when the display refresh rate has headroom above the stream FPS. This can add up to about one extra display interval of latency.";
+"Frame Interpolation detail" = "Uses VideoToolbox low-latency frame interpolation in Metal Renderer when the display cadence and this Mac's processing capacity allow it. Processing can add latency; the runtime status shows whether interpolation is active or has fallen back to source frames.";
 "Frame Interpolation Metal only detail" = "Available only in Metal Renderer.";
 "Frame Interpolation unavailable detail" = "This Mac or the current renderer path can't use low-latency frame interpolation right now. The session will continue without it.";
 "Force Frame Interpolation" = "Force Frame Interpolation";
 "Force Frame Interpolation detail" = "Runs interpolation even when the display refresh rate is not a whole multiple of the stream frame rate doubled. Extra frames then land on uneven refreshes and compete for scanout slots, so motion may judder or tear and latency can rise -- forcing cannot repair a cadence, only skip the check. While forcing, 4:4:4 color is held back to 4:2:0 because the interpolator cannot take a 4:4:4 source.";
-"Force Frame Interpolation no conflict detail" = "This display already carries the stream frame rate doubled on whole refreshes, so interpolation runs without forcing. Keep this on to bypass the check if the measured refresh rate drifts during a stream.";
+"Force Frame Interpolation no conflict detail" = "This display meets the cadence check for doubled output without forcing. Actual interpolation still depends on source format and processing capacity. Keep this on to bypass the cadence check if the measured refresh rate drifts during a stream.";
+"Frame Interpolation processing budget hint" = "A matching refresh rate does not guarantee enough processing capacity, especially at high stream frame rates such as 90 FPS. If processing fails or overloads, interpolation pauses and source frames continue. Forcing skips only the cadence check; it cannot bypass hardware limits or overload protection. Check the runtime status and actual presentation rate.";
 "Reference" = "Reference";
 "Dim Room" = "Dim Room";
 "Office" = "Office";

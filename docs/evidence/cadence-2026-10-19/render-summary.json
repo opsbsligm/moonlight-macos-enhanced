@@ -1,0 +1,93 @@
+{
+  "settingsPagePixels": {
+    "mean": 0.969588523848018,
+    "distinctColours": 269,
+    "sampled": 85878,
+    "stddev": 0.07705797257992562
+  },
+  "materialLayers": [
+    "CABackdropLayer x4"
+  ],
+  "windowsAddedByPresentingSettings": [],
+  "viewsAddedToWindowContent": 1,
+  "overlayInsideWindowContent": true,
+  "failures": [],
+  "recorded_at": "2026-10-19 Asia/Shanghai",
+  "returncode": 0,
+  "streamPane": {
+    "pixels": {
+      "mean": 0.968812945819335,
+      "distinctColours": 251,
+      "sampled": 85878,
+      "stddev": 0.07746009834918031
+    },
+    "initialPixels": {
+      "mean": 0.9699036625953701,
+      "distinctColours": 261,
+      "sampled": 85878,
+      "stddev": 0.07754763285284283
+    },
+    "advancedSectionCollapsed": false,
+    "disclosuresPressed": 0,
+    "panePreferenceRestored": true,
+    "expectationsFromPageModel": true,
+    "readableRows": 68
+  },
+  "videoPane": {
+    "pixels": {
+      "mean": 0.9715819367787063,
+      "distinctColours": 233,
+      "sampled": 85878,
+      "stddev": 0.07388704868399318
+    },
+    "initialPixels": {
+      "mean": 0.969588523848018,
+      "distinctColours": 269,
+      "sampled": 85878,
+      "stddev": 0.07705797257992562
+    },
+    "advancedSectionCollapsed": false,
+    "disclosuresPressed": 0,
+    "panePreferenceRestored": true,
+    "expectationsFromPageModel": true,
+    "readableRows": 108
+  },
+  "appPane": {
+    "pixels": {
+      "mean": 0.9674238099794281,
+      "distinctColours": 324,
+      "sampled": 85878,
+      "stddev": 0.08650661163025475
+    },
+    "initialPixels": {
+      "mean": 0.9710342213702468,
+      "distinctColours": 248,
+      "sampled": 85878,
+      "stddev": 0.07235829737257156
+    },
+    "advancedSectionCollapsed": true,
+    "disclosuresPressed": 1,
+    "panePreferenceRestored": true,
+    "expectationsFromPageModel": true,
+    "readableRows": 52
+  },
+  "devicesPane": {
+    "pixels": {
+      "mean": 0.9678438213046981,
+      "distinctColours": 229,
+      "sampled": 85878,
+      "stddev": 0.07954681262866033
+    },
+    "initialPixels": {
+      "mean": 0.973848044676375,
+      "distinctColours": 282,
+      "sampled": 85878,
+      "stddev": 0.07397341253157036
+    },
+    "advancedSectionCollapsed": false,
+    "disclosuresPressed": 0,
+    "panePreferenceRestored": true,
+    "expectationsFromPageModel": true,
+    "readableRows": 77
+  }
+}
