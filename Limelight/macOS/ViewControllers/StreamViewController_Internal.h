@@ -1065,6 +1065,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)handleMouseModeToggledNotification:(NSNotification *)note;
 - (void)handleGamepadQuitNotification:(NSNotification *)note;
 - (void)showNotification:(NSString *)message;
+- (void)showShortcutOSDForAction:(NSString *)action;
 - (void)showNotification:(NSString *)message forSeconds:(NSTimeInterval)seconds;
 @end
 
