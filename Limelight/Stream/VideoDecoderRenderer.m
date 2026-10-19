@@ -3970,29 +3970,19 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                                   reason:(NSString **)reasonOut
 {
     if (_requestedFrameInterpolationMode == MLRequestedVideoFrameInterpolationModeOff) {
-        if (reportOut != NULL) {
-            *reportOut = MLVideoFrameInterpolationReportDisabled;
-        }
-        if (reasonOut != NULL) {
-            *reasonOut = @"frame interpolation disabled";
-        }
+        if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportDisabled;
+        if (reasonOut != NULL) *reasonOut = @"frame interpolation disabled";
         return NO;
     }
 
     if (_activeRendererMode != MLActiveVideoRendererModeEnhanced) {
-        if (reportOut != NULL) {
-            *reportOut = MLVideoFrameInterpolationReportRequiresMetalRenderer;
-        }
-        if (reasonOut != NULL) {
-            *reasonOut = @"frame interpolation is only available in Metal Renderer";
-        }
+        if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportRequiresMetalRenderer;
+        if (reasonOut != NULL) *reasonOut = @"frame interpolation is only available in Metal Renderer";
         return NO;
     }
 
     if (_enableHdr) {
-        if (reportOut != NULL) {
-            *reportOut = MLVideoFrameInterpolationReportDisabledForHdr;
-        }
+        if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportDisabledForHdr;
         if (reasonOut != NULL) {
             *reasonOut = @"HDR stream keeps native Metal present path; frame interpolation stays disabled";
         }
@@ -4000,12 +3990,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     if (displayRefreshRate <= 0.0) {
-        if (reportOut != NULL) {
-            *reportOut = MLVideoFrameInterpolationReportRefreshRateUnknown;
-        }
-        if (reasonOut != NULL) {
-            *reasonOut = @"display refresh rate unavailable";
-        }
+        if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportRefreshRateUnknown;
+        if (reasonOut != NULL) *reasonOut = @"display refresh rate unavailable";
         return NO;
     }
 
@@ -4016,15 +4002,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     double minimumRefreshRate = MLInterpolationMinimumRefreshForSourceFps((double)self.frameRate);
     if (displayRefreshRate < minimumRefreshRate) {
         if (!_frameInterpolationForceAdmission) {
-            if (reportOut != NULL) {
-                *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;
-            }
-            if (reasonOut != NULL) {
-                *reasonOut = [NSString stringWithFormat:@"display %.2fHz matches no whole multiple of stream %d FPS doubled (%.2f Hz per displayed frame)",
+            if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;
+            if (reasonOut != NULL) *reasonOut = [NSString stringWithFormat:@"display %.2fHz matches no whole multiple of stream %d FPS doubled (%.2f Hz per displayed frame)",
                               displayRefreshRate,
                               self.frameRate,
                               minimumRefreshRate];
-            }
             return NO;
         }
         // Forced admission keeps the refusal visible: the cadence answer stays
@@ -4038,11 +4020,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         _frameInterpolationCadenceForced = NO;
     }
 
-    if (reportOut != NULL) {
-        *reportOut = _frameInterpolationCadenceForced
+    if (reportOut != NULL) *reportOut = _frameInterpolationCadenceForced
             ? MLVideoFrameInterpolationReportActiveForced
             : MLVideoFrameInterpolationReportActive;
-    }
     return YES;
 }
 
@@ -4091,15 +4071,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                 // The configuration refused this format. Say so once and mean it: the
                 // session beside it is not broken and must survive to the next stream.
                 _frameInterpolationRefusedSourcePixelFormat = sourcePixelFormat;
-                if (reportOut != NULL) {
-                    *reportOut = MLVideoFrameInterpolationReportSourceFormatUnsupported;
-                }
+                if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportSourceFormatUnsupported;
                 return NO;
 
             case MLFrameInterpolationPrepareActionSourceFormatUnsupported:
-                if (reportOut != NULL) {
-                    *reportOut = MLVideoFrameInterpolationReportSourceFormatUnsupported;
-                }
+                if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportSourceFormatUnsupported;
                 return NO;
 
             case MLFrameInterpolationPrepareActionRequestWarmup:
@@ -4108,11 +4084,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
         [self requestFrameInterpolationWarmupForStreamWidth:sourceWidth
                                                streamHeight:sourceHeight];
-        if (reportOut != NULL) {
-            *reportOut = _frameInterpolationProcessor == nil
+        if (reportOut != NULL) *reportOut = _frameInterpolationProcessor == nil
                 ? MLVideoFrameInterpolationReportWarmup
                 : MLVideoFrameInterpolationReportRuntimeUnavailable;
-        }
         return NO;
     }
 
