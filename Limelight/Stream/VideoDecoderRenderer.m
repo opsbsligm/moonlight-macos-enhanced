@@ -1588,6 +1588,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     BOOL _timingCompatibilityMode;
     BOOL _timingSdrCompatibilityWorkaround;
     NSInteger _lastLoggedPendingTarget;
+    BOOL _lastLoggedPendingTargetDoubledCadence;
     MLDisplaySyncMode _displaySyncMode;
     NSInteger _frameQueueTargetOverride;
     NSInteger _timingResponsivenessBias;
@@ -3006,6 +3007,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
                                                                      _hdrHlgViewingEnvironment,
                                                                      _hdrOpticalOutputScale);
     _lastLoggedPendingTarget = NSIntegerMin;
+    _lastLoggedPendingTargetDoubledCadence = NO;
     _metalDrawScheduled = NO;
     _lastLoggedDrawableWidth = 0;
     _lastLoggedDrawableHeight = 0;
@@ -3125,6 +3127,15 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         }
     }
 
+    // Doubled-cadence pairings pull each frame in a single display refresh, so
+    // smoothing/pacing that pad the queue for the half-rate case are padding
+    // latency we cannot spend. Drop one pending frame; vsync/compatibility
+    // floors still keep the answer at the same safe minimum as before.
+    if (displayRefreshRate > 0 && self.frameRate > 0 &&
+        displayRefreshRate >= (double)self.frameRate * 2.0) {
+        target -= 1;
+    }
+
     if (_activeRendererMode == MLActiveVideoRendererModeEnhanced &&
         !_timingEnableVsync &&
         !_timingCompatibilityMode &&
@@ -3144,7 +3155,16 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 
 - (NSUInteger)desiredEnhancedDrawableDepth
 {
+    // Doubled-cadence pairings (90 FPS source on a 180 Hz panel, 120 on 240, etc.)
+    // already pull each frame at exactly one display refresh, so the queue that
+    // smoothness/vsync would otherwise pad with is queueing latency we cannot
+    // spend on a fixed-refresh target. The hard cap of 3 stems from the
+    // 60 FPS / 60 Hz pairing -- the doubling leaves no need for the same cushion.
     if (_timingEnableVsync || _timingCompatibilityMode || _timingBufferLevel >= 2 || _smoothnessLatencyMode >= 2) {
+        if (_lastDisplayRefreshRate > 0.0 && self.frameRate > 0 &&
+            _lastDisplayRefreshRate >= (double)self.frameRate * 2.0) {
+            return 2;
+        }
         return 3;
     }
 
@@ -3155,6 +3175,14 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 {
     NSUInteger drawableDepth = [self desiredEnhancedDrawableDepth];
     if (_timingEnableVsync || _timingCompatibilityMode || _timingBufferLevel >= 2 || _smoothnessLatencyMode >= 2) {
+        // Mirror the drawable depth step-down so the semaphore tracks the
+        // shorter queue; otherwise the semaphore would still hold 3 in-flight
+        // commands against only 2 drawables and the renderer would stall on a
+        // drawable that has nowhere to land.
+        if (_lastDisplayRefreshRate > 0.0 && self.frameRate > 0 &&
+            _lastDisplayRefreshRate >= (double)self.frameRate * 2.0) {
+            return MIN(drawableDepth, (NSUInteger)2);
+        }
         return drawableDepth;
     }
 
@@ -5898,9 +5926,13 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     }
     self->_lastDisplayRefreshRate = displayRefreshRate;
     int desiredPendingFrames = [self desiredPendingFramesForDisplayRefreshRate:displayRefreshRate];
+    BOOL doubledCadence = (displayRefreshRate > 0.0 && self.frameRate > 0 &&
+                           displayRefreshRate >= (double)self.frameRate * 2.0);
     if (self->_lastLoggedPendingTarget != desiredPendingFrames) {
+        BOOL lastDoubled = self->_lastLoggedPendingTargetDoubledCadence;
         self->_lastLoggedPendingTarget = desiredPendingFrames;
-        Log(LOG_I, @"[diag] Renderer pacing target updated: pending=%d framePacing=%ld mode=%ld buffer=%ld responsiveness=%d compatibility=%d vsync=%d sdrCompat=%d display=%.2fHz stream=%d",
+        self->_lastLoggedPendingTargetDoubledCadence = doubledCadence;
+        Log(LOG_I, @"[diag] Renderer pacing target updated: pending=%d framePacing=%ld mode=%ld buffer=%ld responsiveness=%d compatibility=%d vsync=%d sdrCompat=%d display=%.2fHz stream=%d doubledCadence=%d",
             desiredPendingFrames,
             (long)self->_framePacingMode,
             (long)self->_smoothnessLatencyMode,
@@ -5910,7 +5942,12 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
             self->_timingEnableVsync ? 1 : 0,
             self->_timingSdrCompatibilityWorkaround ? 1 : 0,
             displayRefreshRate,
-            self.frameRate);
+            self.frameRate,
+            doubledCadence ? 1 : 0);
+        if (doubledCadence && !lastDoubled) {
+            Log(LOG_I, @"[diag] Doubled cadence detected: applying buffered-queue step-down (drawable depth/inflight and pending -1) for %.2fHz@%dFPS",
+                displayRefreshRate, self.frameRate);
+        }
     }
 
     while (LiPollNextVideoFrameCtx(depacketizerCtx, &handle, &du)) {
