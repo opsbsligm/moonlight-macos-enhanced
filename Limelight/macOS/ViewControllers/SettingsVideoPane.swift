@@ -64,6 +64,17 @@ struct VideoView: View {
   // into the model, but nothing displayed them, so a silently disabled
   // upscaler or interpolator was indistinguishable from one that was never
   // enabled. This shows what the decoder is really doing right now.
+  private func runtimeStatusRow(labelKey: String, valueKey: String) -> some View {
+    HStack {
+      Text(languageManager.localize(labelKey))
+        .foregroundColor(.secondary)
+        .font(.caption)
+      Spacer()
+      Text(languageManager.localize(valueKey))
+        .font(.caption.weight(.semibold))
+    }
+  }
+
   private func runtimeStatusLabel(labelKey: String, summaryKey: String) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
       Text(languageManager.localize(labelKey))

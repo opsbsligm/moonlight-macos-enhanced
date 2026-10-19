@@ -1411,3 +1411,6 @@
 "Pre-auth" = "Pre-auth";
 "USB pre-auth help" = "Pre-authorize this device model now; it will be ready when USB redirection is available.";
 "Allowed" = "Allowed";
+
+"Hardware Info" = "Hardware Info";
+"Hardware info diagnostic detail" = "Current renderer, video enhancement and frame interpolation status. Updates when a stream is running.";

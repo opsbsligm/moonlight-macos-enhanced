@@ -1410,3 +1410,6 @@
 "Pre-auth" = "预授权";
 "USB pre-auth help" = "预先授权此设备型号；当 USB 重定向就绪时即可使用。";
 "Allowed" = "已授权";
+
+"Hardware Info" = "硬件信息";
+"Hardware info diagnostic detail" = "当前渲染器、视频增强与插帧状态。串流运行时实时更新。";
