@@ -125,6 +125,15 @@ int main(void) {
     assert(!MLActualPresentationRead(&actual,9).available);
     assert(MLActualPresentationRecord(&actual,0,10.01,10,false,false));
     assert(!MLActualPresentationRead(&actual,10.03).available);
+    uint64_t previousPresented = actual.presented;
+    assert(MLActualPresentationRecord(&actual,0,20,19.998,false,false));
+    assert(actual.count==1 && actual.presented==previousPresented+1);
+    assert(!MLActualPresentationRead(&actual,20).available);
+    assert(MLActualPresentationRecord(&actual,0,20.01,20.008,false,false));
+    observed=MLActualPresentationRead(&actual,20.02);
+    assert(observed.available && fabs(observed.fps-100)<0.00001);
+    assert(!MLActualPresentationRecord(&actual,0,10.04,10.03,false,false));
+    assert(MLActualPresentationRead(&actual,20.02).available);
     MLActualPresentationReset(&actual);
     assert(actual.generation==1 && actual.count==0 && actual.presented==0);
     assert(!MLActualPresentationRecord(&actual,0,20,19,false,false));
@@ -200,6 +209,8 @@ actual_mutations = [
     ('stale-fps-stays-visible', 'now - result.latestTime > 2.0', 'now - result.latestTime > 200.0'),
     ('callbacks-assumed-ordered', 'qsort(times, state->count, sizeof(double), MLActualPresentationCompare);', '(void)times;'),
     ('counts-a-submit-instead-of-present', 'state->presented++;', 'state->presented += 2;'),
+    ('resume-includes-stale-history', 'time - state->latestTime > 2.0', 'time - state->latestTime > 200.0'),
+    ('late-callback-revives-old-window', 'state->latestTime - time > 2.0', 'state->latestTime - time > 200.0'),
 ]
 for name, before, after in actual_mutations:
     assert actual_header.count(before) == 1, name
@@ -282,6 +293,39 @@ if native_toolchain is None:
     print('SKIP native async lifecycle harness: Apple toolchain unavailable')
 else:
     native_clang, native_sdk = native_toolchain
+    queue_methods = section('- (int)desiredPendingFramesForDisplayRefreshRate:', '- (BOOL)setupMetalRenderer {')
+    assert draw.index('[self updateEnhancedQueueDepthIfNeeded]') < draw.index('dispatch_semaphore_t inflightSemaphore'), 'queue update races its own submission'
+    assert 'setupMetalRenderer' not in callback, 'refresh callback asynchronously rebuilds presentation'
+    assert 'DISPATCH_TIME_FOREVER' not in queue_methods, 'queue depth adjustment blocks UI'
+    mode_start = source.index('typedef NS_ENUM(NSInteger, MLActiveVideoRendererMode)')
+    mode_enum = source[mode_start:source.index('};', mode_start) + 2]
+    clamp = section('static int MLClampInt(', 'static BOOL MLPixelFormatIsVideoRange(')
+    constants = '\n'.join('enum { %s = %s };' % (name, re.search(name + r'\s*=\s*(\d+)', source).group(1))
+                          for name in ('kMLEnhancedStartupPacingWindowMs', 'kMLEnhancedStartupPacingPresentThreshold'))
+    def queue_replay(methods, expected, name):
+        text = (ROOT/'scripts/fixtures/enhanced-queue-depth.m').read_text()
+        for key, value in [('@@METHODS@@', methods), ('@@RENDERER_ENUM@@', mode_enum),
+                           ('@@CLAMP@@', clamp), ('@@CONSTANTS@@', constants)]:
+            text = text.replace(key, value)
+        with tempfile.TemporaryDirectory(prefix='ml-queue-depth-') as d:
+            p = Path(d)
+            (p/'probe.m').write_text(text)
+            built = subprocess.run([native_clang, '-isysroot', native_sdk, '-fobjc-arc', '-fblocks',
+                '-Wall', '-Werror', '-framework', 'Foundation', '-I', str(ROOT/'Limelight/macOS'),
+                str(p/'probe.m'), '-o', str(p/'probe')], capture_output=True, text=True)
+            assert built.returncode == 0, name + ': ' + built.stderr
+            ran = subprocess.run([str(p/'probe')], capture_output=True, text=True, timeout=10)
+            assert (ran.returncode == 0) == expected, name + ': ' + ran.stdout + ran.stderr
+            print(ran.stdout.strip() if expected else 'ok: queue replay rejects ' + name)
+    queue_replay(queue_methods, True, 'shipping queue')
+    for name, before, after in [
+        ('replace-with-outstanding-GPU-work', 'if (!drained) return;', 'if (!drained) { /* unsafe */ }'),
+        ('lose-partial-reservations', 'while (reserved > 0)', 'while (reserved > 1)'),
+        ('vsync-floor-lost', 'target = MAX(target - 1, _timingEnableVsync ? 1 : 0);', 'target -= 1;'),
+        ('compatibility-loses-depth', 'if (_timingCompatibilityMode) {\n        return 3;', 'if (_timingCompatibilityMode && false) {\n        return 3;'),
+    ]:
+        assert before in queue_methods, name
+        queue_replay(queue_methods.replace(before, after, 1), False, name)
     enum_start = source.index('typedef NS_ENUM(NSInteger, MLActiveVideoEnhancementEngine)')
     enum_end = source.index('};', enum_start) + 2
     release_history = section('- (void)releasePreviousEnhancedFrames\n', '- (void)releaseFrameInterpolationFrames\n')

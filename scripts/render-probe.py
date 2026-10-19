@@ -23,6 +23,8 @@ What it proves:
     was given, as one added view inside that window's own content view);
   * the fade finishes and dismissal unmounts cleanly;
   * the page really draws (a flat capture means the render never happened);
+  * captures use the composited pixels of the probe's own visible window;
+    ScreenCaptureKit's current-process API needs no access to other apps;
   * a Liquid Glass material is actually composited, measured from the Core
     Animation layer tree (CABackdropLayer and friends), because SwiftUI materials
     do not appear as AppKit view classes and the hosting view's own name contains
@@ -274,7 +276,7 @@ def verify(report, out_dir=None):
            "pressing the back control left the page mounted in the window content")
     # Handing the keyboard back is a claim only a window that can hold the keyboard
     # can answer, so it is required where the probe window was key and reported as
-    # unanswerable everywhere else -- an offscreen probe window is never key.
+    # unanswerable everywhere else -- the probe may not have keyboard focus.
     expect(not (report.get("probeWindowIsKeyWindow") and report.get("focusOnPageAfterBackControl")),
            "the page kept the keyboard after a close in a window that can hold one")
     expect(report.get("titleAfterBackControl") == report.get("titleBeforePresent"),

@@ -71,6 +71,15 @@ static inline double MLInterpolationMinimumRefreshForSourceFps(double sourceFps)
     return sourceFps * 2.0;
 }
 
+// Queue headroom does not require an integer cadence, but uses the same
+// measurement tolerance as interpolation admission.
+static inline bool MLDisplayHasDoubleRateHeadroom(double refreshHz, int sourceFps)
+{
+    return isfinite(refreshHz) && sourceFps > 0 &&
+        refreshHz >= MLInterpolationMinimumRefreshForSourceFps(sourceFps) *
+            (1.0 - ML_INTERPOLATION_CADENCE_TOLERANCE);
+}
+
 /// The question the renderer asks, in one place: does this display carry the doubled stream
 /// cadence on whole refreshes? An unknown refresh rate answers "no" rather than "yes", because
 /// an engine built on an assumption nobody measured is the failure that looks like success right
@@ -78,7 +87,7 @@ static inline double MLInterpolationMinimumRefreshForSourceFps(double sourceFps)
 /// same refusal the old headroom floor made, just named by what the player would see.
 static inline bool MLInterpolationHasCadenceHeadroom(double refreshHz, int sourceFps)
 {
-    if (refreshHz <= 0.0 || sourceFps <= 0) {
+    if (!isfinite(refreshHz) || refreshHz <= 0.0 || sourceFps <= 0) {
         return false;
     }
     double ratio = refreshHz / ((double)sourceFps * 2.0);

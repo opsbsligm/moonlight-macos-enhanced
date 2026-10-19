@@ -1,0 +1,27 @@
+# Selected runtime evidence, local time Asia/Shanghai.
+# Queue/submit counters are not actual presentation FPS. Source-only comparison also changed chroma format.
+[2026-10-19 19:08:28.580] [pid=44844] <INFO> [video] Enhanced drawable depth=3 inflight=3 vsync=1 compatibility=0 buffer=2 smoothness=3
+[2026-10-19 19:08:29.840] [pid=44844] <INFO> [diag] Renderer pacing target updated: pending=1 framePacing=1 mode=3 buffer=2 responsiveness=0 compatibility=0 vsync=1 sdrCompat=0 display=180.00Hz stream=90 doubledCadence=1
+[2026-10-19 19:08:30.617] [pid=44844] <INFO> [video] Enhanced queue updated drawable=2 inflight=2 display=180.00Hz stream=90
+[2026-10-19 19:08:38.760] [pid=44844] <INFO> [video] Actual drawable present fps=19.29 frameP95=61.110ms submitWaitP95=34.410ms waitAvailable=1 samples=4 source=4 interpolated=0 scaled=0
+[2026-10-19 19:08:39.784] [pid=44844] <INFO> [video] Actual drawable present fps=31.20 frameP95=61.110ms submitWaitP95=35.283ms waitAvailable=1 samples=14 source=10 interpolated=4 scaled=0
+[2026-10-19 19:09:38.129] [pid=44844] <INFO> [video] Stream submit window source=33 submitted=33 interpolated=19 queueAvg=29.121ms decodeAvg=0.636ms pending=0
+[2026-10-19 19:09:39.135] [pid=44844] <INFO> [video] Stream submit window source=32 submitted=31 interpolated=11 queueAvg=28.194ms decodeAvg=0.656ms pending=0
+[2026-10-19 19:09:40.157] [pid=44844] <INFO> [video] Stream submit window source=33 submitted=30 interpolated=12 queueAvg=27.133ms decodeAvg=0.636ms pending=0
+[2026-10-19 18:56:51.979] [pid=42152] <WARN> [video] VT frame interpolation breaker tripped: 150ms call over a 22ms budget (strike 3)
+[2026-10-19 19:01:45.014] [pid=42152] <INFO> [video] Stream submit window source=33 submitted=33 interpolated=0 queueAvg=5.000ms decodeAvg=0.636ms pending=0
+[2026-10-19 19:01:46.042] [pid=42152] <INFO> [video] Stream submit window source=33 submitted=33 interpolated=0 queueAvg=5.394ms decodeAvg=0.758ms pending=0
+[2026-10-19 19:01:47.042] [pid=42152] <INFO> [video] Stream submit window source=32 submitted=32 interpolated=0 queueAvg=5.094ms decodeAvg=0.938ms pending=0
+[2026-10-19 19:01:48.070] [pid=42152] <INFO> [video] Stream submit window source=33 submitted=33 interpolated=0 queueAvg=4.939ms decodeAvg=0.636ms pending=0
+[2026-10-19 19:19:08.948] [pid=49785] <INFO> [diag] Renderer pacing target updated: pending=1 framePacing=1 mode=3 buffer=2 responsiveness=0 compatibility=0 vsync=1 sdrCompat=0 display=180.00Hz stream=90 doubledCadence=1
+[2026-10-19 19:19:09.682] [pid=49785] <INFO> [video] Enhanced queue updated drawable=2 inflight=2 display=180.00Hz stream=90
+[2026-10-19 19:19:24.230] [pid=49785] <INFO> [video] Actual drawable present fps=10.59 frameP95=233.330ms submitWaitP95=30.186ms waitAvailable=1 samples=5 source=5 interpolated=0 scaled=0
+[2026-10-19 19:19:25.232] [pid=49785] <INFO> [video] Actual drawable present fps=10.59 frameP95=233.330ms submitWaitP95=30.186ms waitAvailable=1 samples=5 source=5 interpolated=0 scaled=0
+[2026-10-19 19:22:29.169] [pid=49785] <INFO> [diag] Renderer pacing target updated: pending=1 framePacing=1 mode=3 buffer=2 responsiveness=0 compatibility=0 vsync=1 sdrCompat=0 display=180.00Hz stream=90 doubledCadence=1
+[2026-10-19 19:22:29.761] [pid=49785] <INFO> [video] Enhanced queue updated drawable=2 inflight=2 display=180.00Hz stream=90
+[2026-10-19 19:23:29.810] [pid=49785] <INFO> [video] Actual drawable present fps=3.40 frameP95=294.440ms submitWaitP95=12.812ms waitAvailable=1 samples=2 source=2 interpolated=0 scaled=0
+[2026-10-19 19:23:30.818] [pid=49785] <INFO> [video] Actual drawable present fps=3.40 frameP95=294.440ms submitWaitP95=12.812ms waitAvailable=1 samples=2 source=2 interpolated=0 scaled=0
+[2026-10-19 19:01:53.135] [pid=42152] <INFO> [video] Stream submit window source=32 submitted=32 interpolated=0 queueAvg=4.688ms decodeAvg=0.656ms pending=0
+[2026-10-19 19:01:57.201] [pid=42152] <INFO> [video] Stream submit window source=32 submitted=32 interpolated=0 queueAvg=5.906ms decodeAvg=0.719ms pending=0
+[2026-10-19 19:19:24.910] [pid=49785] <INFO> [video] Stream submit window source=32 submitted=31 interpolated=0 queueAvg=5.161ms decodeAvg=0.469ms pending=0
+[2026-10-19 19:23:19.358] [pid=49785] <INFO> [video] Stream submit window source=33 submitted=14 interpolated=32 queueAvg=53.500ms decodeAvg=0.545ms pending=0
