@@ -3428,6 +3428,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         }
         self.pendingOptionUncaptureToken += 1;
         [self toggleOverlay];
+        [self showShortcutOSDForAction:MLShortcutActionTogglePerformanceOverlay];
         return [self consumeKeyDownEvent:event];
     }
 
@@ -3444,6 +3445,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         }
         self.pendingOptionUncaptureToken += 1;
         [self toggleMouseMode];
+        [self showShortcutOSDForAction:MLShortcutActionToggleMouseMode];
         return [self consumeKeyDownEvent:event];
     }
 
@@ -3460,6 +3462,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         }
         self.pendingOptionUncaptureToken += 1;
         [self toggleFullscreenControlBallVisibility];
+        [self showShortcutOSDForAction:MLShortcutActionToggleFullscreenControlBall];
         return [self consumeKeyDownEvent:event];
     }
 
@@ -3477,6 +3480,7 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         // See the monitored path: the dock and its menu are alternatives, never stacked.
         if (![self openEdgeMenuDockForControlCenterShortcut]) {
             [self presentControlCenterFromShortcut];
+            [self showShortcutOSDForAction:MLShortcutActionOpenControlCenter];
         }
         return [self consumeKeyDownEvent:event];
     }
