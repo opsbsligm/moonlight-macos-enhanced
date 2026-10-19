@@ -227,11 +227,21 @@ def self_test():
     unconfigured = "\n".join(
         line for line in shipped_project.split("\n")
         if "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*]" not in line)
-    if not project_problems(unconfigured, shipped_bar):
+    # The shipped bar can stop using the AppKit role. Keep proving the
+    # conditional rule with a guarded consumer instead of requiring dead flags.
+    guarded_consumer = "#if ML_APPKIT_TABS_ROLE\ncontrol.role = .tabs\n#endif\n"
+    configured = 'SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=macosx27.*] = ML_APPKIT_TABS_ROLE'
+    if project_problems(configured, guarded_consumer):
+        failures += 1
+        print("FAIL a configured guarded role should be accepted")
+    if not project_problems(unconfigured, guarded_consumer):
         failures += 1
         print("FAIL %-46s expected a violation, got clean" % "a project that dropped the guard's condition")
     else:
         print("ok   %-46s refused" % "a project that dropped the guard's condition")
+    if project_problems(unconfigured, ""):
+        failures += 1
+        print("FAIL an unused role should not require the build condition")
 
     for what, files, expect_problem in cases:
         problems = check(files)

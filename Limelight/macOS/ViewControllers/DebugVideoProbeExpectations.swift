@@ -68,6 +68,11 @@ final class DebugProbeExpectations: NSObject {
     if let cadenceAdvice = model.frameInterpolationCadenceAdviceText {
       videoStrings.append(cadenceAdvice)
     }
+    if model.frameInterpolationControlIsEnabled,
+      SettingsModel.frameInterpolationModeRawValue(for: model.selectedFrameInterpolationMode) != 0
+    {
+      videoStrings.append(localize("Frame Interpolation processing budget hint"))
+    }
     // The super-resolution source warning rides the same rule the page reads: whenever the
     // model says the selected source has no VT factors, that sentence has to be on screen,
     // and the probe may not certify a page that quietly dropped it.

@@ -712,12 +712,13 @@
 "Manual" = "手动";
 "HDR Manual Luminance Host detail" = "手动亮度只会在 HDR 元数据来源设为“混合”或“本机覆盖”时生效。";
 "Frame Interpolation" = "插帧";
-"Frame Interpolation detail" = "Metal 渲染器的节奏增强。会在显示器刷新率高于串流帧率且有余量时，调用 VideoToolbox 低延迟插帧。启用后通常会额外增加约一个显示刷新周期以内的延迟。";
+"Frame Interpolation detail" = "在 Metal 渲染器中，显示节拍与本机处理能力允许时使用 VideoToolbox 低延迟插帧。处理可能增加延迟；是否正在插帧或已回退为源帧，以串流中的实际状态为准。";
 "Frame Interpolation Metal only detail" = "仅 Metal 渲染器可用。";
 "Frame Interpolation unavailable detail" = "当前这台 Mac 或当前渲染路径暂时无法启用低延迟插帧，会自动继续使用非插帧路径。";
 "Force Frame Interpolation" = "强制开启插帧";
 "Force Frame Interpolation detail" = "即使显示器刷新率不是串流帧率两倍的整数倍也运行插帧。额外帧会落在不均匀的刷新节拍上并与原始帧抢占上屏时机，画面可能顿挫或撕裂，延迟也可能上升——强制只能跳过检查，修不好节拍本身。强制插帧期间 4:4:4 让位为 4:2:0 串流，否则插帧引擎无法挂载。";
-"Force Frame Interpolation no conflict detail" = "当前显示器刷新率恰好以整数倍刷新承载串流帧率的两倍，不强制也会插帧。保留此项可在串流中实测刷新率漂移时跳过该检查。";
+"Force Frame Interpolation no conflict detail" = "当前显示器已通过双倍输出的节拍检查，无需强制。实际能否插帧仍取决于源格式与本机处理能力。保留此项可在串流中实测刷新率漂移时跳过节拍检查。";
+"Frame Interpolation processing budget hint" = "刷新率匹配不代表算力足够，90 FPS 等高帧率串流尤其如此。处理失败或过载时会暂停插帧并继续显示源帧。强制开启只跳过节拍检查，不能绕过硬件限制或过载保护。请结合下方运行状态与实际上屏帧率判断。";
 "Reference" = "参考";
 "Dim Room" = "暗室";
 "Office" = "办公";

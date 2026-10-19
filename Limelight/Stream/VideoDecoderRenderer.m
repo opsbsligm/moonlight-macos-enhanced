@@ -1899,12 +1899,21 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
                          scaled:(BOOL)scaled
 {
     @synchronized(self) {
-        if (!MLActualPresentationRecord(&_actualPresentationState, generation, time, submittedAt, interpolated, scaled)) return;
+        if (generation != _actualPresentationState.generation) return;
+        MLActualPresentationRecord(&_actualPresentationState, generation, time, submittedAt, interpolated, scaled);
         CFTimeInterval now = CACurrentMediaTime();
         if (now - _lastActualPresentationLogTime < 1.0) return;
         MLActualPresentationReading reading = MLActualPresentationRead(&_actualPresentationState, now);
-        if (!reading.available) return;
         _lastActualPresentationLogTime = now;
+        if (!reading.available) {
+            Log(LOG_I, @"[video] Actual drawable presentation unavailable samples=%lu presented=%llu unpresented=%llu invalid=%llu callbackTime=%.6f latestTime=%.6f now=%.6f",
+                (unsigned long)reading.count,
+                (unsigned long long)_actualPresentationState.presented,
+                (unsigned long long)_actualPresentationState.unpresented,
+                (unsigned long long)_actualPresentationState.invalid,
+                time, reading.latestTime, now);
+            return;
+        }
         Log(LOG_I, @"[video] Actual drawable present fps=%.2f frameP95=%.3fms submitWaitP95=%.3fms waitAvailable=%d samples=%lu source=%llu interpolated=%llu scaled=%llu",
             reading.fps, reading.frameP95Ms, reading.waitP95Ms, reading.waitAvailable,
             (unsigned long)reading.count,
@@ -3127,13 +3136,10 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         }
     }
 
-    // Doubled-cadence pairings pull each frame in a single display refresh, so
-    // smoothing/pacing that pad the queue for the half-rate case are padding
-    // latency we cannot spend. Drop one pending frame; vsync/compatibility
-    // floors still keep the answer at the same safe minimum as before.
-    if (displayRefreshRate > 0 && self.frameRate > 0 &&
-        displayRefreshRate >= (double)self.frameRate * 2.0) {
-        target -= 1;
+    if (_activeRendererMode == MLActiveVideoRendererModeEnhanced &&
+        !_timingCompatibilityMode &&
+        MLDisplayHasDoubleRateHeadroom(displayRefreshRate, self.frameRate)) {
+        target = MAX(target - 1, _timingEnableVsync ? 1 : 0);
     }
 
     if (_activeRendererMode == MLActiveVideoRendererModeEnhanced &&
@@ -3155,14 +3161,12 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 
 - (NSUInteger)desiredEnhancedDrawableDepth
 {
-    // Doubled-cadence pairings (90 FPS source on a 180 Hz panel, 120 on 240, etc.)
-    // already pull each frame at exactly one display refresh, so the queue that
-    // smoothness/vsync would otherwise pad with is queueing latency we cannot
-    // spend on a fixed-refresh target. The hard cap of 3 stems from the
-    // 60 FPS / 60 Hz pairing -- the doubling leaves no need for the same cushion.
-    if (_timingEnableVsync || _timingCompatibilityMode || _timingBufferLevel >= 2 || _smoothnessLatencyMode >= 2) {
-        if (_lastDisplayRefreshRate > 0.0 && self.frameRate > 0 &&
-            _lastDisplayRefreshRate >= (double)self.frameRate * 2.0) {
+    if (_timingCompatibilityMode) {
+        return 3;
+    }
+
+    if (_timingEnableVsync || _timingBufferLevel >= 2 || _smoothnessLatencyMode >= 2) {
+        if (MLDisplayHasDoubleRateHeadroom(_lastDisplayRefreshRate, self.frameRate)) {
             return 2;
         }
         return 3;
@@ -3175,14 +3179,6 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 {
     NSUInteger drawableDepth = [self desiredEnhancedDrawableDepth];
     if (_timingEnableVsync || _timingCompatibilityMode || _timingBufferLevel >= 2 || _smoothnessLatencyMode >= 2) {
-        // Mirror the drawable depth step-down so the semaphore tracks the
-        // shorter queue; otherwise the semaphore would still hold 3 in-flight
-        // commands against only 2 drawables and the renderer would stall on a
-        // drawable that has nowhere to land.
-        if (_lastDisplayRefreshRate > 0.0 && self.frameRate > 0 &&
-            _lastDisplayRefreshRate >= (double)self.frameRate * 2.0) {
-            return MIN(drawableDepth, (NSUInteger)2);
-        }
         return drawableDepth;
     }
 
@@ -3191,6 +3187,42 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     }
 
     return 1;
+}
+
+- (void)updateEnhancedQueueDepthIfNeeded
+{
+    // Draws run on the main thread. Change only queue resources, before this
+    // draw reserves a permit; stop() retires them under the same lock.
+    @synchronized(self) {
+        if (_metalInflightSemaphore == nil || _metalInflightLimit == 0) return;
+        NSUInteger drawableDepth = [self desiredEnhancedDrawableDepth];
+        NSUInteger inflightLimit = [self desiredEnhancedInflightLimit];
+        CAMetalLayer *layer = (CAMetalLayer *)_metalView.layer;
+        if (![layer isKindOfClass:[CAMetalLayer class]]) return;
+        if (_metalInflightLimit == inflightLimit && layer.maximumDrawableCount == drawableDepth) return;
+
+        // A completion owns its original semaphore. Wait for all outstanding
+        // commands without blocking the UI, or retry on the next draw.
+        dispatch_semaphore_t previous = _metalInflightSemaphore;
+        NSUInteger reserved = 0;
+        while (reserved < _metalInflightLimit &&
+               dispatch_semaphore_wait(previous, DISPATCH_TIME_NOW) == 0) {
+            reserved++;
+        }
+        BOOL drained = reserved == _metalInflightLimit;
+        while (reserved > 0) {
+            dispatch_semaphore_signal(previous);
+            reserved--;
+        }
+        if (!drained) return;
+
+        layer.maximumDrawableCount = drawableDepth;
+        _metalInflightSemaphore = dispatch_semaphore_create((long)inflightLimit);
+        _metalInflightLimit = inflightLimit;
+        Log(LOG_I, @"[video] Enhanced queue updated drawable=%lu inflight=%lu display=%.2fHz stream=%d",
+            (unsigned long)drawableDepth, (unsigned long)inflightLimit,
+            _lastDisplayRefreshRate, self.frameRate);
+    }
 }
 
 - (BOOL)setupMetalRenderer {
@@ -3256,7 +3288,9 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
             metalLayer.displaySyncEnabled = MLBoolForDisplaySyncMode(_displaySyncMode, _timingEnableVsync);
         }
         if (@available(macOS 10.15, *)) {
-            metalLayer.maximumDrawableCount = desiredDrawableDepth;
+            if (_metalInflightSemaphore == nil || _metalInflightLimit == 0) {
+                metalLayer.maximumDrawableCount = desiredDrawableDepth;
+            }
         }
         [self applyHDRPresentationStateToMetalLayer:metalLayer];
     }
@@ -3282,7 +3316,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         }
     }
 
-    if (_metalInflightSemaphore == nil || _metalInflightLimit != desiredInflightLimit) {
+    if (_metalInflightSemaphore == nil || _metalInflightLimit == 0) {
         _metalInflightSemaphore = dispatch_semaphore_create((long)desiredInflightLimit);
         _metalInflightLimit = desiredInflightLimit;
         Log(LOG_I, @"[video] Enhanced drawable depth=%lu inflight=%lu vsync=%d compatibility=%d buffer=%ld smoothness=%ld",
@@ -3292,6 +3326,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
             _timingCompatibilityMode ? 1 : 0,
             (long)_timingBufferLevel,
             (long)_smoothnessLatencyMode);
+    } else {
+        [self updateEnhancedQueueDepthIfNeeded];
     }
 
     if (outputFormatChanged) {
@@ -4017,7 +4053,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         return NO;
     }
 
-    if (displayRefreshRate <= 0.0) {
+    if (!isfinite(displayRefreshRate) || displayRefreshRate <= 0.0) {
         if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportRefreshRateUnknown;
         if (reasonOut != NULL) *reasonOut = @"display refresh rate unavailable";
         return NO;
@@ -4028,7 +4064,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     // drift away from it: a warning that names a frame rate this branch then refuses is worse
     // than no warning, because the player has already done what they were told.
     double minimumRefreshRate = MLInterpolationMinimumRefreshForSourceFps((double)self.frameRate);
-    if (displayRefreshRate < minimumRefreshRate) {
+    if (!MLInterpolationHasCadenceHeadroom(displayRefreshRate, self.frameRate)) {
         if (!_frameInterpolationForceAdmission) {
             if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;
             if (reasonOut != NULL) *reasonOut = [NSString stringWithFormat:@"display %.2fHz matches no whole multiple of stream %d FPS doubled (%.2f Hz per displayed frame)",
@@ -5365,6 +5401,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     if (_enableHdr) {
         [self refreshEnhancedHDRPresentationIfNeeded];
     }
+    [self updateEnhancedQueueDepthIfNeeded];
 
     CVImageBufferRef frame = NULL;
     CVImageBufferRef interpolatedFrame = NULL;
@@ -5374,8 +5411,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     BOOL presentingInterpolatedFrame = NO;
     CMTime framePresentationTimeStamp = kCMTimeInvalid;
     uint64_t observationGeneration = 0;
+    dispatch_semaphore_t inflightSemaphore = nil;
+    NSUInteger inflightLimit = 0;
     @synchronized(self) {
         observationGeneration = _actualPresentationState.generation;
+        inflightSemaphore = _metalInflightSemaphore;
+        inflightLimit = _metalInflightLimit;
         [self expireInterpolationStagingIfNeeded];
         // A refresh retry must not run SR/MetalFX again on an already submitted
         // source. Wait for staging so the source cannot overtake its midpoint.
@@ -5409,14 +5450,13 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         return;
     }
 
-    dispatch_semaphore_t inflightSemaphore = _metalInflightSemaphore;
     if (inflightSemaphore != nil &&
         dispatch_semaphore_wait(inflightSemaphore, DISPATCH_TIME_NOW) != 0) {
         _inflightBackpressureCount += 1;
         uint64_t nowMs = LiGetMillis();
         if (_lastInflightBackpressureLogMs == 0 || nowMs - _lastInflightBackpressureLogMs >= 1000) {
             Log(LOG_W, @"[video] Enhanced inflight backpressure count=%lu depth=%lu (before enhancement)",
-                (unsigned long)_inflightBackpressureCount, (unsigned long)_metalInflightLimit);
+                (unsigned long)_inflightBackpressureCount, (unsigned long)inflightLimit);
             _lastInflightBackpressureLogMs = nowMs;
             _inflightBackpressureCount = 0;
         }
@@ -5924,12 +5964,13 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
             displayRefreshRate = 1.0 / refreshPeriod;
         }
     }
-    self->_lastDisplayRefreshRate = displayRefreshRate;
+    @synchronized(self) {
+        self->_lastDisplayRefreshRate = displayRefreshRate;
+    }
     int desiredPendingFrames = [self desiredPendingFramesForDisplayRefreshRate:displayRefreshRate];
-    BOOL doubledCadence = (displayRefreshRate > 0.0 && self.frameRate > 0 &&
-                           displayRefreshRate >= (double)self.frameRate * 2.0);
-    if (self->_lastLoggedPendingTarget != desiredPendingFrames) {
-        BOOL lastDoubled = self->_lastLoggedPendingTargetDoubledCadence;
+    BOOL doubledCadence = MLDisplayHasDoubleRateHeadroom(displayRefreshRate, self.frameRate);
+    if (self->_lastLoggedPendingTarget != desiredPendingFrames ||
+        self->_lastLoggedPendingTargetDoubledCadence != doubledCadence) {
         self->_lastLoggedPendingTarget = desiredPendingFrames;
         self->_lastLoggedPendingTargetDoubledCadence = doubledCadence;
         Log(LOG_I, @"[diag] Renderer pacing target updated: pending=%d framePacing=%ld mode=%ld buffer=%ld responsiveness=%d compatibility=%d vsync=%d sdrCompat=%d display=%.2fHz stream=%d doubledCadence=%d",
@@ -5944,10 +5985,6 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
             displayRefreshRate,
             self.frameRate,
             doubledCadence ? 1 : 0);
-        if (doubledCadence && !lastDoubled) {
-            Log(LOG_I, @"[diag] Doubled cadence detected: applying buffered-queue step-down (drawable depth/inflight and pending -1) for %.2fHz@%dFPS",
-                displayRefreshRate, self.frameRate);
-        }
     }
 
     while (LiPollNextVideoFrameCtx(depacketizerCtx, &handle, &du)) {
@@ -5996,6 +6033,11 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
             VideoStats completedStats = self->_activeWndVideoStats;
             completedStats.lastUpdatedTimestamp = now;
             self->_videoStats = completedStats;
+            Log(LOG_I, @"[video] Stream submit window source=%u submitted=%u interpolated=%u queueAvg=%.3fms decodeAvg=%.3fms pending=%d",
+                completedStats.receivedFrames, completedStats.renderedFrames, completedStats.interpolatedFrames,
+                completedStats.renderedFrames ? (double)completedStats.totalRenderTime / completedStats.renderedFrames : 0.0,
+                completedStats.decodedFrames ? (double)completedStats.totalDecodeTime / completedStats.decodedFrames : 0.0,
+                LiGetPendingVideoFramesCtx(depacketizerCtx));
 
             [self publishVideoCadenceRuntimeReadoutWithSourceFps:completedStats.receivedFps
                                                        outputFps:completedStats.renderedFps
@@ -6174,7 +6216,10 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     _enhancedStartupPacingUntilMs = 0;
     _enhancedStartupPresentedFrameCount = 0;
     _didLogEnhancedStartupPacing = NO;
-    _metalInflightLimit = 0;
+    @synchronized(self) {
+        _metalInflightSemaphore = nil;
+        _metalInflightLimit = 0;
+    }
     _lastDrawableUnavailableLogMs = 0;
     _drawableUnavailableCount = 0;
     _lastInflightBackpressureLogMs = 0;
