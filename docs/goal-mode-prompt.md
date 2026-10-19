@@ -1,92 +1,51 @@
 # Moonlight macOS Enhanced — 目标模式提示词
 
-## 项目定位
+## 当前目标
 
-Moonlight macOS 客户端的独立增强实现。**完全独立于原项目 skyhua0224/moonlight-macos-enhanced**，不再做任何上游同步或 PR。专注于 macOS 平台的低延迟串流体验，Linux/Windows 特性直接无视。
+Moonlight macOS Enhanced 性能与体验优化：
+1. ⏳ **(待 CUA 验收)** 帧队列 29ms 瓶颈 — 已识别真因：90FPS×180Hz 下 desiredEnhancedDrawableDepth/InflightLimit 与 desiredPendingFrames 均未做 doubled-cadence 短路。上一回合 6e3c7321 仅改 MLFramePacer 内部 frameDropTarget，但 pacer 路径未启用（缺 initializeWithMaxVideoFps 调用），等同于无效接线。新提交将在 doubled-cadence 时把 drawable/inflight 3→2、pending 减 1，CUA 实测 desktop 串流验证。
+2. ⛔ **(结构性失败已确认)** 90FPS 插帧稳定性 — 180Hz 下 VTLLFI 单次 18-141ms 远超 5.555ms 节拍预算，breaker 持续熔断。需在 UI 上为 force=true 提示"插帧不可保证，仅源帧流"。
+3. ✅ **(已完成)** 快捷键OSD视觉反馈 — 串流中操作名+按键组合提示，1.8s 淡出。
+4. ✅ **(已完成)** Settings 面板硬件信息展示 — 解码器/渲染器状态摘要行。
 
-## 当前状态（2026-10-19）
+## 真因 vs 误诊（参考）
 
-### ✅ 已完成（P0 核心 99%）
+| 项 | 误诊 | 真因 |
+| --- | --- | --- |
+| 29ms 队列 | MLFramePacer frameDropTarget=3 | pacer 路径未启用（无 initialize），真正生效路径是 CAMetalLayer.maximumDrawableCount + dispatch_semaphore，smoothness=3 时固定 3 |
+| 90FPS 插帧熔断 | 单点调参可解 | 180Hz 节拍 5.555ms < VTLLFI 单次 18ms+，结构性不可行 |
 
-- OpenSSL 构建顺序修复
-- Device-redirection 测试字符串修复
-- Scalers 测试（MLFramePacer forward-declare）
-- Static analyzer（macOS 26 baseline + reasons）
-- x86_64 warning（unused const）
-- README 完全重写——独立项目定位
-- 双托管推送配置（GitHub opsbsligm + GitLab 172.16.130.6）
-- 标签页 UI：NSSegmentedControl 原生控件，已用户确认
-- LiquidGlass 全页面玻璃效果
-- USB 设备页 UI 重设计
-- 插帧/超分基础框架（VT FI + MetalFX）
-- frame pacing 双队列（从 moonlight-qt 吸收）
-- 串流控制栏（边缘把手）
-- 约束审计框架（constraints-audit / credential-scan / liquid-glass-audit 等）
-- CI 配置（GitHub Actions + GitLab CI）
+## CICD 标准（每轮执行）
 
-### 待办优先级
+1. 改代码 → `xcodebuild build` → BUILD SUCCEEDED
+2. `scripts/liquid-glass-audit.py` → 0 violations
+3. `scripts/constraints-audit.py --no-battery` → 0 failures
+4. `git commit`（`git -c user.email="codex-agent@homelab.local" -c user.name="Codex Agent"`）
+5. `git push gitlab main`（http://172.16.130.6/moonlight/moonlight-macos-enhanced.git）
+6. CI 自动镜像到 GitHub（opsbsligm/moonlight-macos-enhanced）
 
-#### P1 🔴 核心功能体验
+## 当前架构关键文件
 
-1. **merge round77 → main** — 42 commits 等待合并，P0 收官
-2. **BandwidthTracker 挂接到数据路径** — `DrSubmitDecodeUnit` 中的 `addBytes:` 调用
-3. **插帧/超分实机验证** — 需要 Computer Use 做真实串流测试，验证 90fps 动态插帧
-4. **VT 解码探测对齐 upstream** — 读取 moonlight-stream 最新代码，吸收 macOS 相关改进
-5. **串流控制栏打磨** — 边缘把手 + 快捷键一致性
+| 用途 | 路径 |
+|------|------|
+| 标签页 UI（液态玻璃滑块） | `Limelight/macOS/ViewControllers/LiquidGlass/LiquidGlassTabBar.swift` |
+| 帧节奏控制（暂未启用主循环） | `Limelight/Stream/MLFramePacer.h/.m` |
+| 真正生效的帧队列策略 | `Limelight/Stream/VideoDecoderRenderer.m`（desiredEnhancedDrawableDepth/InflightLimit、desiredPendingFramesForDisplayRefreshRate） |
+| 带宽追踪 | `Limelight/Stream/MLBandwidthTracker.h/.m` |
+| 解码渲染核心 | `Limelight/Stream/VideoDecoderRenderer.m` |
+| 串流控制栏 | `Limelight/macOS/ViewControllers/MLEdgeMenuUI.m` |
+| 设置面板 | `Limelight/macOS/ViewControllers/` |
+| USB 侧边状态 | `Limelight/Stream/USBMenuStatus.h` |
+| 玻璃效果容器 | `Limelight/macOS/Views/GlassOverlayContainer.h/.m` |
+| 快捷键OSD | `Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m` |
+| 审计基线 | `scripts/analyzer-baseline.json` |
+| CI配置 | `.github/workflows/build.yml` |
 
-#### P2 🟢 UI/UX 与架构
+## 约定
 
-6. **首页主机卡片响应式修复** — HostCell.m 的白圈/布局问题
-7. **USB 设备页面侧边栏重构** — 设置只配置可重定向设备类型，具体重定向由串流侧边控制栏选择
-8. **插帧/超分文案中文化** — Localizable.strings
-9. **串流效果持续打磨** — 编解码体验、MetalFX、VideoToolbox 插帧
-10. **前端 UI 设计感提升** — LiquidGlass 效果全页面一致性、主框体缩放卡片跟随
-
-#### P3 🔵 长期
-
-11. **USB 重定向** — 需要 Developer ID 签名与主机侧虚拟总线，当前冻结
-12. **DriverKit 驱动扩展** — USB 重定向的前提
-13. **90fps 动态插帧验收** — 真实串流验证
-
-## 开发纪律（严格执行）
-
-### CICD 工作流
-```
-改代码 → build (CODE_SIGNING_ALLOWED=NO) → 审计 0 failures → commit → push GitLab
-```
-- 审计: `scripts/constraints-audit.py --no-battery` (~30s)
-- 审计: `scripts/credential-scan-audit.py` (~0.5s)
-- 构建: `xcodebuild -project Moonlight.xcodeproj -scheme "Moonlight for macOS" -configuration Debug -derivedDataPath build-render-probe -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build`
-- 提交: `git -c user.email="codex-agent@homelab.local" -c user.name="Codex Agent" commit -m "type(scope): subject ≤72 chars"`
-- 推送: `git push gitlab <branch>`
-
-### 双托管仓库
-- 唯一事实源 = GitLab (http://172.16.130.6)
-- GitHub (opsbsligm) 是 CI 自动镜像
-- 本地工作区: `/tmp/gitlab-ws-mac`
-- remote origin=GitHub, gitlab=GitLab
-- 提交身份固定
-
-### 标签页 UI 红线
-**NSSegmentedControl 版本不动**（已多次用户确认，任何改动都会引发强烈反弹）
-
-### USB 冻结
-Developer ID 不可用，USB 重定向不做（设备页只做诊断）
-
-### 验收标准
-- 构建成功 ≠ 完成，真机验证才算
-- 实机串流测试验证插帧/超分
-- UI 改动必须截图给用户确认
-- 桌面/远程模式都需验证
-
-## 重点关注领域
-
-1. **插帧/超分** — 前端文案对齐、实机验证 90fps、MetalFX 超分效果
-2. **串流控制栏** — 边缘把手、快捷键、USB 设备侧边选择
-3. **前端 UI** — LiquidGlass 全页面一致性、设计感提升、半透明模糊效果
-4. **CICD** — pipeline 监控、门禁不绕过
-5. **moonlight-stream 上游吸收** — 只吸收 macOS 相关优化
-
-## 执行模式
-
-自主推进，有实质变化才汇报：解决了什么、证据是什么、还缺什么。不反复要求用户小步测试。中文汇报，结论先行。
+- 完全独立原项目，不接受任何 PR 或 fork 关系
+- 专注 macOS，Linux/Windows 特性无视
+- USB 重定向代码已就绪但功能冻结（需 Apple Developer Program 签名）
+- 所有改动必须 build + audit 0 failures + commit + push GitLab
+- "完成"必须基于真实运行证据（log/CUA/用户主观），不能由代理代答
+- 中文汇报，结论先行
