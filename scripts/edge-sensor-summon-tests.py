@@ -153,14 +153,20 @@ print('PASS no activation bypass, cursor warp, duplicate presentation state or s
 # and the menu are alternatives at both shortcut callsites; the menu is the fallback for
 # windowed mode, where there is no dock to open. (The third presentation is the separate
 # keyboard-translation action, which never opens a dock.)
-guarded = len(re.findall(r'if \(!\[(?:self|strongSelf) openEdgeMenuDockForControlCenterShortcut\]\)\s*\{\s*\[(?:self|strongSelf) presentControlCenterFromShortcut\];', mouse))
+DOCK_MENU = r'if \(!\[(self|strongSelf) openEdgeMenuDockForControlCenterShortcut\]\)\s*\{\s*\[\1 presentControlCenterFromShortcut\];'
+BARE_DOCK = r'^\s*\[(?:self|strongSelf) openEdgeMenuDockForControlCenterShortcut\];'
+guarded = len(re.findall(DOCK_MENU, mouse))
 assert guarded == 2, 'the control-center shortcut must open the dock OR present the menu, never both (%d guarded callsites)' % guarded
-bare = len(re.findall(r'^\s*\[(?:self|strongSelf) openEdgeMenuDockForControlCenterShortcut\];', mouse, re.M))
+bare = len(re.findall(BARE_DOCK, mouse, re.M))
 assert bare == 0, 'an unguarded dock call can no longer report whether the menu is still needed'
-DOCK_MENU = r'if \(!\[(?:self|strongSelf) openEdgeMenuDockForControlCenterShortcut\]\)\s*\{\s*\[(?:self|strongSelf) presentControlCenterFromShortcut\];'
 if '--self-test' in sys.argv:
-    legacy = re.sub(r'if \(!\[(\w+) openEdgeMenuDockForControlCenterShortcut\]\)\s*\{\s*\[\1 presentControlCenterFromShortcut\];\s*\}',
-                    r'[\1 openEdgeMenuDockForControlCenterShortcut];\n [\1 presentControlCenterFromShortcut];', mouse)
+    # Keep the fallback body, including its OSD, while making the menu unconditional.
+    legacy, replaced = re.subn(
+        DOCK_MENU,
+        r'[\1 openEdgeMenuDockForControlCenterShortcut];\n { [\1 presentControlCenterFromShortcut];',
+        mouse)
+    assert replaced == guarded, 'the negative control did not replace every guarded shortcut'
+    assert len(re.findall(BARE_DOCK, legacy, re.M)) == guarded, 'the negative control did not restore the unconditional dock calls'
     assert len(re.findall(DOCK_MENU, legacy)) == 0, 'the shape guard accepts the calls it exists to prevent'
     print('PASS negative control: modal menu stacked on the open sidebar')
 print('PASS the control-center shortcut cannot stack a modal menu on the open sidebar')

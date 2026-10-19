@@ -1,11 +1,13 @@
 #import "MLBandwidthTracker.h"
 #import <mach/mach_time.h>
 
+typedef struct {
+    uint64_t startNanos;
+    NSUInteger bytes;
+} MLBandwidthBucket;
+
 @interface MLBandwidthTracker () {
-    struct {
-        uint64_t startNanos;
-        NSUInteger bytes;
-    } *_buckets;
+    MLBandwidthBucket *_buckets;
     uint32_t _bucketCount;
     uint32_t _windowSeconds;
     uint32_t _bucketIntervalMs;
@@ -75,7 +77,7 @@ static inline uint64_t ml_nanos(void) {
     uint32_t idx = (uint32_t)((nowMs / _bucketIntervalMs) % _bucketCount);
     uint64_t aligned = (nowMs - (nowMs % _bucketIntervalMs)) * 1000000ULL;
 
-    struct { uint64_t startNanos; NSUInteger bytes; } *b = &_buckets[idx];
+    MLBandwidthBucket *b = &_buckets[idx];
     uint64_t windowNs = (uint64_t)_windowSeconds * 1000000000ULL;
 
     if (b->startNanos == 0 || (now - b->startNanos) > windowNs) {
