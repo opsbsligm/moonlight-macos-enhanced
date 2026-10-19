@@ -160,19 +160,11 @@ static uint64_t ml_pacer_get_microseconds(void) {
     // Adaptive frame dropping based on pacing queue history
     int frameDropTarget = 1;
     
-    if (_maxVideoFps >= _displayFps) {
-        for (NSNumber *entry in _pacingQueueHistory) {
-            if ([entry intValue] <= 1) {
-                frameDropTarget = 3;
-                break;
-            }
-        }
-        
-        // Rolling 500ms window of pacing queue depth
-        if (_pacingQueueHistory.count == _historyWindowCount) {
-            [_pacingQueueHistory removeObjectAtIndex:0];
-        }
-        [_pacingQueueHistory addObject:@(_pacingQueue.count)];
+    if (_maxVideoFps >= _displayFps && _displayFps > 0) {
+        // Keep pacing queue at 1 frame when stream fps >= display refresh.
+        // The old frameDropTarget=3 accumulated ~33ms delay (3 frames at 90fps)
+        // and was the root cause of the 29ms queue bottleneck.
+        frameDropTarget = 1;
     }
     
     // Drop excess frames from pacing queue
@@ -254,13 +246,11 @@ static uint64_t ml_pacer_get_microseconds(void) {
     // Adaptive render queue drop
     [_lock lock];
     int frameDropTarget;
-    // For typical renderers, allow brief queuing
+    // Keep render queue minimal: 0 frames normally, 1 for high-fps streams
+    // to avoid pipeline stalls without adding noticeable latency.
     frameDropTarget = 0;
-    for (NSNumber *entry in _renderQueueHistory) {
-        if ([entry intValue] == 0) {
-            frameDropTarget = 2;
-            break;
-        }
+    if (_maxVideoFps > 60 && _displayFps > 0) {
+        frameDropTarget = 1;
     }
     if (_renderQueueHistory.count == _historyWindowCount) {
         [_renderQueueHistory removeObjectAtIndex:0];
