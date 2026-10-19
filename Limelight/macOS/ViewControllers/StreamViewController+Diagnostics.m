@@ -3312,6 +3312,36 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
     [self requestStreamCloseWithSource:@"gamepad-quit-combo"];
 }
 
+/// Returns a user-visible action name for the given shortcut action constant.
+static NSString *MLShortcutActionDisplayName(NSString *action) {
+    static NSDictionary *names;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        names = @{
+            MLShortcutActionTogglePerformanceOverlay: @"性能覆盖层",
+            MLShortcutActionToggleMouseMode: @"鼠标模式",
+            MLShortcutActionToggleFullscreenControlBall: @"全屏控制球",
+            MLShortcutActionOpenControlCenter: @"控制中心",
+            MLShortcutActionReleaseMouseCapture: @"释放鼠标",
+            MLShortcutActionShowDisconnectOptions: @"断开选项",
+            MLShortcutActionDisconnectStream: @"断开串流",
+            MLShortcutActionCloseAndQuitApp: @"关闭并退出",
+            MLShortcutActionReconnectStream: @"重新连接",
+            MLShortcutActionToggleBorderlessWindowed: @"无边框窗口",
+        };
+    });
+    return names[action] ?: action;
+}
+
+- (void)showShortcutOSDForAction:(NSString *)action {
+    NSString *displayName = MLShortcutActionDisplayName(action);
+    NSString *shortcutText = [self shortcutDisplayStringForAction:action];
+    NSString *message = shortcutText.length > 0
+        ? [NSString stringWithFormat:@"%@  %@", displayName, shortcutText]
+        : displayName;
+    [self showNotification:message forSeconds:1.8];
+}
+
 - (void)showNotification:(NSString *)message {
     [self showNotification:message forSeconds:2.0];
 }
