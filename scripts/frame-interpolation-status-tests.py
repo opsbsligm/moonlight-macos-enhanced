@@ -251,6 +251,14 @@ int main(void) {
         Report("no cadence", MLActiveVideoFrameInterpolationEngineNone, answer.report,
                answer.reason, @"Off",
                @"Video Frame Interpolation Runtime Detail No Cadence Headroom");
+        answer = GateRefusal(lowLatency, enhanced, NO, 60, 180.0);
+        Report("noninteger cadence", MLActiveVideoFrameInterpolationEngineNone, answer.report,
+               answer.reason, @"Off",
+               @"Video Frame Interpolation Runtime Detail No Cadence Headroom");
+        answer = GateRefusal(lowLatency, enhanced, NO, 90, 179.82);
+        Report("measured 180 Hz", MLActiveVideoFrameInterpolationEngineNone, answer.report,
+               [NSString stringWithFormat:kWorkingFormat, 179.82, 90],
+               @"Off", @"Video Frame Interpolation Runtime Detail Active");
         Report("processing paused", MLActiveVideoFrameInterpolationEngineNone,
                MLVideoFrameInterpolationReportPausedForProcessing, @"pause log", @"Off",
                @"Video Frame Interpolation Runtime Detail Processing Paused");
@@ -595,6 +603,10 @@ RUNTIME_GUARD = "runtimeReport != MLVideoFrameInterpolationReportSourceFormatUns
 TEARDOWN_CALL = "[self teardownFrameInterpolationProcessor];"
 
 KNOWN_BAD = [
+    ("cadence-admission-ignores-integer-multiple-and-tolerance",
+     "if (!MLInterpolationHasCadenceHeadroom(displayRefreshRate, self.frameRate))",
+     "if (displayRefreshRate < minimumRefreshRate)",
+     "the renderer admits a noninteger cadence or refuses a rounded display mode"),
     ("processing-pause-reads-as-off",
      '        case MLVideoFrameInterpolationReportPausedForProcessing:\n'
      '            return @"Video Frame Interpolation Runtime Detail Processing Paused";',
@@ -633,8 +645,8 @@ KNOWN_BAD = [
      "a stream interpolating without cadence headroom reads like one that had it, "
      "so the risk sentence the player accepted disappears"),
     ("two-refusals-share-one-sentence",
-     "            *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;",
-     "            *reportOut = MLVideoFrameInterpolationReportRefreshRateUnknown;",
+     "if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportNoCadenceHeadroom;",
+     "if (reportOut != NULL) *reportOut = MLVideoFrameInterpolationReportRefreshRateUnknown;",
      "a display with no headroom is reported as a display with no refresh rate, which is "
      "advice pointing at the wrong knob"),
 ]

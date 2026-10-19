@@ -10,6 +10,7 @@
 typedef struct { double time, submittedAt; } MLActualPresentationSample;
 typedef struct {
     uint64_t generation, presented, interpolated, scaled, unpresented, invalid;
+    double latestTime;
     size_t count, next;
     MLActualPresentationSample samples[ML_ACTUAL_PRESENTATION_CAPACITY];
 } MLActualPresentationState;
@@ -29,6 +30,16 @@ static inline bool MLActualPresentationRecord(MLActualPresentationState *state, 
     if (generation != state->generation) return false;
     if (time == 0.0) { state->unpresented++; return false; }
     if (!isfinite(time) || time < 0.0) { state->invalid++; return false; }
+    if (state->latestTime > 0.0 && state->latestTime - time > 2.0) {
+        state->invalid++;
+        return false;
+    }
+    // Resume after occlusion with a fresh sample window, preserving session
+    // counters. Otherwise a new frame makes minutes-old history look current.
+    if (state->latestTime > 0.0 && time - state->latestTime > 2.0) {
+        state->count = state->next = 0;
+    }
+    if (time > state->latestTime) state->latestTime = time;
     // Handler arrival order need not equal presentation order. Sort at query time.
     state->samples[state->next] = (MLActualPresentationSample){time, submittedAt};
     state->next = (state->next + 1) % ML_ACTUAL_PRESENTATION_CAPACITY;

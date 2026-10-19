@@ -41,6 +41,14 @@ DRIVER = r'''
 #include "InterpolationCadencePolicy.h"
 #include <stdio.h>
 int main(void) {
+    printf("queueUnknown=%d queue17999=%d queue180=%d queue174=%d queue240=%d queueNaN=%d queueInf=%d\n",
+           MLDisplayHasDoubleRateHeadroom(0, 90),
+           MLDisplayHasDoubleRateHeadroom(179.99, 90),
+           MLDisplayHasDoubleRateHeadroom(180, 90),
+           MLDisplayHasDoubleRateHeadroom(174, 90),
+           MLDisplayHasDoubleRateHeadroom(240, 90),
+           MLDisplayHasDoubleRateHeadroom(NAN, 90),
+           MLDisplayHasDoubleRateHeadroom(INFINITY, 90));
     printf("min12=%.1f min20=%.1f min23=%.1f min24=%.1f\n",
            MLInterpolationMinimumRefreshForSourceFps(12),
            MLInterpolationMinimumRefreshForSourceFps(20),
@@ -102,6 +110,8 @@ int main(void) {
 # 90 is the same panel measured honestly; 174 is a different cadence and stays refused. The
 # recommendation being a selectable rate is what makes the settings page's advice actionable.
 EXPECTED = {
+    "queueUnknown": "0", "queue17999": "1", "queue180": "1", "queue174": "0",
+    "queue240": "1", "queueNaN": "0", "queueInf": "0",
     "min12": "24.0", "min20": "40.0", "min23": "46.0", "min24": "48.0",
     "min30": "60.0", "min60": "120.0", "min120": "240.0", "min144": "288.0",
     "edge32_20": "0", "edge31_20": "0", "edge45_30": "0", "edge44_30": "0",
@@ -168,6 +178,8 @@ def wiring(policy_text, renderer_text, swift_text):
         gaps.append("the renderer does not import the shared policy header")
     if "MLInterpolationMinimumRefreshForSourceFps((double)self.frameRate)" not in renderer_text:
         gaps.append("the admission does not call the shared minimum-refresh answer")
+    if "if (!MLInterpolationHasCadenceHeadroom(displayRefreshRate, self.frameRate))" not in renderer_text:
+        gaps.append("the admission does not use the shared integer cadence and tolerance")
     if re.search(r"frameRate\s*\*\s*1\.5", renderer_text) or \
        re.search(r"frameRate\s*\+\s*12\.0", renderer_text):
         gaps.append("the renderer still carries its own copy of the cadence arithmetic")

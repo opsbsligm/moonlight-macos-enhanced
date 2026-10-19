@@ -3069,27 +3069,55 @@ screen_line = report_code[report_code.index("screen recording:"):][:520]
 check("is not measured here" in screen_line,
       "the screen recording answer travels with the limit of what was measured")
 
-# The line also claims the build calls no capture API. That is a claim about the tree, not
-# about this file, so it is checked against the tree -- the same shape as the changelog rule
-# that refuses a sentence about a build step the workflow does not contain.
+# Normal operation does not capture screens. The Debug-only visual probe captures
+# its own window, so both the report and the source scan must name that boundary.
 CAPTURE_APIS = ("ScreenCaptureKit", "SCStream", "SCShareableContent", "SCContentFilter",
                 "SCStreamConfiguration", "CGDisplayCreateImage", "CGDisplayCreateImageForRect",
                 "CGDisplayStreamCreate", "CGWindowListCreateImage", "CGRequestScreenCaptureAccess")
+
+def outside_debug_regions(source):
+    """Drop explicitly positive DEBUG branches; unknown conditions stay checked."""
+    guards, kept = [], []
+    for line in source.splitlines():
+        directive = line.strip()
+        if re.match(r"#\s*(if|ifdef|ifndef)\b", directive):
+            guards.append(bool(re.fullmatch(r"#\s*(ifdef\s+DEBUG|if\s+DEBUG)", directive)))
+        elif re.match(r"#\s*(else|elif)\b", directive):
+            if guards:
+                guards[-1] = False
+        elif re.match(r"#\s*endif\b", directive):
+            if guards:
+                guards.pop()
+        elif not any(guards):
+            kept.append(line)
+    return "\n".join(kept)
+
+capture_fixture = "@import ScreenCaptureKit;\n"
+check(capture_fixture.strip() in outside_debug_regions(capture_fixture)
+      and not outside_debug_regions("#ifdef DEBUG\n#if DEBUG\n" + capture_fixture + "#endif\n#endif\n")
+      and capture_fixture.strip() in outside_debug_regions(
+          "#ifdef DEBUG\nvoid probe(void);\n#else\n" + capture_fixture + "#endif\n")
+      and capture_fixture.strip() in outside_debug_regions(
+          "#ifdef DEBUG\nvoid probe(void);\n#endif\n" + capture_fixture),
+      "capture APIs outside a DEBUG guard, including its else branch, remain forbidden")
+check("normal operation calls no capture API" in screen_line
+      and "Debug render probe captures only its own window" in screen_line,
+      "the permissions report separates normal operation from the Debug visual probe")
 capture_hits = []
 for directory, _, names in os.walk(os.path.join(root, "Limelight")):
     for name in sorted(names):
         if not name.endswith((".m", ".mm", ".swift", ".h")):
             continue
         source = open(os.path.join(directory, name), encoding="utf-8", errors="replace").read()
-        code = "\n".join(line for line in source.splitlines()
+        code = "\n".join(line for line in outside_debug_regions(source).splitlines()
                           if not line.lstrip().startswith(("//", "///", "*", "/*")))
         hit = [api for api in CAPTURE_APIS if api in code]
         if hit:
             capture_hits.append((os.path.relpath(os.path.join(directory, name), root), hit))
 check(not capture_hits,
-      "the report's 'no capture API' line matches a tree that really calls none"
+      "normal operation's 'no capture API' line matches the non-Debug tree"
       if not capture_hits else
-      "the report still claims no capture API while these files reference one: "
+      "normal operation claims no capture API while these non-Debug regions reference one: "
       + "; ".join("%s (%s)" % pair for pair in capture_hits))
 
 # --- one compiler answer --------------------------------------------------

@@ -264,6 +264,7 @@ struct VideoView: View {
               hintKey: settingsModel.frameInterpolationForceHintKey,
               boolBinding: $settingsModel.frameInterpolationForce
             )
+            SettingDescriptionRow(textKey: "Frame Interpolation processing budget hint")
           }
 
           // Numbers rather than a second paragraph of prose: a player who is told to lower the

@@ -34,6 +34,8 @@ typedef enum : NSUInteger {
 
 
 #ifdef DEBUG
+@import ScreenCaptureKit;
+
 // A render probe, compiled only for Debug and inert unless ML_RENDER_PROBE is set.
 //
 // The embedded settings page and the glass surfaces are the two things a build
@@ -42,9 +44,9 @@ typedef enum : NSUInteger {
 // still says the right words. Both were reported as "needs a human eye" and the
 // human eye was blocked, so the claims sat unverified. This probe drives the
 // production presenter through the production call and measures what actually
-// happened, so scripts/render-probe.py can assert it without a stream session
-// and without touching anyone's settings: the runner points HOME at a scratch
-// directory, so the database and preferences under test are the probe's own.
+// happened, so scripts/render-probe.py can assert it without a stream session.
+// A scratch HOME does not isolate the database; the probe reads the existing
+// library and restores the pane preference after its page visits.
 #if DEBUG
 // Defined in `DataManager.m`. Debug-only, like the counter it reads: the release binary carries
 // neither, and `getHosts` does not branch on anything a player would pay for.
@@ -63,6 +65,67 @@ static void MLProbeSpin(NSTimeInterval seconds) {
             [NSApp sendEvent:event];
         }
     }
+}
+
+static NSBitmapImageRep *MLProbeCaptureView(NSView *view) {
+    NSWindow *window = view.window;
+    if (window == nil) return nil;
+    [window displayIfNeeded];
+    NSRect rect = [view convertRect:view.bounds toView:nil];
+    NSInteger windowNumber = window.windowNumber;
+    __block BOOL finished = NO;
+    __block NSBitmapImageRep *result = nil;
+    // AppKit's cacheDisplay omits SwiftUI's composited layers. Capture only our
+    // own window; currentProcess does not request access to other applications.
+    [SCShareableContent getCurrentProcessShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
+        SCWindow *target = nil;
+        for (SCWindow *candidate in content.windows) {
+            if (candidate.windowID == windowNumber &&
+                candidate.owningApplication.processID == NSProcessInfo.processInfo.processIdentifier) {
+                target = candidate;
+                break;
+            }
+        }
+        if (target == nil) {
+            fprintf(stderr, "[render-probe] own window capture unavailable: %s\n",
+                    (error.localizedDescription ?: @"window not found").UTF8String);
+            dispatch_async(dispatch_get_main_queue(), ^{ finished = YES; });
+            return;
+        }
+        SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
+        SCStreamConfiguration *configuration = [SCStreamConfiguration new];
+        configuration.width = (size_t)ceil(filter.contentRect.size.width);
+        configuration.height = (size_t)ceil(filter.contentRect.size.height);
+        configuration.ignoreShadowsSingleWindow = YES;
+        configuration.includeChildWindows = NO;
+        configuration.showsCursor = NO;
+        [SCScreenshotManager captureImageWithFilter:filter configuration:configuration
+                                 completionHandler:^(CGImageRef image, NSError *captureError) {
+            NSBitmapImageRep *bitmap = nil;
+            if (image != NULL) {
+                CGFloat sx = CGImageGetWidth(image) / filter.contentRect.size.width;
+                CGFloat sy = CGImageGetHeight(image) / filter.contentRect.size.height;
+                CGRect crop = CGRectMake(rect.origin.x * sx,
+                    (filter.contentRect.size.height - NSMaxY(rect)) * sy,
+                    rect.size.width * sx, rect.size.height * sy);
+                CGImageRef cropped = CGImageCreateWithImageInRect(image, crop);
+                if (cropped != NULL) {
+                    bitmap = [[NSBitmapImageRep alloc] initWithCGImage:cropped];
+                    CGImageRelease(cropped);
+                }
+            } else {
+                fprintf(stderr, "[render-probe] own window capture failed: %s\n",
+                        (captureError.localizedDescription ?: @"no image").UTF8String);
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                result = bitmap;
+                finished = YES;
+            });
+        }];
+    }];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+    while (!finished && deadline.timeIntervalSinceNow > 0) MLProbeSpin(0.02);
+    return result;
 }
 
 static NSUInteger MLProbeCountMatching(NSView *root, BOOL (^match)(NSView *)) {
@@ -607,8 +670,7 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
 
     // Capture the initial fold independently: the final capture below is taken
     // after scrolling and cannot show whether the page header is readable.
-    NSBitmapImageRep *initialRep = [overlay bitmapImageRepForCachingDisplayInRect:overlay.bounds];
-    [overlay cacheDisplayInRect:overlay.bounds toBitmapImageRep:initialRep];
+    NSBitmapImageRep *initialRep = MLProbeCaptureView(overlay);
     NSString *initialPNG = [NSString stringWithFormat:@"09-%@-page-top.png", name];
     result[@"initialPixels"] = MLProbePixels([output stringByAppendingPathComponent:initialPNG], initialRep);
     result[@"initialCapture"] = initialPNG;
@@ -637,8 +699,7 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
         [scroller reflectScrolledClipView:scroller.contentView];
         MLProbeSpin(0.7);
         result[@"readableContentScrolled"] = MLProbeReadableNodes(overlay);
-        NSBitmapImageRep *scrolledRep = [overlay bitmapImageRepForCachingDisplayInRect:overlay.bounds];
-        [overlay cacheDisplayInRect:overlay.bounds toBitmapImageRep:scrolledRep];
+        NSBitmapImageRep *scrolledRep = MLProbeCaptureView(overlay);
         NSString *scrolledPNG = [NSString stringWithFormat:@"11-%@-page-bottom.png", name];
         result[@"scrolledPixels"] = MLProbePixels([output stringByAppendingPathComponent:scrolledPNG],
                                                   scrolledRep);
@@ -662,8 +723,7 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     }];
     result[@"materialLayers"] = materials;
 
-    NSBitmapImageRep *rep = [overlay bitmapImageRepForCachingDisplayInRect:overlay.bounds];
-    [overlay cacheDisplayInRect:overlay.bounds toBitmapImageRep:rep];
+    NSBitmapImageRep *rep = MLProbeCaptureView(overlay);
     NSString *png = [NSString stringWithFormat:@"10-%@-page.png", name];
     result[@"pixels"] = MLProbePixels([output stringByAppendingPathComponent:png], rep);
     result[@"capture"] = png;
@@ -1657,27 +1717,29 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
     // No title is set on purpose: a window title is user-facing text, the
     // localizability checker is right to say so, and a Diagnostic window that
     // never outlives its own process has nothing to title.
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(-12000, -12000, 1100, 700)
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1100, 700)
                                                   styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
                                                             | NSWindowStyleMaskResizable)
                                                     backing:NSBackingStoreBuffered
                                                       defer:NO];
-    [window orderFrontRegardless];
+    // SwiftUI can suspend its layer drawing for an offscreen window. Measure
+    // a visible page instead of accepting an accessibility tree over black pixels.
+    [window center];
+    [window makeKeyAndOrderFront:nil];
+    [NSApp activate];
     MLProbeSpin(0.4);
 
     NSView *content = window.contentView;
     report[@"contentSize"] = NSStringFromSize(content.bounds.size);
-    // A high contrast pattern behind the page: without it the offscreen window
-    // captures as black and a glass material has nothing to bend, so "is the
-    // glass doing anything" cannot be measured at all.
+    // A high contrast pattern gives the glass a backdrop whose response can
+    // be compared with a solid fill.
     NSImageView *backdrop = [[NSImageView alloc] initWithFrame:content.bounds];
     backdrop.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     backdrop.image = MLProbePatternImage(content.bounds.size);
     [content addSubview:backdrop];
     MLProbeSpin(0.2);
 
-    NSBitmapImageRep *beforeRep = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
-    [content cacheDisplayInRect:content.bounds toBitmapImageRep:beforeRep];
+    NSBitmapImageRep *beforeRep = MLProbeCaptureView(content);
     report[@"beforePresent"] = MLProbePixels([output stringByAppendingPathComponent:@"01-window-before.png"],
                                              beforeRep);
     report[@"backdropBlocksBeforePresent"] = MLProbeBlockAnalysis(
@@ -1776,8 +1838,7 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         }];
         report[@"glassBackings"] = glassBackings;
 
-        NSBitmapImageRep *compositeRep = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
-        [content cacheDisplayInRect:content.bounds toBitmapImageRep:compositeRep];
+        NSBitmapImageRep *compositeRep = MLProbeCaptureView(content);
         report[@"compositePixels"] = MLProbePixels([output stringByAppendingPathComponent:@"03-composite.png"],
                                                    compositeRep);
         report[@"behindPageBlocks"] = MLProbeBlockAnalysis(
@@ -1791,8 +1852,7 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         // exists at all is measured from the layer tree below.
         backdrop.image = MLProbeSolidImage(content.bounds.size, 0.95, 0.10, 0.10);
         MLProbeSpin(0.3);
-        NSBitmapImageRep *overSolid = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
-        [content cacheDisplayInRect:content.bounds toBitmapImageRep:overSolid];
+        NSBitmapImageRep *overSolid = MLProbeCaptureView(content);
         NSString *where = nil;
         NSDictionary *readThrough = MLProbeTranslucentRegions(compositeRep, overSolid, &where);
         report[@"readThroughPageBlocks"] = readThrough;
@@ -1814,8 +1874,7 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
                     (unsigned long)layers.count]);
         }
 
-        NSBitmapImageRep *rep = [overlay bitmapImageRepForCachingDisplayInRect:overlay.bounds];
-        [overlay cacheDisplayInRect:overlay.bounds toBitmapImageRep:rep];
+        NSBitmapImageRep *rep = MLProbeCaptureView(overlay);
         NSDictionary *pixels = MLProbePixels([output stringByAppendingPathComponent:@"02-settings-page.png"], rep);
 
         report[@"settingsPagePixels"] = pixels;

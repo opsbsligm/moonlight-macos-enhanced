@@ -3,17 +3,18 @@
 ## 当前目标
 
 Moonlight macOS Enhanced 性能与体验优化：
-1. ⏳ **(待 CUA 验收)** 帧队列 29ms 瓶颈 — 已识别真因：90FPS×180Hz 下 desiredEnhancedDrawableDepth/InflightLimit 与 desiredPendingFrames 均未做 doubled-cadence 短路。上一回合 6e3c7321 仅改 MLFramePacer 内部 frameDropTarget，但 pacer 路径未启用（缺 initializeWithMaxVideoFps 调用），等同于无效接线。新提交将在 doubled-cadence 时把 drawable/inflight 3→2、pending 减 1，CUA 实测 desktop 串流验证。
-2. ⛔ **(结构性失败已确认)** 90FPS 插帧稳定性 — 180Hz 下 VTLLFI 单次 18-141ms 远超 5.555ms 节拍预算，breaker 持续熔断。需在 UI 上为 force=true 提示"插帧不可保证，仅源帧流"。
+1. ⏳ **(队列调整已实测，持续延迟目标未闭合)** 29ms 队列延迟 — MLFramePacer 未驱动实际渲染。当前生效路径是拉帧阈值与 Metal drawable/inflight；刷新率未知时先建 3/3，首个有效刷新率后在绘制前、安全排空旧命令再切换 2/2。90FPS/180Hz 请求已实测切换，VSync pending 保持 1。首帧或提交队列的一次下降不能证明持续延迟改善。
+2. ⏳ **(性能边界已暴露，稳定 180FPS 未验收)** 90FPS 插帧稳定性 — 本机 Apple M2 的历史 VT 单次调用为 18-141ms，本轮另实测 150ms 调用触发 22ms 预算的过载保护。该结论仅适用于已测硬件和配置。当前源画面为 Windows 锁屏，实际到达约 33FPS，不能用请求 90FPS 或目标 180FPS 日志代替有效负载验收。设置页已区分节拍准入、处理能力与过载回退，强制开关不能绕过后两者。
 3. ✅ **(已完成)** 快捷键OSD视觉反馈 — 串流中操作名+按键组合提示，1.8s 淡出。
 4. ✅ **(已完成)** Settings 面板硬件信息展示 — 解码器/渲染器状态摘要行。
 
-## 真因 vs 误诊（参考）
+## 已验证事实与待验证结论
 
-| 项 | 误诊 | 真因 |
+| 项 | 已验证事实 | 结论边界 |
 | --- | --- | --- |
-| 29ms 队列 | MLFramePacer frameDropTarget=3 | pacer 路径未启用（无 initialize），真正生效路径是 CAMetalLayer.maximumDrawableCount + dispatch_semaphore，smoothness=3 时固定 3 |
-| 90FPS 插帧熔断 | 单点调参可解 | 180Hz 节拍 5.555ms < VTLLFI 单次 18ms+，结构性不可行 |
+| 29ms 队列 | pacer 未接入；Metal 队列 3/3→2/2 已实测 | 拉帧 pending 是解码单元阈值；不能将 buffer 数量直接等同于 29ms 根因 |
+| 90FPS 插帧熔断 | 本机出现超预算调用与实际回退 | 不推导所有硬件都不可行；不靠关闭保护或伪造上屏指标验收 |
+| 实际上屏统计 | 读取 drawable.presentedTime，0 表示未呈现或跳过 | 无新鲜样本显示 --；恢复呈现后重建统计窗口，拒绝迟到旧回调 |
 
 ## CICD 标准（每轮执行）
 
@@ -39,7 +40,8 @@ Moonlight macOS Enhanced 性能与体验优化：
 | 玻璃效果容器 | `Limelight/macOS/Views/GlassOverlayContainer.h/.m` |
 | 快捷键OSD | `Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m` |
 | 审计基线 | `scripts/analyzer-baseline.json` |
-| CI配置 | `.github/workflows/build.yml` |
+| GitLab 构建与自动镜像 | `.gitlab-ci.yml` |
+| 镜像端补充审计 | `.github/workflows/build.yml` |
 
 ## 约定
 
