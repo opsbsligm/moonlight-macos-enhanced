@@ -10,6 +10,8 @@
 #import "GamepadMenuGesture.h"
 #import "KeyboardMapResolver.h"
 #import "HIDKeyboardQuirkFilter.h"
+#import "HIDSupport+Inventory.h"
+#import "MLControllerInventory.h"
 
 #import <IOKit/hid/IOHIDElement.h>
 #import <IOKit/hid/IOHIDKeys.h>  // kIOHIDPrimaryUsagePageKey: what kind of device a node claims to be
@@ -2782,6 +2784,7 @@ void myHIDDeviceMatchingCallback(void * _Nullable        context,
     HIDSupport *self = (__bridge HIDSupport *)context;
 
     [self rumbleSync];
+    [self publishControllerInventoryChange];
 }
 
 void myHIDDeviceRemovalCallback(void * _Nullable        context,
@@ -2791,6 +2794,7 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     HIDSupport *self = (__bridge HIDSupport *)context;
 
     [self releaseMouseButtonsForSource:@"hid-controller"];
+    [self publishControllerInventoryChange];
     if (self.controllerDriver == 0) {
         self.controller.lastButtonFlags = 0;
         self.controller.lastLeftTrigger = 0;
@@ -2908,6 +2912,7 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
             });
         }
     }
+    [self publishControllerInventoryForSessionStart];
 }
 
 - (void)tearDownHidManager {
@@ -2952,6 +2957,10 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         CFRelease(self.hidManager);
         self.hidManager = NULL;
     }
+    // The manager that recorded the bench is going away, so the record stops claiming a
+    // stream is running. The entries stay: the report a player copies is usually copied
+    // after the session that would have answered is over.
+    [MLControllerInventory.sharedInventory noteSessionStopped];
 }
 
 
