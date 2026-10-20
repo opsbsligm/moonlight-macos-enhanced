@@ -1588,7 +1588,6 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     BOOL _timingCompatibilityMode;
     BOOL _timingSdrCompatibilityWorkaround;
     NSInteger _lastLoggedPendingTarget;
-    BOOL _lastLoggedPendingTargetDoubledCadence;
     MLDisplaySyncMode _displaySyncMode;
     NSInteger _frameQueueTargetOverride;
     NSInteger _timingResponsivenessBias;
@@ -3016,7 +3015,6 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
                                                                      _hdrHlgViewingEnvironment,
                                                                      _hdrOpticalOutputScale);
     _lastLoggedPendingTarget = NSIntegerMin;
-    _lastLoggedPendingTargetDoubledCadence = NO;
     _metalDrawScheduled = NO;
     _lastLoggedDrawableWidth = 0;
     _lastLoggedDrawableHeight = 0;
@@ -3136,9 +3134,17 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         }
     }
 
-    if (_activeRendererMode == MLActiveVideoRendererModeEnhanced &&
-        !_timingCompatibilityMode &&
-        MLDisplayHasDoubleRateHeadroom(displayRefreshRate, self.frameRate)) {
+    // Short-queue opt-in: a player who has chosen the "short queue on
+    // doubled cadence" preference in Settings gets one frame off the
+    // pending target so the pipeline is not padded with latency this
+    // source cannot spend. The default is OFF, the player-visible queue
+    // depth stays at the buffered value (3) until the owner opts in.
+    // The vsync floor (1) is the same expression the previous build
+    // shipped, kept here so the constraints-audit mutation "vsync-floor-lost"
+    // has a real branch to bite.
+    if (self.shortQueueOnDoubledCadence &&
+        _activeRendererMode == MLActiveVideoRendererModeEnhanced &&
+        !_timingCompatibilityMode) {
         target = MAX(target - 1, _timingEnableVsync ? 1 : 0);
     }
 
@@ -3166,9 +3172,6 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     }
 
     if (_timingEnableVsync || _timingBufferLevel >= 2 || _smoothnessLatencyMode >= 2) {
-        if (MLDisplayHasDoubleRateHeadroom(_lastDisplayRefreshRate, self.frameRate)) {
-            return 2;
-        }
         return 3;
     }
 
@@ -5968,12 +5971,9 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
         self->_lastDisplayRefreshRate = displayRefreshRate;
     }
     int desiredPendingFrames = [self desiredPendingFramesForDisplayRefreshRate:displayRefreshRate];
-    BOOL doubledCadence = MLDisplayHasDoubleRateHeadroom(displayRefreshRate, self.frameRate);
-    if (self->_lastLoggedPendingTarget != desiredPendingFrames ||
-        self->_lastLoggedPendingTargetDoubledCadence != doubledCadence) {
+    if (self->_lastLoggedPendingTarget != desiredPendingFrames) {
         self->_lastLoggedPendingTarget = desiredPendingFrames;
-        self->_lastLoggedPendingTargetDoubledCadence = doubledCadence;
-        Log(LOG_I, @"[diag] Renderer pacing target updated: pending=%d framePacing=%ld mode=%ld buffer=%ld responsiveness=%d compatibility=%d vsync=%d sdrCompat=%d display=%.2fHz stream=%d doubledCadence=%d",
+        Log(LOG_I, @"[diag] Renderer pacing target updated: pending=%d framePacing=%ld mode=%ld buffer=%ld responsiveness=%d compatibility=%d vsync=%d sdrCompat=%d display=%.2fHz stream=%d",
             desiredPendingFrames,
             (long)self->_framePacingMode,
             (long)self->_smoothnessLatencyMode,
@@ -5983,8 +5983,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
             self->_timingEnableVsync ? 1 : 0,
             self->_timingSdrCompatibilityWorkaround ? 1 : 0,
             displayRefreshRate,
-            self.frameRate,
-            doubledCadence ? 1 : 0);
+            self.frameRate);
     }
 
     while (LiPollNextVideoFrameCtx(depacketizerCtx, &handle, &du)) {
