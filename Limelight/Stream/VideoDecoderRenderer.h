@@ -83,6 +83,13 @@ typedef struct {
 - (NSDictionary<NSString *, NSNumber *> *)actualPresentationMetrics;
 @property(nonatomic, readonly) int videoFormat;
 
+/// Player opt-in for a halved-cadence queue depth. Default OFF keeps the
+/// buffered default (drawable=3, inflight=3) so the queue depth the player
+/// sees on the settings page is the queue depth the renderer ships. When
+/// the owner enables it, the renderer takes one frame off the pending
+/// target on a doubled-cadence pairing, with the vsync floor kept.
+@property(nonatomic, assign) BOOL shortQueueOnDoubledCadence;
+
 - (id)initWithView:(OSView *)view;
 
 - (void)prewarmPresentationForStreamConfig:(StreamConfiguration *)streamConfig;
