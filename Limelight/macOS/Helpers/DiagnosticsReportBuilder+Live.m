@@ -14,6 +14,7 @@
 #import "DataManager.h"
 #import "DeviceRedirectionPanelModel.h"
 #import "InputDiagnosticsLedger.h"
+#import "MLControllerInventory.h"
 #import "Moonlight-Swift.h"
 #import "Logger.h"
 #import "TemporaryHost.h"
@@ -42,6 +43,7 @@ static NSString *stringOrNone(NSString *_Nullable value) {
     // read for are answered next to each other: whether the system lets the app listen to
     // the mouse at all, and which sender was holding it when it stopped.
     [sections addObject:[self inputSection]];
+    [sections addObject:[self controllersSection]];
     // Devices sits under input rather than under hosts, because the four preconditions the
     // devices panel reports are answered by the same two questions a permissions and input
     // readout raises: whether the app may watch the mouse at all, and whether this build is
@@ -161,6 +163,36 @@ static NSString *stringOrNone(NSString *_Nullable value) {
 //  `rowsByScanningBusWithHostPaired:` is deliberately absent from this file, and a gate keeps it
 //  out: a report that enumerated the bus would make copying a report slower than opening the
 //  panel, on the machine of the person whose device is already misbehaving.
++ (DiagnosticsReportSection *)controllersSection {
+    MLControllerInventorySnapshot *snapshot = MLControllerInventory.sharedInventory.snapshot;
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    if (snapshot == nil) {
+        [lines addObject:@"controllers: never looked (no stream has recorded them)"];
+    } else {
+        [lines addObject:[NSString stringWithFormat:@"controllers looked: %lu session(s)%s",
+                          (unsigned long)snapshot.generations,
+                          snapshot.recordingNow ? ", recording now" : ""]];
+        for (MLControllerEntry *entry in snapshot.entries) {
+            NSMutableString *row = [NSMutableString string];
+            [row appendFormat:@"  %@:%@ %@",
+             [NSString stringWithFormat:@"%04lx", (unsigned long)entry.vendorId],
+             [NSString stringWithFormat:@"%04lx", (unsigned long)entry.productId],
+             MLControllerFamilyName(entry.family)];
+            if (entry.transport.length > 0) {
+                [row appendFormat:@" %@", entry.transport];
+            }
+            if (entry.hasBatteryPercent) {
+                [row appendFormat:@" battery=%ld%%", (long)entry.batteryPercent];
+            }
+            if (entry.nodeCount > 1) {
+                [row appendFormat:@" nodes=%lu", (unsigned long)entry.nodeCount];
+            }
+            [lines addObject:row];
+        }
+    }
+    return [DiagnosticsReportSection sectionWithTitle:@"controllers" lines:lines];
+}
+
 + (DiagnosticsReportSection *)devicesSection {
     MLDeviceRedirectionPanelModel *panel = [[MLDeviceRedirectionPanelModel alloc]
         initWithDefaults:[NSUserDefaults standardUserDefaults]];
