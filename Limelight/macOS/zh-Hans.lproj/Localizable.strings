@@ -703,6 +703,9 @@
 "Display Sync detail" = "控制 Metal 渲染器是否跟随显示同步。自动模式会沿用当前串流配置。";
 "Frame Queue Target" = "帧队列目标";
 "Frame Queue Target detail" = "覆盖当前呈现链路的待显示帧目标。更低更偏低延迟，更高更偏平滑。";
+"Short queue on doubled cadence" = "双倍节拍下使用短队列";
+"Short queue on doubled cadence detail" = "当显示器刷新率至少为串流帧率的两倍（如 180 Hz 配 90 FPS）时，将待显示帧目标减一，避免给这一帧源无法消耗的延迟再叠缓冲。";
+"Short queue on doubled cadence hint" = "默认关闭。开启之前渲染器在所有显示器上都使用缓冲默认值（drawable=3、inflight=3）。仅在实测本机延迟确有改善、且接受相应权衡后再开启。";
 "Responsiveness Bias" = "响应倾向";
 "Responsiveness Bias detail" = "让当前呈现链路更积极地削减排队帧，以换取更低的输入延迟。";
 "Allow Drawable Timeout" = "允许 Drawable 超时";

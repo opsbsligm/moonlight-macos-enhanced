@@ -703,6 +703,9 @@
 "Display Sync detail" = "Controls whether Metal Renderer waits for display sync. Auto follows the current streaming profile.";
 "Frame Queue Target" = "Frame Queue Target";
 "Frame Queue Target detail" = "Overrides the renderer's pending-frame target. Lower values reduce latency; higher values improve smoothness.";
+"Short queue on doubled cadence" = "Short queue on doubled cadence";
+"Short queue on doubled cadence detail" = "When the display refresh is at least twice the stream frame rate (e.g. 180 Hz with 90 FPS), trim one frame off the pending target so the queue is not padded with latency this source cannot spend.";
+"Short queue on doubled cadence hint" = "Default is off. The renderer uses the buffered default (drawable=3, inflight=3) on every display until you turn this on. Turn it on only after you have measured a latency win on this setup and accept the trade-off.";
 "Responsiveness Bias" = "Responsiveness Bias";
 "Responsiveness Bias detail" = "Makes the presentation path trim queued work more aggressively for lower input latency.";
 "Allow Drawable Timeout" = "Allow Drawable Timeout";
