@@ -253,6 +253,8 @@ class SettingsClass: NSObject {
           ?? SettingsModel.defaultFrameInterpolationMode,
         "frameInterpolationForce":
           settings.frameInterpolationForce ?? SettingsModel.defaultFrameInterpolationForce,
+        "shortQueueOnDoubledCadence":
+          settings.shortQueueOnDoubledCadence ?? SettingsModel.defaultShortQueueOnDoubledCadence,
         "clipboardSyncMode": settings.clipboardSyncMode
           ?? SettingsModel.defaultClipboardSyncMode,
         // Single source of truth: Settings.connectionMethod (persisted by SettingsModel)
@@ -424,6 +426,7 @@ class SettingsClass: NSObject {
       upscalingMode: settings.upscalingMode,
       frameInterpolationMode: settings.frameInterpolationMode,
       frameInterpolationForce: settings.frameInterpolationForce,
+      shortQueueOnDoubledCadence: settings.shortQueueOnDoubledCadence,
       connectionMethod: settings.connectionMethod,
       clipboardSyncMode: settings.clipboardSyncMode,
       smoothnessLatencyMode: settings.smoothnessLatencyMode,
@@ -533,6 +536,7 @@ class SettingsClass: NSObject {
         upscalingMode: updated.upscalingMode,
         frameInterpolationMode: updated.frameInterpolationMode,
         frameInterpolationForce: updated.frameInterpolationForce,
+        shortQueueOnDoubledCadence: updated.shortQueueOnDoubledCadence,
         connectionMethod: updated.connectionMethod,
         clipboardSyncMode: updated.clipboardSyncMode,
         smoothnessLatencyMode: updated.smoothnessLatencyMode,
@@ -650,6 +654,7 @@ class SettingsClass: NSObject {
       upscalingMode: settings.upscalingMode,
       frameInterpolationMode: settings.frameInterpolationMode,
       frameInterpolationForce: settings.frameInterpolationForce,
+      shortQueueOnDoubledCadence: settings.shortQueueOnDoubledCadence,
       connectionMethod: settings.connectionMethod,
       clipboardSyncMode: settings.clipboardSyncMode,
       smoothnessLatencyMode: settings.smoothnessLatencyMode,
