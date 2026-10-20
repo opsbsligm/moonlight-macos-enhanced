@@ -208,6 +208,7 @@ extension SettingsModel {
     selectedFrameInterpolationMode = Self.frameInterpolationModeSelection(
       for: Self.defaultFrameInterpolationMode)
     frameInterpolationForce = Self.defaultFrameInterpolationForce
+    shortQueueOnDoubledCadence = Self.defaultShortQueueOnDoubledCadence
     selectedClipboardSyncMode = Self.clipboardSyncModeSelection(
       for: SettingsClass.clipboardSyncMode(for: selectedHost?.id ?? Self.globalHostId))
     selectedConnectionMethod = "Auto"
@@ -504,6 +505,8 @@ extension SettingsModel {
         for: settings.frameInterpolationMode)
       frameInterpolationForce =
         settings.frameInterpolationForce ?? Self.defaultFrameInterpolationForce
+      shortQueueOnDoubledCadence =
+        settings.shortQueueOnDoubledCadence ?? Self.defaultShortQueueOnDoubledCadence
       selectedClipboardSyncMode = Self.clipboardSyncModeSelection(
         for: SettingsClass.clipboardSyncMode(for: hostId))
       selectedDisplaySyncMode = Self.displaySyncModeSelection(for: settings.displaySyncMode)
@@ -602,6 +605,7 @@ extension SettingsModel {
     let frameInterpolationMode = Self.frameInterpolationModeRawValue(
       for: selectedFrameInterpolationMode)
     let frameInterpolationForce = frameInterpolationForce
+    let shortQueueOnDoubledCadence = shortQueueOnDoubledCadence
     let clipboardSyncMode = Self.clipboardSyncModeRawValue(
       for: selectedClipboardSyncMode)
     let hdrHlgViewingEnvironment = Self.hdrHlgViewingEnvironmentRawValue(
@@ -786,6 +790,7 @@ extension SettingsModel {
       upscalingMode: upscalingMode,
       frameInterpolationMode: frameInterpolationMode,
       frameInterpolationForce: frameInterpolationForce,
+      shortQueueOnDoubledCadence: shortQueueOnDoubledCadence,
       connectionMethod: selectedConnectionMethod,
       clipboardSyncMode: clipboardSyncMode,
       smoothnessLatencyMode: smoothnessLatencyMode,

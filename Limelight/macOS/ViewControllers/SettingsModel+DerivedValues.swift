@@ -657,6 +657,12 @@ extension SettingsModel {
   }
   static let defaultFrameInterpolationMode = 0
   static let defaultFrameInterpolationForce = false
+  /// The short-queue opt-in for doubled-cadence pairings (e.g. 180 Hz + 90 FPS).
+  /// Default OFF keeps the buffered default (drawable=3, inflight=3) so the
+  /// queue depth the player sees on the Settings panel is the queue depth the
+  /// renderer ships. The owner turns this on when they have measured a latency
+  /// win on their setup and accept the trade-off.
+  static let defaultShortQueueOnDoubledCadence = false
 
   static func frameInterpolationModeRawValue(for title: String) -> Int {
     frameInterpolationModeOptions.first(where: { $0.title == title })?.value
