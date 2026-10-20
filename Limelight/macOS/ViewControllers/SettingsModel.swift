@@ -1039,6 +1039,17 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  /// Short-queue opt-in for doubled-cadence pairings (e.g. 180 Hz + 90 FPS).
+  /// Default OFF keeps the buffered default (drawable=3, inflight=3) so the
+  /// queue depth the player sees on the Settings panel is the queue depth the
+  /// renderer ships. The owner turns this on when they have measured a
+  /// latency win on their setup and accept the trade-off.
+  @Published var shortQueueOnDoubledCadence: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var selectedClipboardSyncMode: String {
     didSet {
       guard !isLoading else { return }
@@ -1399,6 +1410,7 @@ class SettingsModel: ObservableObject {
     selectedFrameInterpolationMode = Self.frameInterpolationModeSelection(
       for: Self.defaultFrameInterpolationMode)
     frameInterpolationForce = Self.defaultFrameInterpolationForce
+    shortQueueOnDoubledCadence = Self.defaultShortQueueOnDoubledCadence
     selectedClipboardSyncMode = Self.clipboardSyncModeSelection(
       for: Self.defaultClipboardSyncMode)
     selectedConnectionMethod = "Auto"

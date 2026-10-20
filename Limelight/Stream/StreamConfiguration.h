@@ -81,4 +81,12 @@
 // cause; hardware and renderer capability checks still apply.
 @property(nonatomic) BOOL frameInterpolationForce;
 
+// Short-queue opt-in for doubled-cadence pairings (e.g. 180 Hz + 90 FPS).
+// When YES, the renderer trims one frame off the pending target so the
+// queue is not padded with latency this source cannot spend. Default NO
+// keeps the buffered default (drawable=3, inflight=3) so the queue depth
+// the player sees on the Settings panel is the queue depth the renderer
+// ships.
+@property(nonatomic) BOOL shortQueueOnDoubledCadence;
+
 @end

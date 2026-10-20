@@ -3025,6 +3025,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         ? (MLRequestedVideoFrameInterpolationMode)MAX(0, MIN(streamConfig.frameInterpolationMode, MLRequestedVideoFrameInterpolationModeVTLowLatency))
         : MLRequestedVideoFrameInterpolationModeOff;
     _frameInterpolationForceAdmission = streamConfig ? streamConfig.frameInterpolationForce : NO;
+    _shortQueueOnDoubledCadence = streamConfig ? streamConfig.shortQueueOnDoubledCadence : NO;
     _frameInterpolationCadenceForced = NO;
     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
