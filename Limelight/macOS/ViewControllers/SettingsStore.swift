@@ -132,6 +132,7 @@ struct Settings: Encodable, Decodable {
   let upscalingMode: Int?
   let frameInterpolationMode: Int?
   let frameInterpolationForce: Bool?
+  let shortQueueOnDoubledCadence: Bool?
   let connectionMethod: String?
   let clipboardSyncMode: Int?
   let smoothnessLatencyMode: Int?
@@ -281,6 +282,7 @@ struct Settings: Encodable, Decodable {
       upscalingMode: upscalingMode,
       frameInterpolationMode: frameInterpolationMode,
       frameInterpolationForce: frameInterpolationForce,
+      shortQueueOnDoubledCadence: shortQueueOnDoubledCadence,
       connectionMethod: nil,
       clipboardSyncMode: clipboardSyncMode,
       smoothnessLatencyMode: smoothnessLatencyMode,
@@ -365,6 +367,7 @@ extension SettingsClass {
     videoRendererMode: Int?? = nil,
     hdr: Bool? = nil,
     frameInterpolationForce: Bool? = nil,
+    shortQueueOnDoubledCadence: Bool? = nil,
     connectionMethod: String? = nil,
     mouseMode: Int? = nil,
     volumeLevel: CGFloat? = nil,
@@ -534,6 +537,7 @@ extension SettingsClass {
       upscalingMode: settings.upscalingMode,
       frameInterpolationMode: settings.frameInterpolationMode,
       frameInterpolationForce: frameInterpolationForce ?? settings.frameInterpolationForce,
+      shortQueueOnDoubledCadence: settings.shortQueueOnDoubledCadence,
       connectionMethod: resolvedConnectionMethod,
       clipboardSyncMode: settings.clipboardSyncMode,
       smoothnessLatencyMode: settings.smoothnessLatencyMode,
