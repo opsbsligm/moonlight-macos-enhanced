@@ -575,6 +575,16 @@ struct VideoView: View {
 
             Divider()
 
+            ToggleCell(
+              title: "Short queue on doubled cadence",
+              boolBinding: $settingsModel.shortQueueOnDoubledCadence
+            )
+
+            SettingDescriptionRow(textKey: "Short queue on doubled cadence detail")
+            SettingDescriptionRow(textKey: "Short queue on doubled cadence hint")
+
+            Divider()
+
             FormCell(
               title: "Responsiveness Bias", contentWidth: 220,
               content: {
