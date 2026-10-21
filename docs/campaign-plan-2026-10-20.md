@@ -35,7 +35,9 @@ M1 未落地前不要碰 M2/M3/M4——能力没通告，主机不会发 `rumble
 
 **0.1 手柄能力探针（纯新增，先有仪表再动手术）**
 - 在诊断日志/诊断报告里输出每块手柄的 vid/pid、判定结果、当前驱动、通告后的 type/caps 占位。
-- 完成边界：串流一次后，诊断报告能读出"接了几块手柄、分别被判成什么"。不改变发包行为。
+- 完成边界：串流一次后，诊断报告能读出"看到几条 HID 身份、分别被判成什么、用哪个驱动"。
+  报告按 VID/PID/协议族分组计数，`nodeCount` 是分组内节点数；同型号多只手柄会合成一行，
+  所以"几条身份"不等于"几只物理手柄"。不改变发包行为。
 - 验收：`scripts/diagnostics-report-tests.py` 扩展一条断言；本机插两块手柄看日志。
 
 **0.2 HID 路径 per-device 状态表（M1 的硬前置）**
@@ -128,7 +130,7 @@ M1 未落地前不要碰 M2/M3/M4——能力没通告，主机不会发 `rumble
 ## 2. 每波通用的执行标准
 
 ```sh
-zsh scripts/local-gates.sh          # 门禁清单取自 workflow，新增门禁会被自动带上
+bash scripts/local-gates.sh         # 门禁清单取自 workflow，新增门禁会被自动带上
 xcodebuild build                    # BUILD SUCCEEDED
 git -c user.email="codex-agent@homelab.local" -c user.name="Codex Agent" commit
 git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜像
@@ -144,7 +146,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
 
 | 里程碑 | 依赖 | 代码可完成 | 真机验收 | 状态 |
 | --- | --- | --- | --- | --- |
-| 0.1 探针 | — | 是 | 本机日志即可 | 待开工 |
+| 0.1 探针 | — | 是 | 本机日志即可 | 代码与 68 项回归完成，真机待验证（hardware_validated=false） |
 | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 待开工 |
 | M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 待开工 |
 | M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 待开工 |
@@ -167,3 +169,31 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
 
 - 不做多显示器双实例串流、`LiSendTouchEvent`/`PenEvent`、UU 式触屏按键映射库（理由见 roadmap §3 P3）。
 - 不以 Parsec/UU 宣传面为依据；不把未真机验证的条目写成已完成。
+
+## 6. 0.1 探针增量（2026-10-21，代码完成，真机待验证）
+
+- 诊断报告已能输出 controller vid:pid + family + transport + battery + nodeCount +
+  会话启动时捕获的 driver，并明确输出四行诚实状态：
+  - `driver captured at session start; type-map is a local candidate`（driver 是开流瞬间的，
+    设置随后改了不追）
+  - `controller arrivals sent to host: no (0.1 probe; M1 owns arrival)`
+  - `advertised controller type/caps: not advertised`（0.1 没有任何通告，不假装候选 map 已发出）
+  - `HID identity groups: N (VID/PID/family groups, not a physical controller count)`
+- 报告读同一张 `MLControllerInventory` 表，协议类型映射是候选，不是已向主机通告的事实；
+  M1 未实现前绝不把 type-map 写成主机已被告知。
+- 控制器格式化已移到 Foundation-only 的 `DiagnosticsReportBuilder`，Live 只把 snapshot 交给它；
+  `scripts/diagnostics-report-tests.py` 对真实格式化输出做回放，共 68 项：六类分类/协议类型
+  映射、同身份多节点合并、idle 记录不臆造 driver、session 开关、空 driver 不保留上一次的
+  名字、旧 snapshot 不被新会话改写（模型回放，非真机路径复现）、arrival/type/caps 未通告
+  文案、HID identity groups 计数边界、空列表与未观察的区别、电池缺读与真实 0% 的区别。
+  18 个格式化行为变异及 6 个 inventory 状态变异在临时目录编译运行，另有 1 个静态分析负向检查。
+  正向基线失败时立即停止，编译错误或崩溃不计作行为变异被断言捕获。
+- `MLControllerDriverNameForIndex` 在 Foundation-only 的 `MLControllerInventory.m` 中映射驱动名，
+  非 0/1 的索引返回 `unknown`。
+- 顺带修复模型里 `noteSessionStarted` 没有把 live 状态/代数/driver 写回已有 snapshot 的缺陷
+  （用模型回放证明，未作真机路径复现）。`local-gates.sh` 默认不再误跑完整
+  assertion-battery，skip 统计逐项说明原因，快速/完整模式选择自测接入 GitLab。
+- 编译审计识别 `scripts/build.sh` 实际使用的 `build/xcode/derivedData`，并使用 `libs`
+  中的 OpenSSL 头文件路径；本地 Swift 审计也识别该构建目录。
+- 真机验收仍待做：串流一次后接两块手柄看诊断报告分类、driver、arrival 文案与日志。
+  `hardware_validated=false` 直到完成；M1 类型/能力通告仍属于下一里程碑，不在本波宣完成。

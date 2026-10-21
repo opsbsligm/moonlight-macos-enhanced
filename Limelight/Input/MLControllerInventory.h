@@ -60,12 +60,17 @@ typedef NS_ENUM(NSInteger, MLControllerFamily) {
 @property (nonatomic) NSUInteger nodeCount;
 @end
 
-/// The controllers of the current or most recent session, plus the two process facts needed
-/// to read that list: how many sessions recorded it, and whether one is recording now.
+/// Recorded HID identities and metadata from the current or most recent session.
 @interface MLControllerInventorySnapshot : NSObject <NSCopying>
 @property (nonatomic, copy) NSArray<MLControllerEntry *> *entries;
 @property (nonatomic) NSUInteger generations;
 @property (nonatomic) BOOL recordingNow;
+/// The driver captured at session start: "HID", "MFi", or "unknown".
+/// nil means no driver was recorded for this session.
+@property (nonatomic, copy, nullable) NSString *driverName;
+/// Whether controller arrival packets were sent to the host for the recorded stream.
+/// The 0.1 probe deliberately does not implement M1, so this stays NO until arrival lands.
+@property (nonatomic) BOOL advertisedControllerArrivals;
 @end
 
 /// The layout family for a vendor/product pair. A zero id is a legal read -- some devices
@@ -76,11 +81,12 @@ FOUNDATION_EXPORT MLControllerFamily MLControllerFamilyForIds(NSUInteger vendorI
 /// report and log string: the reader is whoever triages a report, not the player.
 FOUNDATION_EXPORT NSString *MLControllerFamilyName(MLControllerFamily family);
 
-/// The protocol type a host is told about a family, in the `LI_CTYPE_*` numbering. Kept
-/// beside the table rather than at a call site, so the type a host is told and the layout
-/// this app actually decodes cannot drift apart. Returns 0 (`LI_CTYPE_UNKNOWN`) for a
-/// family this app can drive but cannot name to a host.
+/// The protocol type candidate, in the `LI_CTYPE_*` numbering. This mapping does not send
+/// an arrival event or prove the host received it. Unrecognized families return 0.
 FOUNDATION_EXPORT uint8_t MLControllerProtocolTypeForFamily(MLControllerFamily family);
+
+/// The settings index used by the input path, without assuming an invalid value is HID.
+FOUNDATION_EXPORT NSString *MLControllerDriverNameForIndex(NSInteger index);
 
 /// The process-wide inventory. Everything happens on the main queue, which is where the HID
 /// manager is scheduled and where the report is assembled.
@@ -93,8 +99,11 @@ FOUNDATION_EXPORT uint8_t MLControllerProtocolTypeForFamily(MLControllerFamily f
 /// cannot be reported as still present.
 - (void)recordEntries:(NSArray<MLControllerEntry *> *)entries;
 
-/// A streaming session started: the tally goes up, and the record is live.
+/// A streaming session started without a recorded driver.
 - (void)noteSessionStarted;
+
+/// Record the driver at session start. A missing name clears the previous session's name.
+- (void)noteSessionStartedWithDriverName:(nullable NSString *)driverName;
 
 /// That session ended. The tally stays and the entries stay -- a report read afterwards is
 /// exactly the case the record exists for -- but it stops claiming the bench is in use.

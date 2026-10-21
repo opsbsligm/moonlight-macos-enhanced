@@ -20,6 +20,13 @@ workflow=".github/workflows/build.yml"
 
 all=0
 [ "${1:-}" = "--all" ] && all=1
+
+skip_full_battery() {
+  case "$1" in
+    *assertion-battery.py*) [ "$all" != 1 ];;
+    *) return 1;;
+  esac
+}
 # One command per line, deduplicated. A step whose command is folded across lines with
 # a trailing backslash has to be unfolded first: cutting it at the fold is how this
 # script once reported "dmg-audit.py: error: nothing to check" for a step that had been
@@ -86,7 +93,17 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "self-test failed: a list with nothing missing was refused" >&2
     exit 1
   fi
-  echo "self-test ok: the list notices a call it cannot read, and accepts one it can"
+  if ! skip_full_battery "python3 scripts/assertion-battery.py" ||
+     skip_full_battery "python3 scripts/diagnostics-report-tests.py"; then
+    echo "self-test failed: quick mode must skip only the full mutation battery" >&2
+    exit 1
+  fi
+  all=1
+  if skip_full_battery "python3 scripts/assertion-battery.py"; then
+    echo "self-test failed: --all must run the full mutation battery" >&2
+    exit 1
+  fi
+  echo "self-test ok: command discovery and quick/full battery selection"
   exit 0
 fi
 
@@ -128,7 +145,7 @@ artefact_command() {
       # running Debug are the same project with different paths. Probing one of the two
       # skipped the gate for whoever built the other way, which is the silence this
       # function exists to remove.
-      for root in build-analyze build-header-check build build-probe; do
+      for root in build/xcode/derivedData build-analyze build-header-check build build-probe; do
         for configuration in Release Debug; do
           derived="$root/Build/Intermediates.noindex/Moonlight.build/$configuration/Moonlight for macOS.build/DerivedSources"
           [ -d "$derived" ] && {
@@ -161,6 +178,10 @@ passed=0 failed=0 skipped=0
 
 while IFS= read -r cmd; do
   [ -n "$cmd" ] || continue
+  if skip_full_battery "$cmd"; then
+    echo "skip  $cmd (complete mutation battery; run this sweep with --all)"
+    skipped=$((skipped+1)); continue
+  fi
   # sed rather than a bash pattern substitution: `${APP_NAME}` inside `${cmd//...}` is the
   # kind of nesting that quietly rewrites the wrong part of a command line.
   [ -n "$app_name" ] && cmd=$(printf '%s' "$cmd" | sed "s/\${APP_NAME}/$app_name/g")
@@ -236,6 +257,7 @@ while IFS= read -r cmd; do
     *constraints-audit.py*)
       [ "$all" = 1 ] || cmd="$cmd --no-battery";;
   esac
+  printf 'run  %s\n' "$cmd"
   out=$(eval "$cmd" 2>&1)
   if [ $? -eq 0 ]; then
     passed=$((passed+1))
@@ -246,5 +268,9 @@ while IFS= read -r cmd; do
   fi
 done < /tmp/local-gates.list
 
-echo "$passed gates passed, $failed failed, $skipped need a CI artefact"
+if [ "$skipped" -eq 0 ]; then
+  echo "$passed gates passed, $failed failed"
+else
+  echo "$passed gates passed, $failed failed, $skipped skipped (reasons printed above)"
+fi
 [ "$failed" -eq 0 ]

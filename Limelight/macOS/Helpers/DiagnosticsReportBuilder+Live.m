@@ -43,7 +43,8 @@ static NSString *stringOrNone(NSString *_Nullable value) {
     // read for are answered next to each other: whether the system lets the app listen to
     // the mouse at all, and which sender was holding it when it stopped.
     [sections addObject:[self inputSection]];
-    [sections addObject:[self controllersSection]];
+    [sections addObject:[DiagnosticsReportBuilder
+        controllersSectionWithSnapshot:MLControllerInventory.sharedInventory.snapshot]];
     // Devices sits under input rather than under hosts, because the four preconditions the
     // devices panel reports are answered by the same two questions a permissions and input
     // readout raises: whether the app may watch the mouse at all, and whether this build is
@@ -145,52 +146,6 @@ static NSString *stringOrNone(NSString *_Nullable value) {
             // that "denied" sends them looking for a switch that is not switched off.
             return @"undetermined (the prompt has not been answered yet)";
     }
-}
-
-//
-//  The devices panel and this section read the same object on purpose. A panel that says
-//  `blocked=unsigned` while a report says nothing at all is the failure this exists to prevent:
-//  the report is what gets pasted into an issue, and an issue without the panel's answer is
-//  answered by guessing.
-//
-//  Two boundaries are printed rather than left to the reader, because both fail quietly.
-//  Building the model reads stored preferences and the signature of the running binary -- it
-//  opens no device, enumerates no registry, and sends no packet -- so when the panel never
-//  heard from a host this says `host-not-asked`, not `host-refused`, and when nobody scanned it
-//  says `not-scanned`, not an empty list. A device section that reads as "nothing plugged in"
-//  sends a player to a cable they already unplugged.
-//
-//  `rowsByScanningBusWithHostPaired:` is deliberately absent from this file, and a gate keeps it
-//  out: a report that enumerated the bus would make copying a report slower than opening the
-//  panel, on the machine of the person whose device is already misbehaving.
-+ (DiagnosticsReportSection *)controllersSection {
-    MLControllerInventorySnapshot *snapshot = MLControllerInventory.sharedInventory.snapshot;
-    NSMutableArray<NSString *> *lines = [NSMutableArray array];
-    if (snapshot == nil) {
-        [lines addObject:@"controllers: never looked (no stream has recorded them)"];
-    } else {
-        [lines addObject:[NSString stringWithFormat:@"controllers looked: %lu session(s)%s",
-                          (unsigned long)snapshot.generations,
-                          snapshot.recordingNow ? ", recording now" : ""]];
-        for (MLControllerEntry *entry in snapshot.entries) {
-            NSMutableString *row = [NSMutableString string];
-            [row appendFormat:@"  %@:%@ %@",
-             [NSString stringWithFormat:@"%04lx", (unsigned long)entry.vendorId],
-             [NSString stringWithFormat:@"%04lx", (unsigned long)entry.productId],
-             MLControllerFamilyName(entry.family)];
-            if (entry.transport.length > 0) {
-                [row appendFormat:@" %@", entry.transport];
-            }
-            if (entry.hasBatteryPercent) {
-                [row appendFormat:@" battery=%ld%%", (long)entry.batteryPercent];
-            }
-            if (entry.nodeCount > 1) {
-                [row appendFormat:@" nodes=%lu", (unsigned long)entry.nodeCount];
-            }
-            [lines addObject:row];
-        }
-    }
-    return [DiagnosticsReportSection sectionWithTitle:@"controllers" lines:lines];
 }
 
 + (DiagnosticsReportSection *)devicesSection {
