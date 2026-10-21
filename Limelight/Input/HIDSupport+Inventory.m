@@ -82,7 +82,7 @@ static NSArray<MLControllerEntry *> *MLControllerEntriesFromManager(IOHIDManager
         return;
     }
     MLControllerInventory *inventory = MLControllerInventory.sharedInventory;
-    [inventory noteSessionStarted];
+    [inventory noteSessionStartedWithDriverName:MLControllerDriverNameForIndex(self.controllerDriver)];
     [inventory recordEntries:entries];
 }
 
