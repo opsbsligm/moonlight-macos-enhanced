@@ -87,6 +87,7 @@ audit:python:
       . "$venv_dir/bin/activate"
       python -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
       python scripts/ci/test_pipeline.py
+      bash scripts/local-gates.sh --self-test
       python scripts/project_identity.py --self-test
       python scripts/credential-scan-audit.py --self-test
       python scripts/credential-scan-audit.py

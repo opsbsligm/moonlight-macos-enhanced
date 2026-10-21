@@ -86,6 +86,14 @@ uint8_t MLControllerProtocolTypeForFamily(MLControllerFamily family) {
     return 0x00; // LI_CTYPE_UNKNOWN
 }
 
+NSString *MLControllerDriverNameForIndex(NSInteger index) {
+    switch (index) {
+        case 0: return @"HID";
+        case 1: return @"MFi";
+        default: return @"unknown";
+    }
+}
+
 @implementation MLControllerEntry
 
 - (id)copyWithZone:(NSZone *)zone {
@@ -100,7 +108,7 @@ uint8_t MLControllerProtocolTypeForFamily(MLControllerFamily family) {
     return copy;
 }
 
-/// The grouping key: two HID nodes of one physical pad collapse into one row.
+/// Identity grouping, not physical device identity: identical pads share this key too.
 - (NSString *)identityKey {
     return [NSString stringWithFormat:@"%04lx:%04lx:%ld",
             (unsigned long)self.vendorId, (unsigned long)self.productId, (long)self.family];
@@ -115,6 +123,8 @@ uint8_t MLControllerProtocolTypeForFamily(MLControllerFamily family) {
     copy.entries = self.entries;
     copy.generations = self.generations;
     copy.recordingNow = self.recordingNow;
+    copy.driverName = self.driverName;
+    copy.advertisedControllerArrivals = self.advertisedControllerArrivals;
     return copy;
 }
 
@@ -139,6 +149,7 @@ uint8_t MLControllerProtocolTypeForFamily(MLControllerFamily family) {
 
 - (void)recordEntries:(NSArray<MLControllerEntry *> *)entries {
     NSAssert(NSThread.isMainThread, @"the inventory is written where the HID manager runs");
+    MLControllerInventorySnapshot *previous = self.snapshot;
     NSMutableArray<MLControllerEntry *> *merged = [NSMutableArray array];
     NSMutableDictionary<NSString *, MLControllerEntry *> *rows = [NSMutableDictionary dictionary];
     for (MLControllerEntry *entry in entries) {
@@ -183,13 +194,30 @@ uint8_t MLControllerProtocolTypeForFamily(MLControllerFamily family) {
     snapshot.entries = [merged copy];
     snapshot.generations = self.generations;
     snapshot.recordingNow = self.recording;
+    snapshot.driverName = previous.driverName;
+    snapshot.advertisedControllerArrivals = previous.advertisedControllerArrivals;
     self.snapshot = snapshot;
 }
 
 - (void)noteSessionStarted {
+    [self noteSessionStartedWithDriverName:nil];
+}
+
+- (void)noteSessionStartedWithDriverName:(NSString *_Nullable)driverName {
     NSAssert(NSThread.isMainThread, @"the inventory is written where the HID manager runs");
     self.generations += 1;
     self.recording = YES;
+    MLControllerInventorySnapshot *snapshot = [self.snapshot copy];
+    if (snapshot == nil) {
+        snapshot = [[MLControllerInventorySnapshot alloc] init];
+        snapshot.entries = @[];
+    }
+    snapshot.recordingNow = YES;
+    snapshot.generations = self.generations;
+    snapshot.driverName = driverName;
+    // 0.1 does not send controller arrival packets. M1 owns the hop from this flag to YES.
+    snapshot.advertisedControllerArrivals = NO;
+    self.snapshot = snapshot;
 }
 
 - (void)noteSessionStopped {

@@ -149,7 +149,7 @@ def derived_sources():
     the gate, so the freshest copy of one target's generated headers is the only answer.
     """
     found = []
-    for extra in EXTRA_DERIVED:
+    for extra in [os.path.join(ROOT, "build", "xcode", "derivedData")] + EXTRA_DERIVED:
         if not os.path.isdir(extra):
             continue
         for current, directories, files in os.walk(extra):
@@ -183,6 +183,7 @@ def derived_sources():
 # the directory that has to be on the search path holds no headers of its own -- only
 # a subdirectory named after the package. Walking for headers would miss them.
 PACKAGE_ROOTS = (
+    "libs",
     os.path.join("moonlight-common", "moonlight-common-c", "enet", "include"),
     os.path.join("moonlight-common", "moonlight-common-c", "nanors"),
 )
