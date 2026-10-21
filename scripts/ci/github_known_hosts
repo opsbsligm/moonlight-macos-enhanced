@@ -1,0 +1,3 @@
+# GitHub's public Ed25519 host key, verified against https://api.github.com/meta
+# on 2026-10-21. Rotate only after verifying the new key through GitHub HTTPS.
+github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
