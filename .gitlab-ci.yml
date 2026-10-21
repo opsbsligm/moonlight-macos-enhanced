@@ -2,7 +2,7 @@
 # Requires a macOS runner with Xcode and shell executor.
 #
 # Pipeline stages:
-#   lint     — code quality gates (SwiftLint, clang-format dry-run)
+#   lint     — Python repository audits and toolchain availability
 #   deps     — download binary frameworks
 #   build    — compile the app
 #   test     — integration smoke test (bundle, signature, launch)
@@ -21,7 +21,7 @@
 # time (no auth configured yet); macos jobs pull them via fetch_submodules.
 .fetch_submodules: &fetch_submodules
   - |
-    git config --global url."http://oauth2:${GRP_CI_JOB_TOKEN}@172.16.130.6/moonlight/moonlight-common-c.git".insteadOf "http://172.16.130.6/moonlight/moonlight-common-c.git"
+    git config --local url."http://oauth2:${GRP_CI_JOB_TOKEN}@172.16.130.6/moonlight/moonlight-common-c.git".insteadOf "http://172.16.130.6/moonlight/moonlight-common-c.git"
     git submodule sync --recursive
     git submodule update --init --recursive
 
@@ -69,56 +69,64 @@ include:
   # - template: Security/Dependency-Scanning.gitlab-ci.yml
 
 # --- Lint --------------------------------------------------------------------
-lint:swiftlint:
+# The macOS runners carry SwiftLint and clang-format. Fail loudly if they are
+# missing instead of reporting a green "skip"; this repository has no committed
+# style baseline yet, so a full-tree strict sweep is deliberately not a gate.
+lint:toolchain:
   stage: lint
+  tags: [macos]
+  cache: {}
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
   script:
     - |
-      if ! command -v swiftlint >/dev/null 2>&1; then
-        echo "SwiftLint not installed — skipping (install via brew install swiftlint)"
-        exit 0
-      fi
-      swiftlint lint --strict Limelight 2>&1 | tee lint-swift.txt
-  artifacts:
-    when: always
-    paths:
-      - lint-swift.txt
-    expire_in: 1 week
+      set -euo pipefail
+      swiftlint --version
+      clang-format --version
 
-lint:clang-format:
+# The fast half of the repository audits. This mirrors the Python-only gates in
+# .github/workflows/build.yml without the mutation battery, which belongs to its
+# own job only because it measures in the tens of minutes.
+audit:python:
   stage: lint
+  tags: [macos]
+  cache: {}
+  timeout: 20 minutes
+  before_script:
+    - *fetch_submodules
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
   script:
     - |
-      if ! command -v clang-format >/dev/null 2>&1; then
-        echo "clang-format not installed — skipping"
-        exit 0
-      fi
-      # Dry-run: exit non-zero if any file would be reformatted.
-      find Limelight -name '*.m' -o -name '*.h' | \
-        xargs clang-format --dry-run -Werror 2>&1 | tee lint-clang.txt
-  artifacts:
-    when: always
-    paths:
-      - lint-clang.txt
-    expire_in: 1 week
+      set -euo pipefail
+      venv_dir="$(mktemp -d /tmp/moonlight-gitlab-gates.XXXXXX)"
+      trap 'rm -rf "$venv_dir"' EXIT
+      python3 -m venv "$venv_dir"
+      . "$venv_dir/bin/activate"
+      python -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
+      python scripts/project_identity.py --self-test
+      python scripts/credential-scan-audit.py --self-test
+      python scripts/credential-scan-audit.py
+      python scripts/l10n-audit.py
+      python scripts/source-membership-audit.py
+      python scripts/constraints-audit.py --no-battery --history
+      python scripts/liquid-glass-audit.py --self-test
+      python scripts/liquid-glass-audit.py
+      python scripts/leak-audit.py --self-test
+      python scripts/leak-audit.py --log scripts/leak-sample.txt --red-team
+      python scripts/ownership-audit.py --self-test
+      python scripts/ownership-audit.py --red-team
+      python scripts/workflow-audit.py --self-test
+      python scripts/workflow-audit.py
+      for script in scripts/*.sh; do bash -n "$script"; done
 
 # --- Dependencies ------------------------------------------------------------
 # Cache binary frameworks between pipelines. Keyed on DEPS_VERSION so a bump
 # automatically invalidates stale caches.
-cache:
-  key:
-    files:
-      - scripts/download-frameworks.sh
-    prefix: "frameworks-${DEPS_VERSION}"
-  paths:
-    - xcframeworks/
-    - Packages/OpenSSL.xcframework/
-  policy: pull-push
 
 download-deps:
   before_script:
@@ -126,6 +134,15 @@ download-deps:
 
   stage: deps
   tags: [macos]
+  cache:
+    key:
+      files:
+        - scripts/download-frameworks.sh
+      prefix: "frameworks-${DEPS_VERSION}"
+    paths:
+      - xcframeworks/
+      - Packages/OpenSSL.xcframework/
+    policy: pull-push
   script:
     - zsh scripts/download-frameworks.sh
   artifacts:
@@ -136,6 +153,7 @@ download-deps:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 # --- Build -------------------------------------------------------------------
 build-app:
@@ -144,6 +162,7 @@ build-app:
 
   stage: build
   tags: [macos]
+  timeout: 30 minutes
   dependencies:
     - download-deps
   script:
@@ -153,6 +172,7 @@ build-app:
     # those outrank every xcconfig. This job used to write the generated file into
     # the derivedData root, where nothing read it, so CI silently fell back to the
     # checked-in baseline and artifact versions drifted from the git count.
+    - set -o pipefail
     - export BUILD_NUMBER_RESOLVED="$(sh Limelight/build-number.sh --print)"
     - echo "resolved BUILD_NUMBER=$BUILD_NUMBER_RESOLVED"
     - xcodebuild
@@ -175,6 +195,7 @@ build-app:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 # --- Test --------------------------------------------------------------------
 test-app:
@@ -197,6 +218,32 @@ test-app:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+# Build-log and binary-level coverage, wired to the exact files that gave the
+# project its first "green pipeline with a source nobody compiled" failure.
+audit:sources:
+  stage: test
+  tags: [macos]
+  cache: {}
+  timeout: 10 minutes
+  dependencies:
+    - build-app
+  script:
+    - set -euo pipefail
+    - app="$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/MoonlightEnhanced.app"
+    - test -d "$app"
+    - python3 scripts/build-warning-audit.py --self-test
+    - python3 scripts/build-warning-audit.py --log build.log
+    - python3 scripts/source-membership-audit.py --build-log build.log
+    - arch="$(uname -m)"
+    - python3 scripts/compiled-source-audit.py "$app/Contents/MacOS/MoonlightEnhanced" --arch "$arch" --self-test
+    - python3 scripts/compiled-source-audit.py "$app/Contents/MacOS/MoonlightEnhanced" --arch "$arch"
+    - python3 scripts/diagnostics-report-tests.py
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 # --- Package -----------------------------------------------------------------
 # Produce a DMG only for tags (releases) and main branch pushes (nightly smoke).
