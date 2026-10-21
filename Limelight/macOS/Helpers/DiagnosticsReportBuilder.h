@@ -11,6 +11,7 @@
 #import <Foundation/Foundation.h>
 
 @class InputDiagnosticsSummary;
+@class MLControllerInventorySnapshot;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -69,6 +70,11 @@ NS_ASSUME_NONNULL_BEGIN
 + (DiagnosticsReportSection *)inputSectionWithSummary:(nullable InputDiagnosticsSummary *)summary
                                 collectionEnabledNow:(BOOL)collectionEnabledNow
                                                  now:(NSDate *)now;
+
+/// Format the recorded inventory without enumerating devices. nil means no observation.
+/// Protocol type candidates and HID node counts do not imply host advertisements or a
+/// physical device count.
++ (DiagnosticsReportSection *)controllersSectionWithSnapshot:(nullable MLControllerInventorySnapshot *)snapshot;
 
 /// Assemble the sections in the order given, redact the whole of it once at the end
 /// -- one pass, so a value cannot survive by arriving in a line nobody thought to

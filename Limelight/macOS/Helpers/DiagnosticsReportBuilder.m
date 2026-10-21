@@ -8,6 +8,7 @@
 #import <math.h>
 
 #import "InputDiagnosticsLedger.h"
+#import "MLControllerInventory.h"
 
 @interface DiagnosticsReportSection ()
 // The public properties say readonly, because a report section that changed after it
@@ -52,6 +53,56 @@ static NSString *const kRedactedUuid = @"[redacted-uuid]";
 static NSString *const kRedactedBlob = @"[redacted-blob]";
 static NSString *const kRedactedPath = @"[redacted-path]";
 static NSString *const kRuleUnavailable = @"\n[redaction rule unavailable]\n";
+
++ (DiagnosticsReportSection *)controllersSectionWithSnapshot:(MLControllerInventorySnapshot *_Nullable)snapshot {
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    if (snapshot == nil) {
+        [lines addObject:@"controllers: never looked (no stream has recorded them)"];
+    } else {
+        [lines addObject:[NSString stringWithFormat:@"controllers looked: %lu session(s)%s",
+                          (unsigned long)snapshot.generations,
+                          snapshot.recordingNow ? ", recording now" : ""]];
+        if (snapshot.driverName.length > 0) {
+            [lines addObject:[NSString stringWithFormat:@"controller driver: %@",
+                              snapshot.driverName]];
+        } else {
+            [lines addObject:@"controller driver: none (not recorded for this session)"];
+        }
+        [lines addObject:@"driver captured at session start; type-map is a local candidate"];
+        [lines addObject:snapshot.advertisedControllerArrivals
+            ? @"controller arrivals sent to host: yes"
+            : @"controller arrivals sent to host: no (0.1 probe; M1 owns arrival)"];
+        [lines addObject:snapshot.advertisedControllerArrivals
+            ? @"advertised controller type/caps: not recorded"
+            : @"advertised controller type/caps: not advertised"];
+        [lines addObject:[NSString stringWithFormat:
+                          @"HID identity groups: %lu (VID/PID/family groups, not a physical controller count)",
+                          (unsigned long)snapshot.entries.count]];
+        if (snapshot.entries.count == 0) {
+            [lines addObject:@"controller HID nodes: none recorded"];
+        }
+        for (MLControllerEntry *entry in snapshot.entries) {
+            NSMutableString *row = [NSMutableString string];
+            [row appendFormat:@"  %@:%@ %@",
+             [NSString stringWithFormat:@"%04lx", (unsigned long)entry.vendorId],
+             [NSString stringWithFormat:@"%04lx", (unsigned long)entry.productId],
+             MLControllerFamilyName(entry.family)];
+            [row appendFormat:@" type-map=%d",
+                              MLControllerProtocolTypeForFamily(entry.family)];
+            if (entry.transport.length > 0) {
+                [row appendFormat:@" %@", entry.transport];
+            }
+            if (entry.hasBatteryPercent) {
+                [row appendFormat:@" battery=%ld%%", (long)entry.batteryPercent];
+            }
+            if (entry.nodeCount > 1) {
+                [row appendFormat:@" nodes=%lu", (unsigned long)entry.nodeCount];
+            }
+            [lines addObject:row];
+        }
+    }
+    return [DiagnosticsReportSection sectionWithTitle:@"controllers" lines:lines];
+}
 
 + (NSString *)logSectionTitle {
     return @"log";
