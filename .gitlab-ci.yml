@@ -7,23 +7,15 @@
 #   build    — compile the app
 #   test     — integration smoke test (bundle, signature, launch)
 #   package  — produce a DMG (tag / main only)
+#   mirror   — serialized GitHub mirror after all applicable gates
 #
-# Security scanning (SAST / Secret Detection / Dependency Scanning) is included
-# via GitLab Auto-DevOps templates. Sign/notarize stages are intentionally
-# omitted here (no Developer ID configured yet); add a `notarize` stage once
-# signing credentials are available as CI/CD Variables.
+# The Docker-based GitLab security templates are not enabled on shell runners.
+# Signing/notarization needs Developer ID credentials and remains a separate gate.
 
-# Dual-hosting: CI/CD job token (scoped) cannot cross projects for submodule
-# fetches, so rewrite the RESOLVED submodule URL to an authenticated one
-# using the group-scoped project token (GRP_CI_JOB_TOKEN, file variable). Note:
-# insteadOf must match the resolved absolute URL, not the relative .gitmodules path.
-# GIT_SUBMODULE_STRATEGY=none: the runner must not touch submodules at clone
-# time (no auth configured yet); macos jobs pull them via fetch_submodules.
+# GRP_CI_JOB_TOKEN is an env_var. Limit its HTTP header to the private
+# submodule URL and the lifetime of the recursive Git processes.
 .fetch_submodules: &fetch_submodules
-  - |
-    git config --local url."http://oauth2:${GRP_CI_JOB_TOKEN}@172.16.130.6/moonlight/moonlight-common-c.git".insteadOf "http://172.16.130.6/moonlight/moonlight-common-c.git"
-    git submodule sync --recursive
-    git submodule update --init --recursive
+  - bash scripts/ci/fetch-submodules.sh
 
 
 stages:
@@ -32,6 +24,7 @@ stages:
   - build
   - test
   - package
+  - mirror
 
 variables:
   LANG: en_US.UTF-8
@@ -53,20 +46,10 @@ variables:
   DEPS_VERSION: "3.6.0001"
 
 workflow:
-  rules:
+  rules: &pipeline_rules
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "web"'
-    - if: '$CI_COMMIT_TAG'
-
-# --- Security scanning (Auto-DevOps templates) -------------------------------
-include:
-  # Security scanning templates need a Docker image with /analyzer; the
-  # shell-executor runners (Linux VM + macOS) cannot run them. Re-enable
-  # with docker executor, or run Semgrep/TruffleHog locally in pre-push.
-  # - template: Security/SAST.gitlab-ci.yml
-  # - template: Security/Secret-Detection.gitlab-ci.yml
-  # - template: Security/Dependency-Scanning.gitlab-ci.yml
 
 # --- Lint --------------------------------------------------------------------
 # The macOS runners carry SwiftLint and clang-format. Fail loudly if they are
@@ -76,19 +59,16 @@ lint:toolchain:
   stage: lint
   tags: [macos]
   cache: {}
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+  timeout: 5 minutes
+  rules: *pipeline_rules
   script:
     - |
       set -euo pipefail
       swiftlint --version
       clang-format --version
 
-# The fast half of the repository audits. This mirrors the Python-only gates in
-# .github/workflows/build.yml without the mutation battery, which belongs to its
-# own job only because it measures in the tens of minutes.
+# Selected repository audits. The full GitHub aggregate and mutation battery
+# are not claimed as GitLab coverage.
 audit:python:
   stage: lint
   tags: [macos]
@@ -96,10 +76,8 @@ audit:python:
   timeout: 20 minutes
   before_script:
     - *fetch_submodules
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+  dependencies: []
+  rules: *pipeline_rules
   script:
     - |
       set -euo pipefail
@@ -108,6 +86,7 @@ audit:python:
       python3 -m venv "$venv_dir"
       . "$venv_dir/bin/activate"
       python -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
+      python scripts/ci/test_pipeline.py
       python scripts/project_identity.py --self-test
       python scripts/credential-scan-audit.py --self-test
       python scripts/credential-scan-audit.py
@@ -122,7 +101,7 @@ audit:python:
       python scripts/ownership-audit.py --red-team
       python scripts/workflow-audit.py --self-test
       python scripts/workflow-audit.py
-      for script in scripts/*.sh; do bash -n "$script"; done
+      for script in scripts/*.sh scripts/ci/*.sh; do bash -n "$script"; done
 
 # --- Dependencies ------------------------------------------------------------
 # Cache binary frameworks between pipelines. Keyed on DEPS_VERSION so a bump
@@ -134,6 +113,8 @@ download-deps:
 
   stage: deps
   tags: [macos]
+  timeout: 15 minutes
+  dependencies: []
   cache:
     key:
       files:
@@ -150,10 +131,7 @@ download-deps:
       - xcframeworks/
       - Packages/OpenSSL.xcframework/
     expire_in: 1 day
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+  rules: *pipeline_rules
 
 # --- Build -------------------------------------------------------------------
 build-app:
@@ -172,8 +150,9 @@ build-app:
     # those outrank every xcconfig. This job used to write the generated file into
     # the derivedData root, where nothing read it, so CI silently fell back to the
     # checked-in baseline and artifact versions drifted from the git count.
-    - set -o pipefail
-    - export BUILD_NUMBER_RESOLVED="$(sh Limelight/build-number.sh --print)"
+    - set -euo pipefail
+    - BUILD_NUMBER_RESOLVED="$(sh Limelight/build-number.sh --print)"
+    - export BUILD_NUMBER_RESOLVED
     - echo "resolved BUILD_NUMBER=$BUILD_NUMBER_RESOLVED"
     - xcodebuild
         -project "$XCODE_PROJECT"
@@ -184,7 +163,7 @@ build-app:
         CODE_SIGN_IDENTITY="-"
         CODE_SIGNING_REQUIRED=NO
         BUILD_NUMBER="$BUILD_NUMBER_RESOLVED"
-        build 2>&1 | tee build.log | xcpretty --report junit
+        clean build 2>&1 | tee build.log | xcpretty --report junit
   artifacts:
     when: always
     paths:
@@ -192,10 +171,7 @@ build-app:
       - build.log
       - build/reports/
     expire_in: 1 week
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+  rules: *pipeline_rules
 
 # --- Test --------------------------------------------------------------------
 test-app:
@@ -204,10 +180,12 @@ test-app:
 
   stage: test
   tags: [macos]
+  timeout: 10 minutes
   dependencies:
     - build-app
   script:
-    - zsh scripts/integration-test.sh
+    - set -euo pipefail
+    - bash scripts/integration-test.sh
         "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/MoonlightEnhanced.app"
         2>&1 | tee test-integration.log
   artifacts:
@@ -215,10 +193,7 @@ test-app:
     paths:
       - test-integration.log
     expire_in: 1 week
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+  rules: *pipeline_rules
 
 # Build-log and binary-level coverage, wired to the exact files that gave the
 # project its first "green pipeline with a source nobody compiled" failure.
@@ -240,10 +215,7 @@ audit:sources:
     - python3 scripts/compiled-source-audit.py "$app/Contents/MacOS/MoonlightEnhanced" --arch "$arch" --self-test
     - python3 scripts/compiled-source-audit.py "$app/Contents/MacOS/MoonlightEnhanced" --arch "$arch"
     - python3 scripts/diagnostics-report-tests.py
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+  rules: *pipeline_rules
 
 # --- Package -----------------------------------------------------------------
 # Produce a DMG only for tags (releases) and main branch pushes (nightly smoke).
@@ -253,6 +225,7 @@ package-dmg:
 
   stage: package
   tags: [macos]
+  timeout: 15 minutes
   dependencies:
     - build-app
   script:
@@ -267,34 +240,24 @@ package-dmg:
     expire_in: 30 days
   rules:
     - if: '$CI_COMMIT_TAG'
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
 # --- GitHub mirror sync (best practice: GitLab = source of truth) ------------
 # Runs on the untagged VM runner (linux has git + ssh, and the VM can reach
 # github.com). Pushes the full mirror via the repo deploy key (GH_DEPLOY_KEY,
-# file variable, write-enabled). Runs after the gates in earlier stages.
+# file variable, write-enabled). The stage barrier includes DMG packaging.
 publish-github:
-  stage: package
+  stage: mirror
+  resource_group: github-mirror
+  timeout: 10 minutes
+  interruptible: false
+  cache: {}
   dependencies: []
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
   script:
-    - umask 077
-    - mkdir -p ~/.ssh && cat "$GH_DEPLOY_KEY" > ~/.ssh/gh_deploy
-    - chmod 600 ~/.ssh/gh_deploy
-    - |
-      cat > ~/.ssh/config <<EOF
-      Host github.com
-        HostName github.com
-        IdentityFile ~/.ssh/gh_deploy
-        StrictHostKeyChecking accept-new
-      EOF
-    - git remote add github git@github.com:opsbsligm/moonlight-macos-enhanced.git 2>/dev/null || git remote set-url github git@github.com:opsbsligm/moonlight-macos-enhanced.git
-    # One-way mirror (GitLab = source of truth). Fetch every GitLab head/tag into a
-    # dedicated namespace, then force-push + prune to GitHub. Explicit refspecs avoid
-    # both the refs/remotes/origin/* push and the branch-deletion of a plain --mirror,
-    # and work even when the CI clone is single-branch/shallow.
-    - git fetch --prune origin "+refs/heads/*:refs/gh-mirror/*" "+refs/tags/*:refs/tags/*"
-    - git push github --force --prune "refs/gh-mirror/*:refs/heads/*"
-    - git push github --force "refs/tags/*:refs/tags/*"
+    - bash scripts/ci/publish-github.sh
 
 # --- Notarize (placeholder) --------------------------------------------------
 # Enable once a Developer ID Application certificate is available as CI/CD
