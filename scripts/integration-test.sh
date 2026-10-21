@@ -97,18 +97,39 @@ fi
 
 echo ""
 echo "5. Launch test (5 second smoke test)"
-open -n "$APP_PATH" 2>/dev/null
+LAUNCH_LOG="$(mktemp "${TMPDIR:-/tmp}/moonlight-launch.XXXXXX")"
+LAUNCH_PID=""
+cleanup_launch() {
+  if [[ -n "$LAUNCH_PID" ]]; then
+    kill "$LAUNCH_PID" 2>/dev/null || true
+    for attempt in 1 2 3 4 5; do
+      if ! kill -0 "$LAUNCH_PID" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    kill -KILL "$LAUNCH_PID" 2>/dev/null || true
+    wait "$LAUNCH_PID" 2>/dev/null || true
+  fi
+  rm -f "$LAUNCH_LOG"
+}
+trap cleanup_launch EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+"$APP_PATH/Contents/MacOS/$EXECUTABLE" > "$LAUNCH_LOG" 2>&1 &
+LAUNCH_PID=$!
 sleep 5
 
-if pgrep -f "${APP_NAME}.app/Contents/MacOS/${EXECUTABLE}" >/dev/null 2>&1; then
+if kill -0 "$LAUNCH_PID" 2>/dev/null; then
   echo "  PASS: App launched and running"
   PASS=$((PASS + 1))
-  pkill -f "${APP_NAME}.app/Contents/MacOS/${EXECUTABLE}" 2>/dev/null || true
-  sleep 1
 else
   echo "  FAIL: App did not stay running"
+  tail -20 "$LAUNCH_LOG"
   FAIL=$((FAIL + 1))
 fi
+cleanup_launch
+LAUNCH_PID=""
 
 # Check for crash logs
 CRASH_LOGS=$(find ~/Library/Logs/DiagnosticReports -name "Moonlight*" 2>/dev/null | wc -l)
