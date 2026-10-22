@@ -2529,6 +2529,7 @@ CI_ONLY = {
     "controller-arrival-tests.py": "clang_and_sdk",
     "controller-mouse-routing-tests.py": "clang_and_sdk",
     "controller-rumble-routing-tests.py": "clang_and_sdk",
+    "controller-led-routing-tests.py": "clang_and_sdk",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})
