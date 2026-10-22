@@ -1374,7 +1374,8 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
         return;
     }
     HIDDispatchInput(self, inputLease, ^{
-        if (entry.advertisedInputGeneration != inputLease.generation) return;
+        // A state packet may have succeeded even when arrival failed.
+        // Clearing the removed slot is idempotent and must not depend on arrival.
         LiSendMultiControllerEventCtx(inputCtx, playerIndex, mask, 0, 0, 0, 0, 0, 0, 0);
     });
 }
@@ -2944,8 +2945,7 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         HIDDeviceControllerEntry *entry = self.deviceControllerTable[key];
         [self resetControllerStateForEntry:entry];
         [self.deviceControllerTable removeObjectForKey:key];
-        // Check successful arrival on inputQueue, including an arrival
-        // whose main-thread diagnostic completion has not run yet.
+        // Clear even when arrival or its diagnostic completion did not succeed.
         [self sendControllerRemovalForEntry:entry];
     }
 }

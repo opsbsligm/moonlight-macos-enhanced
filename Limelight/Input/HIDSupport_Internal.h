@@ -49,7 +49,7 @@
 @property (nonatomic) int playerIndex;
 @property (nonatomic) BOOL changeArmed;
 // Main-thread diagnostic completion; local queue acceptance is not host receipt.
-// Send deduplication and removal use the input-queue generation below.
+// Send deduplication uses the input-queue generation below.
 @property (nonatomic) BOOL advertisedToHost;
 // Written only by inputQueue; deduplicates successful arrivals per connection.
 @property (nonatomic) uint64_t advertisedInputGeneration;
