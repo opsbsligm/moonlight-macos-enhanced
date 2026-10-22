@@ -7,6 +7,7 @@
 //
 #import "HIDSupport_Internal.h"
 #import "InputDiagnosticsLedger.h"
+#import "ControllerEventBaseline.h"
 #import "GamepadMenuGesture.h"
 #import "KeyboardMapResolver.h"
 #import "HIDKeyboardQuirkFilter.h"
@@ -1230,39 +1231,27 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
 
 
 - (void)sendControllerEvent {
-    if (self.shouldSendInputEvents) {
-        // Capture state
-        int playerIndex = self.controller.playerIndex;
-        int lastButtonFlags = self.controller.lastButtonFlags;
-        
-        // Guide Button Emulation (Start + Select)
-        // If both Start and Select are pressed, convert to Guide
-        if ((lastButtonFlags & (PLAY_FLAG | BACK_FLAG)) == (PLAY_FLAG | BACK_FLAG)) {
-            lastButtonFlags &= ~(PLAY_FLAG | BACK_FLAG);
-            lastButtonFlags |= SPECIAL_FLAG;
-        }
-        
-        unsigned char lastLeftTrigger = self.controller.lastLeftTrigger;
-        unsigned char lastRightTrigger = self.controller.lastRightTrigger;
-        short lastLeftStickX = self.controller.lastLeftStickX;
-        short lastLeftStickY = self.controller.lastLeftStickY;
-        short lastRightStickX = self.controller.lastRightStickX;
-        short lastRightStickY = self.controller.lastRightStickY;
-        
-        if (self.controller.isMouseMode) {
-            return;
-        }
-
-        HIDInputLease inputLease = HIDAcquireInputContext(self);
-
-        PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
-        if (!inputCtx) {
-            return;
-        }
-        HIDDispatchInput(self, inputLease, ^{
-            LiSendMultiControllerEventCtx(inputCtx, playerIndex, 1, lastButtonFlags, lastLeftTrigger, lastRightTrigger, lastLeftStickX, lastLeftStickY, lastRightStickX, lastRightStickY);
-        });
+    // The wire tuple has one owner, ControllerEventBaselineFromController: 0.2 is
+    // allowed to change how this is called per device, not what is sent. The
+    // baseline gate (scripts/controller-event-baseline.py) replays the exact
+    // tuple the old inline code sent and refuses any drift on this path.
+    ControllerWireEvent wireEvent;
+    if (!ControllerEventBaselineFromController(self.controller, self.shouldSendInputEvents, &wireEvent)) {
+        return;
     }
+
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+    if (!inputCtx) {
+        return;
+    }
+    HIDDispatchInput(self, inputLease, ^{
+        LiSendMultiControllerEventCtx(inputCtx, wireEvent.playerIndex, wireEvent.mask, wireEvent.buttons,
+                                      wireEvent.leftTrigger, wireEvent.rightTrigger,
+                                      wireEvent.leftStickX, wireEvent.leftStickY,
+                                      wireEvent.rightStickX, wireEvent.rightStickY);
+    });
 }
 
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event {
