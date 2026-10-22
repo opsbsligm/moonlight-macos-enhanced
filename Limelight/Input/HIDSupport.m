@@ -1160,14 +1160,17 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
         
         self.ticks = [[Ticks alloc] init];
         self.switchUsingBluetooth = YES;
+
+        // 0.2: one shared gesture/mouse-mode Controller. The pads' button and stick
+        // state now lives in the per-device table; this object keeps the long-press
+        // mouse-mode toggle and its notification, which is a global UI concern.
+        self.controller = [[Controller alloc] init];
         
         self.previousLowFreqMotor = 0xFF;
         self.previousHighFreqMotor = 0xFF;
 
         [self rumbleSync];
 
-        self.controller = [[Controller alloc] init];
-        
         for (GCMouse *mouse in GCMouse.mice) {
             [self registerMouseCallbacks:mouse];
         }
@@ -1230,13 +1233,18 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
 }
 
 
-- (void)sendControllerEvent {
+// Sends one entry's controller to the host as its own active controller:
+// playerIndex and the mask bit both come from the entry's player slot. With a
+// single pad that is exactly the tuple the old shared path sent (slot 0, mask 1),
+// which is what keeps the 0.2 wire baseline byte-for-byte intact.
+- (void)sendControllerEventForEntry:(HIDDeviceControllerEntry *)entry {
     // The wire tuple has one owner, ControllerEventBaselineFromController: 0.2 is
     // allowed to change how this is called per device, not what is sent. The
     // baseline gate (scripts/controller-event-baseline.py) replays the exact
     // tuple the old inline code sent and refuses any drift on this path.
+    entry.controller.playerIndex = entry.playerIndex;
     ControllerWireEvent wireEvent;
-    if (!ControllerEventBaselineFromController(self.controller, self.shouldSendInputEvents, &wireEvent)) {
+    if (!ControllerEventBaselineFromController(entry.controller, self.shouldSendInputEvents, &wireEvent)) {
         return;
     }
 
@@ -1246,12 +1254,29 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
     if (!inputCtx) {
         return;
     }
+    // The owner computed the single-pad tuple (mask 1); the per-device layer maps
+    // the player slot onto that bit, so the call still sends the owner's fields.
+    wireEvent.mask = 1 << entry.playerIndex;
     HIDDispatchInput(self, inputLease, ^{
         LiSendMultiControllerEventCtx(inputCtx, wireEvent.playerIndex, wireEvent.mask, wireEvent.buttons,
                                       wireEvent.leftTrigger, wireEvent.rightTrigger,
                                       wireEvent.leftStickX, wireEvent.leftStickY,
                                       wireEvent.rightStickX, wireEvent.rightStickY);
     });
+}
+
+- (void)sendControllerEvent {
+    // 0.2: fan out one event per connected pad, in slot order. With zero or one
+    // pad this is the old path exactly; with several, each pad keeps its own
+    // state instead of overwriting the shared one.
+    NSMutableArray<HIDDeviceControllerEntry *> *entries =
+        [[self deviceControllerTable] allValues].mutableCopy;
+    [entries sortUsingComparator:^NSComparisonResult(HIDDeviceControllerEntry *a, HIDDeviceControllerEntry *b) {
+        return [@(a.playerIndex) compare:@(b.playerIndex)];
+    }];
+    for (HIDDeviceControllerEntry *entry in entries) {
+        [self sendControllerEventForEntry:entry];
+    }
 }
 
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event {
@@ -2181,35 +2206,35 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
                                          detailKey:detailKey];
 }
 
-- (void)handleDpad:(NSInteger)intValue {
+- (void)handleDpad:(NSInteger)intValue entry:(HIDDeviceControllerEntry *)entry {
     switch (intValue) {
         case 0:
-            [self updateButtonFlags:UP_FLAG state:YES];
+            [self updateButtonFlags:UP_FLAG entry:entry state:YES];
             break;
         case 1:
-            [self updateButtonFlags:UP_FLAG | RIGHT_FLAG state:YES];
+            [self updateButtonFlags:UP_FLAG | RIGHT_FLAG entry:entry state:YES];
             break;
         case 2:
-            [self updateButtonFlags:RIGHT_FLAG state:YES];
+            [self updateButtonFlags:RIGHT_FLAG entry:entry state:YES];
             break;
         case 3:
-            [self updateButtonFlags:DOWN_FLAG | RIGHT_FLAG state:YES];
+            [self updateButtonFlags:DOWN_FLAG | RIGHT_FLAG entry:entry state:YES];
             break;
         case 4:
-            [self updateButtonFlags:DOWN_FLAG state:YES];
+            [self updateButtonFlags:DOWN_FLAG entry:entry state:YES];
             break;
         case 5:
-            [self updateButtonFlags:DOWN_FLAG | LEFT_FLAG state:YES];
+            [self updateButtonFlags:DOWN_FLAG | LEFT_FLAG entry:entry state:YES];
             break;
         case 6:
-            [self updateButtonFlags:LEFT_FLAG state:YES];
+            [self updateButtonFlags:LEFT_FLAG entry:entry state:YES];
             break;
         case 7:
-            [self updateButtonFlags:UP_FLAG | LEFT_FLAG state:YES];
+            [self updateButtonFlags:UP_FLAG | LEFT_FLAG entry:entry state:YES];
             break;
 
         case 8:
-            [self updateButtonFlags:UP_FLAG | RIGHT_FLAG | DOWN_FLAG | LEFT_FLAG state:NO];
+            [self updateButtonFlags:UP_FLAG | RIGHT_FLAG | DOWN_FLAG | LEFT_FLAG entry:entry state:NO];
             break;
 
         default:
@@ -2228,6 +2253,12 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
     
     IOHIDDeviceRef device = IOHIDElementGetDevice(elem);
     if (device == NULL) return;
+    // 0.2: every pad owns its own state now; this pad's controller is what the
+    // layout below writes into. The table is read-only from the HID callbacks'
+    // point of view, so no allocation races.
+    HIDDeviceControllerEntry *entry = [self entryForDevice:device];
+    if (entry == nil) return;
+    Controller *devController = entry.controller;
 
     // KingKong claims the Microsoft vendor id, so the vendor-specific check
     // has to win over the generic Xbox layout check regardless of how either
@@ -2238,47 +2269,47 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
             case kHIDPage_GenericDesktop:
                 switch (usage) {
                     case kHIDUsage_GD_X:
-                        self.controller.lastLeftStickX = MIN((intValue - 32768), 32767);
+                        devController.lastLeftStickX = MIN((intValue - 32768), 32767);
                         break;
                     case kHIDUsage_GD_Y:
-                        self.controller.lastLeftStickY = MIN(-(intValue - 32768), 32767);
+                        devController.lastLeftStickY = MIN(-(intValue - 32768), 32767);
                         break;
                     case kHIDUsage_GD_Z:
-                        self.controller.lastRightStickX = MIN((intValue - 32768), 32767);
+                        devController.lastRightStickX = MIN((intValue - 32768), 32767);
                         break;
                     case kHIDUsage_GD_Rz:
-                        self.controller.lastRightStickY = MIN(-(intValue - 32768), 32767);
+                        devController.lastRightStickY = MIN(-(intValue - 32768), 32767);
                         break;
                         
                     case kHIDUsage_GD_Hatswitch:
                         switch (intValue) {
                             case 1:
-                                [self updateButtonFlags:UP_FLAG state:YES];
+                                [self updateButtonFlags:UP_FLAG entry:entry state:YES];
                                 break;
                             case 2:
-                                [self updateButtonFlags:UP_FLAG | RIGHT_FLAG state:YES];
+                                [self updateButtonFlags:UP_FLAG | RIGHT_FLAG entry:entry state:YES];
                                 break;
                             case 3:
-                                [self updateButtonFlags:RIGHT_FLAG state:YES];
+                                [self updateButtonFlags:RIGHT_FLAG entry:entry state:YES];
                                 break;
                             case 4:
-                                [self updateButtonFlags:DOWN_FLAG | RIGHT_FLAG state:YES];
+                                [self updateButtonFlags:DOWN_FLAG | RIGHT_FLAG entry:entry state:YES];
                                 break;
                             case 5:
-                                [self updateButtonFlags:DOWN_FLAG state:YES];
+                                [self updateButtonFlags:DOWN_FLAG entry:entry state:YES];
                                 break;
                             case 6:
-                                [self updateButtonFlags:DOWN_FLAG | LEFT_FLAG state:YES];
+                                [self updateButtonFlags:DOWN_FLAG | LEFT_FLAG entry:entry state:YES];
                                 break;
                             case 7:
-                                [self updateButtonFlags:LEFT_FLAG state:YES];
+                                [self updateButtonFlags:LEFT_FLAG entry:entry state:YES];
                                 break;
                             case 8:
-                                [self updateButtonFlags:UP_FLAG | LEFT_FLAG state:YES];
+                                [self updateButtonFlags:UP_FLAG | LEFT_FLAG entry:entry state:YES];
                                 break;
 
                             case 0:
-                                [self updateButtonFlags:UP_FLAG | RIGHT_FLAG | DOWN_FLAG | LEFT_FLAG state:NO];
+                                [self updateButtonFlags:UP_FLAG | RIGHT_FLAG | DOWN_FLAG | LEFT_FLAG entry:entry state:NO];
                                 break;
 
                             default:
@@ -2292,10 +2323,10 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
             case kHIDPage_Simulation:
                 switch (usage) {
                     case kHIDUsage_Sim_Brake:
-                        self.controller.lastLeftTrigger = intValue;
+                        devController.lastLeftTrigger = intValue;
                         break;
                     case kHIDUsage_Sim_Accelerator:
-                        self.controller.lastRightTrigger = intValue;
+                        devController.lastRightTrigger = intValue;
                         break;
 
                     default:
@@ -2306,31 +2337,31 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
             case kHIDPage_Button:
                 switch (usage) {
                     case 1:
-                        [self updateButtonFlags:A_FLAG state:intValue];
+                        [self updateButtonFlags:A_FLAG entry:entry state:intValue];
                         break;
                     case 2:
-                        [self updateButtonFlags:B_FLAG state:intValue];
+                        [self updateButtonFlags:B_FLAG entry:entry state:intValue];
                         break;
                     case 4:
-                        [self updateButtonFlags:X_FLAG state:intValue];
+                        [self updateButtonFlags:X_FLAG entry:entry state:intValue];
                         break;
                     case 5:
-                        [self updateButtonFlags:Y_FLAG state:intValue];
+                        [self updateButtonFlags:Y_FLAG entry:entry state:intValue];
                         break;
                     case 7:
-                        [self updateButtonFlags:LB_FLAG state:intValue];
+                        [self updateButtonFlags:LB_FLAG entry:entry state:intValue];
                         break;
                     case 8:
-                        [self updateButtonFlags:RB_FLAG state:intValue];
+                        [self updateButtonFlags:RB_FLAG entry:entry state:intValue];
                         break;
                     case 11:
-                        [self updateButtonFlags:BACK_FLAG state:intValue];
+                        [self updateButtonFlags:BACK_FLAG entry:entry state:intValue];
                         break;
                     case 12:
-                        [self updateButtonFlags:PLAY_FLAG state:intValue];
+                        [self updateButtonFlags:PLAY_FLAG entry:entry state:intValue];
                         break;
                     case 13:
-                        [self updateButtonFlags:SPECIAL_FLAG state:intValue];
+                        [self updateButtonFlags:SPECIAL_FLAG entry:entry state:intValue];
                         break;
 
                         
@@ -2342,16 +2373,16 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
             case kHIDPage_Consumer:
                 switch (usage) {
                     case kHIDUsage_Csmr_ACBack:
-                        [self updateButtonFlags:BACK_FLAG state:intValue];
+                        [self updateButtonFlags:BACK_FLAG entry:entry state:intValue];
                         break;
                     case kHIDUsage_Csmr_ACHome:
-                        [self updateButtonFlags:SPECIAL_FLAG state:intValue];
+                        [self updateButtonFlags:SPECIAL_FLAG entry:entry state:intValue];
                         break;
                     case 14:
-                        [self updateButtonFlags:LS_CLK_FLAG state:intValue];
+                        [self updateButtonFlags:LS_CLK_FLAG entry:entry state:intValue];
                         break;
                     case 15:
-                        [self updateButtonFlags:RS_CLK_FLAG state:intValue];
+                        [self updateButtonFlags:RS_CLK_FLAG entry:entry state:intValue];
                         break;
 
                     default:
@@ -2367,53 +2398,53 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
             case kHIDPage_GenericDesktop:
                 switch (usage) {
                     case kHIDUsage_GD_X:
-                        self.controller.lastLeftStickX = MAX(MIN((intValue - 32768), 32767), -32768);
+                        devController.lastLeftStickX = MAX(MIN((intValue - 32768), 32767), -32768);
                         break;
                     case kHIDUsage_GD_Y:
-                        self.controller.lastLeftStickY = MAX(MIN(-(intValue - 32768), 32767), -32768);
+                        devController.lastLeftStickY = MAX(MIN(-(intValue - 32768), 32767), -32768);
                         break;
                     case kHIDUsage_GD_Rx:
-                        self.controller.lastRightStickX = MAX(MIN((intValue - 32768), 32767), -32768);
+                        devController.lastRightStickX = MAX(MIN((intValue - 32768), 32767), -32768);
                         break;
                     case kHIDUsage_GD_Ry:
-                        self.controller.lastRightStickY = MAX(MIN(-(intValue - 32768), 32767), -32768);
+                        devController.lastRightStickY = MAX(MIN(-(intValue - 32768), 32767), -32768);
                         break;
                     case kHIDUsage_GD_Z:
-                        self.controller.lastLeftTrigger = (unsigned char)((int)intValue / 4);
+                        devController.lastLeftTrigger = (unsigned char)((int)intValue / 4);
                         break;
                     case kHIDUsage_GD_Rz:
-                        self.controller.lastRightTrigger = (unsigned char)((int)intValue / 4);
+                        devController.lastRightTrigger = (unsigned char)((int)intValue / 4);
                         break;
                         
                     case kHIDUsage_GD_Hatswitch:
                         switch (intValue) {
                             case 1:
-                                [self updateButtonFlags:UP_FLAG state:YES];
+                                [self updateButtonFlags:UP_FLAG entry:entry state:YES];
                                 break;
                             case 2:
-                                [self updateButtonFlags:UP_FLAG | RIGHT_FLAG state:YES];
+                                [self updateButtonFlags:UP_FLAG | RIGHT_FLAG entry:entry state:YES];
                                 break;
                             case 3:
-                                [self updateButtonFlags:RIGHT_FLAG state:YES];
+                                [self updateButtonFlags:RIGHT_FLAG entry:entry state:YES];
                                 break;
                             case 4:
-                                [self updateButtonFlags:DOWN_FLAG | RIGHT_FLAG state:YES];
+                                [self updateButtonFlags:DOWN_FLAG | RIGHT_FLAG entry:entry state:YES];
                                 break;
                             case 5:
-                                [self updateButtonFlags:DOWN_FLAG state:YES];
+                                [self updateButtonFlags:DOWN_FLAG entry:entry state:YES];
                                 break;
                             case 6:
-                                [self updateButtonFlags:DOWN_FLAG | LEFT_FLAG state:YES];
+                                [self updateButtonFlags:DOWN_FLAG | LEFT_FLAG entry:entry state:YES];
                                 break;
                             case 7:
-                                [self updateButtonFlags:LEFT_FLAG state:YES];
+                                [self updateButtonFlags:LEFT_FLAG entry:entry state:YES];
                                 break;
                             case 8:
-                                [self updateButtonFlags:UP_FLAG | LEFT_FLAG state:YES];
+                                [self updateButtonFlags:UP_FLAG | LEFT_FLAG entry:entry state:YES];
                                 break;
 
                             case 0:
-                                [self updateButtonFlags:UP_FLAG | RIGHT_FLAG | DOWN_FLAG | LEFT_FLAG state:NO];
+                                [self updateButtonFlags:UP_FLAG | RIGHT_FLAG | DOWN_FLAG | LEFT_FLAG entry:entry state:NO];
                                 break;
 
                             default:
@@ -2428,37 +2459,37 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
             case kHIDPage_Button:
                 switch (usage) {
                     case 1:
-                        [self updateButtonFlags:A_FLAG state:intValue];
+                        [self updateButtonFlags:A_FLAG entry:entry state:intValue];
                         break;
                     case 2:
-                        [self updateButtonFlags:B_FLAG state:intValue];
+                        [self updateButtonFlags:B_FLAG entry:entry state:intValue];
                         break;
                     case 3:
-                        [self updateButtonFlags:X_FLAG state:intValue];
+                        [self updateButtonFlags:X_FLAG entry:entry state:intValue];
                         break;
                     case 4:
-                        [self updateButtonFlags:Y_FLAG state:intValue];
+                        [self updateButtonFlags:Y_FLAG entry:entry state:intValue];
                         break;
                     case 5:
-                        [self updateButtonFlags:LB_FLAG state:intValue];
+                        [self updateButtonFlags:LB_FLAG entry:entry state:intValue];
                         break;
                     case 6:
-                        [self updateButtonFlags:RB_FLAG state:intValue];
+                        [self updateButtonFlags:RB_FLAG entry:entry state:intValue];
                         break;
                     case 7:
-                        [self updateButtonFlags:BACK_FLAG state:intValue];
+                        [self updateButtonFlags:BACK_FLAG entry:entry state:intValue];
                         break;
                     case 8:
-                        [self updateButtonFlags:PLAY_FLAG state:intValue];
+                        [self updateButtonFlags:PLAY_FLAG entry:entry state:intValue];
                         break;
                     case 9:
-                        [self updateButtonFlags:LS_CLK_FLAG state:intValue];
+                        [self updateButtonFlags:LS_CLK_FLAG entry:entry state:intValue];
                         break;
                     case 10:
-                        [self updateButtonFlags:RS_CLK_FLAG state:intValue];
+                        [self updateButtonFlags:RS_CLK_FLAG entry:entry state:intValue];
                         break;
                     case 133:
-                        [self updateButtonFlags:SPECIAL_FLAG state:intValue];
+                        [self updateButtonFlags:SPECIAL_FLAG entry:entry state:intValue];
                         break;
 
                         
@@ -2493,6 +2524,11 @@ void myHIDReportCallback (
     if (!isPlayStation(device) && !isNintendo(device)) {
         return;
     };
+    // 0.2: the state packets below and the change detector belong to this pad,
+    // not to one shared object.
+    HIDDeviceControllerEntry *entry = [self entryForDevice:device];
+    if (entry == nil) return;
+    Controller *devController = entry.controller;
     
     if (isPS4(device)) {
         PS4StatePacket_t snapshot;
@@ -2524,46 +2560,46 @@ void myHIDReportCallback (
                                   offsetof(PS4StatePacket_t, ucTriggerRight) + 1,
                                   report, reportLength, offset)) return;
         UInt8 abxy = state->rgucButtonsHatAndCounter[0] >> 4;
-        [self updateButtonFlags:X_FLAG state:(abxy & 0x01) != 0];
-        [self updateButtonFlags:A_FLAG state:(abxy & 0x02) != 0];
-        [self updateButtonFlags:B_FLAG state:(abxy & 0x04) != 0];
-        [self updateButtonFlags:Y_FLAG state:(abxy & 0x08) != 0];
+        [self updateButtonFlags:X_FLAG entry:entry state:(abxy & 0x01) != 0];
+        [self updateButtonFlags:A_FLAG entry:entry state:(abxy & 0x02) != 0];
+        [self updateButtonFlags:B_FLAG entry:entry state:(abxy & 0x04) != 0];
+        [self updateButtonFlags:Y_FLAG entry:entry state:(abxy & 0x08) != 0];
         
-        [self handleDpad:state->rgucButtonsHatAndCounter[0] & 0x0F];
+        [self handleDpad:state->rgucButtonsHatAndCounter[0] & 0x0F entry:entry];
 
         UInt8 otherButtons = state->rgucButtonsHatAndCounter[1];
-        [self updateButtonFlags:LB_FLAG state:(otherButtons & 0x01) != 0];
-        [self updateButtonFlags:RB_FLAG state:(otherButtons & 0x02) != 0];
-        [self updateButtonFlags:BACK_FLAG state:(otherButtons & 0x10) != 0];
-        [self updateButtonFlags:PLAY_FLAG state:(otherButtons & 0x20) != 0];
-        [self updateButtonFlags:LS_CLK_FLAG state:(otherButtons & 0x40) != 0];
-        [self updateButtonFlags:RS_CLK_FLAG state:(otherButtons & 0x80) != 0];
+        [self updateButtonFlags:LB_FLAG entry:entry state:(otherButtons & 0x01) != 0];
+        [self updateButtonFlags:RB_FLAG entry:entry state:(otherButtons & 0x02) != 0];
+        [self updateButtonFlags:BACK_FLAG entry:entry state:(otherButtons & 0x10) != 0];
+        [self updateButtonFlags:PLAY_FLAG entry:entry state:(otherButtons & 0x20) != 0];
+        [self updateButtonFlags:LS_CLK_FLAG entry:entry state:(otherButtons & 0x40) != 0];
+        [self updateButtonFlags:RS_CLK_FLAG entry:entry state:(otherButtons & 0x80) != 0];
 
-        [self updateButtonFlags:SPECIAL_FLAG state:(state->rgucButtonsHatAndCounter[2] & 0x01) != 0];
+        [self updateButtonFlags:SPECIAL_FLAG entry:entry state:(state->rgucButtonsHatAndCounter[2] & 0x01) != 0];
         
-        self.controller.lastLeftTrigger = state->ucTriggerLeft;
-        self.controller.lastRightTrigger = state->ucTriggerRight;
+        devController.lastLeftTrigger = state->ucTriggerLeft;
+        devController.lastRightTrigger = state->ucTriggerRight;
 
-        self.controller.lastLeftStickX = (state->ucLeftJoystickX - 128) * 255 + 1;
-        self.controller.lastLeftStickY = (state->ucLeftJoystickY - 128) * -255;
-        self.controller.lastRightStickX = (state->ucRightJoystickX - 128) * 255 + 1;
-        self.controller.lastRightStickY = (state->ucRightJoystickY - 128) * -255;
+        devController.lastLeftStickX = (state->ucLeftJoystickX - 128) * 255 + 1;
+        devController.lastLeftStickY = (state->ucLeftJoystickY - 128) * -255;
+        devController.lastRightStickX = (state->ucRightJoystickX - 128) * 255 + 1;
+        devController.lastRightStickY = (state->ucRightJoystickY - 128) * -255;
         
         if (self.controllerDriver == 0) {
 
-            if (self.lastPS4State.rgucButtonsHatAndCounter[0] != state->rgucButtonsHatAndCounter[0] ||
-                self.lastPS4State.rgucButtonsHatAndCounter[1] != state->rgucButtonsHatAndCounter[1] ||
-                self.lastPS4State.rgucButtonsHatAndCounter[2] != state->rgucButtonsHatAndCounter[2] ||
-                self.lastPS4State.ucTriggerLeft != state->ucTriggerLeft ||
-                self.lastPS4State.ucTriggerRight != state->ucTriggerRight ||
-                self.lastPS4State.ucLeftJoystickX != state->ucLeftJoystickX ||
-                self.lastPS4State.ucLeftJoystickY != state->ucLeftJoystickY ||
-                self.lastPS4State.ucRightJoystickX != state->ucRightJoystickX ||
-                self.lastPS4State.ucRightJoystickY != state->ucRightJoystickY ||
+            if (entry.lastPS4State.rgucButtonsHatAndCounter[0] != state->rgucButtonsHatAndCounter[0] ||
+                entry.lastPS4State.rgucButtonsHatAndCounter[1] != state->rgucButtonsHatAndCounter[1] ||
+                entry.lastPS4State.rgucButtonsHatAndCounter[2] != state->rgucButtonsHatAndCounter[2] ||
+                entry.lastPS4State.ucTriggerLeft != state->ucTriggerLeft ||
+                entry.lastPS4State.ucTriggerRight != state->ucTriggerRight ||
+                entry.lastPS4State.ucLeftJoystickX != state->ucLeftJoystickX ||
+                entry.lastPS4State.ucLeftJoystickY != state->ucLeftJoystickY ||
+                entry.lastPS4State.ucRightJoystickX != state->ucRightJoystickX ||
+                entry.lastPS4State.ucRightJoystickY != state->ucRightJoystickY ||
                 0)
             {
-                [self sendControllerEvent];
-                self.lastPS4State = *state;
+                [self sendControllerEventForEntry:entry];
+                entry.lastPS4State = *state;
             }
         }
     } else if (isPS5(device)) {
@@ -2587,46 +2623,46 @@ void myHIDReportCallback (
                                   offsetof(PS5StatePacket_t, rgucButtonsAndHat) + 3,
                                   report, reportLength, offset)) return;
         UInt8 abxy = state->rgucButtonsAndHat[0] >> 4;
-        [self updateButtonFlags:X_FLAG state:(abxy & 0x01) != 0];
-        [self updateButtonFlags:A_FLAG state:(abxy & 0x02) != 0];
-        [self updateButtonFlags:B_FLAG state:(abxy & 0x04) != 0];
-        [self updateButtonFlags:Y_FLAG state:(abxy & 0x08) != 0];
+        [self updateButtonFlags:X_FLAG entry:entry state:(abxy & 0x01) != 0];
+        [self updateButtonFlags:A_FLAG entry:entry state:(abxy & 0x02) != 0];
+        [self updateButtonFlags:B_FLAG entry:entry state:(abxy & 0x04) != 0];
+        [self updateButtonFlags:Y_FLAG entry:entry state:(abxy & 0x08) != 0];
         
-        [self handleDpad:state->rgucButtonsAndHat[0] & 0x0F];
+        [self handleDpad:state->rgucButtonsAndHat[0] & 0x0F entry:entry];
 
         UInt8 otherButtons = state->rgucButtonsAndHat[1];
-        [self updateButtonFlags:LB_FLAG state:(otherButtons & 0x01) != 0];
-        [self updateButtonFlags:RB_FLAG state:(otherButtons & 0x02) != 0];
-        [self updateButtonFlags:BACK_FLAG state:(otherButtons & 0x10) != 0];
-        [self updateButtonFlags:PLAY_FLAG state:(otherButtons & 0x20) != 0];
-        [self updateButtonFlags:LS_CLK_FLAG state:(otherButtons & 0x40) != 0];
-        [self updateButtonFlags:RS_CLK_FLAG state:(otherButtons & 0x80) != 0];
+        [self updateButtonFlags:LB_FLAG entry:entry state:(otherButtons & 0x01) != 0];
+        [self updateButtonFlags:RB_FLAG entry:entry state:(otherButtons & 0x02) != 0];
+        [self updateButtonFlags:BACK_FLAG entry:entry state:(otherButtons & 0x10) != 0];
+        [self updateButtonFlags:PLAY_FLAG entry:entry state:(otherButtons & 0x20) != 0];
+        [self updateButtonFlags:LS_CLK_FLAG entry:entry state:(otherButtons & 0x40) != 0];
+        [self updateButtonFlags:RS_CLK_FLAG entry:entry state:(otherButtons & 0x80) != 0];
 
-        [self updateButtonFlags:SPECIAL_FLAG state:(state->rgucButtonsAndHat[2] & 0x01) != 0];
+        [self updateButtonFlags:SPECIAL_FLAG entry:entry state:(state->rgucButtonsAndHat[2] & 0x01) != 0];
         
-        self.controller.lastLeftTrigger = state->ucTriggerLeft;
-        self.controller.lastRightTrigger = state->ucTriggerRight;
+        devController.lastLeftTrigger = state->ucTriggerLeft;
+        devController.lastRightTrigger = state->ucTriggerRight;
 
-        self.controller.lastLeftStickX = (state->ucLeftJoystickX - 128) * 255 + 1;
-        self.controller.lastLeftStickY = (state->ucLeftJoystickY - 128) * -255;
-        self.controller.lastRightStickX = (state->ucRightJoystickX - 128) * 255 + 1;
-        self.controller.lastRightStickY = (state->ucRightJoystickY - 128) * -255;
+        devController.lastLeftStickX = (state->ucLeftJoystickX - 128) * 255 + 1;
+        devController.lastLeftStickY = (state->ucLeftJoystickY - 128) * -255;
+        devController.lastRightStickX = (state->ucRightJoystickX - 128) * 255 + 1;
+        devController.lastRightStickY = (state->ucRightJoystickY - 128) * -255;
         
         if (self.controllerDriver == 0) {
 
-            if (self.lastPS5State.rgucButtonsAndHat[0] != state->rgucButtonsAndHat[0] ||
-                self.lastPS5State.rgucButtonsAndHat[1] != state->rgucButtonsAndHat[1] ||
-                self.lastPS5State.rgucButtonsAndHat[2] != state->rgucButtonsAndHat[2] ||
-                self.lastPS5State.ucTriggerLeft != state->ucTriggerLeft ||
-                self.lastPS5State.ucTriggerRight != state->ucTriggerRight ||
-                self.lastPS5State.ucLeftJoystickX != state->ucLeftJoystickX ||
-                self.lastPS5State.ucLeftJoystickY != state->ucLeftJoystickY ||
-                self.lastPS5State.ucRightJoystickX != state->ucRightJoystickX ||
-                self.lastPS5State.ucRightJoystickY != state->ucRightJoystickY ||
+            if (entry.lastPS5State.rgucButtonsAndHat[0] != state->rgucButtonsAndHat[0] ||
+                entry.lastPS5State.rgucButtonsAndHat[1] != state->rgucButtonsAndHat[1] ||
+                entry.lastPS5State.rgucButtonsAndHat[2] != state->rgucButtonsAndHat[2] ||
+                entry.lastPS5State.ucTriggerLeft != state->ucTriggerLeft ||
+                entry.lastPS5State.ucTriggerRight != state->ucTriggerRight ||
+                entry.lastPS5State.ucLeftJoystickX != state->ucLeftJoystickX ||
+                entry.lastPS5State.ucLeftJoystickY != state->ucLeftJoystickY ||
+                entry.lastPS5State.ucRightJoystickX != state->ucRightJoystickX ||
+                entry.lastPS5State.ucRightJoystickY != state->ucRightJoystickY ||
                 0)
             {
-                [self sendControllerEvent];
-                self.lastPS5State = *state;
+                [self sendControllerEventForEntry:entry];
+                entry.lastPS5State = *state;
             }
         }
     } else if (isNintendo(device)) {
@@ -2658,49 +2694,49 @@ void myHIDReportCallback (
                 SInt16 axis;
                 
                 UInt8 buttons = packet->rgucButtons[0];
-                [self updateButtonFlags:Y_FLAG state:(buttons & 0x08) != 0];
-                [self updateButtonFlags:B_FLAG state:(buttons & 0x02) != 0];
-                [self updateButtonFlags:A_FLAG state:(buttons & 0x01) != 0];
-                [self updateButtonFlags:X_FLAG state:(buttons & 0x04) != 0];
-                [self updateButtonFlags:LB_FLAG state:(buttons & 0x10) != 0];
-                [self updateButtonFlags:RB_FLAG state:(buttons & 0x20) != 0];
+                [self updateButtonFlags:Y_FLAG entry:entry state:(buttons & 0x08) != 0];
+                [self updateButtonFlags:B_FLAG entry:entry state:(buttons & 0x02) != 0];
+                [self updateButtonFlags:A_FLAG entry:entry state:(buttons & 0x01) != 0];
+                [self updateButtonFlags:X_FLAG entry:entry state:(buttons & 0x04) != 0];
+                [self updateButtonFlags:LB_FLAG entry:entry state:(buttons & 0x10) != 0];
+                [self updateButtonFlags:RB_FLAG entry:entry state:(buttons & 0x20) != 0];
                 axis = (buttons & 0x40) ? 32767 : -32768;
-                self.controller.lastLeftTrigger = axis;
+                devController.lastLeftTrigger = axis;
                 axis = (buttons & 0x80) ? 32767 : -32768;
-                self.controller.lastRightTrigger = axis;
+                devController.lastRightTrigger = axis;
                 
                 UInt8 otherButtons = packet->rgucButtons[1];
-                [self updateButtonFlags:BACK_FLAG state:(otherButtons & 0x01) != 0];
-                [self updateButtonFlags:PLAY_FLAG state:(otherButtons & 0x02) != 0];
-                [self updateButtonFlags:LS_CLK_FLAG state:(otherButtons & 0x04) != 0];
-                [self updateButtonFlags:RS_CLK_FLAG state:(otherButtons & 0x08) != 0];
+                [self updateButtonFlags:BACK_FLAG entry:entry state:(otherButtons & 0x01) != 0];
+                [self updateButtonFlags:PLAY_FLAG entry:entry state:(otherButtons & 0x02) != 0];
+                [self updateButtonFlags:LS_CLK_FLAG entry:entry state:(otherButtons & 0x04) != 0];
+                [self updateButtonFlags:RS_CLK_FLAG entry:entry state:(otherButtons & 0x08) != 0];
                 
-                [self updateButtonFlags:SPECIAL_FLAG state:(otherButtons & 0x10) != 0];
+                [self updateButtonFlags:SPECIAL_FLAG entry:entry state:(otherButtons & 0x10) != 0];
                 
-                [self handleDpad:packet->ucStickHat];
+                [self handleDpad:packet->ucStickHat entry:entry];
 
                 axis = (short)(packet->sJoystickLeft[0] - INT_MAX);
-                self.controller.lastLeftStickX = axis;
+                devController.lastLeftStickX = axis;
                 axis = (short)(packet->sJoystickLeft[1] - INT_MAX);
-                self.controller.lastLeftStickY = axis;
+                devController.lastLeftStickY = axis;
                 axis = (short)(packet->sJoystickRight[0] - INT_MAX);
-                self.controller.lastRightStickX = axis;
+                devController.lastRightStickX = axis;
                 axis = (short)(packet->sJoystickRight[1] - INT_MAX);
-                self.controller.lastRightStickY = axis;
+                devController.lastRightStickY = axis;
                 
                 if (self.controllerDriver == 0) {
                     
-                    if (self.lastSimpleSwitchState.rgucButtons[0] != packet->rgucButtons[0] ||
-                        self.lastSimpleSwitchState.rgucButtons[1] != packet->rgucButtons[1] ||
-                        self.lastSimpleSwitchState.ucStickHat != packet->ucStickHat ||
-                        self.lastSimpleSwitchState.sJoystickLeft[0] != packet->sJoystickLeft[0] ||
-                        self.lastSimpleSwitchState.sJoystickLeft[1] != packet->sJoystickLeft[1] ||
-                        self.lastSimpleSwitchState.sJoystickRight[0] != packet->sJoystickRight[0] ||
-                        self.lastSimpleSwitchState.sJoystickRight[1] != packet->sJoystickRight[1] ||
+                    if (entry.lastSimpleSwitchState.rgucButtons[0] != packet->rgucButtons[0] ||
+                        entry.lastSimpleSwitchState.rgucButtons[1] != packet->rgucButtons[1] ||
+                        entry.lastSimpleSwitchState.ucStickHat != packet->ucStickHat ||
+                        entry.lastSimpleSwitchState.sJoystickLeft[0] != packet->sJoystickLeft[0] ||
+                        entry.lastSimpleSwitchState.sJoystickLeft[1] != packet->sJoystickLeft[1] ||
+                        entry.lastSimpleSwitchState.sJoystickRight[0] != packet->sJoystickRight[0] ||
+                        entry.lastSimpleSwitchState.sJoystickRight[1] != packet->sJoystickRight[1] ||
                         0)
                     {
-                        [self sendControllerEvent];
-                        self.lastSimpleSwitchState = *packet;
+                        [self sendControllerEventForEntry:entry];
+                        entry.lastSimpleSwitchState = *packet;
                     }
                 }
             } else if (report[0] == k_eSwitchInputReportIDs_FullControllerState) {
@@ -2712,53 +2748,53 @@ void myHIDReportCallback (
                 SInt16 axis;
                 
                 UInt8 buttons = packet->controllerState.rgucButtons[0];
-                [self updateButtonFlags:Y_FLAG state:(buttons & 0x02) != 0];
-                [self updateButtonFlags:B_FLAG state:(buttons & 0x08) != 0];
-                [self updateButtonFlags:A_FLAG state:(buttons & 0x04) != 0];
-                [self updateButtonFlags:X_FLAG state:(buttons & 0x01) != 0];
-                [self updateButtonFlags:RB_FLAG state:(buttons & 0x40) != 0];
+                [self updateButtonFlags:Y_FLAG entry:entry state:(buttons & 0x02) != 0];
+                [self updateButtonFlags:B_FLAG entry:entry state:(buttons & 0x08) != 0];
+                [self updateButtonFlags:A_FLAG entry:entry state:(buttons & 0x04) != 0];
+                [self updateButtonFlags:X_FLAG entry:entry state:(buttons & 0x01) != 0];
+                [self updateButtonFlags:RB_FLAG entry:entry state:(buttons & 0x40) != 0];
                 axis = (buttons & 0x80) ? 32767 : -32768;
-                self.controller.lastRightTrigger = axis;
+                devController.lastRightTrigger = axis;
                 
                 UInt8 otherButtons = packet->controllerState.rgucButtons[1];
-                [self updateButtonFlags:BACK_FLAG state:(otherButtons & 0x01) != 0];
-                [self updateButtonFlags:PLAY_FLAG state:(otherButtons & 0x02) != 0];
-                [self updateButtonFlags:LS_CLK_FLAG state:(otherButtons & 0x08) != 0];
-                [self updateButtonFlags:RS_CLK_FLAG state:(otherButtons & 0x04) != 0];
+                [self updateButtonFlags:BACK_FLAG entry:entry state:(otherButtons & 0x01) != 0];
+                [self updateButtonFlags:PLAY_FLAG entry:entry state:(otherButtons & 0x02) != 0];
+                [self updateButtonFlags:LS_CLK_FLAG entry:entry state:(otherButtons & 0x08) != 0];
+                [self updateButtonFlags:RS_CLK_FLAG entry:entry state:(otherButtons & 0x04) != 0];
                 
-                [self updateButtonFlags:SPECIAL_FLAG state:(otherButtons & 0x10) != 0];
+                [self updateButtonFlags:SPECIAL_FLAG entry:entry state:(otherButtons & 0x10) != 0];
                 
                 UInt8 otherOtherButtons = packet->controllerState.rgucButtons[2];
-                [self updateButtonFlags:DOWN_FLAG state:(otherOtherButtons & 0x01) != 0];
-                [self updateButtonFlags:UP_FLAG state:(otherOtherButtons & 0x02) != 0];
-                [self updateButtonFlags:RIGHT_FLAG state:(otherOtherButtons & 0x04) != 0];
-                [self updateButtonFlags:LEFT_FLAG state:(otherOtherButtons & 0x08) != 0];
-                [self updateButtonFlags:LB_FLAG state:(otherOtherButtons & 0x40) != 0];
+                [self updateButtonFlags:DOWN_FLAG entry:entry state:(otherOtherButtons & 0x01) != 0];
+                [self updateButtonFlags:UP_FLAG entry:entry state:(otherOtherButtons & 0x02) != 0];
+                [self updateButtonFlags:RIGHT_FLAG entry:entry state:(otherOtherButtons & 0x04) != 0];
+                [self updateButtonFlags:LEFT_FLAG entry:entry state:(otherOtherButtons & 0x08) != 0];
+                [self updateButtonFlags:LB_FLAG entry:entry state:(otherOtherButtons & 0x40) != 0];
                 axis = (otherOtherButtons & 0x80) ? 32767 : -32768;
-                self.controller.lastLeftTrigger = axis;
+                devController.lastLeftTrigger = axis;
                 
                 axis = packet->controllerState.rgucJoystickLeft[0] | ((packet->controllerState.rgucJoystickLeft[1] & 0xF) << 8);
-                self.controller.lastLeftStickX = MAX(MIN((axis - 2048) * 24, INT16_MAX), INT16_MIN);
+                devController.lastLeftStickX = MAX(MIN((axis - 2048) * 24, INT16_MAX), INT16_MIN);
                 axis = ((packet->controllerState.rgucJoystickLeft[1] & 0xF0) >> 4) | (packet->controllerState.rgucJoystickLeft[2] << 4);
-                self.controller.lastLeftStickY = MAX(MIN((axis - 2048) * 24, INT16_MAX), INT16_MIN);
+                devController.lastLeftStickY = MAX(MIN((axis - 2048) * 24, INT16_MAX), INT16_MIN);
                 axis = packet->controllerState.rgucJoystickRight[0] | ((packet->controllerState.rgucJoystickRight[1] & 0xF) << 8);
-                self.controller.lastRightStickX = MAX(MIN((axis - 2048) * 24, INT16_MAX), INT16_MIN);
+                devController.lastRightStickX = MAX(MIN((axis - 2048) * 24, INT16_MAX), INT16_MIN);
                 axis = ((packet->controllerState.rgucJoystickRight[1] & 0xF0) >> 4) | (packet->controllerState.rgucJoystickRight[2] << 4);
-                self.controller.lastRightStickY = MAX(MIN((axis - 2048) * 24, INT16_MAX), INT16_MIN);
+                devController.lastRightStickY = MAX(MIN((axis - 2048) * 24, INT16_MAX), INT16_MIN);
                 
                 if (self.controllerDriver == 0) {
                     
-                    if (self.lastSwitchState.controllerState.rgucButtons[0] != packet->controllerState.rgucButtons[0] ||
-                        self.lastSwitchState.controllerState.rgucButtons[1] != packet->controllerState.rgucButtons[1] ||
-                        self.lastSwitchState.controllerState.rgucButtons[2] != packet->controllerState.rgucButtons[2] ||
-                        self.lastSwitchState.controllerState.rgucJoystickLeft[0] != packet->controllerState.rgucJoystickLeft[0] ||
-                        self.lastSwitchState.controllerState.rgucJoystickLeft[1] != packet->controllerState.rgucJoystickLeft[1] ||
-                        self.lastSwitchState.controllerState.rgucJoystickRight[0] != packet->controllerState.rgucJoystickRight[0] ||
-                        self.lastSwitchState.controllerState.rgucJoystickRight[1] != packet->controllerState.rgucJoystickRight[1] ||
+                    if (entry.lastSwitchState.controllerState.rgucButtons[0] != packet->controllerState.rgucButtons[0] ||
+                        entry.lastSwitchState.controllerState.rgucButtons[1] != packet->controllerState.rgucButtons[1] ||
+                        entry.lastSwitchState.controllerState.rgucButtons[2] != packet->controllerState.rgucButtons[2] ||
+                        entry.lastSwitchState.controllerState.rgucJoystickLeft[0] != packet->controllerState.rgucJoystickLeft[0] ||
+                        entry.lastSwitchState.controllerState.rgucJoystickLeft[1] != packet->controllerState.rgucJoystickLeft[1] ||
+                        entry.lastSwitchState.controllerState.rgucJoystickRight[0] != packet->controllerState.rgucJoystickRight[0] ||
+                        entry.lastSwitchState.controllerState.rgucJoystickRight[1] != packet->controllerState.rgucJoystickRight[1] ||
                         0)
                     {
-                        [self sendControllerEvent];
-                        self.lastSwitchState = *packet;
+                        [self sendControllerEventForEntry:entry];
+                        entry.lastSwitchState = *packet;
                     }
                 }
             }
@@ -2772,6 +2808,7 @@ void myHIDDeviceMatchingCallback(void * _Nullable        context,
                                 IOHIDDeviceRef          device) {
     HIDSupport *self = (__bridge HIDSupport *)context;
 
+    [self entryForDevice:device];
     [self rumbleSync];
     [self publishControllerInventoryChange];
 }
@@ -2785,15 +2822,14 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     [self releaseMouseButtonsForSource:@"hid-controller"];
     [self publishControllerInventoryChange];
     if (self.controllerDriver == 0) {
-        self.controller.lastButtonFlags = 0;
-        self.controller.lastLeftTrigger = 0;
-        self.controller.lastRightTrigger = 0;
-        self.controller.lastLeftStickX = 0;
-        self.controller.lastLeftStickY = 0;
-        self.controller.lastRightStickX = 0;
-        self.controller.lastRightStickY = 0;
-        
-        [self sendControllerEvent];
+        // 0.2: the pad that left owns the clear frame; other pads keep their state.
+        NSString *key = [self deviceKeyForDevice:device];
+        if (key != nil) {
+            HIDDeviceControllerEntry *entry = self.deviceControllerTable[key];
+            [self resetControllerStateForEntry:entry];
+            [self.deviceControllerTable removeObjectForKey:key];
+            [self sendControllerEventForEntry:entry];
+        }
     }
 }
 
@@ -2805,7 +2841,7 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     return [SettingsClass gamepadMenuLongPressTogglesMouseModeFor:self.host.uuid];
 }
 
-- (void)updateButtonFlags:(int)flag state:(BOOL)set {
+- (void)updateButtonFlags:(int)flag entry:(HIDDeviceControllerEntry *)entry state:(BOOL)set {
     // Mouse Mode Toggle Logic: the same gesture the MFi path runs, asked of the same
     // function, so one switch and one timing boundary cover both controller drivers and
     // neither can drift away from the other (issue #45).
@@ -2846,18 +2882,18 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     }
 
     if (set) {
-        self.controller.lastButtonFlags |= flag;
+        entry.controller.lastButtonFlags |= flag;
     } else {
-        self.controller.lastButtonFlags &= ~flag;
+        entry.controller.lastButtonFlags &= ~flag;
     }
     
     // Gamepad Quit Combo (Start + Select + LB + RB)
     int quitCombo = PLAY_FLAG | BACK_FLAG | LB_FLAG | RB_FLAG;
-    if ((self.controller.lastButtonFlags & quitCombo) == quitCombo) {
+    if ((entry.controller.lastButtonFlags & quitCombo) == quitCombo) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [[NSNotificationCenter defaultCenter] postNotificationName:HIDGamepadQuitNotification object:nil];
         });
-        self.controller.lastButtonFlags = 0;
+        entry.controller.lastButtonFlags = 0;
     }
 }
 
@@ -2952,5 +2988,77 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     [MLControllerInventory.sharedInventory noteSessionStopped];
 }
 
+#pragma mark - 0.2 per-device state table
 
+- (NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *)deviceControllerTable {
+    if (self._deviceControllerTable == nil) {
+        self._deviceControllerTable = [NSMutableDictionary dictionary];
+    }
+    return self._deviceControllerTable;
+}
+
+// Stable identity for a matched device: the product serial when the OS assigns
+// one, otherwise vendor+product. A serial is unique per physical unit, which is
+// what a player slot and a mask bit have to follow across replugs.
+- (NSString *)deviceKeyForDevice:(IOHIDDeviceRef)device {
+    if (device == NULL) {
+        return nil;
+    }
+    CFStringRef serial = IOHIDDeviceGetProperty(device, kIOHIDProductSerialNumberKey);
+    if (serial != NULL) {
+        NSString *sn = CFBridgingRelease(CFStringCreateWithCFString(kCFAllocatorDefault, serial));
+        if (sn.length > 0) {
+            return [@"sn:" stringByAppendingString:sn];
+        }
+    }
+    UInt32 vendor = (UInt32)IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey);
+    UInt32 product = (UInt32)IOHIDDeviceGetProperty(device, kIOHIDProductIDKey);
+    return [NSString stringWithFormat:@"vp:%x:%x", vendor, product];
+}
+
+// Allocation happens at (re)match time, before the first input value of a pad
+// can arrive; the value callbacks only read the table, so slots and mask bits
+// stay consistent without locking.
+- (HIDDeviceControllerEntry *)entryForDevice:(IOHIDDeviceRef)device {
+    NSString *key = [self deviceKeyForDevice:device];
+    if (key == nil) {
+        return nil;
+    }
+    NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *table = [self deviceControllerTable];
+    HIDDeviceControllerEntry *entry = table[key];
+    if (entry == nil) {
+        entry = [[HIDDeviceControllerEntry alloc] init];
+        entry.controller = [[Controller alloc] init];
+        entry.playerIndex = [self allocatePlayerSlot];
+        table[key] = entry;
+    }
+    return entry;
+}
+
+// Connection-order slot with reuse: lowest free index in the protocol's 16-slot
+// space. A removal frees the slot for the next pad that plugs in.
+- (int)allocatePlayerSlot {
+    BOOL taken[16] = {0};
+    for (HIDDeviceControllerEntry *e in [self deviceControllerTable].allValues) {
+        if (e.playerIndex >= 0 && e.playerIndex < 16) {
+            taken[e.playerIndex] = YES;
+        }
+    }
+    for (int i = 0; i < 16; i++) {
+        if (!taken[i]) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+- (void)resetControllerStateForEntry:(HIDDeviceControllerEntry *)entry {
+    entry.controller.lastButtonFlags = 0;
+    entry.controller.lastLeftTrigger = 0;
+    entry.controller.lastRightTrigger = 0;
+    entry.controller.lastLeftStickX = 0;
+    entry.controller.lastLeftStickY = 0;
+    entry.controller.lastRightStickX = 0;
+    entry.controller.lastRightStickY = 0;
+}
 @end

@@ -149,7 +149,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
 | 里程碑 | 依赖 | 代码可完成 | 真机验收 | 状态 |
 | --- | --- | --- | --- | --- |
  | 0.1 探针 | — | 是 | 本机日志即可 | 代码与 68 项回归完成，真机待验证（hardware_validated=false）；真机验收需先装 build1933（日常应用仍是 1926） |
- | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（`ControllerEventBaseline`+`controller-event-baseline.py`，21 用例/8 变异）；结构拆分待开工 |
+ | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（`ControllerEventBaseline`+`controller-event-baseline.py`，21 用例/8 变异）；per-device 状态表拆分已完成（每设备独立 Controller/playerIndex/mask 位/变化检测器），本地门禁 77 过，双手柄真机待验证（hardware_validated=false） |
 | M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 待开工 |
 | M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 待开工 |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 待开工 |
