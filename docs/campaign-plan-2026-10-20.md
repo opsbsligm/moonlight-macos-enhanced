@@ -152,7 +152,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
  | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（21 用例/8 变异）；per-device 拆分完成（每设备独立 Controller/playerIndex/mask 位/变化检测器），9aa5c6b9 pipeline 388 8/8 全绿，本地 xcodebuild 无第一方 warning；双手柄真机待验证（hardware_validated=false） |
 | M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 代码完成（arrival 通告/真实 mask/拔出清位/诊断报告记录通告类型），本地门禁 77 过 + 基线 21 用例等价；主机侧虚拟手柄类型验证待真机（hardware_validated=false） |
 | 0.2b HID 鼠标路由 | 0.2 | 是 | 双手柄本机 | 代码完成（每设备 gesture、单一指针 owner 接管/恢复、进入中性帧、拔出只清 owner），routing 门禁 13 正向+8 变异，pipeline 396；双手柄真机待验证（hardware_validated=false） |
-| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备），routing 门禁 4 正向+2 变异；三回调（rumbleTriggers/setMotionEventState/setControllerLED）仍待开工；PS5 真机待验证（hardware_validated=false） |
+| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地：C 回调→forwarder→owner→按号写灯，PS4/PS5 写路径回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告），routing 门禁各 4 正向+2 变异；rumbleTriggers/setMotionEventState 仍待开工；PS4/PS5 真机待验证（hardware_validated=false） |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 待开工 |
 | M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | 待开工 |
 | K1 文本注入 | — | 是 | 需主机输入法 | 待开工 |
@@ -314,3 +314,36 @@ Menu 长按手势计时也是共享的，两只手柄互串；从未按过 Menu 
 - 边界：三回调（`rumbleTriggers`/`setMotionEventState`/`setControllerLED`）仍待开工；
   Switch 分支与 Xbox 直写路径只验证了去重与路由，未抓真机报文，
   `hardware_validated=false` 保持。
+
+### M2 setControllerLED 接线（2026-10-23，待本提交 CI）
+
+macOS 侧三回调此前一个都没接，主机发来的灯色包被 `FakeCallbacks` 吞掉。本波接
+`setControllerLED`（签名最简单、无会话/速率状态、与按号震动同为按编号路由的写
+路径），是三回调里第一个落地：
+
+- 回调链补齐：`Connection.m` 新增 `ClSetControllerLED` 并注册到
+  `_clCallbacks.setControllerLED`；`ConnectionCallbacks` 加可选方法
+  `setControllerLED:red:green:blue:`；forwarder 按 `forwardIfCurrentNamed:`
+  模式转发；`StreamViewController` owner 收到后 gated 在
+  `hidSupport.shouldSendInputEvents` 上，调 `ledForControllerNumber:`。
+- 写路径镜像按号震动：`ledForControllerNumber:` 复用 `rumbleDeviceForPlayerIndex:`
+  解析 pad（first-device 回退保持单手柄旧行为），`writeLEDForDevice:` 只对
+  PS4/PS5 写（它们才有灯条），Xbox/Switch 无写路径。
+- 不踩正在响的马达：PS4/PS5 的效果报告同时含马达与灯色，纯灯色写会 clobber
+  正在进行的震动，所以写包回显该设备 `previousLow/HighFreqMotor`，去重只按灯色
+  （`previousLEDRed/Green/Blue`，0xFF 表示本会话未写过）。
+- 能力位只在能兑现的地方通告：entry 新增 `capabilities`，创建时按
+  `isPS4||isPS5` 决定是否加 `LI_CCAP_RGB_LED`，`sendControllerArrivalForEntry:`
+  改读 entry 的能力位——符合 M1 "只通告能兑现的能力"，主机不会向 Xbox/Switch
+  要它给不了的颜色。
+- 新门禁 `scripts/controller-led-routing-tests.py` 编译真实 `ledForControllerNumber:`
+  / `rumbleDeviceForPlayerIndex:` / `writeLEDForDevice:` / `entryForDevice:`，双 PS4 pad
+  回放：按号路由、first-device 回退、马达回显、每设备灯色去重（两 pad 首帧都写、
+  各自重复被抑制、单 pad 变灯只到该 pad）；两项行为变异（编号被忽略、去重退回
+  共享）均须被断言拦截。
+- 四个既有 harness（arrival/device-table/mouse-routing/rumble-routing）的 entry 桩补
+  `capabilities` 与 LED 去重属性；arrival 桩删掉现在未引用的能力位常量，mouse 桩
+  因已 import 真实 `Limelight.h`（`LI_CCAP_*` 是宏）只保留本地 `kHIDArrivalCapabilities`。
+- Release 构建 first-party 零 warning；本地门禁 84 passed / 0 failed / 15 skipped。
+- 边界：`rumbleTriggers`/`setMotionEventState` 仍待开工；PS4/PS5 写路径只验证了
+  去重、马达回显与路由，未抓真机报文，`hardware_validated=false` 保持。

@@ -208,6 +208,17 @@ highFreqMotor:(unsigned short)highFreqMotor {
     }];
 }
 
+- (void)setControllerLED:(unsigned short)controllerNumber
+                    red:(unsigned char)red
+                  green:(unsigned char)green
+                   blue:(unsigned char)blue {
+    [self forwardIfCurrentNamed:@"setControllerLED" block:^(id<MLStreamScopedCallbackOwner> owner) {
+        if ([owner respondsToSelector:@selector(setControllerLED:red:green:blue:)]) {
+            [owner setControllerLED:controllerNumber red:red green:green blue:blue];
+        }
+    }];
+}
+
 @end
 
 @implementation StreamViewController
@@ -1792,6 +1803,15 @@ highFreqMotor:(unsigned short)highFreqMotor {
                 [self.hidSupport rumbleForControllerNumber:(int)controllerNumber lowFreqMotor:lowFreqMotor highFreqMotor:highFreqMotor];
             }
         }
+    }
+}
+
+- (void)setControllerLED:(unsigned short)controllerNumber red:(unsigned char)red green:(unsigned char)green blue:(unsigned char)blue {
+    // The lightbar is a pad feature like rumble, so it is gated on input being
+    // forwarded; there is no separate setting because a host that never asks
+    // for a color costs nothing here.
+    if (self.hidSupport.shouldSendInputEvents) {
+        [self.hidSupport ledForControllerNumber:(int)controllerNumber red:red green:green blue:blue];
     }
 }
 
