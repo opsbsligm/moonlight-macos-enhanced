@@ -22,6 +22,7 @@
 
 #import <Carbon/Carbon.h>
 #import <IOKit/hid/IOHIDManager.h>
+#import <IOKit/hid/IOHIDDevice.h>
 #import <IOKit/hid/IOHIDKeys.h>
 #import <IOKit/hid/IOHIDElement.h>
 
@@ -46,8 +47,13 @@
 // Identity groups in diagnostics are separate from these runtime device keys.
 @interface HIDDeviceControllerEntry : NSObject
 @property (nonatomic) Controller *controller;
+@property (nonatomic) IOHIDDeviceRef hidDevice;
 @property (nonatomic) int playerIndex;
 @property (nonatomic) BOOL changeArmed;
+// Last motors actually put on the wire for this device, so the dedup guard
+// compares against the pad it is writing, not a neighbour's.
+@property (nonatomic) UInt8 previousLowFreqMotor;
+@property (nonatomic) UInt8 previousHighFreqMotor;
 // Main-thread diagnostic completion; local queue acceptance is not host receipt.
 // Send deduplication uses the input-queue generation below.
 @property (nonatomic) BOOL advertisedToHost;
@@ -75,8 +81,6 @@
 @property (nonatomic, strong) NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *deviceControllerTable;
 @property (nonatomic) CVDisplayLinkRef displayLink;
 @property (nonatomic, strong) HIDMouseDeltaAccumulator *mouseDeltaAccumulator;
-@property (nonatomic) UInt8 previousLowFreqMotor;
-@property (nonatomic) UInt8 previousHighFreqMotor;
 @property (atomic) UInt16 nextLowFreqMotor;
 @property (atomic) UInt16 nextHighFreqMotor;
 @property (atomic) dispatch_semaphore_t rumbleSemaphore;
@@ -335,6 +339,9 @@
 - (int)hidGetFeatureReport:(IOHIDDeviceRef)device data:(unsigned char *)data length:(size_t)length;
 - (void)rumbleSync;
 - (void)runRumbleLoop;
+- (void)rumbleForControllerNumber:(int)number lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor;
+- (IOHIDDeviceRef)rumbleDeviceForPlayerIndex:(int)number;
+- (void)writeRumbleToDevice:(IOHIDDeviceRef)device lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor;
 - (IOHIDDeviceRef)getFirstDevice;
 - (int)switch_RumbleJoystick:(IOHIDDeviceRef)device lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor;
 - (BOOL)setVibrationEnabled:(UInt8)enabled;

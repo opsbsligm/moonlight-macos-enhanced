@@ -221,6 +221,7 @@ audit:sources:
     - python3 scripts/controller-device-table-tests.py
     - python3 scripts/controller-arrival-tests.py
     - python3 scripts/controller-mouse-routing-tests.py
+    - python3 scripts/controller-rumble-routing-tests.py
     - python3 scripts/controller-event-baseline.py --self-test
     - python3 scripts/controller-wire-baseline.py --self-test
   rules: *pipeline_rules

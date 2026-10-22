@@ -1789,7 +1789,7 @@ highFreqMotor:(unsigned short)highFreqMotor {
             if (self.controllerSupport != nil) {
                 [self.controllerSupport rumble:controllerNumber lowFreqMotor:lowFreqMotor highFreqMotor:highFreqMotor];
             } else {
-                [self.hidSupport rumbleLowFreqMotor:lowFreqMotor highFreqMotor:highFreqMotor];
+                [self.hidSupport rumbleForControllerNumber:(int)controllerNumber lowFreqMotor:lowFreqMotor highFreqMotor:highFreqMotor];
             }
         }
     }
