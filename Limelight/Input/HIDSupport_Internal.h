@@ -70,8 +70,8 @@
 @property (nonatomic, strong) NSDictionary *mappings;
 @property (nonatomic) IOHIDManagerRef hidManager;
 @property (nonatomic, strong) Controller *controller;
-// 0.2 per-device table (see HIDDeviceControllerEntry above). The shared
-// `controller` above now owns only the global gesture/mouse-mode state.
+// Pointer source selected under @synchronized(self), like the display-link read.
+@property (nonatomic, strong) HIDDeviceControllerEntry *mouseModeEntry;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *deviceControllerTable;
 @property (nonatomic) CVDisplayLinkRef displayLink;
 @property (nonatomic, strong) HIDMouseDeltaAccumulator *mouseDeltaAccumulator;
@@ -254,6 +254,8 @@
 - (void)handleDpad:(NSInteger)intValue entry:(HIDDeviceControllerEntry *)entry;
 - (void)updateButtonFlags:(int)flag entry:(HIDDeviceControllerEntry *)entry state:(BOOL)set;
 - (void)sendControllerEventForEntry:(HIDDeviceControllerEntry *)entry;
+- (void)sendControllerNeutralEventForEntry:(HIDDeviceControllerEntry *)entry;
+- (void)setControllerMouseMode:(BOOL)enabled forEntry:(HIDDeviceControllerEntry *)entry;
 - (void)sendControllerArrivalForEntry:(HIDDeviceControllerEntry *)entry;
 - (void)sendControllerRemovalForEntry:(HIDDeviceControllerEntry *)entry;
 - (void)announceIdleControllersForNewStream;

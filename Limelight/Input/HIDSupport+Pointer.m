@@ -651,6 +651,7 @@ static CVReturn displayLinkOutputCallback(CVDisplayLinkRef displayLink,
 
         // Mouse Emulation Movement
         if (me.controller.isMouseMode && me.shouldSendInputEvents) {
+            if (me.controllerDriver != 0) return kCVReturnSuccess;
             HIDInputLease inputLease = HIDAcquireInputContext(me);
             PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
             if (!inputCtx) {

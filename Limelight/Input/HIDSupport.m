@@ -1178,9 +1178,7 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
         self.ticks = [[Ticks alloc] init];
         self.switchUsingBluetooth = YES;
 
-        // 0.2: one shared gesture/mouse-mode Controller. The pads' button and stick
-        // state now lives in the per-device table; this object keeps the long-press
-        // mouse-mode toggle and its notification, which is a global UI concern.
+        // Inactive pointer source until a physical pad requests mouse mode.
         self.controller = [[Controller alloc] init];
         
         self.previousLowFreqMotor = 0xFF;
@@ -1360,6 +1358,49 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
                                       wireEvent.leftStickX, wireEvent.leftStickY,
                                       wireEvent.rightStickX, wireEvent.rightStickY);
     });
+}
+
+- (void)sendControllerNeutralEventForEntry:(HIDDeviceControllerEntry *)entry {
+    if (entry == nil || self.controllerDriver != 0 || !self.shouldSendInputEvents) return;
+    int playerIndex = entry.playerIndex;
+    int mask = [self activeDeviceMask];
+    HIDInputLease lease = HIDAcquireInputContext(self);
+    if (lease.context == NULL) return;
+    HIDDispatchInput(self, lease, ^{
+        LiSendMultiControllerEventCtx(lease.context, playerIndex, mask, 0, 0, 0, 0, 0, 0, 0);
+    });
+}
+
+- (void)setControllerMouseMode:(BOOL)enabled forEntry:(HIDDeviceControllerEntry *)entry {
+    if (entry == nil) return;
+    @synchronized (self) {
+        if (enabled == entry.controller.isMouseMode) return;
+        [self releaseMouseButtonsForSource:@"hid-controller"];
+        if (enabled) {
+            HIDDeviceControllerEntry *previous = self.mouseModeEntry;
+            previous.controller.isMouseMode = NO;
+            if (previous != nil && previous != entry) {
+                [self sendControllerEventForEntry:previous];
+            }
+            // Keep the slot connected, but release its remote held state before
+            // mouse mode starts suppressing ordinary gamepad packets.
+            [self sendControllerNeutralEventForEntry:entry];
+            entry.controller.isMouseMode = YES;
+            self.mouseModeEntry = entry;
+            self.controller = entry.controller;
+        } else {
+            entry.controller.isMouseMode = NO;
+            if (self.mouseModeEntry == entry) self.mouseModeEntry = nil;
+        }
+        self.mouseEmulationResidualX = 0;
+        self.mouseEmulationResidualY = 0;
+        BOOL active = self.mouseModeEntry != nil;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:HIDMouseModeToggledNotification object:nil
+                userInfo:@{@"enabled": @(active)}];
+        });
+    }
 }
 
 // M1: removal sends an empty event for the gone pad with the refreshed mask,
@@ -2937,12 +2978,14 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
                                 IOHIDDeviceRef          device) {
     HIDSupport *self = (__bridge HIDSupport *)context;
 
-    [self releaseMouseButtonsForSource:@"hid-controller"];
     [self publishControllerInventoryChange];
     // Clean up the table for both drivers; only the HID driver sends a removal.
     NSString *key = [self deviceKeyForDevice:device];
     if (key != nil) {
         HIDDeviceControllerEntry *entry = self.deviceControllerTable[key];
+        if (self.mouseModeEntry == entry) {
+            [self setControllerMouseMode:NO forEntry:entry];
+        }
         [self resetControllerStateForEntry:entry];
         [self.deviceControllerTable removeObjectForKey:key];
         // Clear even when arrival or its diagnostic completion did not succeed.
@@ -2959,58 +3002,55 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 }
 
 - (void)updateButtonFlags:(int)flag entry:(HIDDeviceControllerEntry *)entry state:(BOOL)set {
-    // Mouse Mode Toggle Logic: the same gesture the MFi path runs, asked of the same
-    // function, so one switch and one timing boundary cover both controller drivers and
-    // neither can drift away from the other (issue #45).
-    if (flag == PLAY_FLAG) {
-        MLGamepadMenuGesture gesture = self.controller.menuGesture;
-        const BOOL toggled = MLGamepadMenuGestureToggles(&gesture,
-                                                         set ? YES : NO,
-                                                         [NSDate date].timeIntervalSinceReferenceDate,
-                                                         [self gamepadMenuLongPressTogglesMouseModeEnabled] ? YES : NO,
-                                                         MLGamepadMenuLongPressRequiredSeconds);
-        self.controller.menuGesture = gesture;
-        if (toggled) {
-            self.controller.isMouseMode = !self.controller.isMouseMode;
-            if (!self.controller.isMouseMode) {
-                [self releaseMouseButtonsForSource:@"hid-controller"];
+    if (self.controllerDriver != 0 || entry == nil) return;
+    @synchronized (self) {
+        // Mouse Mode Toggle Logic: the same gesture the MFi path runs, asked of the same
+        // function, so one switch and one timing boundary cover both controller drivers and
+        // neither can drift away from the other (issue #45).
+        if (flag == PLAY_FLAG) {
+            MLGamepadMenuGesture gesture = entry.controller.menuGesture;
+            const BOOL toggled = MLGamepadMenuGestureToggles(&gesture,
+                                                             set ? YES : NO,
+                                                             [NSDate date].timeIntervalSinceReferenceDate,
+                                                             [self gamepadMenuLongPressTogglesMouseModeEnabled] ? YES : NO,
+                                                             MLGamepadMenuLongPressRequiredSeconds);
+            entry.controller.menuGesture = gesture;
+            if (toggled) {
+                [self setControllerMouseMode:!entry.controller.isMouseMode forEntry:entry];
+
+                // Legacy rumble cannot target a pad yet. Keep single-pad feedback
+                // without vibrating an unrelated pad in a multi-device session.
+                if (self.deviceControllerTable.count == 1) {
+                    [self rumbleLowFreqMotor:0xFFFF highFreqMotor:0xFFFF];
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        [self rumbleLowFreqMotor:0 highFreqMotor:0];
+                    });
+                }
             }
-
-            // Notify UI
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [[NSNotificationCenter defaultCenter] postNotificationName:HIDMouseModeToggledNotification object:nil userInfo:@{@"enabled": @(self.controller.isMouseMode)}];
-            });
-
-            // Rumble
-            [self rumbleLowFreqMotor:0xFFFF highFreqMotor:0xFFFF];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [self rumbleLowFreqMotor:0 highFreqMotor:0];
-            });
         }
-    }
 
-    // Physical mice and controller emulation share the remote ownership ledger.
-    if (self.controller.isMouseMode) {
-        if (flag == A_FLAG || flag == B_FLAG) {
-            [self sendMouseButton:flag == A_FLAG ? BUTTON_LEFT : BUTTON_RIGHT
-                         pressed:set source:@"hid-controller"];
-            return;
+        // Physical mice and controller emulation share the remote ownership ledger.
+        if (entry.controller.isMouseMode) {
+            if (flag == A_FLAG || flag == B_FLAG) {
+                [self sendMouseButton:flag == A_FLAG ? BUTTON_LEFT : BUTTON_RIGHT
+                             pressed:set source:@"hid-controller"];
+            }
         }
-    }
 
-    if (set) {
-        entry.controller.lastButtonFlags |= flag;
-    } else {
-        entry.controller.lastButtonFlags &= ~flag;
-    }
+        if (set) {
+            entry.controller.lastButtonFlags |= flag;
+        } else {
+            entry.controller.lastButtonFlags &= ~flag;
+        }
     
-    // Gamepad Quit Combo (Start + Select + LB + RB)
-    int quitCombo = PLAY_FLAG | BACK_FLAG | LB_FLAG | RB_FLAG;
-    if ((entry.controller.lastButtonFlags & quitCombo) == quitCombo) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [[NSNotificationCenter defaultCenter] postNotificationName:HIDGamepadQuitNotification object:nil];
-        });
-        entry.controller.lastButtonFlags = 0;
+        // Gamepad Quit Combo (Start + Select + LB + RB)
+        int quitCombo = PLAY_FLAG | BACK_FLAG | LB_FLAG | RB_FLAG;
+        if ((entry.controller.lastButtonFlags & quitCombo) == quitCombo) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSNotificationCenter defaultCenter] postNotificationName:HIDGamepadQuitNotification object:nil];
+            });
+            entry.controller.lastButtonFlags = 0;
+        }
     }
 }
 
@@ -3069,6 +3109,7 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 }
 
 - (void)tearDownHidManagerOnMainThread {
+    [self setControllerMouseMode:NO forEntry:self.mouseModeEntry];
     [self releaseMouseButtonsForSource:@"hid-controller"];
     [self tearDownCoreHIDMouseDriver];
 
@@ -3128,6 +3169,7 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         if (slot < 0) return nil;
         entry = [[HIDDeviceControllerEntry alloc] init];
         entry.controller = [[Controller alloc] init];
+        entry.controller.menuGesture = MLGamepadMenuGestureIdle();
         entry.playerIndex = slot;
         // The layout decision is made once, from the device, at the moment the
         // entry exists: every later announce reads it instead of re-asking the bus.
