@@ -261,3 +261,28 @@ Menu 长按手势计时也是共享的，两只手柄互串；从未按过 Menu 
 - Release 构建 first-party 零 warning；本地门禁 80 passed / 0 failed / 15 skipped
   （skip 为已知缺 Debug 产物/慢速探针/CI-only 项）。
 - GitLab pipeline 396（SHA 69eb84ef）结果见收尾记录；`hardware_validated=false` 保持。
+
+### 单手柄发包逐字节等价基线（2026-10-23，6109b363）
+
+0.2 的风险节点要求"单手柄时发包序列必须与改前逐字节一致"，用机器比较，不靠记忆。
+此前 tuple 级基线（`controller-event-baseline.py`，21 用例）只覆盖 Mac 侧交给 C 层的
+9 个参数；本波补上 C 层到线上字节这一段：
+
+- 新门禁 `scripts/controller-wire-baseline.py` 从真实 `InputStream.c` 抽取
+  `sendControllerEventInternal` / `LiSendMultiControllerEventCtx` /
+  `LiSendControllerArrivalEventCtx` 与 `PACKET_HOLDER`，用真实 clang 编译；
+  15 条录制场景（Sunshine gen4/5、GFE gen3/4/5、扩展按钮溢出 buttonFlags2、
+  符号扩展客户端、16 槽回绕、gen3 legacy 包、arrival+中性回退）打进真实队列，
+  按出队顺序逐字节、逐 channel 与独立 Python 参考实现比对。
+- 参考实现复刻 wire 语义：size 字段 BE32、magic LE、GFE 4 槽回绕+mask 4 位
+  +MISC→Guide、Sunshine 16 槽回绕、buttonFlags2 仅 Sunshine、gen5 magic 减一、
+  C 层 signed int32 的符号扩展防护。
+- `--self-test` 种 8 项字节级变异（gen5 magic、buttonFlags2 丢失、槽回绕删除、
+  MISC→Guide 丢失、legacy header 漂移、arrival 能力漂移、GFE mask 漂移、MC tail 漂移），
+  每项都必须改变至少一个字节或 channel，当前 8/8 拦截。
+- 顺带修复 `constraints-audit.py` 不向 assertion battery 子进程转发 `--allow-dirty`
+  的问题（父进程已豁免的脏检出，子 battery 会重新判死）。
+- 本地：正向 15 场景 + 8 变异全过；constraints audit 146/146 种缺陷全拦；
+  综合门禁 82 passed / 0 failed / 15 skipped。
+- 边界：基线证明"当前源码的线上字节"，是后续 per-device 改动的对照物；
+  它不等价于真机抓包，`hardware_validated=false` 保持。
