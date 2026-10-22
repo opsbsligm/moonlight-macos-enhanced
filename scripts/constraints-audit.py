@@ -2475,6 +2475,7 @@ CI_ONLY = {
     # true is the toolchain call itself; a gate that stops needing clang_and_sdk
     # can move back here and be driven on every pass.
     "controller-event-baseline.py": "clang_and_sdk",
+    "controller-device-table-tests.py": "clang_and_sdk",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})

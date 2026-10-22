@@ -356,6 +356,7 @@ jobs:
       # flag the local sweep never passes.
       run: |
         python3 scripts/controller-event-baseline.py
+        python3 scripts/controller-device-table-tests.py
         python3 scripts/controller-event-baseline.py --self-test
 
     - name: Verify device-specific C filtering preserves real keyboard input

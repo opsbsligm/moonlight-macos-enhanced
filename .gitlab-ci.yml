@@ -217,6 +217,7 @@ audit:sources:
     - python3 scripts/compiled-source-audit.py "$app/Contents/MacOS/MoonlightEnhanced" --arch "$arch"
     - python3 scripts/diagnostics-report-tests.py
     - python3 scripts/controller-event-baseline.py
+    - python3 scripts/controller-device-table-tests.py
     - python3 scripts/controller-event-baseline.py --self-test
   rules: *pipeline_rules
 

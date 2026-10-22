@@ -3100,39 +3100,28 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 
 #pragma mark - 0.2 per-device state table
 
-// Stable identity for a matched device: the product serial when the OS assigns
-// one, otherwise vendor+product. A serial is unique per physical unit, which is
-// what a player slot and a mask bit have to follow across replugs.
+// Entries belong to live IOHIDDevice objects, not model/serial groups. The HID
+// manager owns these objects until removal; the removal callback deletes the key.
 - (NSString *)deviceKeyForDevice:(IOHIDDeviceRef)device {
-    if (device == NULL) {
-        return nil;
-    }
-    CFTypeRef value = IOHIDDeviceGetProperty(device, (__bridge CFStringRef)@kIOHIDSerialNumberKey);
-    if (value != NULL && CFGetTypeID(value) == CFStringGetTypeID()) {
-        NSString *sn = CFBridgingRelease(value);
-        if (sn.length > 0) {
-            return [@"sn:" stringByAppendingString:sn];
-        }
-    }
-    UInt16 vendor = usbIdFromDevice(device, @kIOHIDVendorIDKey);
-    UInt16 product = usbIdFromDevice(device, @kIOHIDProductIDKey);
-    return [NSString stringWithFormat:@"vp:%x:%x", vendor, product];
+    return device == NULL ? nil : [NSString stringWithFormat:@"hid:%p", (void *)device];
 }
 
-// Allocation happens at (re)match time, before the first input value of a pad
-// can arrive; the value callbacks only read the table, so slots and mask bits
-// stay consistent without locking.
 - (HIDDeviceControllerEntry *)entryForDevice:(IOHIDDeviceRef)device {
     NSString *key = [self deviceKeyForDevice:device];
     if (key == nil) {
         return nil;
     }
-    NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *table = [self deviceControllerTable];
+    if (self.deviceControllerTable == nil) {
+        self.deviceControllerTable = [NSMutableDictionary dictionary];
+    }
+    NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *table = self.deviceControllerTable;
     HIDDeviceControllerEntry *entry = table[key];
     if (entry == nil) {
+        int slot = [self allocatePlayerSlot];
+        if (slot < 0) return nil;
         entry = [[HIDDeviceControllerEntry alloc] init];
         entry.controller = [[Controller alloc] init];
-        entry.playerIndex = [self allocatePlayerSlot];
+        entry.playerIndex = slot;
         // The layout decision is made once, from the device, at the moment the
         // entry exists: every later announce reads it instead of re-asking the bus.
         entry.protocolType = [self protocolTypeForDevice:device];
@@ -3156,7 +3145,7 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
             return i;
         }
     }
-    return 0;
+    return -1;
 }
 
 - (void)resetControllerStateForEntry:(HIDDeviceControllerEntry *)entry {
