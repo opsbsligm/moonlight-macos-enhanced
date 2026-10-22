@@ -112,7 +112,9 @@ int main(void) { @autoreleasepool {
     [s sendControllerRemovalForEntry:e]; drain(inputJobs); drain(mainJobs);
     CHECK(notes == 2 && removals == 1 && removalMask == 0);
     s.generation = 6;
-    [s sendControllerRemovalForEntry:e]; drain(inputJobs); CHECK(removals == 1);
+    // Even without a successful arrival in this generation, a normal state
+    // packet could have activated the slot. Removal must still clear it.
+    [s sendControllerRemovalForEntry:e]; drain(inputJobs); CHECK(removals == 2);
     puts("arrival lifecycle replay passed"); return 0;
 }}
 '''
@@ -131,6 +133,10 @@ for name, old, new in (
     ('send failure ignored', 'if (result != 0) return;', '(void)result;'),
     ('queue dedup removed', 'if (entry.advertisedInputGeneration == inputLease.generation) return;', ''),
     ('stale completion accepted', 'current.generation != inputLease.generation ||', ''),
+    ('removal depends on successful arrival',
+     '        LiSendMultiControllerEventCtx(inputCtx, playerIndex, mask, 0, 0, 0, 0, 0, 0, 0);',
+     '        if (entry.advertisedInputGeneration != inputLease.generation) return;\n'
+     '        LiSendMultiControllerEventCtx(inputCtx, playerIndex, mask, 0, 0, 0, 0, 0, 0, 0);'),
 ):
     assert method.count(old) == 1, name
     r = run(method.replace(old, new))
