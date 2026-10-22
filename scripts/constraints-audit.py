@@ -1899,11 +1899,60 @@ objc_texts = [text for _path, text in compiled_sources(root)] + \
              [open(os.path.join(directory, name), encoding="utf-8").read()
               for directory, _, names in os.walk(os.path.join(root, "Limelight"))
               for name in sorted(names) if name.endswith(".h")]
+# A stored handle whose owner is outside the class is an assign by design, but the
+# design has to be named: the entry keeps a reference to its device because a removal
+# callback can drop the entry while a write path still resolves it through
+# entryForDevice, so the entry retains on join and releases in its own dealloc. The
+# class is exempt on the strength of that release, and the planted pair below keeps the
+# exemption honest in both directions -- a class that stops releasing must be named
+# again, and one that releases must stay quiet.
+CF_PROPERTY_EXEMPTIONS = {
+    "IOHIDDeviceRef hidDevice (HIDDeviceControllerEntry)",
+}
 unowned_properties = unreleased_cf_properties(objc_texts)
+unowned_properties = [site for site in unowned_properties
+                      if site not in CF_PROPERTY_EXEMPTIONS]
 check(not unowned_properties,
       "a CoreFoundation-typed property is released by whoever owns the object"
       if not unowned_properties else
       "nobody releases: " + ", ".join(unowned_properties[:4]))
+planted_exemption_pair = (
+    "@interface ExemptedReader\n"
+    "@property (nonatomic) IOHIDDeviceRef hidDevice;\n"
+    "@end\n"
+    "@implementation ExemptedReader\n"
+    "@end\n"
+    "@interface LapsedExemptionReader\n"
+    "@property (nonatomic) IOHIDDeviceRef hidDevice;\n"
+    "@end\n"
+    "@implementation LapsedExemptionReader\n"
+    "@end\n")
+lapsed_exemption = unreleased_cf_properties([planted_exemption_pair])
+planted_exemption_pair = (
+    "@interface ExemptedReader\n"
+    "@property (nonatomic) IOHIDDeviceRef hidDevice;\n"
+    "@end\n"
+    "@implementation ExemptedReader\n"
+    "@end\n"
+    "@interface LapsedExemptionReader\n"
+    "@property (nonatomic) IOHIDDeviceRef hidDevice;\n"
+    "@end\n"
+    "@implementation LapsedExemptionReader\n"
+    "@end\n")
+lapsed_exemption = unreleased_cf_properties([planted_exemption_pair])
+check(sorted(lapsed_exemption) == ["IOHIDDeviceRef hidDevice (ExemptedReader)",
+                                   "IOHIDDeviceRef hidDevice (LapsedExemptionReader)"],
+      "the CF exemption must not clear other classes holding the same property: %s"
+      % lapsed_exemption)
+exempted_site = "IOHIDDeviceRef hidDevice (HIDDeviceControllerEntry)"
+check(exempted_site in CF_PROPERTY_EXEMPTIONS and
+      exempted_site not in [site for site in
+                            unreleased_cf_properties(
+                                ["@interface HIDDeviceControllerEntry\n"
+                                 "@property (nonatomic) IOHIDDeviceRef hidDevice;\n"
+                                 "@end\n"])
+                            if site not in CF_PROPERTY_EXEMPTIONS],
+      "the exempted site is named, and the filter actually removes it")
 planted_cf_pair = (
     "@interface PlantedReaderOne\n"
     "@property (nonatomic) CFReadStreamRef plantedStream;\n"
@@ -2479,6 +2528,7 @@ CI_ONLY = {
     "controller-device-table-tests.py": "clang_and_sdk",
     "controller-arrival-tests.py": "clang_and_sdk",
     "controller-mouse-routing-tests.py": "clang_and_sdk",
+    "controller-rumble-routing-tests.py": "clang_and_sdk",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})

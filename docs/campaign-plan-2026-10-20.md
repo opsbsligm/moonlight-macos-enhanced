@@ -152,7 +152,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
  | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（21 用例/8 变异）；per-device 拆分完成（每设备独立 Controller/playerIndex/mask 位/变化检测器），9aa5c6b9 pipeline 388 8/8 全绿，本地 xcodebuild 无第一方 warning；双手柄真机待验证（hardware_validated=false） |
 | M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 代码完成（arrival 通告/真实 mask/拔出清位/诊断报告记录通告类型），本地门禁 77 过 + 基线 21 用例等价；主机侧虚拟手柄类型验证待真机（hardware_validated=false） |
 | 0.2b HID 鼠标路由 | 0.2 | 是 | 双手柄本机 | 代码完成（每设备 gesture、单一指针 owner 接管/恢复、进入中性帧、拔出只清 owner），routing 门禁 13 正向+8 变异，pipeline 396；双手柄真机待验证（hardware_validated=false） |
-| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 待开工 |
+| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备），routing 门禁 4 正向+2 变异；三回调（rumbleTriggers/setMotionEventState/setControllerLED）仍待开工；PS5 真机待验证（hardware_validated=false） |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 待开工 |
 | M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | 待开工 |
 | K1 文本注入 | — | 是 | 需主机输入法 | 待开工 |
@@ -286,3 +286,31 @@ Menu 长按手势计时也是共享的，两只手柄互串；从未按过 Menu 
   综合门禁 82 passed / 0 failed / 15 skipped。
 - 边界：基线证明"当前源码的线上字节"，是后续 per-device 改动的对照物；
   它不等价于真机抓包，`hardware_validated=false` 保持。
+
+### M2 按号震动（2026-10-23，待本提交 CI）
+
+主机按 player index 点名某只手柄震动，但旧 HID 写路径忽略编号、永远发给
+`getFirstDevice` 的第一只；去重状态 `previousLowFreqMotor/High` 是全局共享的，
+多手柄互相吞帧或发错对象。本波：
+
+- `runRumbleLoop` 拆成循环与 `rumbleForControllerNumber:`；`rumbleDeviceForPlayerIndex:`
+  按 entry 的 playerIndex 解析 pad（找不到回退 first device，保持单手柄旧行为）。
+- 去重状态移到 `HIDDeviceControllerEntry`（`previousLowFreqMotor/High`），
+  每设备独立比较，邻居的帧不再被吞。
+- entry 保留自己的一份 `hidDevice` 句柄：`entryForDevice:` 存 `CFRetain` 句柄、
+  entry `dealloc` 释放——拔出回调移除 entry 后，震动手柄路径解析到的是自有句柄，
+  不依赖已释放的总线对象。`HIDSupport_Internal.h` 增加 `<IOKit/hid/IOHIDDevice.h>`
+  （macOS IOKit 无 `IOHIDDeviceRetain`，句柄管理走 CF 语义）。
+- 新门禁 `scripts/controller-rumble-routing-tests.py` 编译真实 rumble 方法集 +
+  `entryForDevice:`，双 pad 回放：按号路由、first-device 回退、每设备去重
+  （第一帧必发、邻居不互吞、各自重复被抑制、单 pad 变更只到该 pad）；
+  两项行为变异（编号被忽略、去重退回共享）均须被断言拦截。
+- `constraints-audit.py` 的 per-class CF 规则新增具名豁免
+  `IOHIDDeviceRef hidDevice (HIDDeviceControllerEntry)`，豁免靠 entry 自身 dealloc
+  的 release 成立；自测种两个同类同属性的类证明豁免按类名而非属性形状清除。
+- 三个既有 harness（device-table/mouse-routing/rumble-routing）的桩补上新属性与
+  CF 句柄 stub，编译真实 `entryForDevice:` 后仍全绿。
+- Release 构建 first-party 零 warning；本地门禁 83 passed / 0 failed / 15 skipped。
+- 边界：三回调（`rumbleTriggers`/`setMotionEventState`/`setControllerLED`）仍待开工；
+  Switch 分支与 Xbox 直写路径只验证了去重与路由，未抓真机报文，
+  `hardware_validated=false` 保持。

@@ -56,6 +56,8 @@ harness = r'''
 @implementation Controller
 @end
 typedef const void *IOHIDDeviceRef;
+CFTypeRef CFRetain(CFTypeRef v) { return v; }
+void CFRelease(CFTypeRef v) { (void)v; }
 typedef struct { IOHIDDeviceRef device; uint32_t page, usage; CFIndex value; } FakeValue;
 typedef FakeValue *IOHIDValueRef;
 typedef FakeValue *IOHIDElementRef;
@@ -75,9 +77,12 @@ static NSString *const HIDMouseModeToggledNotification = @"mode";
 static NSString *const HIDGamepadQuitNotification = @"quit";
 @interface HIDDeviceControllerEntry : NSObject
 @property Controller *controller;
+@property IOHIDDeviceRef hidDevice;
 @property int playerIndex;
 @property uint8_t protocolType;
 @property uint32_t supportedButtonFlags;
+@property UInt8 previousLowFreqMotor;
+@property UInt8 previousHighFreqMotor;
 @end
 @implementation HIDDeviceControllerEntry
 @end
