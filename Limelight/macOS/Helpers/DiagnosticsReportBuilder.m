@@ -54,6 +54,23 @@ static NSString *const kRedactedBlob = @"[redacted-blob]";
 static NSString *const kRedactedPath = @"[redacted-path]";
 static NSString *const kRuleUnavailable = @"\n[redaction rule unavailable]\n";
 
+// The name a protocol type reads as in a report. The comparison goes through the
+// same table that produced the recorded number, so the builder and the sender
+// cannot start calling the same id by different names. An id the table does not
+// know prints as unknown rather than being guessed.
++ (NSString *)controllerTypeNameForProtocolType:(uint8_t)protocolType {
+    if (protocolType == MLControllerProtocolTypeForFamily(MLControllerFamilyXbox)) {
+        return @"xbox";
+    }
+    if (protocolType == MLControllerProtocolTypeForFamily(MLControllerFamilyPS4)) {
+        return @"ps";
+    }
+    if (protocolType == MLControllerProtocolTypeForFamily(MLControllerFamilyNintendo)) {
+        return @"nintendo";
+    }
+    return @"unknown";
+}
+
 + (DiagnosticsReportSection *)controllersSectionWithSnapshot:(MLControllerInventorySnapshot *_Nullable)snapshot {
     NSMutableArray<NSString *> *lines = [NSMutableArray array];
     if (snapshot == nil) {
@@ -71,10 +88,24 @@ static NSString *const kRuleUnavailable = @"\n[redaction rule unavailable]\n";
         [lines addObject:@"driver captured at session start; type-map is a local candidate"];
         [lines addObject:snapshot.advertisedControllerArrivals
             ? @"controller arrivals sent to host: yes"
-            : @"controller arrivals sent to host: no (0.1 probe; M1 owns arrival)"];
-        [lines addObject:snapshot.advertisedControllerArrivals
-            ? @"advertised controller type/caps: not recorded"
-            : @"advertised controller type/caps: not advertised"];
+            : @"controller arrivals sent to host: no"];
+        if (snapshot.advertisedControllerArrivals &&
+            snapshot.advertisedControllerTypes.count > 0) {
+            NSArray<NSNumber *> *slots = [snapshot.advertisedControllerTypes.allKeys
+                                          sortedArrayUsingSelector:@selector(compare:)];
+            NSMutableArray<NSString *> *parts = [NSMutableArray array];
+            for (NSNumber *slot in slots) {
+                [parts addObject:[NSString stringWithFormat:@"player %ld=%@",
+                                   (long)[slot integerValue],
+                                   [self controllerTypeNameForProtocolType:
+                                        [snapshot.advertisedControllerTypes[slot] unsignedCharValue]]]];
+            }
+            [parts addObject:@"caps=analog triggers+rumble"];
+            [lines addObject:[@"advertised controller type/caps: "
+                               stringByAppendingString:[parts componentsJoinedByString:@" "]]];
+        } else {
+            [lines addObject:@"advertised controller type/caps: not advertised"];
+        }
         [lines addObject:[NSString stringWithFormat:
                           @"HID identity groups: %lu (VID/PID/family groups, not a physical controller count)",
                           (unsigned long)snapshot.entries.count]];
