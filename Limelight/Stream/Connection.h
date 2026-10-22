@@ -25,6 +25,10 @@
 
 @optional
 - (void)clipboardItemReceived:(const LI_CLIPBOARD_ITEM *)item;
+- (void)setControllerLED:(unsigned short)controllerNumber
+                    red:(unsigned char)red
+                  green:(unsigned char)green
+                   blue:(unsigned char)blue;
 
 @end
 

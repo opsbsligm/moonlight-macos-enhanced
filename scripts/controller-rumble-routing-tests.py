@@ -76,6 +76,10 @@ static BOOL isXbox(IOHIDDeviceRef device) { return device == (const void *)0x1 |
 static BOOL isKingKong(IOHIDDeviceRef device) { return NO; }
 static BOOL isPS4(IOHIDDeviceRef device) { return NO; }
 static BOOL isPS5(IOHIDDeviceRef device) { return NO; }
+static const uint16_t LI_CCAP_ANALOG_TRIGGERS = 0x01;
+static const uint16_t LI_CCAP_RUMBLE = 0x02;
+static const uint16_t LI_CCAP_RGB_LED = 0x80;
+static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
 static BOOL isNintendo(IOHIDDeviceRef device) { return NO; }
 typedef int IOReturn;
 enum { kIOHIDReportTypeInput = 0, kIOHIDReportTypeOutput = 1, kIOHIDReportTypeFeature = 2 };
@@ -115,8 +119,12 @@ static MLGamepadMenuGesture MLGamepadMenuGestureIdle(void) {
 @property int playerIndex;
 @property uint8_t protocolType;
 @property uint32_t supportedButtonFlags;
+@property uint16_t capabilities;
 @property uint8_t previousLowFreqMotor;
 @property uint8_t previousHighFreqMotor;
+@property uint8_t previousLEDRed;
+@property uint8_t previousLEDGreen;
+@property uint8_t previousLEDBlue;
 @end
 @implementation HIDDeviceControllerEntry
 @end

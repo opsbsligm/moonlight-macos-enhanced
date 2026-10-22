@@ -54,6 +54,12 @@
 // compares against the pad it is writing, not a neighbour's.
 @property (nonatomic) UInt8 previousLowFreqMotor;
 @property (nonatomic) UInt8 previousHighFreqMotor;
+// Last lightbar color actually put on the wire for this device, so the dedup
+// guard compares against the pad it is writing, not a neighbour's. 0xFF means
+// "never written this session", so the host's first color is always honored.
+@property (nonatomic) UInt8 previousLEDRed;
+@property (nonatomic) UInt8 previousLEDGreen;
+@property (nonatomic) UInt8 previousLEDBlue;
 // Main-thread diagnostic completion; local queue acceptance is not host receipt.
 // Send deduplication uses the input-queue generation below.
 @property (nonatomic) BOOL advertisedToHost;
@@ -65,6 +71,10 @@
 // already idle, and keeps the type-map and the announced type on one table.
 @property (nonatomic) uint8_t protocolType;
 @property (nonatomic) uint32_t supportedButtonFlags;
+// The capability bitmask this arrival carries: the layout-wide base plus the
+// RGB bit only where a real lightbar write exists (PS4/PS5). Decided once at
+// creation, next to protocolType, so the arrival and the write path agree.
+@property (nonatomic) uint16_t capabilities;
 @property (nonatomic) PS4StatePacket_t lastPS4State;
 @property (nonatomic) PS5StatePacket_t lastPS5State;
 @property (nonatomic) SwitchSimpleStatePacket_t lastSimpleSwitchState;
@@ -342,6 +352,7 @@
 - (void)rumbleForControllerNumber:(int)number lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor;
 - (IOHIDDeviceRef)rumbleDeviceForPlayerIndex:(int)number;
 - (void)writeRumbleToDevice:(IOHIDDeviceRef)device lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor;
+- (void)writeLEDForDevice:(IOHIDDeviceRef)device red:(UInt8)red green:(UInt8)green blue:(UInt8)blue;
 - (IOHIDDeviceRef)getFirstDevice;
 - (int)switch_RumbleJoystick:(IOHIDDeviceRef)device lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor;
 - (BOOL)setVibrationEnabled:(UInt8)enabled;
