@@ -2990,13 +2990,6 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 
 #pragma mark - 0.2 per-device state table
 
-- (NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *)deviceControllerTable {
-    if (self._deviceControllerTable == nil) {
-        self._deviceControllerTable = [NSMutableDictionary dictionary];
-    }
-    return self._deviceControllerTable;
-}
-
 // Stable identity for a matched device: the product serial when the OS assigns
 // one, otherwise vendor+product. A serial is unique per physical unit, which is
 // what a player slot and a mask bit have to follow across replugs.
@@ -3004,15 +2997,15 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     if (device == NULL) {
         return nil;
     }
-    CFStringRef serial = IOHIDDeviceGetProperty(device, kIOHIDProductSerialNumberKey);
-    if (serial != NULL) {
-        NSString *sn = CFBridgingRelease(CFStringCreateWithCFString(kCFAllocatorDefault, serial));
+    CFTypeRef value = IOHIDDeviceGetProperty(device, (__bridge CFStringRef)@kIOHIDSerialNumberKey);
+    if (value != NULL && CFGetTypeID(value) == CFStringGetTypeID()) {
+        NSString *sn = CFBridgingRelease(value);
         if (sn.length > 0) {
             return [@"sn:" stringByAppendingString:sn];
         }
     }
-    UInt32 vendor = (UInt32)IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey);
-    UInt32 product = (UInt32)IOHIDDeviceGetProperty(device, kIOHIDProductIDKey);
+    UInt16 vendor = usbIdFromDevice(device, @kIOHIDVendorIDKey);
+    UInt16 product = usbIdFromDevice(device, @kIOHIDProductIDKey);
     return [NSString stringWithFormat:@"vp:%x:%x", vendor, product];
 }
 
@@ -3061,4 +3054,9 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     entry.controller.lastRightStickX = 0;
     entry.controller.lastRightStickY = 0;
 }
+
 @end
+
+@implementation HIDDeviceControllerEntry
+@end
+
