@@ -350,6 +350,14 @@ jobs:
     - name: Verify gamepad mouse ownership on mode exit and disconnect
       run: python3 scripts/controller-mouse-ownership-tests.py
 
+    - name: Verify the single-controller wire tuple stays on its recorded baseline
+      # One line each, not a folded line: scripts/local-gates.sh builds its list
+      # out of the python3 calls in this file, and a flag on its own line is a
+      # flag the local sweep never passes.
+      run: |
+        python3 scripts/controller-event-baseline.py
+        python3 scripts/controller-event-baseline.py --self-test
+
     - name: Verify device-specific C filtering preserves real keyboard input
       run: python3 scripts/keyboard-source-quirk-tests.py
 
