@@ -25,8 +25,13 @@ methods = '\n'.join(method(source, name) for name in (
 harness = r'''
 #import <Foundation/Foundation.h>
 typedef const void *IOHIDDeviceRef;
+typedef struct { double pressedAt; } MLGamepadMenuGesture;
+static MLGamepadMenuGesture MLGamepadMenuGestureIdle(void) {
+    return (MLGamepadMenuGesture){__builtin_nan("")};
+}
 @interface Controller : NSObject
 @property int lastButtonFlags;
+@property MLGamepadMenuGesture menuGesture;
 @end
 @implementation Controller
 @end
