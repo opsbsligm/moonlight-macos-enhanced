@@ -48,10 +48,11 @@
 @property (nonatomic) Controller *controller;
 @property (nonatomic) int playerIndex;
 @property (nonatomic) BOOL changeArmed;
-// M1: the host has been told this pad exists (type and capabilities). The flag
-// lives with the entry, so a replug after a removal re-announces it, and a pad
-// that never moved never double-announces.
+// Main-thread diagnostic completion; local queue acceptance is not host receipt.
+// Send deduplication and removal use the input-queue generation below.
 @property (nonatomic) BOOL advertisedToHost;
+// Written only by inputQueue; deduplicates successful arrivals per connection.
+@property (nonatomic) uint64_t advertisedInputGeneration;
 // The protocol type and button set the arrival event will carry, decided once
 // from the device at creation. Storing them on the entry (rather than re-asking
 // the bus at send time) is what lets stream-start announce pads that are
