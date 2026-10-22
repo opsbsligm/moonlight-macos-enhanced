@@ -169,4 +169,7 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 @interface HIDSupport (RumbleOutput)
 - (void)rumbleLowFreqMotor:(unsigned short)lowFreqMotor
              highFreqMotor:(unsigned short)highFreqMotor;
+- (void)rumbleForControllerNumber:(int)number
+                  lowFreqMotor:(unsigned short)lowFreqMotor
+                   highFreqMotor:(unsigned short)highFreqMotor;
 @end

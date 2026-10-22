@@ -1180,9 +1180,6 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
 
         // Inactive pointer source until a physical pad requests mouse mode.
         self.controller = [[Controller alloc] init];
-        
-        self.previousLowFreqMotor = 0xFF;
-        self.previousHighFreqMotor = 0xFF;
 
         [self rumbleSync];
 
@@ -3168,9 +3165,14 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         int slot = [self allocatePlayerSlot];
         if (slot < 0) return nil;
         entry = [[HIDDeviceControllerEntry alloc] init];
+        // The bus owns the reference the callback hands over; this entry keeps its own,
+        // released when the entry leaves the table (see the class's dealloc below).
+        entry.hidDevice = (IOHIDDeviceRef)CFRetain((CFTypeRef)device);
         entry.controller = [[Controller alloc] init];
         entry.controller.menuGesture = MLGamepadMenuGestureIdle();
         entry.playerIndex = slot;
+        entry.previousLowFreqMotor = 0xFF;
+        entry.previousHighFreqMotor = 0xFF;
         // The layout decision is made once, from the device, at the moment the
         // entry exists: every later announce reads it instead of re-asking the bus.
         entry.protocolType = [self protocolTypeForDevice:device];
@@ -3210,5 +3212,14 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 @end
 
 @implementation HIDDeviceControllerEntry
+// The entry owns one reference to its device: retained when it joins the table and
+// released here, so a removal callback that drops the entry cannot outlive a
+// write path that still resolves the pad through entryForDevice.
+- (void)dealloc
+{
+    if (_hidDevice != NULL) {
+        CFRelease(_hidDevice);
+    }
+}
 @end
 

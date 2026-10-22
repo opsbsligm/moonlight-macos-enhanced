@@ -71,24 +71,55 @@ SwitchCommonOutputPacket_t switchRumblePacket;
             break;
         }
         
+        // get next value
+        UInt16 lowFreqMotor = self.nextLowFreqMotor;
+        UInt16 highFreqMotor = self.nextHighFreqMotor;
         IOHIDDeviceRef device = [self getFirstDevice];
         if (device == nil) {
             continue;
         }
         
-        // get next value
-        UInt16 lowFreqMotor = self.nextLowFreqMotor;
-        UInt16 highFreqMotor = self.nextHighFreqMotor;
-        
+        [self writeRumbleToDevice:device lowFreqMotor:lowFreqMotor highFreqMotor:highFreqMotor];
+    }
+}
+
+// Per-number write: the host names the pad by player index, and the dedup
+// guard is per device, so a pad's rumble no longer rides on whichever device
+// the bus happened to list first or swallow a neighbour's.
+- (void)rumbleForControllerNumber:(int)number lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor {
+    IOHIDDeviceRef device = [self rumbleDeviceForPlayerIndex:number];
+    if (device == NULL) {
+        return;
+    }
+    [self writeRumbleToDevice:device lowFreqMotor:lowFreqMotor highFreqMotor:highFreqMotor];
+}
+
+// The player index is assigned at entry creation and freed on removal, so it
+// is stable for the life of the entry; the first device is the documented
+// single-pad fallback.
+- (IOHIDDeviceRef)rumbleDeviceForPlayerIndex:(int)number {
+    if (self.controllerDriver != 0) {
+        return NULL;
+    }
+    for (HIDDeviceControllerEntry *entry in self.deviceControllerTable.allValues) {
+        if (entry.playerIndex == number) {
+            return entry.hidDevice;
+        }
+    }
+    return [self getFirstDevice];
+}
+
+- (void)writeRumbleToDevice:(IOHIDDeviceRef)device lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor {
+        HIDDeviceControllerEntry *entry = [self entryForDevice:device];
         if (isXbox(device) || isKingKong(device)) {
             UInt8 rumble_packet[] = { 0x03, 0x0F, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xEB };
             
             UInt8 convertedLowFreqMotor = lowFreqMotor / 655;
             UInt8 convertedHighFreqMotor = highFreqMotor / 655;
-            if (convertedLowFreqMotor != self.previousLowFreqMotor || convertedHighFreqMotor != self.previousHighFreqMotor) {
+            if (convertedLowFreqMotor != entry.previousLowFreqMotor || convertedHighFreqMotor != entry.previousHighFreqMotor) {
                 
-                self.previousLowFreqMotor = convertedLowFreqMotor;
-                self.previousHighFreqMotor = convertedHighFreqMotor;
+                entry.previousLowFreqMotor = convertedLowFreqMotor;
+                entry.previousHighFreqMotor = convertedHighFreqMotor;
 
                 rumble_packet[4] = convertedLowFreqMotor;
                 rumble_packet[5] = convertedHighFreqMotor;
@@ -116,10 +147,10 @@ SwitchCommonOutputPacket_t switchRumblePacket;
             }
             UInt8 convertedLowFreqMotor = lowFreqMotor / 256;
             UInt8 convertedHighFreqMotor = highFreqMotor / 256;
-            if ((convertedLowFreqMotor != self.previousLowFreqMotor || convertedHighFreqMotor != self.previousHighFreqMotor) || (convertedLowFreqMotor == 0 && convertedHighFreqMotor == 0)) {
+            if ((convertedLowFreqMotor != entry.previousLowFreqMotor || convertedHighFreqMotor != entry.previousHighFreqMotor) || (convertedLowFreqMotor == 0 && convertedHighFreqMotor == 0)) {
                 
-                self.previousLowFreqMotor = convertedLowFreqMotor;
-                self.previousHighFreqMotor = convertedHighFreqMotor;
+                entry.previousLowFreqMotor = convertedLowFreqMotor;
+                entry.previousHighFreqMotor = convertedHighFreqMotor;
                 
                 int i = isBluetooth ? 6 : 4;
                 data[i++] = convertedHighFreqMotor;
@@ -160,10 +191,10 @@ SwitchCommonOutputPacket_t switchRumblePacket;
 
             UInt8 convertedLowFreqMotor = lowFreqMotor / 256;
             UInt8 convertedHighFreqMotor = highFreqMotor / 256;
-            if ((convertedLowFreqMotor != self.previousLowFreqMotor || convertedHighFreqMotor != self.previousHighFreqMotor) || (convertedLowFreqMotor == 0 && convertedHighFreqMotor == 0)) {
+            if ((convertedLowFreqMotor != entry.previousLowFreqMotor || convertedHighFreqMotor != entry.previousHighFreqMotor) || (convertedLowFreqMotor == 0 && convertedHighFreqMotor == 0)) {
 
-                self.previousLowFreqMotor = convertedLowFreqMotor;
-                self.previousHighFreqMotor = convertedHighFreqMotor;
+                entry.previousLowFreqMotor = convertedLowFreqMotor;
+                entry.previousHighFreqMotor = convertedHighFreqMotor;
 
                 effects->ucEnableBits1 |= 0x01; /* Enable rumble emulation */
                 effects->ucEnableBits1 |= 0x02; /* Disable audio haptics */
@@ -208,7 +239,6 @@ SwitchCommonOutputPacket_t switchRumblePacket;
                 dispatch_semaphore_signal(self.rumbleSemaphore);
             }
         }
-    }
 }
 
 - (IOHIDDeviceRef)getFirstDevice {
