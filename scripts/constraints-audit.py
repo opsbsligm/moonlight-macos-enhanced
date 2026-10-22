@@ -2469,6 +2469,12 @@ CI_ONLY = {
     # local build log contained the line, and the check that reads such logs was inline shell in
     # the build job and therefore invisible to the local list. Run it against your own log.
     "build-warning-audit.py": "xcodebuild log",
+    # The single-controller wire tuple is compiled with a real clang against the
+    # shipping header, so it needs the Apple toolchain this audits runner lacks --
+    # the same reason as the scroll/notch gates above. The marker that has to stay
+    # true is the toolchain call itself; a gate that stops needing clang_and_sdk
+    # can move back here and be driven on every pass.
+    "controller-event-baseline.py": "clang_and_sdk",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})
