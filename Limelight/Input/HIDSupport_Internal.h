@@ -57,6 +57,16 @@
 @property (nonatomic) Controller *controller;
 @property (nonatomic) int playerIndex;
 @property (nonatomic) BOOL changeArmed;
+// M1: the host has been told this pad exists (type and capabilities). The flag
+// lives with the entry, so a replug after a removal re-announces it, and a pad
+// that never moved never double-announces.
+@property (nonatomic) BOOL advertisedToHost;
+// The protocol type and button set the arrival event will carry, decided once
+// from the device at creation. Storing them on the entry (rather than re-asking
+// the bus at send time) is what lets stream-start announce pads that are
+// already idle, and keeps the type-map and the announced type on one table.
+@property (nonatomic) uint8_t protocolType;
+@property (nonatomic) uint32_t supportedButtonFlags;
 @property (nonatomic) PS4StatePacket_t lastPS4State;
 @property (nonatomic) PS5StatePacket_t lastPS5State;
 @property (nonatomic) SwitchSimpleStatePacket_t lastSimpleSwitchState;
@@ -252,6 +262,9 @@
 - (void)handleDpad:(NSInteger)intValue entry:(HIDDeviceControllerEntry *)entry;
 - (void)updateButtonFlags:(int)flag entry:(HIDDeviceControllerEntry *)entry state:(BOOL)set;
 - (void)sendControllerEventForEntry:(HIDDeviceControllerEntry *)entry;
+- (void)sendControllerArrivalForEntry:(HIDDeviceControllerEntry *)entry;
+- (void)sendControllerRemovalForEntry:(HIDDeviceControllerEntry *)entry;
+- (void)announceIdleControllersForNewStream;
 - (HIDDeviceControllerEntry *)entryForDevice:(IOHIDDeviceRef)device;
 - (NSString *)deviceKeyForDevice:(IOHIDDeviceRef)device;
 - (void)resetControllerStateForEntry:(HIDDeviceControllerEntry *)entry;

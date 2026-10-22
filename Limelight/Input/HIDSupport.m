@@ -438,6 +438,23 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
             [self resetPointerMotionForCaptureTransition];
         }
         _shouldSendInputEvents = next;
+        // M1: a stream that starts announces the pads the player already has in
+        // hand -- an idle controller sends no input, so waiting for its first
+        // value would leave the host without it for the whole session.
+        if (next) {
+            [self announceIdleControllersForNewStream];
+        }
+    }
+}
+
+// M1: every pad in the table that the host has not been told about yet gets its
+// arrival event now. Kept out of the setter so the setter stays the one-line
+// transition the boundary harness extracts on its own.
+- (void)announceIdleControllersForNewStream {
+    for (HIDDeviceControllerEntry *entry in [self deviceControllerTable].allValues) {
+        if (!entry.advertisedToHost) {
+            [self sendControllerArrivalForEntry:entry];
+        }
     }
 }
 
@@ -1233,6 +1250,70 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
 }
 
 
+// M1: what the arrival event tells the host this pad is. The mapping is the
+// same table the report prints (one owner, no second id list), and it is only a
+// local candidate until the host answers: the report says so.
+- (uint8_t)protocolTypeForDevice:(IOHIDDeviceRef)device {
+    if (isPlayStation(device)) {
+        return LI_CTYPE_PS;
+    }
+    if (isNintendo(device)) {
+        return LI_CTYPE_NINTENDO;
+    }
+    return LI_CTYPE_XBOX;
+}
+
+// M1: the capabilities an arriving pad claims. Only what the HID path can back
+// with a real write: analog triggers (the trigger axes above) and rumble (the
+// +Rumble.m write path). ACCEL/GYRO/TOUCHPAD/BATTERY/RGB stay unclaimed until
+// M3/M4 implement them, because a claimed capability is a promise the host
+// will keep trying to use.
+static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
+
+// The buttons every layout this path reads can actually produce: the face and
+// shoulder buttons, the menu pair, the stick clicks and the D-pad. The arrival
+// event carries them so the host knows what the emulated gamepad has; a flag
+// the HID path never sets (paddles, touchpad) is not one the host should draw.
+- (uint32_t)supportedButtonFlagsForDevice:(IOHIDDeviceRef)device {
+    (void)device;
+    return A_FLAG | B_FLAG | X_FLAG | Y_FLAG | LB_FLAG | RB_FLAG |
+           PLAY_FLAG | BACK_FLAG | SPECIAL_FLAG | LS_CLK_FLAG | RS_CLK_FLAG |
+           UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG;
+}
+
+// M1: tell the host a pad exists, with the type and capabilities it actually
+// has. The event goes out on the input queue next to the pad's own events, so
+// it lands in order with them, and it doubles as the fallback multi-controller
+// event the C library sends on hosts without arrival support.
+- (void)sendControllerArrivalForEntry:(HIDDeviceControllerEntry *)entry {
+    entry.advertisedToHost = YES;
+    int playerIndex = entry.playerIndex;
+    int mask = [self activeDeviceMask];
+    [MLControllerInventory.sharedInventory noteControllerArrival:playerIndex
+                                                   protocolType:entry.protocolType];
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+    if (inputCtx == NULL) {
+        return;
+    }
+    HIDDispatchInput(self, inputLease, ^{
+        LiSendControllerArrivalEventCtx(inputCtx, (uint8_t)playerIndex, (uint16_t)mask,
+                                        entry.protocolType, entry.supportedButtonFlags,
+                                        kHIDArrivalCapabilities);
+    });
+}
+
+// The mask bitfield the protocol wants on every controller event: one bit per
+// pad still connected. Computed from the table at send time, so a removal
+// between two events changes the mask without a second bookkeeping store.
+- (int)activeDeviceMask {
+    int mask = 0;
+    for (HIDDeviceControllerEntry *entry in [self deviceControllerTable].allValues) {
+        mask |= 1 << entry.playerIndex;
+    }
+    return mask;
+}
+
 // Sends one entry's controller to the host as its own active controller:
 // playerIndex and the mask bit both come from the entry's player slot. With a
 // single pad that is exactly the tuple the old shared path sent (slot 0, mask 1),
@@ -1254,14 +1335,31 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
     if (!inputCtx) {
         return;
     }
-    // The owner computed the single-pad tuple (mask 1); the per-device layer maps
-    // the player slot onto that bit, so the call still sends the owner's fields.
-    wireEvent.mask = 1 << entry.playerIndex;
+    // The owner computed the single-pad tuple (mask 1); the per-device layer
+    // widens it to the full active set, so every pad's event names every pad
+    // still connected. With one pad that is the original mask 1, which is the
+    // case the baseline gate pins.
+    wireEvent.mask = [self activeDeviceMask];
     HIDDispatchInput(self, inputLease, ^{
         LiSendMultiControllerEventCtx(inputCtx, wireEvent.playerIndex, wireEvent.mask, wireEvent.buttons,
                                       wireEvent.leftTrigger, wireEvent.rightTrigger,
                                       wireEvent.leftStickX, wireEvent.leftStickY,
                                       wireEvent.rightStickX, wireEvent.rightStickY);
+    });
+}
+
+// M1: removal sends an empty event for the gone pad with the refreshed mask,
+// which is the protocol's "this slot is free now".
+- (void)sendControllerRemovalForEntry:(HIDDeviceControllerEntry *)entry {
+    int playerIndex = entry.playerIndex;
+    int mask = [self activeDeviceMask];
+    HIDInputLease inputLease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
+    if (inputCtx == NULL) {
+        return;
+    }
+    HIDDispatchInput(self, inputLease, ^{
+        LiSendMultiControllerEventCtx(inputCtx, playerIndex, mask, 0, 0, 0, 0, 0, 0, 0);
     });
 }
 
@@ -2259,6 +2357,10 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
     HIDDeviceControllerEntry *entry = [self entryForDevice:device];
     if (entry == nil) return;
     Controller *devController = entry.controller;
+    if (!entry.advertisedToHost &&
+        HIDAcquireInputContext(self).context != NULL) {
+        [self sendControllerArrivalForEntry:entry];
+    }
 
     // KingKong claims the Microsoft vendor id, so the vendor-specific check
     // has to win over the generic Xbox layout check regardless of how either
@@ -2529,6 +2631,10 @@ void myHIDReportCallback (
     HIDDeviceControllerEntry *entry = [self entryForDevice:device];
     if (entry == nil) return;
     Controller *devController = entry.controller;
+    if (!entry.advertisedToHost &&
+        HIDAcquireInputContext(self).context != NULL) {
+        [self sendControllerArrivalForEntry:entry];
+    }
     
     if (isPS4(device)) {
         PS4StatePacket_t snapshot;
@@ -2828,7 +2934,11 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
             HIDDeviceControllerEntry *entry = self.deviceControllerTable[key];
             [self resetControllerStateForEntry:entry];
             [self.deviceControllerTable removeObjectForKey:key];
-            [self sendControllerEventForEntry:entry];
+            // A pad that arrived only in the table (no input yet) was never
+            // announced, so the host has no slot to clear.
+            if (entry.advertisedToHost) {
+                [self sendControllerRemovalForEntry:entry];
+            }
         }
     }
 }
@@ -3023,6 +3133,10 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         entry = [[HIDDeviceControllerEntry alloc] init];
         entry.controller = [[Controller alloc] init];
         entry.playerIndex = [self allocatePlayerSlot];
+        // The layout decision is made once, from the device, at the moment the
+        // entry exists: every later announce reads it instead of re-asking the bus.
+        entry.protocolType = [self protocolTypeForDevice:device];
+        entry.supportedButtonFlags = [self supportedButtonFlagsForDevice:device];
         table[key] = entry;
     }
     return entry;

@@ -150,7 +150,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
 | --- | --- | --- | --- | --- |
  | 0.1 探针 | — | 是 | 本机日志即可 | 代码与 68 项回归完成，真机待验证（hardware_validated=false）；真机验收需先装 build1933（日常应用仍是 1926） |
  | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（21 用例/8 变异）；per-device 拆分完成（每设备独立 Controller/playerIndex/mask 位/变化检测器），9aa5c6b9 pipeline 388 8/8 全绿，本地 xcodebuild 无第一方 warning；双手柄真机待验证（hardware_validated=false） |
-| M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 待开工 |
+| M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 代码完成（arrival 通告/真实 mask/拔出清位/诊断报告记录通告类型），本地门禁 77 过 + 基线 21 用例等价；主机侧虚拟手柄类型验证待真机（hardware_validated=false） |
 | M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 待开工 |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 待开工 |
 | M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | 待开工 |

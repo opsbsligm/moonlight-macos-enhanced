@@ -131,6 +131,7 @@ static void LiSendMousePositionEventCtx(void *context, short x, short y, short w
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event {}
 - (char)translateKeyModifierWithEvent:(NSEvent *)event { return 1; }
 - (void)recordAbsoluteInputDiagnosticsFrom:(NSString *)source x:(short)x y:(short)y width:(short)width height:(short)height {}
+- (void)announceIdleControllersForNewStream {}
 __METHODS__
 @end
 static short const HIDScrollWheelDelta = 120;
