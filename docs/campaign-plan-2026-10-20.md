@@ -151,6 +151,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
  | 0.1 探针 | — | 是 | 本机日志即可 | 代码与 68 项回归完成，真机待验证（hardware_validated=false）；真机验收需先装 build1933（日常应用仍是 1926） |
  | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（21 用例/8 变异）；per-device 拆分完成（每设备独立 Controller/playerIndex/mask 位/变化检测器），9aa5c6b9 pipeline 388 8/8 全绿，本地 xcodebuild 无第一方 warning；双手柄真机待验证（hardware_validated=false） |
 | M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 代码完成（arrival 通告/真实 mask/拔出清位/诊断报告记录通告类型），本地门禁 77 过 + 基线 21 用例等价；主机侧虚拟手柄类型验证待真机（hardware_validated=false） |
+| 0.2b HID 鼠标路由 | 0.2 | 是 | 双手柄本机 | 代码完成（每设备 gesture、单一指针 owner 接管/恢复、进入中性帧、拔出只清 owner），routing 门禁 13 正向+8 变异，pipeline 396；双手柄真机待验证（hardware_validated=false） |
 | M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 待开工 |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 待开工 |
 | M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | 待开工 |
@@ -230,3 +231,33 @@ M2 未提交草稿已撤回并保存在外部证据目录；自适应扳机与 t
 - 拔出先移除设备表，再通过有效会话的输入队列无条件发送幂等清位（普通状态包可能在 arrival 失败后成功），不依赖滞后的诊断标志；MFi 模式也清理本地表。
 - 新门禁编译发货 arrival/removal 方法，回放失败重试、去重、过期 lease、旧完成回调、初始化门控、驱动/捕获门控及拔出竞态；四项行为变异须被断言捕获。
 - Release 构建与 first-party warning 审计通过。此波仍未解决统一能力位、按号震动、鼠标模式共享状态和未知 HID 节点问题；hardware_validated=false。
+
+### HID 鼠标路由修复（2026-10-23，69eb84ef）
+
+此前 per-device 表只管了按钮/轴/摇杆，鼠标模式还挂在旧的共享 `Controller` 上：
+指针 displaylink 读 `self.controller` 但轴值写进各 entry，摇杆驱动的鼠标不会动；
+Menu 长按手势计时也是共享的，两只手柄互串；从未按过 Menu 的一次 release 也可能
+被当成旧 hold 误触发；拔出任意手柄会无条件释放鼠标所有权。
+
+本波选择的行为：**单个远端鼠标，明确一个当前控制设备**。
+- 每设备独立的 gesture 与物理按钮/轴状态；长按 Menu 的手势按 entry 计时。
+- 第二只手柄进入鼠标模式时接管 `mouseModeEntry` 与 `self.controller` 指针源，
+  旧 owner 恢复真实 held 的 gamepad 状态；其余手柄不变成鼠标按钮、不抢摇杆。
+- 进入鼠标模式先向 owner 发一帧中性事件（保留 playerIndex/mask，零 tuple），
+  释放远端 held 状态，避免退出模式后按钮/轴卡住；退出时恢复真实物理状态。
+- 切换与 displaylink 读取都在 `@synchronized(self)` 内，指针源不悬空。
+- 拔出只清 owner 自己的所有权；非 owner 拔出不释放鼠标。
+- 多设备时切换反馈震动暂抑制（legacy rumble 不按号，避免震错手柄），
+  单手柄保留原反馈；按号震动留 M2。
+- 单手柄默认手势时长、鼠标速率与现常量一致，设置外观/默认值不动。
+
+验收证据：
+- 新门禁 `scripts/controller-mouse-routing-tests.py` 从真实源码抽取 myHIDCallback
+  轴/按键生产者、真实 removal 回调、Pointer 真实鼠标消费块与 HIDDrainRelativeDelta，
+  回放 13 条正向路径与 8 项行为变异（非 owner 写共享、旧 owner 不恢复、指针不切换、
+  gesture 共享、无中性帧、所有 pad 转鼠标按钮、退出丢物理 A 位、未按 Menu 误触发）。
+  fake 边界仅 IOHID 取值/C 发送记录/clock/所有权 stub，不称真硬件或完整发包等价。
+- 本波的中性帧是修复卡键行为，**不能宣称完整单手柄发送序列等价**（0.2 等价基线仍是独立项）。
+- Release 构建 first-party 零 warning；本地门禁 80 passed / 0 failed / 15 skipped
+  （skip 为已知缺 Debug 产物/慢速探针/CI-only 项）。
+- GitLab pipeline 396（SHA 69eb84ef）结果见收尾记录；`hardware_validated=false` 保持。
