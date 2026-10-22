@@ -125,6 +125,7 @@ NSString *MLControllerDriverNameForIndex(NSInteger index) {
     copy.recordingNow = self.recordingNow;
     copy.driverName = self.driverName;
     copy.advertisedControllerArrivals = self.advertisedControllerArrivals;
+    copy.advertisedControllerTypes = self.advertisedControllerTypes;
     return copy;
 }
 
@@ -196,6 +197,7 @@ NSString *MLControllerDriverNameForIndex(NSInteger index) {
     snapshot.recordingNow = self.recording;
     snapshot.driverName = previous.driverName;
     snapshot.advertisedControllerArrivals = previous.advertisedControllerArrivals;
+    snapshot.advertisedControllerTypes = previous.advertisedControllerTypes;
     self.snapshot = snapshot;
 }
 
@@ -217,6 +219,8 @@ NSString *MLControllerDriverNameForIndex(NSInteger index) {
     snapshot.driverName = driverName;
     // 0.1 does not send controller arrival packets. M1 owns the hop from this flag to YES.
     snapshot.advertisedControllerArrivals = NO;
+    // A new stream is a new set of promises; what the host was told for it starts empty.
+    snapshot.advertisedControllerTypes = @{};
     self.snapshot = snapshot;
 }
 
@@ -231,6 +235,21 @@ NSString *MLControllerDriverNameForIndex(NSInteger index) {
     }
     MLControllerInventorySnapshot *snapshot = [previous copy];
     snapshot.recordingNow = NO;
+    self.snapshot = snapshot;
+}
+
+- (void)noteControllerArrival:(NSInteger)playerIndex protocolType:(uint8_t)protocolType {
+    NSAssert(NSThread.isMainThread, @"the inventory is written where the HID manager runs");
+    MLControllerInventorySnapshot *snapshot = [self.snapshot copy];
+    if (snapshot == nil) {
+        snapshot = [[MLControllerInventorySnapshot alloc] init];
+        snapshot.entries = @[];
+    }
+    NSMutableDictionary<NSNumber *, NSNumber *> *types =
+        [snapshot.advertisedControllerTypes mutableCopy] ?: [NSMutableDictionary dictionary];
+    types[@(playerIndex)] = @(protocolType);
+    snapshot.advertisedControllerTypes = [types copy];
+    snapshot.advertisedControllerArrivals = YES;
     self.snapshot = snapshot;
 }
 

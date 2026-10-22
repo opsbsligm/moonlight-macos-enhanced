@@ -69,8 +69,12 @@ typedef NS_ENUM(NSInteger, MLControllerFamily) {
 /// nil means no driver was recorded for this session.
 @property (nonatomic, copy, nullable) NSString *driverName;
 /// Whether controller arrival packets were sent to the host for the recorded stream.
-/// The 0.1 probe deliberately does not implement M1, so this stays NO until arrival lands.
+/// The 0.1 probe left this NO; M1 sets it when an arrival event actually goes out.
 @property (nonatomic) BOOL advertisedControllerArrivals;
+/// What the host was told for each arriving pad, in the LI_CTYPE_* numbering. The
+/// record is the arrival event itself, so an empty dictionary reads as "nothing was
+/// sent" even though the arrival flag says a stream ran.
+@property (nonatomic, copy) NSDictionary<NSNumber *, NSNumber *> *advertisedControllerTypes;
 @end
 
 /// The layout family for a vendor/product pair. A zero id is a legal read -- some devices
@@ -104,6 +108,10 @@ FOUNDATION_EXPORT NSString *MLControllerDriverNameForIndex(NSInteger index);
 
 /// Record the driver at session start. A missing name clears the previous session's name.
 - (void)noteSessionStartedWithDriverName:(nullable NSString *)driverName;
+
+/// A controller was told to the host. The type is what the arrival event carried,
+/// the slot its player index. Called from the main thread, like the rest of the record.
+- (void)noteControllerArrival:(NSInteger)playerIndex protocolType:(uint8_t)protocolType;
 
 /// That session ended. The tally stays and the entries stay -- a report read afterwards is
 /// exactly the case the record exists for -- but it stops claiming the bench is in use.

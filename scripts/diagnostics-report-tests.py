@@ -372,6 +372,7 @@ int main(void) {
             controllersSectionWithSnapshot:inventory.snapshot].lines componentsJoinedByString:@"\n"];
         check([idleText rangeOfString:@"controller driver: none"].location != NSNotFound &&
               [idleText rangeOfString:@"controller arrivals sent to host: no"].location != NSNotFound &&
+              [idleText rangeOfString:@"no (0.1 probe"].location == NSNotFound &&
               [idleText rangeOfString:@"advertised controller type/caps: not advertised"].location != NSNotFound &&
               [idleText rangeOfString:@"not a physical controller count"].location != NSNotFound &&
               [idleText rangeOfString:@"type-map=2"].location != NSNotFound,
@@ -391,6 +392,18 @@ int main(void) {
               [captured rangeOfString:@"advertised controller type/caps: not advertised"].location != NSNotFound,
               "a session report names the driver the stream used and does not claim "
               "controller types reached the host");
+        [inventory noteControllerArrival:0 protocolType:0x02];
+        [inventory noteControllerArrival:1 protocolType:0x03];
+        NSString *announced = [[DiagnosticsReportBuilder
+            controllersSectionWithSnapshot:inventory.snapshot].lines componentsJoinedByString:@"\n"];
+        check([announced rangeOfString:@"controller arrivals sent to host: yes"].location != NSNotFound &&
+              [announced rangeOfString:@"advertised controller type/caps: player 0=ps player 1=nintendo caps=analog triggers+rumble"].location != NSNotFound,
+              "recorded arrivals print the types the host was told, per player slot, with the capability set");
+        [inventory noteSessionStartedWithDriverName:@"MFi"];
+        NSString *freshSession = [[DiagnosticsReportBuilder
+            controllersSectionWithSnapshot:inventory.snapshot].lines componentsJoinedByString:@"\n"];
+        check([freshSession rangeOfString:@"controller arrivals sent to host: no"].location != NSNotFound,
+              "a new session starts with no arrivals of its own, so a re-plug cannot ride the old record");
         MLControllerInventory *freshDoneFirst = MLControllerInventory.new;
         MLControllerEntry *first = [[MLControllerEntry alloc] init];
         first.vendorId = 0x045E;
@@ -529,11 +542,14 @@ MUTATIONS = (
     ("the report drops the controller driver a stream recorded",
      "        if (snapshot.driverName.length > 0) {",
      "        if (NO) {"),
-    ("the report claims controller arrivals reached the host before M1",
+    ("the report claims controller arrivals reached the host before the record says so",
      "        [lines addObject:snapshot.advertisedControllerArrivals\n"
      "            ? @\"controller arrivals sent to host: yes\"\n"
-     "            : @\"controller arrivals sent to host: no (0.1 probe; M1 owns arrival)\"];",
+     "            : @\"controller arrivals sent to host: no\"];",
      "        [lines addObject:@\"controller arrivals sent to host: yes\"];"),
+    ("the report drops the capability set that goes with the announced types",
+     "@\"caps=analog triggers+rumble\"",
+     "@\"caps=rumble\""),
     ("the report claims controller type/caps were advertised",
      '@"advertised controller type/caps: not advertised"',
      '@"advertised controller type/caps: sent"'),
