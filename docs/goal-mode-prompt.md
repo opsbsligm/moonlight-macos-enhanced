@@ -1,12 +1,54 @@
-# Moonlight macOS Enhanced — 目标模式提示词
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-22 刷新）
 
-## 当前目标
+## 当前目标（对标作战，顺序即优先级）
 
-Moonlight macOS Enhanced 性能与体验优化：
-1. ⏳ **(队列调整已实测，持续延迟目标未闭合)** 29ms 队列延迟 — MLFramePacer 未驱动实际渲染。当前生效路径是拉帧阈值与 Metal drawable/inflight；刷新率未知时先建 3/3，首个有效刷新率后在绘制前、安全排空旧命令再切换 2/2。90FPS/180Hz 请求已实测切换，VSync pending 保持 1。首帧或提交队列的一次下降不能证明持续延迟改善。
-2. ⏳ **(性能边界已暴露，稳定 180FPS 未验收)** 90FPS 插帧稳定性 — 本机 Apple M2 的历史 VT 单次调用为 18-141ms，本轮另实测 150ms 调用触发 22ms 预算的过载保护。该结论仅适用于已测硬件和配置。当前源画面为 Windows 锁屏，实际到达约 33FPS，不能用请求 90FPS 或目标 180FPS 日志代替有效负载验收。设置页已区分节拍准入、处理能力与过载回退，强制开关不能绕过后两者。
-3. ✅ **(已完成)** 快捷键OSD视觉反馈 — 串流中操作名+按键组合提示，1.8s 淡出。
-4. ✅ **(已完成)** Settings 面板硬件信息展示 — 解码器/渲染器状态摘要行。
+对标来源：`docs/competitive-polish-roadmap-2026-10-20.md`（能力矩阵 + P0/P1/P2）、
+`docs/input-mapping-benchmark.md`（输入映射四级证据）。对标对象：moonlight-qt（上游）、
+moonlight-common-c fork @386e79c（协议层）、Sunshine（主机）、基地版 skyhua0224（起点）；
+竞品 Citrix Horizon / Parsec / 网易 UU / ToDesk。执行波次见
+`docs/campaign-plan-2026-10-20.md`，不可撼动基线见 `docs/baseline-2026-10-22.md`。
+
+1. **0.1 控制器探针真机验收** ⏳（代码完成 `a85c5879`，1933 产物已验收）
+   诊断报告已能输出 vid:pid/族/传输/电池/驱动/未通告文案。真机验收 = 装 1933 后
+   串流一次接两块手柄，核对分类、driver、arrival 文案与日志。`hardware_validated=false`。
+2. **0.2 per-device 状态表** ⏳（下一开发重点）
+   HID 驱动仍是单一 `Controller`（`HIDSupport_Internal.h:49`）、mask 硬编码 1
+   （`HIDSupport.m:1263`）。第一步：单手柄发包逐字节等价录制基线；再按设备索引拆状态，
+   playerIndex 由连接顺序分配。等价证不出来就停（计划 §4 风险节）。
+3. **M1 类型/能力通告 + mask 修正 + 拔出清位** ⏳（依赖 0.2）
+   `LiSendControllerArrivalEvent` 全仓 0 调用。首轮只报 `ANALOG_TRIGGERS|RUMBLE`，
+   没实现的不报。验收 = Sunshine 主机侧虚拟手柄类型随设备变化 + 拔出及时断开。
+4. **M2 三回调 + 按号震动** ⏳（依赖 M1）
+   `rumbleTriggers`/`setControllerLED` 接线；震动先按 controllerNumber 找设备
+   （现在 HID 路径 `getFirstDevice`，第二只手柄的震动必丢）。
+5. **M3 陀螺仪/加速度计** ⏳（依赖 M1）
+   解析字段已在 PS4/PS5 状态包里，缺的是启用 feature report + 节流 + 单位换算 + 关闭复原。
+6. **M4 电池/触摸板/Joy-Con 扩容** ⏳（依赖 M1）
+   isNintendo 补 057E:2006/2007；评估 fork 对齐 `LI_CTYPE_STEAM`/`DUAL_TOUCHPAD`/`TouchEvent2`。
+7. **K1 中文/文本注入** ⏳（无依赖，可并行）
+   `LiSendUtf8TextEvent` 0 调用 = 键盘面最后硬缺口。先已提交文本与 keyCode 互斥，
+   marked text 单独提交单独验收。
+8. **K2 Ctrl+Alt+Del** ⏳（无依赖，可并行）
+   扩展 scancode `0x8000` 路径已在用；先真机验可行性，拉不起 SAS 就降级为提示。
+9. **E1 全屏侧边栏参数化** ⏳（无依赖，可并行）
+   感应带 8–16pt/驻留 60–300ms/收起 300–1000ms 变设置项，默认值 = 现常量；
+   甩动阈值与冷却维持编译期常量。门控先改再改默认。
+10. **P2 对等补齐** ⏳（各自独立小提交）
+    重连退避状态机；`muteOnFocusLoss`/`backgroundGamepad`/`playAudioOnHost` UI 开关；
+    桌面档绝对鼠标默认关。
+11. **历史遗留（保持状态）**：29ms 队列延迟（pacer 未接入，持续改善未闭合）、
+    90FPS 插帧稳定性（本机 VT 过载保护已触发，有效负载验收未做）。
+    这两项不因对标作战自动解冻，单独排期。
+
+## 对标结论速查（为什么是这个顺序）
+
+- 控制器 = 唯一"维度缺失"：qt 全链路已用 Arrival/Motion/Touch/Battery 事件，
+  我们全仓 0 调用 → 主机永远把我们当 Xbox 360。P0 收益最大。
+- 键盘规则系统（97 键×修饰键 + 10 月亮动作）领先 qt；中文注入是最后硬缺口。
+- 鼠标/边缘栏/视频/音频我们领先（三模式 + 1000Hz、MetalFX SR、VT 插帧、VRR、
+  7.1.4、剪贴板同步、Sunshine HTTP 扩展），保持领先不返工。
+- 竞品证据封顶：Citrix 仅 ADMX 机制证据；Parsec 文档 403 不做断言；
+  UU 仅宣传面（触屏场景不同赛道）；ToDesk 仅宣传面。
 
 ## 已验证事实与待验证结论
 
@@ -18,12 +60,12 @@ Moonlight macOS Enhanced 性能与体验优化：
 
 ## CICD 标准（每轮执行）
 
-1. 改代码 → `xcodebuild build` → BUILD SUCCEEDED
-2. `scripts/liquid-glass-audit.py` → 0 violations
-3. `scripts/constraints-audit.py --no-battery` → 0 failures
-4. `git commit`（`git -c user.email="codex-agent@homelab.local" -c user.name="Codex Agent"`）
-5. `git push gitlab main`（http://172.16.130.6/moonlight/moonlight-macos-enhanced.git）
-6. CI 自动镜像到 GitHub（opsbsligm/moonlight-macos-enhanced）
+1. 改代码 → `bash scripts/local-gates.sh`（快速模式，完整变异电池仅 `--all`）→ 0 failed，skip 逐项列名
+2. 涉及新行为 → 新增门控脚本（含 self-test）并接入 CI；门控必须证明自己会失败
+3. `git -c user.email="codex-agent@homelab.local" -c user.name="Codex Agent" commit`
+4. `git push gitlab main`（http://172.16.130.6/moonlight/moonlight-macos-enhanced.git）
+5. 等 30s+ 再查 project 6 pipeline，准确 SHA 对应、全绿才算通过；失败修复后重推，不绕过
+6. GitHub（opsbsligm）由 `publish-github` job 单向镜像，只读，不手推
 
 ## 当前架构关键文件
 
@@ -45,9 +87,10 @@ Moonlight macOS Enhanced 性能与体验优化：
 
 ## 约定
 
-- 完全独立原项目，不接受任何 PR 或 fork 关系
-- 专注 macOS，Linux/Windows 特性无视
-- USB 重定向代码已就绪但功能冻结（需 Apple Developer Program 签名）
-- 所有改动必须 build + audit 0 failures + commit + push GitLab
-- "完成"必须基于真实运行证据（log/CUA/用户主观），不能由代理代答
-- 中文汇报，结论先行
+- 完全独立原项目，不接受任何 PR 或 fork 关系；专注 macOS，Linux/Windows 特性无视
+- 所有改动必须 local-gates 0 failed + commit + push GitLab + pipeline 全绿
+- "完成"必须基于真实运行证据（log/CUA/用户主观），不能由代理代答；
+  未真机一律 `hardware_validated=false`
+- 设置 UI 已验收控件与默认值不动（AGENTS.md），新增设置项默认 = 当前行为
+- 冻结项不自行解冻：USB 真实重定向、Developer ID 公证/正式签名、自动更新
+- 中文汇报，结论先行；一个里程碑一个提交一个 pipeline
