@@ -451,10 +451,9 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 // arrival event now. Kept out of the setter so the setter stays the one-line
 // transition the boundary harness extracts on its own.
 - (void)announceIdleControllersForNewStream {
+    if (self.controllerDriver != 0 || !self.shouldSendInputEvents) return;
     for (HIDDeviceControllerEntry *entry in [self deviceControllerTable].allValues) {
-        if (!entry.advertisedToHost) {
-            [self sendControllerArrivalForEntry:entry];
-        }
+        [self sendControllerArrivalForEntry:entry];
     }
 }
 
@@ -498,6 +497,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         if (inputContext != NULL) {
             [self.keyboardQuirkFilter start];
             [self startKeyboardStateHealTimerIfNeeded];
+            [self announceIdleControllersForNewStream];
         } else {
             [self.keyboardQuirkFilter stop];
             [self stopKeyboardStateHealTimer];
@@ -1286,20 +1286,34 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
 // it lands in order with them, and it doubles as the fallback multi-controller
 // event the C library sends on hosts without arrival support.
 - (void)sendControllerArrivalForEntry:(HIDDeviceControllerEntry *)entry {
-    entry.advertisedToHost = YES;
+    if (entry == nil || self.controllerDriver != 0 || !self.shouldSendInputEvents) return;
     int playerIndex = entry.playerIndex;
     int mask = [self activeDeviceMask];
-    [MLControllerInventory.sharedInventory noteControllerArrival:playerIndex
-                                                   protocolType:entry.protocolType];
+    uint8_t protocolType = entry.protocolType;
+    uint32_t buttons = entry.supportedButtonFlags;
     HIDInputLease inputLease = HIDAcquireInputContext(self);
     PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (inputCtx == NULL) {
         return;
     }
     HIDDispatchInput(self, inputLease, ^{
-        LiSendControllerArrivalEventCtx(inputCtx, (uint8_t)playerIndex, (uint16_t)mask,
-                                        entry.protocolType, entry.supportedButtonFlags,
-                                        kHIDArrivalCapabilities);
+        // The lease consumer has validated initialization and context lifetime.
+        // A successful C return means accepted by its queue, not host receipt.
+        if (entry.advertisedInputGeneration == inputLease.generation) return;
+        int result = LiSendControllerArrivalEventCtx(inputCtx, (uint8_t)playerIndex,
+                                                     (uint16_t)mask, protocolType,
+                                                     buttons, kHIDArrivalCapabilities);
+        if (result != 0) return;
+        entry.advertisedInputGeneration = inputLease.generation;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            HIDInputLease current = HIDAcquireInputContext(self);
+            if (current.context != inputLease.context ||
+                current.generation != inputLease.generation ||
+                ![self.deviceControllerTable.allValues containsObject:entry]) return;
+            entry.advertisedToHost = YES;
+            [MLControllerInventory.sharedInventory noteControllerArrival:playerIndex
+                                                           protocolType:protocolType];
+        });
     });
 }
 
@@ -1351,6 +1365,7 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
 // M1: removal sends an empty event for the gone pad with the refreshed mask,
 // which is the protocol's "this slot is free now".
 - (void)sendControllerRemovalForEntry:(HIDDeviceControllerEntry *)entry {
+    if (entry == nil || self.controllerDriver != 0) return;
     int playerIndex = entry.playerIndex;
     int mask = [self activeDeviceMask];
     HIDInputLease inputLease = HIDAcquireInputContext(self);
@@ -1359,6 +1374,7 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
         return;
     }
     HIDDispatchInput(self, inputLease, ^{
+        if (entry.advertisedInputGeneration != inputLease.generation) return;
         LiSendMultiControllerEventCtx(inputCtx, playerIndex, mask, 0, 0, 0, 0, 0, 0, 0);
     });
 }
@@ -2357,10 +2373,7 @@ void myHIDCallback(void* context, IOReturn result, void* sender, IOHIDValueRef v
     HIDDeviceControllerEntry *entry = [self entryForDevice:device];
     if (entry == nil) return;
     Controller *devController = entry.controller;
-    if (!entry.advertisedToHost &&
-        HIDAcquireInputContext(self).context != NULL) {
-        [self sendControllerArrivalForEntry:entry];
-    }
+    [self sendControllerArrivalForEntry:entry];
 
     // KingKong claims the Microsoft vendor id, so the vendor-specific check
     // has to win over the generic Xbox layout check regardless of how either
@@ -2631,10 +2644,7 @@ void myHIDReportCallback (
     HIDDeviceControllerEntry *entry = [self entryForDevice:device];
     if (entry == nil) return;
     Controller *devController = entry.controller;
-    if (!entry.advertisedToHost &&
-        HIDAcquireInputContext(self).context != NULL) {
-        [self sendControllerArrivalForEntry:entry];
-    }
+    [self sendControllerArrivalForEntry:entry];
     
     if (isPS4(device)) {
         PS4StatePacket_t snapshot;
@@ -2915,6 +2925,7 @@ void myHIDDeviceMatchingCallback(void * _Nullable        context,
     HIDSupport *self = (__bridge HIDSupport *)context;
 
     [self entryForDevice:device];
+    [self announceIdleControllersForNewStream];
     [self rumbleSync];
     [self publishControllerInventoryChange];
 }
@@ -2927,19 +2938,15 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 
     [self releaseMouseButtonsForSource:@"hid-controller"];
     [self publishControllerInventoryChange];
-    if (self.controllerDriver == 0) {
-        // 0.2: the pad that left owns the clear frame; other pads keep their state.
-        NSString *key = [self deviceKeyForDevice:device];
-        if (key != nil) {
-            HIDDeviceControllerEntry *entry = self.deviceControllerTable[key];
-            [self resetControllerStateForEntry:entry];
-            [self.deviceControllerTable removeObjectForKey:key];
-            // A pad that arrived only in the table (no input yet) was never
-            // announced, so the host has no slot to clear.
-            if (entry.advertisedToHost) {
-                [self sendControllerRemovalForEntry:entry];
-            }
-        }
+    // Clean up the table for both drivers; only the HID driver sends a removal.
+    NSString *key = [self deviceKeyForDevice:device];
+    if (key != nil) {
+        HIDDeviceControllerEntry *entry = self.deviceControllerTable[key];
+        [self resetControllerStateForEntry:entry];
+        [self.deviceControllerTable removeObjectForKey:key];
+        // Check successful arrival on inputQueue, including an arrival
+        // whose main-thread diagnostic completion has not run yet.
+        [self sendControllerRemovalForEntry:entry];
     }
 }
 
