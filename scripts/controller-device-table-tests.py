@@ -25,6 +25,8 @@ methods = '\n'.join(method(source, name) for name in (
 harness = r'''
 #import <Foundation/Foundation.h>
 typedef const void *IOHIDDeviceRef;
+CFTypeRef CFRetain(CFTypeRef v) { return v; }
+void CFRelease(CFTypeRef v) { (void)v; }
 typedef struct { double pressedAt; } MLGamepadMenuGesture;
 static MLGamepadMenuGesture MLGamepadMenuGestureIdle(void) {
     return (MLGamepadMenuGesture){__builtin_nan("")};
@@ -37,9 +39,12 @@ static MLGamepadMenuGesture MLGamepadMenuGestureIdle(void) {
 @end
 @interface HIDDeviceControllerEntry : NSObject
 @property(strong) Controller *controller;
+@property IOHIDDeviceRef hidDevice;
 @property int playerIndex;
 @property uint8_t protocolType;
 @property uint32_t supportedButtonFlags;
+@property UInt8 previousLowFreqMotor;
+@property UInt8 previousHighFreqMotor;
 @end
 @implementation HIDDeviceControllerEntry
 @end
