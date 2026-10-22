@@ -2475,6 +2475,7 @@ CI_ONLY = {
     # true is the toolchain call itself; a gate that stops needing clang_and_sdk
     # can move back here and be driven on every pass.
     "controller-event-baseline.py": "clang_and_sdk",
+    "controller-wire-baseline.py": "clang_and_sdk",
     "controller-device-table-tests.py": "clang_and_sdk",
     "controller-arrival-tests.py": "clang_and_sdk",
     "controller-mouse-routing-tests.py": "clang_and_sdk",
@@ -3900,8 +3901,10 @@ if run_battery:
     battery = os.path.join(root, "scripts", "assertion-battery.py")
     # Stream the battery's progress instead of hiding a long run in a captured pipe.
     sys.stdout.flush()
-    proc = subprocess.run([sys.executable, "-u", battery, "--no-audit-recursion"],
-                          cwd=root)
+    battery_args = [sys.executable, "-u", battery, "--no-audit-recursion"]
+    if "--allow-dirty" in sys.argv:
+        battery_args.append("--allow-dirty")
+    proc = subprocess.run(battery_args, cwd=root)
     print("%s assertion battery: exit %d" %
           ("ok" if proc.returncode == 0 else "FAIL", proc.returncode))
     if proc.returncode != 0:
