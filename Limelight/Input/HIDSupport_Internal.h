@@ -42,11 +42,35 @@
 - (void)takeAccumulatedMotionX:(CGFloat *)deltaXOut deltaY:(CGFloat *)deltaYOut;
 @end
 
+// 0.2 per-device state. The HID path used to keep one shared Controller that every
+// connected pad wrote into at once, so two pads overwrote each other. This table gives
+// each matched IOHIDDevice its own Controller, player slot and change detector, keyed
+// by the device's stable identity (product serial, falling back to vendor+product ids).
+// All HID callbacks fire on the main run loop, so the table needs no locking.
+//
+// The player slot is a connection-order assignment with reuse: first connection gets
+// 0, then the next free slot; removal releases the slot so a later connection
+// recycles it. Slots are never published to the host until M1 owns advertisement.
+// The mask bit each entry sends is derived from the slot at send time, so the wire
+// tuple itself still has one owner (ControllerEventBaseline).
+@interface HIDDeviceControllerEntry : NSObject
+@property (nonatomic) Controller *controller;
+@property (nonatomic) int playerIndex;
+@property (nonatomic) BOOL changeArmed;
+@property (nonatomic) PS4StatePacket_t lastPS4State;
+@property (nonatomic) PS5StatePacket_t lastPS5State;
+@property (nonatomic) SwitchSimpleStatePacket_t lastSimpleSwitchState;
+@property (nonatomic) SwitchStatePacket_t lastSwitchState;
+@end
+
 @interface HIDSupport () <CoreHIDMouseDriverDelegate>
 @property (nonatomic) dispatch_queue_t rumbleQueue;
 @property (nonatomic, strong) NSDictionary *mappings;
 @property (nonatomic) IOHIDManagerRef hidManager;
 @property (nonatomic, strong) Controller *controller;
+// 0.2 per-device table (see HIDDeviceControllerEntry above). The shared
+// `controller` above now owns only the global gesture/mouse-mode state.
+@property (nonatomic, strong) NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *deviceControllerTable;
 @property (nonatomic) CVDisplayLinkRef displayLink;
 @property (nonatomic, strong) HIDMouseDeltaAccumulator *mouseDeltaAccumulator;
 @property (nonatomic) UInt8 previousLowFreqMotor;
