@@ -221,3 +221,12 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
 单手柄 tuple 回放不能证明整条发包序列等价；hardware_validated=false 保持。
 M1 的发送成功记录、驱动隔离、热插拔时机与能力真实性仍须复核，不能提升为完整交付。
 M2 未提交草稿已撤回并保存在外部证据目录；自适应扳机与 trigger rumble 不得混用。
+
+### M1 通告生命周期修复（2026-10-23，待本提交 CI）
+
+- 成功通告按 inputContextGeneration 在 inputQueue 去重；C 函数失败不记录成功，后续事件可重试。
+- C context 仅由现有 lease consumer 验证并访问；主线程诊断完成回调再次核对 context、代数和设备是否仍存在。
+- context 绑定、捕获开启与设备接入均尝试通告空闲设备；仅 HID 驱动且捕获开启时入队。
+- 拔出先移除设备表，再在输入队列检查该会话是否成功通告并发送清位，不依赖滞后的诊断标志；MFi 模式也清理本地表。
+- 新门禁编译发货 arrival/removal 方法，回放失败重试、去重、过期 lease、旧完成回调、初始化门控、驱动/捕获门控及拔出竞态；三项行为变异须被断言捕获。
+- Release 构建与 first-party warning 审计通过。此波仍未解决统一能力位、按号震动、鼠标模式共享状态和未知 HID 节点问题；hardware_validated=false。
