@@ -172,4 +172,8 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 - (void)rumbleForControllerNumber:(int)number
                   lowFreqMotor:(unsigned short)lowFreqMotor
                    highFreqMotor:(unsigned short)highFreqMotor;
+- (void)ledForControllerNumber:(int)number
+                          red:(unsigned char)red
+                        green:(unsigned char)green
+                         blue:(unsigned char)blue;
 @end

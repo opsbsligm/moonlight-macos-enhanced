@@ -27,11 +27,11 @@ typedef struct { void *context; uint64_t generation; } HIDInputLease;
 static NSMutableArray *inputJobs, *mainJobs;
 static int sends, resultCode, notes, removals, removalMask;
 static BOOL initialized = YES;
-static const uint16_t kHIDArrivalCapabilities = 3;
 @interface HIDDeviceControllerEntry : NSObject
 @property int playerIndex;
 @property uint8_t protocolType;
 @property uint32_t supportedButtonFlags;
+@property uint16_t capabilities;
 @property uint64_t advertisedInputGeneration;
 @property BOOL advertisedToHost;
 @end

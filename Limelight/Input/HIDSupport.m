@@ -1286,6 +1286,7 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     int mask = [self activeDeviceMask];
     uint8_t protocolType = entry.protocolType;
     uint32_t buttons = entry.supportedButtonFlags;
+    uint16_t capabilities = entry.capabilities;
     HIDInputLease inputLease = HIDAcquireInputContext(self);
     PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
     if (inputCtx == NULL) {
@@ -1297,7 +1298,7 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
         if (entry.advertisedInputGeneration == inputLease.generation) return;
         int result = LiSendControllerArrivalEventCtx(inputCtx, (uint8_t)playerIndex,
                                                      (uint16_t)mask, protocolType,
-                                                     buttons, kHIDArrivalCapabilities);
+                                                     buttons, capabilities);
         if (result != 0) return;
         entry.advertisedInputGeneration = inputLease.generation;
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -3173,10 +3174,19 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         entry.playerIndex = slot;
         entry.previousLowFreqMotor = 0xFF;
         entry.previousHighFreqMotor = 0xFF;
+        entry.previousLEDRed = 0xFF;
+        entry.previousLEDGreen = 0xFF;
+        entry.previousLEDBlue = 0xFF;
         // The layout decision is made once, from the device, at the moment the
         // entry exists: every later announce reads it instead of re-asking the bus.
         entry.protocolType = [self protocolTypeForDevice:device];
         entry.supportedButtonFlags = [self supportedButtonFlagsForDevice:device];
+        // Same once-at-creation rule for capabilities: RGB is advertised only
+        // for a pad that has a lightbar write, so the host stops asking an
+        // Xbox or Switch for a color it can never be given.
+        entry.capabilities = isPS4(device) || isPS5(device)
+            ? (kHIDArrivalCapabilities | LI_CCAP_RGB_LED)
+            : kHIDArrivalCapabilities;
         table[key] = entry;
     }
     return entry;

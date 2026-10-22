@@ -31,6 +31,14 @@ typedef struct { double pressedAt; } MLGamepadMenuGesture;
 static MLGamepadMenuGesture MLGamepadMenuGestureIdle(void) {
     return (MLGamepadMenuGesture){__builtin_nan("")};
 }
+static const uint16_t LI_CCAP_ANALOG_TRIGGERS = 0x01;
+static const uint16_t LI_CCAP_RUMBLE = 0x02;
+static const uint16_t LI_CCAP_RGB_LED = 0x80;
+static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
+static BOOL isPS4(IOHIDDeviceRef device) __attribute__((unused));
+static BOOL isPS4(IOHIDDeviceRef device) { (void)device; return NO; }
+static BOOL isPS5(IOHIDDeviceRef device) __attribute__((unused));
+static BOOL isPS5(IOHIDDeviceRef device) { (void)device; return NO; }
 @interface Controller : NSObject
 @property int lastButtonFlags;
 @property MLGamepadMenuGesture menuGesture;
@@ -43,8 +51,12 @@ static MLGamepadMenuGesture MLGamepadMenuGestureIdle(void) {
 @property int playerIndex;
 @property uint8_t protocolType;
 @property uint32_t supportedButtonFlags;
+@property uint16_t capabilities;
 @property UInt8 previousLowFreqMotor;
 @property UInt8 previousHighFreqMotor;
+@property UInt8 previousLEDRed;
+@property UInt8 previousLEDGreen;
+@property UInt8 previousLEDBlue;
 @end
 @implementation HIDDeviceControllerEntry
 @end

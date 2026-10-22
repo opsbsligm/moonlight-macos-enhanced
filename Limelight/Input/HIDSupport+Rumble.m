@@ -94,6 +94,19 @@ SwitchCommonOutputPacket_t switchRumblePacket;
     [self writeRumbleToDevice:device lowFreqMotor:lowFreqMotor highFreqMotor:highFreqMotor];
 }
 
+// Per-number lightbar write: the host names the pad by player index, and the
+// dedup guard is per device, so one pad's color no longer rides on whichever
+// device the bus listed first or swallow a neighbour's. Only pads with a real
+// lightbar write (PS4/PS5) are advertised the RGB capability, so the host
+// should not ask anything else for a color.
+- (void)ledForControllerNumber:(int)number red:(UInt8)red green:(UInt8)green blue:(UInt8)blue {
+    IOHIDDeviceRef device = [self rumbleDeviceForPlayerIndex:number];
+    if (device == NULL) {
+        return;
+    }
+    [self writeLEDForDevice:device red:red green:green blue:blue];
+}
+
 // The player index is assigned at entry creation and freed on removal, so it
 // is stable for the life of the entry; the first device is the documented
 // single-pad fallback.
@@ -239,6 +252,102 @@ SwitchCommonOutputPacket_t switchRumblePacket;
                 dispatch_semaphore_signal(self.rumbleSemaphore);
             }
         }
+}
+
+// Lightbar write for a single pad. The PS4/PS5 effects report carries the
+// motors and the color in the same packet, so a color-only write must echo
+// the motors the pad last had: otherwise turning the light would silently
+// kill (or restart) the rumble that is in progress. The last motor bytes are
+// read off the entry, so the dedup guard below compares color only and a
+// repeat of the same color is suppressed like a repeat of the same rumble.
+- (void)writeLEDForDevice:(IOHIDDeviceRef)device red:(UInt8)red green:(UInt8)green blue:(UInt8)blue {
+    HIDDeviceControllerEntry *entry = [self entryForDevice:device];
+    if (entry == nil) {
+        return;
+    }
+    if (!(isPS4(device) || isPS5(device))) {
+        // No lightbar write on the layouts this path drives; the RGB bit is
+        // not advertised for them, so reaching here is a host over-reach.
+        return;
+    }
+    if (entry.previousLEDRed == red &&
+        entry.previousLEDGreen == green &&
+        entry.previousLEDBlue == blue) {
+        return;
+    }
+    entry.previousLEDRed = red;
+    entry.previousLEDGreen = green;
+    entry.previousLEDBlue = blue;
+
+    // Motor bytes the pad currently has, echoed so the light does not touch them.
+    UInt8 lowFreq = entry.previousLowFreqMotor;
+    UInt8 highFreq = entry.previousHighFreqMotor;
+
+    if (isPS4(device)) {
+        UInt8 reportData[64];
+        int size;
+        // Fails on Bluetooth, which is what the report-id selection below keys on.
+        reportData[0] = k_ePS4FeatureReportIdSerialNumber;
+        size = [self hidGetFeatureReport:device data:reportData length:sizeof(reportData)];
+        BOOL isBluetooth = !(size >= 7);
+
+        UInt8 data[78] = {};
+        if (isBluetooth) {
+            data[0] = k_EPS4ReportIdBluetoothEffects;
+            data[1] = 0xC0 | 0x04; // Magic value HID + CRC, also sets interval to 4ms.
+            data[3] = 0x01; // 0x1 is rumble; the motors are zero so it stays quiet.
+        } else {
+            data[0] = k_EPS4ReportIdUsbEffects;
+            data[1] = 0x07; // Magic value
+        }
+        int i = isBluetooth ? 6 : 4;
+        data[i++] = highFreq;
+        data[i++] = lowFreq;
+        data[i++] = red;
+        data[i++] = green;
+        data[i++] = blue;
+
+        if (isBluetooth) {
+            UInt8 ubHdr = 0xA2; // hidp header is part of the CRC calculation.
+            UInt32 unCRC = SDL_crc32(0, &ubHdr, 1);
+            unCRC = SDL_crc32(unCRC, data, (size_t)(sizeof(data) - sizeof(unCRC)));
+            memcpy(&data[sizeof(data) - sizeof(unCRC)], &unCRC, sizeof(unCRC));
+        }
+        IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, data[0], data, sizeof(data));
+    } else if (isPS5(device)) {
+        int dataSize, offset;
+        UInt8 data[78] = {};
+        if (self.isPS5Bluetooth) {
+            data[0] = k_EPS5ReportIdBluetoothEffects;
+            data[1] = 0x02; // Magic value
+            dataSize = 78;
+            offset = 2;
+        } else {
+            data[0] = k_EPS5ReportIdBluetoothEffects;
+            dataSize = 48;
+            offset = 1;
+        }
+        DS5EffectsState_t *effects = (DS5EffectsState_t *)&data[offset];
+
+        // Carry the current motors, then set the color. The enable bits keep
+        // rumble emulation on so the echoed motors are honored.
+        effects->ucRumbleLeft = lowFreq;
+        effects->ucRumbleRight = highFreq;
+        effects->ucEnableBits1 |= 0x01;
+        effects->ucEnableBits1 |= 0x02;
+        effects->ucLedFlags |= 0x01;
+        effects->ucLedRed = red;
+        effects->ucLedGreen = green;
+        effects->ucLedBlue = blue;
+
+        if (self.isPS5Bluetooth) {
+            UInt8 ubHdr = 0xA2;
+            UInt32 unCRC = SDL_crc32(0, &ubHdr, 1);
+            unCRC = SDL_crc32(unCRC, data, (size_t)(dataSize - sizeof(unCRC)));
+            memcpy(&data[dataSize - sizeof(unCRC)], &unCRC, sizeof(unCRC));
+        }
+        IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, data[0], data, dataSize);
+    }
 }
 
 - (IOHIDDeviceRef)getFirstDevice {
