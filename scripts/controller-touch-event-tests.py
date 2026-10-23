@@ -179,6 +179,7 @@ typedef struct {
 @property(strong) NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *deviceControllerTable;
 @property NSInteger controllerDriver;
 @property BOOL shouldSendInputEvents;
+@property BOOL suspendControllerEvents;
 @end
 @implementation HIDSupport
 - (void)stopMotionEventsForEntry:(HIDDeviceControllerEntry *)entry { (void)entry; }

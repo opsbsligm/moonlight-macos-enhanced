@@ -980,6 +980,16 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  // P2-3b backgroundGamepad: when YES, a focus flip suppresses controller
+  // events (arrival / axis / motion / touch / battery) but leaves keyboard
+  // and mouse forwarding untouched. Default false preserves the shipped
+  // behaviour of forwarding gamepad input regardless of focus.
+  @Published var backgroundGamepad: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var swapMouseButtons: Bool {
     didSet {
       guard !isLoading else { return }
@@ -1434,6 +1444,7 @@ class SettingsModel: ObservableObject {
     absoluteMouseMode = Self.defaultAbsoluteMouseMode
     relativeMouseAsAbsolute = Self.defaultRelativeMouseAsAbsolute
     muteOnFocusLoss = Self.defaultMuteOnFocusLoss
+    backgroundGamepad = Self.defaultBackgroundGamepad
     swapMouseButtons = Self.defaultSwapMouseButtons
     reverseScrollDirection = Self.defaultReverseScrollDirection
     pointerSensitivity = Self.defaultPointerSensitivity

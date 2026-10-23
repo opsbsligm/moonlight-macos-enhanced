@@ -237,6 +237,7 @@ class SettingsClass: NSObject {
         "relativeMouseAsAbsolute": settings.relativeMouseAsAbsolute,
         "swapMouseButtons": settings.swapMouseButtons,
         "muteOnFocusLoss": settings.muteOnFocusLoss,
+        "backgroundGamepad": settings.backgroundGamepad,
         "reverseScrollDirection": settings.reverseScrollDirection,
         "gamepadMouseMode": settings.gamepadMouseMode,
         "mouseMode": settings.mouseMode,
@@ -422,6 +423,7 @@ class SettingsClass: NSObject {
       absoluteMouseMode: settings.absoluteMouseMode,
       relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
       muteOnFocusLoss: settings.muteOnFocusLoss,
+      backgroundGamepad: settings.backgroundGamepad,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
@@ -537,6 +539,7 @@ class SettingsClass: NSObject {
         absoluteMouseMode: updated.absoluteMouseMode,
         relativeMouseAsAbsolute: updated.relativeMouseAsAbsolute,
         muteOnFocusLoss: updated.muteOnFocusLoss,
+        backgroundGamepad: updated.backgroundGamepad,
         swapMouseButtons: updated.swapMouseButtons,
         reverseScrollDirection: updated.reverseScrollDirection,
         touchscreenMode: updated.touchscreenMode,
@@ -660,6 +663,7 @@ class SettingsClass: NSObject {
       absoluteMouseMode: settings.absoluteMouseMode,
       relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
       muteOnFocusLoss: settings.muteOnFocusLoss,
+      backgroundGamepad: settings.backgroundGamepad,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
@@ -1594,6 +1598,13 @@ class SettingsClass: NSObject {
       return settings.muteOnFocusLoss ?? SettingsModel.defaultMuteOnFocusLoss
     }
     return SettingsModel.defaultMuteOnFocusLoss
+  }
+
+  @objc static func backgroundGamepad(for key: String) -> Bool {
+    if let settings = Settings.getSettings(for: key) {
+      return settings.backgroundGamepad ?? SettingsModel.defaultBackgroundGamepad
+    }
+    return SettingsModel.defaultBackgroundGamepad
   }
 
   @objc static func swapMouseButtons(for key: String) -> Bool {

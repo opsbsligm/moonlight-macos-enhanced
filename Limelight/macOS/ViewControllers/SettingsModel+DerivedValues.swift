@@ -1087,6 +1087,10 @@ extension SettingsModel {
   static let defaultRelativeMouseAsAbsolute = false
   // P2-3a: default false keeps audio playing while the app is inactive.
   static let defaultMuteOnFocusLoss = false
+  // P2-3b: default false keeps controller events flowing through focus flips,
+  // matching the shipped behaviour. Turning this on suppresses arrival / axis /
+  // motion / touch / battery whenever the app is not the focused window.
+  static let defaultBackgroundGamepad = false
   static let defaultSwapMouseButtons = false
   static let defaultReverseScrollDirection = false
   static let defaultPointerSensitivity: CGFloat = 1.0

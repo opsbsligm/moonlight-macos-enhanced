@@ -424,6 +424,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 @implementation HIDSupport
 @synthesize inputContext = _inputContext;
 @synthesize shouldSendInputEvents = _shouldSendInputEvents;
+@synthesize suspendControllerEvents = _suspendControllerEvents;
 
 // Button ownership and capture closure share this lock. Once NO is published,
 // a concurrent hardware producer cannot insert another press behind cleanup.
@@ -452,7 +453,13 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 // arrival event now. Kept out of the setter so the setter stays the one-line
 // transition the boundary harness extracts on its own.
 - (void)announceIdleControllersForNewStream {
-    if (self.controllerDriver != 0 || !self.shouldSendInputEvents) return;
+    // P2-3b: a stream that opens while the app is in the background (e.g. a
+    // side-by-side window that lost focus before the launch even finished)
+    // must not tell the host the pads are already live -- the player is not
+    // in a position to send input, so the host would have to wait for an
+    // arrival it can do nothing with.
+    if (self.controllerDriver != 0 || !self.shouldSendInputEvents ||
+        self.suspendControllerEvents) return;
     for (HIDDeviceControllerEntry *entry in [self deviceControllerTable].allValues) {
         [self sendControllerArrivalForEntry:entry];
     }
@@ -1303,7 +1310,11 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
 // it lands in order with them, and it doubles as the fallback multi-controller
 // event the C library sends on hosts without arrival support.
 - (void)sendControllerArrivalForEntry:(HIDDeviceControllerEntry *)entry {
-    if (entry == nil || self.controllerDriver != 0 || !self.shouldSendInputEvents) return;
+    // P2-3b: arrival must honour suspendControllerEvents the same way the
+    // axis / button / motion / touch / battery paths do -- the host should
+    // not learn about a pad while the player has stepped away from the app.
+    if (entry == nil || self.controllerDriver != 0 || !self.shouldSendInputEvents ||
+        self.suspendControllerEvents) return;
     int playerIndex = entry.playerIndex;
     int mask = [self activeDeviceMask];
     uint8_t protocolType = entry.protocolType;
@@ -1381,7 +1392,10 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
 }
 
 - (void)sendControllerNeutralEventForEntry:(HIDDeviceControllerEntry *)entry {
-    if (entry == nil || self.controllerDriver != 0 || !self.shouldSendInputEvents) return;
+    // P2-3b: the neutral frame is part of the same wire path as axis/button
+    // updates, so it follows the same focus-loss suspension.
+    if (entry == nil || self.controllerDriver != 0 || !self.shouldSendInputEvents ||
+        self.suspendControllerEvents) return;
     int playerIndex = entry.playerIndex;
     int mask = [self activeDeviceMask];
     HIDInputLease lease = HIDAcquireInputContext(self);
@@ -3444,7 +3458,12 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 // is bounded by the pad's state-packet rate either way, and the C layer
 // coalesces whatever slips through into one queued packet per type.
 - (void)pushMotionEventsForEntry:(HIDDeviceControllerEntry *)entry {
+    // P2-3b: motion events stay gated on suspendControllerEvents so a player
+    // who stepped away does not keep the host IMU stream alive in the
+    // background (which would burn battery on the pad and confuse the host
+    // about which pad is still in play).
     if (self.controllerDriver != 0 || !self.shouldSendInputEvents ||
+        self.suspendControllerEvents ||
         entry.motionActiveTypes == 0) {
         return;
     }
@@ -3530,7 +3549,12 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 // writes use, so the host's first reading is always honored (0xFF = never
 // sent this session).
 - (void)pushBatteryEventForEntry:(HIDDeviceControllerEntry *)entry {
-    if (self.controllerDriver != 0 || !self.shouldSendInputEvents) {
+    // P2-3b: battery changes are rare and reportable on their own; they
+    // stay gated on suspendControllerEvents so a level read while the app
+    // is in the background does not surface to the host until the player
+    // is back to read it.
+    if (self.controllerDriver != 0 || !self.shouldSendInputEvents ||
+        self.suspendControllerEvents) {
         return;
     }
     const uint8_t raw = isPS5(entry.hidDevice) ? entry.lastPS5State.ucBatteryLevel
@@ -3600,7 +3624,10 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
 // order between the two families, so each family hands over its own decoded
 // (active, pointerId, x12, y12) and the transition logic is shared.
 - (void)pushControllerTouchForEntry:(HIDDeviceControllerEntry *)entry {
-    if (self.controllerDriver != 0 || !self.shouldSendInputEvents) {
+    // P2-3b: the touchpad path is a controller wire surface, so it honours
+    // the focus-loss suspension like arrival / axis / motion / battery.
+    if (self.controllerDriver != 0 || !self.shouldSendInputEvents ||
+        self.suspendControllerEvents) {
         return;
     }
     // A value copy, not &entry.lastPS4State: the property returns the struct

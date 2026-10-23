@@ -41,6 +41,13 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 
 @interface HIDSupport : NSObject
 @property(atomic) BOOL shouldSendInputEvents;
+/// P2-3b backgroundGamepad: while YES the controller wire path (arrival /
+/// axis+button / motion / touch / battery) is suppressed even when
+/// shouldSendInputEvents is YES, so the app can keep keyboard + mouse
+/// forwarding alive across a focus flip while refusing gamepad events the
+/// player is no longer in a position to see. Default NO matches the
+/// shipped behaviour of "always forward gamepad input regardless of focus".
+@property(atomic) BOOL suspendControllerEvents;
 @property(atomic) TemporaryHost *host;
 @property(atomic, assign) void *inputContext;
 @property(nonatomic, copy) HIDFreeMouseAbsoluteSyncHandler freeMouseAbsoluteSyncHandler;
