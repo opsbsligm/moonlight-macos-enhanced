@@ -3547,6 +3547,15 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         return;
     }
     HIDDispatchInput(self, lease, ^{
+        // M4 退化路径: the family advertises the touchpad, but whether the host
+        // can draw it is the host's answer, not the pad's. A host that did not set
+        // LI_FF_CONTROLLER_TOUCH_EVENTS ignores the reports, so sending them is
+        // churn the pad pays for on every frame the finger moves. The flag is read
+        // on the same context the event rides, inside the same dispatch, so a
+        // generation mismatch still suppresses the whole packet.
+        if ((LiGetHostFeatureFlagsCtx(lease.context->connectionContext) & LI_FF_CONTROLLER_TOUCH_EVENTS) == 0) {
+            return;
+        }
         LiSendControllerTouchEventCtx(lease.context, (uint8_t)slot, eventType, pointerId, x, y, pressure);
     });
 }
