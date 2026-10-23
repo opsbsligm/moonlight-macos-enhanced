@@ -2243,6 +2243,15 @@ void ClSetControllerLED(uint16_t controllerNumber, uint8_t red, uint8_t green, u
     }
 }
 
+void ClRumbleTriggers(uint16_t controllerNumber, uint16_t leftTriggerMotor, uint16_t rightTriggerMotor)
+{
+    Connection *conn = CurrentConnection();
+    id<ConnectionCallbacks> callbacks = ConnectionGetCallbacksSnapshot(conn);
+    if (callbacks && [callbacks respondsToSelector:@selector(triggersRumble:leftTriggerMotor:rightTriggerMotor:)]) {
+        [callbacks triggersRumble:controllerNumber leftTriggerMotor:leftTriggerMotor rightTriggerMotor:rightTriggerMotor];
+    }
+}
+
 void ClConnectionStatusUpdate(int status)
 {
     Connection *conn = CurrentConnection();
@@ -2678,6 +2687,7 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
     _clCallbacks.logMessage = ClLogMessage;
     _clCallbacks.rumble = ClRumble;
     _clCallbacks.setControllerLED = ClSetControllerLED;
+    _clCallbacks.rumbleTriggers = ClRumbleTriggers;
     _clCallbacks.connectionStatusUpdate = ClConnectionStatusUpdate;
     _clCallbacks.clipboardItemReceived = ClClipboardItemReceived;
 

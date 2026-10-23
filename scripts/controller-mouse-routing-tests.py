@@ -69,9 +69,7 @@ static CFIndex IOHIDValueGetIntegerValue(IOHIDValueRef v) { return v->value; }
 static IOHIDDeviceRef IOHIDElementGetDevice(IOHIDElementRef e) { return e->device; }
 static BOOL isXbox(IOHIDDeviceRef d) { return YES; }
 static BOOL isKingKong(IOHIDDeviceRef d) { return NO; }
-static BOOL isPS4(IOHIDDeviceRef d) __attribute__((unused));
 static BOOL isPS4(IOHIDDeviceRef d) { (void)d; return NO; }
-static BOOL isPS5(IOHIDDeviceRef d) __attribute__((unused));
 static BOOL isPS5(IOHIDDeviceRef d) { (void)d; return NO; }
 static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
 typedef void *PML_INPUT_STREAM_CONTEXT;
@@ -92,6 +90,8 @@ static NSString *const HIDGamepadQuitNotification = @"quit";
 @property UInt8 previousLEDRed;
 @property UInt8 previousLEDGreen;
 @property UInt8 previousLEDBlue;
+@property UInt8 previousLeftTriggerMotor;
+@property UInt8 previousRightTriggerMotor;
 @end
 @implementation HIDDeviceControllerEntry
 @end

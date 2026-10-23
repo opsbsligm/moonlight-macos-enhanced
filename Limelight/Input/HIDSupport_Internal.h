@@ -60,6 +60,11 @@
 @property (nonatomic) UInt8 previousLEDRed;
 @property (nonatomic) UInt8 previousLEDGreen;
 @property (nonatomic) UInt8 previousLEDBlue;
+// Last trigger-motor values actually put on the wire for this device. Kept
+// separate from the body-motor pair above so a trigger rumble and a body rumble
+// in flight do not each treat the other's value as a repeat and drop a frame.
+@property (nonatomic) UInt8 previousLeftTriggerMotor;
+@property (nonatomic) UInt8 previousRightTriggerMotor;
 // Main-thread diagnostic completion; local queue acceptance is not host receipt.
 // Send deduplication uses the input-queue generation below.
 @property (nonatomic) BOOL advertisedToHost;
@@ -353,6 +358,7 @@
 - (IOHIDDeviceRef)rumbleDeviceForPlayerIndex:(int)number;
 - (void)writeRumbleToDevice:(IOHIDDeviceRef)device lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor;
 - (void)writeLEDForDevice:(IOHIDDeviceRef)device red:(UInt8)red green:(UInt8)green blue:(UInt8)blue;
+- (void)writeTriggerRumbleToDevice:(IOHIDDeviceRef)device leftTriggerMotor:(UInt16)leftTriggerMotor rightTriggerMotor:(UInt16)rightTriggerMotor;
 - (IOHIDDeviceRef)getFirstDevice;
 - (int)switch_RumbleJoystick:(IOHIDDeviceRef)device lowFreqMotor:(UInt16)lowFreqMotor highFreqMotor:(UInt16)highFreqMotor;
 - (BOOL)setVibrationEnabled:(UInt8)enabled;

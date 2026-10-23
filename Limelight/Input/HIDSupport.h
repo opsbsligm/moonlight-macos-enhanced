@@ -176,4 +176,7 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
                           red:(unsigned char)red
                         green:(unsigned char)green
                          blue:(unsigned char)blue;
+- (void)triggersRumbleForControllerNumber:(int)number
+                     leftTriggerMotor:(unsigned short)leftTriggerMotor
+                    rightTriggerMotor:(unsigned short)rightTriggerMotor;
 @end
