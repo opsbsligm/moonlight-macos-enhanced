@@ -80,6 +80,8 @@ static const uint16_t LI_CCAP_ANALOG_TRIGGERS = 0x01;
 static const uint16_t LI_CCAP_RUMBLE = 0x02;
 static const uint16_t LI_CCAP_TRIGGER_RUMBLE = 0x04;
 static const uint16_t LI_CCAP_RGB_LED = 0x80;
+static const uint16_t LI_CCAP_ACCEL = 0x10;
+static const uint16_t LI_CCAP_GYRO = 0x20;
 static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
 static BOOL isNintendo(IOHIDDeviceRef device) { return NO; }
 typedef int IOReturn;
@@ -128,6 +130,11 @@ static MLGamepadMenuGesture MLGamepadMenuGestureIdle(void) {
 @property uint8_t previousLEDBlue;
 @property uint8_t previousLeftTriggerMotor;
 @property uint8_t previousRightTriggerMotor;
+@property uint8_t motionActiveTypes;
+@property uint16_t motionAccelIntervalMs;
+@property uint16_t motionGyroIntervalMs;
+@property uint64_t lastMotionAccelAtMs;
+@property uint64_t lastMotionGyroAtMs;
 @end
 @implementation HIDDeviceControllerEntry
 @end

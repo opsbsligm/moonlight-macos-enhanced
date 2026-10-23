@@ -2252,6 +2252,17 @@ void ClRumbleTriggers(uint16_t controllerNumber, uint16_t leftTriggerMotor, uint
     }
 }
 
+// The host asks this numbered pad to start/stop reporting IMU samples
+// (motionType) at reportRateHz (0 stops). Mirrors ClRumbleTriggers.
+void ClSetMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16_t reportRateHz)
+{
+    Connection *conn = CurrentConnection();
+    id<ConnectionCallbacks> callbacks = ConnectionGetCallbacksSnapshot(conn);
+    if (callbacks && [callbacks respondsToSelector:@selector(motionEventState:motionType:reportRateHz:)]) {
+        [callbacks motionEventState:controllerNumber motionType:motionType reportRateHz:reportRateHz];
+    }
+}
+
 void ClConnectionStatusUpdate(int status)
 {
     Connection *conn = CurrentConnection();
@@ -2688,6 +2699,7 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
     _clCallbacks.rumble = ClRumble;
     _clCallbacks.setControllerLED = ClSetControllerLED;
     _clCallbacks.rumbleTriggers = ClRumbleTriggers;
+    _clCallbacks.setMotionEventState = ClSetMotionEventState;
     _clCallbacks.connectionStatusUpdate = ClConnectionStatusUpdate;
     _clCallbacks.clipboardItemReceived = ClClipboardItemReceived;
 
