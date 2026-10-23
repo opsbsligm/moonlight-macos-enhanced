@@ -154,7 +154,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
 | 0.2b HID 鼠标路由 | 0.2 | 是 | 双手柄本机 | 代码完成（每设备 gesture、单一指针 owner 接管/恢复、进入中性帧、拔出只清 owner），routing 门禁 13 正向+8 变异，pipeline 396；双手柄真机待验证（hardware_validated=false） |
 | M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地，PS4/PS5 写灯回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告）；rumbleTriggers 已接（Xbox/KingKong 扳机马达=标准震动包两字段，独立去重不踩机身马达，TRIGGER_RUMBLE 能力位仅对 Xbox/KingKong 通告，PS 系扳机=自适应 effect 属 setAdaptiveTriggers 范畴故不通告），setMotionEventState 已接（PS4/PS5 IMU 状态包驱动 + 按类型节流，换算取 SDL HIDAPI 上游比例，新门禁 6 变异全拦）；三回调全部已接；M4.1 电池上报已接（PS4/PS5 状态包电量字节解码 + 有线位，仅 PS 系通告 BATTERY_STATE）；M4.2 PS 触摸板已接（12 位坐标解码 + DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 TOUCHPAD），新门禁各 6 变异全拦，真机待验证（hardware_validated=false） |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 代码完成（setMotionEventState 接线：PS4/PS5 状态包六轴按类型节流上报，SDL HIDAPI 比例换算，拔出/断流/显式停止统一 stop；无 feature-report 显式启用写——状态包本身携带六轴，启用=主机请求即发，该差异已记录）；motion 门禁 6 变异全拦；真机主机侧非零六轴 + 断流无残留待验证（hardware_validated=false） |
-| M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | M4.1 电池完成（PS4/PS5 状态包电量字节 + 有线位，仅 PS 系通告 BATTERY_STATE，6 变异全拦）；M4.2 PS 触摸板完成（12 位坐标 + DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 TOUCHPAD，6 变异全拦）；pipeline 409（build1957）8/8 全绿 + DMG 验收；剩 Joy-Con 扩容（isNintendo 仅 0x2009，缺 0x2006/2007）与触摸板退化路径（主机不支持 touch 时）；真机待验证（hardware_validated=false） |
+| M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | M4.1 电池完成（PS4/PS5 状态包电量字节 + 有线位，仅 PS 系通告 BATTERY_STATE，6 变异全拦）；M4.2 PS 触摸板完成（12 位坐标 + DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 TOUCHPAD，6 变异全拦）；M4.3 Joy-Con 扩容完成（isNintendo + 诊断身份表补 057E:2006/2007，单只 Joy-Con 走既有 0x3F 简单状态解析，arrival 判 NINTENDO，device-table 门禁真谓词回放 + 回归变异全拦）；M4.4 触摸板退化路径完成（LiSendControllerTouchEvent 派发前查 LiGetHostFeatureFlagsCtx 的 LI_FF_CONTROLLER_TOUCH_EVENTS，主机不支持即停发，touch 门禁 8 变异全拦）；代码完成待本提交 CI；真机待验证（hardware_validated=false） |
 | K1 文本注入 | — | 是 | 需主机输入法 | 待开工 |
 | K2 CAD | — | 是 | 需主机（可能不可行） | 待开工 |
 | E1 边缘栏参数化 | — | 是 | 需双屏 | 待开工 |
@@ -494,3 +494,40 @@ PS4/PS5 状态包早已携带两个触摸点但 macOS 从未读取，主机侧�
 - 边界：本波不做 host 不支持触摸板时的退化路径（计划里的鼠标仿真/clickpad），
   也未做 Joy-Con 扩容（057E:2006/2007，M4 剩余最后一块）；未抓真机触摸报文，
   `hardware_validated=false` 保持。
+
+### M4.3 Joy-Con 扩容 + M4.4 触摸板退化路径（2026-10-23，待本提交 CI）
+
+M4 收尾的两个剩余项合为一个提交。
+
+**M4.3 单只 Joy-Con 识别（057E:2006 左 / 2007 右）**
+- `isNintendo`（HIDSupport_Internal.h）与诊断身份表
+  `MLControllerFamilyForKnownPair`（MLControllerInventory.m）同步补 0x2006/0x2007，
+  两处必须一致：前者决定 arrival 的协议类型，后者决定诊断报告的分类行。
+- 解析不另起炉灶：单只 Joy-Con 走既有的 0x3F 简单状态报文
+  （`SwitchSimpleStatePacket_t`），与 Pro Controller 同路径；计划中
+  "Joy-Con 不得直接套 Pro Controller 解析"的约束指的是 FullControllerState
+  0x30 的 47 字节完整报文，简单状态报文无此布局差异。该判断基于上游
+  Switch HID 报文的公开结构，真机抓包前 `hardware_validated=false`。
+- 震动/子命令通道对 Joy-Con 的兼容性（0x48 EnableVibration 子命令在单只
+  Joy-Con 上的行为）未单独验证，维持 M2 已有的 100ms 超时兜底。
+- 门禁：`controller-device-table-tests.py` 现编译真实
+  `isNintendo`/`isPlayStation`/`usbIdFromDevice` 谓词（fake IOHID 属性总线按
+  SDK 同款 `#define` 字符串 key 应答），回放 Pro/左 Joy-Con/右 Joy-Con/DS4/Xbox/
+  未知六对 VID:PID，断言 arrival 协议类型 0x03/0x03/0x03/0x02/0x01/0x01；
+  新增回归变异"只认 0x2009"全拦。diagnostics 门禁补左右 Joy-Con 分类断言。
+
+**M4.4 触摸板退化路径（主机不支持 touch 时）**
+- 计划原文：发 `LiSendControllerTouchEvent` 前先查
+  `LiGetHostFeatureFlags()` 的 `LI_FF_CONTROLLER_TOUCH_EVENTS`，不支持则退化、
+  不要空转。本波落地"门控停发"一半：`sendControllerTouchForEntry:` 派发块内
+  用 `LiGetHostFeatureFlagsCtx(lease.context->connectionContext)` 读同一会话的
+  主机能力，flag 未置位则整包不发（PS 触摸板能力位继续通告，GFE 主机看到
+  触摸板图标但收不到事件，与 battery 事件的 Sunshine-only 现状同形）。
+- 退化为鼠标输入（qt clickpad 仿真）为增强项，需把 12 位触摸坐标映射到
+  绝对鼠标 + tap=单击，独立里程碑，本波记录缺口不实现。
+- 门禁：touch 门禁 harness 的 lease 桩改为携带 connectionContext，
+  `LiGetHostFeatureFlagsCtx` 返回可翻转的 g_flags；回放新增"flag 清除时
+  移动中的触摸不产生任何报告、恢复 flag 后重发 DOWN"；变异总数 6→8
+  （新增"flag 被忽略恒发"与"flag 判反仅在支持时发"，均行为拦截）。
+- 边界：未抓真机触摸报文；GFE 主机的实际 flag 应答未实测（Sunshine 置位、
+  GFE 是否置位需真机确认），`hardware_validated=false` 保持。
