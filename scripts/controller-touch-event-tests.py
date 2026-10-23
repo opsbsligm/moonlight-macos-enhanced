@@ -77,9 +77,18 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
 static const uint8_t LI_TOUCH_EVENT_DOWN = 0x01;
 static const uint8_t LI_TOUCH_EVENT_UP = 0x02;
 static const uint8_t LI_TOUCH_EVENT_MOVE = 0x03;
-typedef int *PML_INPUT_STREAM_CONTEXT;
+static const uint32_t LI_FF_CONTROLLER_TOUCH_EVENTS = 0x02;
+static uint32_t g_flags;
+typedef void *PML_CONNECTION_CONTEXT;
+typedef struct { PML_CONNECTION_CONTEXT connectionContext; } FakeInputContext;
+typedef FakeInputContext *PML_INPUT_STREAM_CONTEXT;
+#pragma clang diagnostic ignored "-Wunused-function"
+static uint32_t LiGetHostFeatureFlagsCtx(PML_CONNECTION_CONTEXT ctx) {
+    (void)ctx;
+    return g_flags;
+}
 typedef struct { PML_INPUT_STREAM_CONTEXT context; uint64_t generation; } HIDInputLease;
-static int g_ctx;
+static FakeInputContext g_ctx = { (PML_CONNECTION_CONTEXT)0x1 };
 @class HIDSupport;
 static HIDInputLease HIDAcquireInputContext(HIDSupport *s) { (void)s; return (HIDInputLease){&g_ctx, 1}; }
 @interface TCall : NSObject
@@ -231,6 +240,10 @@ int main(int argc, char *argv[]) { (void)argc; (void)argv; @autoreleasepool {
     g_touch = [NSMutableArray new];
     HIDSupport *s = [HIDSupport new];
     s.shouldSendInputEvents = YES;
+    // The host in this replay answers that it can draw a controller touchpad;
+    // the last case clears the flag to prove the pad stops paying for reports
+    // a host will never read.
+    g_flags = LI_FF_CONTROLLER_TOUCH_EVENTS;
 
     HIDDeviceControllerEntry *e0 = [s entryForDevice:PAD0]; e0.playerIndex = 0;
     HIDDeviceControllerEntry *e1 = [s entryForDevice:PAD1]; e1.playerIndex = 1;
@@ -357,6 +370,26 @@ int main(int argc, char *argv[]) { (void)argc; (void)argv; @autoreleasepool {
     CHECK(last.pointerId == 1);
     CHECK(fabsf(last.x - (128.0f/4095.0f)) < 0.0005f);
 
+    // M4 退化路径: the pad advertises the touchpad, but a host that did not set
+    // LI_FF_CONTROLLER_TOUCH_EVENTS (the GFE shape) would ignore the reports.
+    // With the flag cleared the same down must produce no report at all, and the
+    // transition state still moved, so restoring the flag re-sends the down once.
+    NSUInteger before = g_touch.count;
+    g_flags = 0;
+    // The finger is already down, so the next frame with a moved position is a
+    // transition that would emit: the gate must swallow that report, not the
+    // state machine.
+    setPS4Touch1(e0, 0x03, 256, 256);
+    [s pushControllerTouchForEntry:e0];
+    CHECK(g_touch.count == before);
+    g_flags = LI_FF_CONTROLLER_TOUCH_EVENTS;
+    setPS4Touch2(e0, 0x80, 0, 0);
+    [s resetControllerStateForEntry:e0];
+    setPS4Touch1(e0, 0x01, 128, 128);
+    [s pushControllerTouchForEntry:e0];
+    CHECK(g_touch.count == before + 1);
+    CHECK(TCH(before).eventType == LI_TOUCH_EVENT_DOWN);
+
     puts("touch event replay passed");
     return 0;
 }}
@@ -409,6 +442,12 @@ MUTATIONS = (
     ('second point not independent, shares state',
      'BOOL pressed2 = entry.touchPressed2;',
      'BOOL pressed2 = entry.touchPressed;'),
+    ('host feature flag ignored, reports always sent',
+     "        if ((LiGetHostFeatureFlagsCtx(lease.context->connectionContext) & LI_FF_CONTROLLER_TOUCH_EVENTS) == 0) {\n            return;\n        }\n",
+     ""),
+    ('host feature flag inverted, sends only when unsupported',
+     "LI_FF_CONTROLLER_TOUCH_EVENTS) == 0) {",
+     "LI_FF_CONTROLLER_TOUCH_EVENTS) != 0) {"),
 )
 
 
