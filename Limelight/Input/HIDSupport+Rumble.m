@@ -350,6 +350,39 @@ SwitchCommonOutputPacket_t switchRumblePacket;
     }
 }
 
+// Per-number trigger rumble: the host names the pad by player index, and the
+// dedup guard is per device. Only Xbox/KingKong advertise LI_CCAP_TRIGGER_RUMBLE
+// (their trigger motors are the same two fields of the standard output report),
+// so a non-Xbox reaching here is a host over-reach.
+- (void)triggersRumbleForControllerNumber:(int)number leftTriggerMotor:(UInt16)leftTriggerMotor rightTriggerMotor:(UInt16)rightTriggerMotor {
+    IOHIDDeviceRef device = [self rumbleDeviceForPlayerIndex:number];
+    if (device == NULL) {
+        return;
+    }
+    [self writeTriggerRumbleToDevice:device leftTriggerMotor:leftTriggerMotor rightTriggerMotor:rightTriggerMotor];
+}
+
+- (void)writeTriggerRumbleToDevice:(IOHIDDeviceRef)device leftTriggerMotor:(UInt16)leftTriggerMotor rightTriggerMotor:(UInt16)rightTriggerMotor {
+    HIDDeviceControllerEntry *entry = [self entryForDevice:device];
+    if (entry == nil || !(isXbox(device) || isKingKong(device))) {
+        return;
+    }
+    UInt8 leftMotor = leftTriggerMotor / 655;
+    UInt8 rightMotor = rightTriggerMotor / 655;
+    if (leftMotor == entry.previousLeftTriggerMotor && rightMotor == entry.previousRightTriggerMotor) {
+        return;
+    }
+    entry.previousLeftTriggerMotor = leftMotor;
+    entry.previousRightTriggerMotor = rightMotor;
+
+    // Xbox output report: byte 4 = low-freq (left), byte 5 = high-freq (right).
+    // Same packet shape as body rumble; the values come from the trigger request.
+    UInt8 trigger_packet[] = { 0x03, 0x0F, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xEB };
+    trigger_packet[4] = leftMotor;
+    trigger_packet[5] = rightMotor;
+    IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, trigger_packet[0], trigger_packet, sizeof(trigger_packet));
+}
+
 - (IOHIDDeviceRef)getFirstDevice {
     NSSet *devices = CFBridgingRelease(IOHIDManagerCopyDevices(self.hidManager));
     if (devices.count == 0) {
