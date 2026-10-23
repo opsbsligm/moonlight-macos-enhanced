@@ -155,7 +155,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
 | M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地，PS4/PS5 写灯回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告）；rumbleTriggers 已接（Xbox/KingKong 扳机马达=标准震动包两字段，独立去重不踩机身马达，TRIGGER_RUMBLE 能力位仅对 Xbox/KingKong 通告，PS 系扳机=自适应 effect 属 setAdaptiveTriggers 范畴故不通告），setMotionEventState 已接（PS4/PS5 IMU 状态包驱动 + 按类型节流，换算取 SDL HIDAPI 上游比例，新门禁 6 变异全拦）；三回调全部已接；M4.1 电池上报已接（PS4/PS5 状态包电量字节解码 + 有线位，仅 PS 系通告 BATTERY_STATE）；M4.2 PS 触摸板已接（12 位坐标解码 + DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 TOUCHPAD），新门禁各 6 变异全拦，真机待验证（hardware_validated=false） |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 代码完成（setMotionEventState 接线：PS4/PS5 状态包六轴按类型节流上报，SDL HIDAPI 比例换算，拔出/断流/显式停止统一 stop；无 feature-report 显式启用写——状态包本身携带六轴，启用=主机请求即发，该差异已记录）；motion 门禁 6 变异全拦；真机主机侧非零六轴 + 断流无残留待验证（hardware_validated=false） |
 | M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | M4.1 电池完成（PS4/PS5 状态包电量字节 + 有线位，仅 PS 系通告 BATTERY_STATE，6 变异全拦）；M4.2 PS 触摸板完成（12 位坐标 + DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 TOUCHPAD，6 变异全拦）；M4.3 Joy-Con 扩容完成（isNintendo + 诊断身份表补 057E:2006/2007，单只 Joy-Con 走既有 0x3F 简单状态解析，arrival 判 NINTENDO，device-table 门禁真谓词回放 + 回归变异全拦）；M4.4 触摸板退化路径完成（LiSendControllerTouchEvent 派发前查 LiGetHostFeatureFlagsCtx 的 LI_FF_CONTROLLER_TOUCH_EVENTS，主机不支持即停发，touch 门禁 8 变异全拦）；代码完成待本提交 CI；真机待验证（hardware_validated=false） |
-| K1 文本注入 | — | 是 | 需主机输入法 | 待开工 |
+| K1 文本注入 | — | 是 | 需主机输入法 | K1.1 事件内 Unicode 转发与键码互斥已实现，待本提交 CI；ASCII/快捷键/已有 wire 所有权保持；不等同于 IME 已提交文本，K1.2 marked text/候选提交与真机验收未完成 |
 | K2 CAD | — | 是 | 需主机（可能不可行） | 待开工 |
 | E1 边缘栏参数化 | — | 是 | 需双屏 | 待开工 |
 | P2 四项 | 各自独立 | 是 | 部分需双机 | 待开工 |
@@ -531,3 +531,27 @@ M4 收尾的两个剩余项合为一个提交。
   （新增"flag 被忽略恒发"与"flag 判反仅在支持时发"，均行为拦截）。
 - 边界：未抓真机触摸报文；GFE 主机的实际 flag 应答未实测（Sunshine 置位、
   GFE 是否置位需真机确认），`hardware_validated=false` 保持。
+
+
+### K1.1 事件内 Unicode 转发（2026-10-23，待本提交 CI）
+
+本波将 keyDown 已携带的可打印 Unicode 以 UTF-8 发送，保留 ASCII 原键码路径。
+不将 keyDown.characters 视为输入法 insertText 提交；普通拼音候选提交须由 K1.2
+在实际视图事件路径实现，K1 整体保持部分完成。
+
+- KeyboardTextRouting.h 过滤空字符、控制字符、AppKit 私有功能键及 Cmd/Ctrl/Option
+  快捷键；非 ASCII 文本才允许转发，无损 UTF-8 编码失败时不注入。
+- 已有 wire DOWN 的物理键保留原路由；文本分支立即返回，不发送键码 DOWN，
+  keyUp 没有对应 wire 所有权时不生成孤立 UP。文本长按重复尚未实现。
+- 异步派发捕获 NSData，块内获取 bytes/length，避免 autorelease pool 结束后的
+  裸指针悬挂。会话上下文仍由原 lease/代数隔离保证。
+- 新门禁复用真实 keyDown/keyUp 与键码翻译方法，延迟执行队列并跨 autorelease
+  pool 回放中文、emoji、全角、组合字符、快捷键、功能键、控制字符、已有 wire
+  按键重复与禁用输入；六项行为变异必须由断言拦截，编译错误不计捕获。
+- 既有键盘探针加载相同路由头文件；这些 wire 场景若意外转发文本，桩直接失败。
+- 新门禁同时加入 GitLab audit:sources 与本地清单来源；无新增设置或默认值变更。
+
+复核修正：M4 的停发并未实现鼠标退化；Joy-Con VID/PID 回放不能证明真实输入报文
+兼容性。M4 整体仍部分完成。此前知识记录中“.m 必须排在 -framework 前”的结论
+没有依据；实际失败来自将 SDK 的字符串宏误声明为变量及缺少 ARC bridge，不能沿用
+为编译实践。
