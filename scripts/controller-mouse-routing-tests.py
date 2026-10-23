@@ -114,6 +114,7 @@ static NSString *const HIDGamepadQuitNotification = @"quit";
 @property NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *deviceControllerTable;
 @property int controllerDriver;
 @property BOOL shouldSendInputEvents;
+@property BOOL suspendControllerEvents;
 @property BOOL gestureEnabled;
 @property CGFloat mouseEmulationResidualX, mouseEmulationResidualY;
 @property BOOL mouseDown;

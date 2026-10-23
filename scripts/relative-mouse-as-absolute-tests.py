@@ -82,7 +82,7 @@ def run_self_test():
             # inserted between these two lines by later commits.
             re.compile(
                 r"relativeMouseAsAbsolute: relativeMouseAsAbsolute,\n"
-                r"      [^\n]*\n"
+                r"(?:      [^\n]*\n){1,2}"
                 r"      swapMouseButtons: swapMouseButtons,"),
             "/* P2-1 PLANTED: registration dropped */\n      swapMouseButtons: swapMouseButtons,",
             "SettingsStore.applyToSettings lost registration",
@@ -233,7 +233,7 @@ def main():
             STORE,
             re.compile(
                 r"relativeMouseAsAbsolute: relativeMouseAsAbsolute,\n"
-                r"      [^\n]*\n"
+                r"(?:      [^\n]*\n){1,2}"
                 r"      swapMouseButtons: swapMouseButtons,"),
             "/* MUTATION: registration dropped */\n      swapMouseButtons: swapMouseButtons,",
             "SettingsStore.applyToSettings lost relativeMouseAsAbsolute registration",
