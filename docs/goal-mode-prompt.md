@@ -1,10 +1,12 @@
 # Moonlight macOS Enhanced — 目标模式提示词（2026-10-22 刷新）
 
-## 2026-10-23 现场复核（覆盖下方历史描述）
+## 2026-10-23 现场复核（覆盖下方历史描述，本波刷新至 pipeline 409）
 
-- 已验证代码基点：`f5f5520a`（M4.1 电池上报）；GitLab pipeline 407 八项成功，build1955 DMG 已验收。在其上 M4.2 PS 触摸板已接完，Release 构建 first-party 零 warning，待本提交 CI 定论。跳过项不算通过。
-- M2 三回调全部接通；M4.1 电池上报 + M4.2 PS 触摸板均已接（电量字节解码/12 位坐标 DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 BATTERY_STATE/TOUCHPAD，新门禁各 6 变异全拦 + self-test）。控制器协议面代码基本落地，M4 仅剩 Joy-Con 扩容（057E:2006/2007）与触摸板退化路径。
-- `hardware_validated=false`：PS5 BT 短包存疑、未抓真机 IMU/电量报文；build1954 未替换日常应用。
+- 已验证代码基点：`6cb96e60`（空提交重触发；触摸板代码在 `c0707e70`）；GitLab pipeline 409 八项成功，build1957 DMG 已验收（SHA256 2f4fac89…，验收目录 moonlight-ci-evidence/20261023-touch-event）。跳过项不算通过。
+- M2 三回调全部接通；M3 setMotionEventState 已接（PS4/PS5 状态包六轴原生携带，启用语义=主机请求即发，按类型节流 + SDL HIDAPI 比例换算 + 拔出/断流/显式停止三路径统一 stop）；M4.1 电池 + M4.2 PS 触摸板均已接（电量字节解码/12 位坐标 DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 BATTERY_STATE/TOUCHPAD，新门禁各 6 变异全拦 + self-test）。M4 仅剩 Joy-Con 扩容（057E:2006/2007）与触摸板退化路径。
+- M3 边界：计划中的 PS4 0x05 / PS5 0x09 feature report 显式启用写未实现（HID 状态包本身携带六轴字节，启用即"主机请求→发送"），完成边界仍以真机主机侧读到非零六轴 + 断流后无残留请求为准。
+- `hardware_validated=false`：PS5 BT 短包存疑、未抓真机 IMU/电量/触摸报文；日常应用现为 build1933（0.1 诊断代码），build1957 未替换日常应用。
+- CI 基建教训（2026-10-23）：gitlab-ctl reconfigure 后 nginx :80 按 external_url 变 SSL-only，纯 HTTP 全 400；Linux VM runner 改 `https://www.bsligm.com:8445` + tls_skip_verify（备份 config.toml.bak-20261023）；Mac M2 runner 曾短暂失联且 macos tag 丢失，误加给 VM runner 后 job 落到 Linux（swiftlint 缺失）。**reconfigure 后必须回读 runner URL 与 tag**；本地 push 被 :80 阻时直接推 8445 HTTPS，不改 remote。
 - 0.2 已拆出 per-device 表，并修复表未初始化、同型号设备 key 合并、借用 CF 对象释放与满槽复用 0。真实方法编译回放及三项行为变异通过。
 - 0.2 仍缺完整发送序列等价证据；tuple 回放不能代替它。M1 已有 arrival 调用，但发送结果、驱动隔离、会话代数、拔出清位、鼠标模式与能力真实性尚未闭环。
 - 通告生命周期已新增修复：输入队列按会话代数去重，发送失败不记录成功；诊断回调校验代数与设备存活；绑定和热插拔补空闲通告；拔出通过有效 lease 幂等清位。真实方法回放及四项变异通过，发布状态以本提交对应 CI 为准，仍不代表 M1 全部交付。

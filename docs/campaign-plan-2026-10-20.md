@@ -148,13 +148,13 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
 
 | 里程碑 | 依赖 | 代码可完成 | 真机验收 | 状态 |
 | --- | --- | --- | --- | --- |
- | 0.1 探针 | — | 是 | 本机日志即可 | 代码与 68 项回归完成，真机待验证（hardware_validated=false）；真机验收需先装 build1933（日常应用仍是 1926） |
+ | 0.1 探针 | — | 是 | 本机日志即可 | 代码与 68 项回归完成，真机待验证（hardware_validated=false）；日常应用已装 build1933（2026-10-23 核实 /Applications/MoonlightEnhanced.app=1933），开流接手柄即取证 |
  | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（21 用例/8 变异）；per-device 拆分完成（每设备独立 Controller/playerIndex/mask 位/变化检测器），9aa5c6b9 pipeline 388 8/8 全绿，本地 xcodebuild 无第一方 warning；双手柄真机待验证（hardware_validated=false） |
 | M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 代码完成（arrival 通告/真实 mask/拔出清位/诊断报告记录通告类型），本地门禁 77 过 + 基线 21 用例等价；主机侧虚拟手柄类型验证待真机（hardware_validated=false） |
 | 0.2b HID 鼠标路由 | 0.2 | 是 | 双手柄本机 | 代码完成（每设备 gesture、单一指针 owner 接管/恢复、进入中性帧、拔出只清 owner），routing 门禁 13 正向+8 变异，pipeline 396；双手柄真机待验证（hardware_validated=false） |
 | M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地，PS4/PS5 写灯回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告）；rumbleTriggers 已接（Xbox/KingKong 扳机马达=标准震动包两字段，独立去重不踩机身马达，TRIGGER_RUMBLE 能力位仅对 Xbox/KingKong 通告，PS 系扳机=自适应 effect 属 setAdaptiveTriggers 范畴故不通告），setMotionEventState 已接（PS4/PS5 IMU 状态包驱动 + 按类型节流，换算取 SDL HIDAPI 上游比例，新门禁 6 变异全拦）；三回调全部已接；M4.1 电池上报已接（PS4/PS5 状态包电量字节解码 + 有线位，仅 PS 系通告 BATTERY_STATE）；M4.2 PS 触摸板已接（12 位坐标解码 + DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 TOUCHPAD），新门禁各 6 变异全拦，真机待验证（hardware_validated=false） |
-| M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 待开工 |
-| M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | 待开工 |
+| M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 代码完成（setMotionEventState 接线：PS4/PS5 状态包六轴按类型节流上报，SDL HIDAPI 比例换算，拔出/断流/显式停止统一 stop；无 feature-report 显式启用写——状态包本身携带六轴，启用=主机请求即发，该差异已记录）；motion 门禁 6 变异全拦；真机主机侧非零六轴 + 断流无残留待验证（hardware_validated=false） |
+| M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | M4.1 电池完成（PS4/PS5 状态包电量字节 + 有线位，仅 PS 系通告 BATTERY_STATE，6 变异全拦）；M4.2 PS 触摸板完成（12 位坐标 + DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 TOUCHPAD，6 变异全拦）；pipeline 409（build1957）8/8 全绿 + DMG 验收；剩 Joy-Con 扩容（isNintendo 仅 0x2009，缺 0x2006/2007）与触摸板退化路径（主机不支持 touch 时）；真机待验证（hardware_validated=false） |
 | K1 文本注入 | — | 是 | 需主机输入法 | 待开工 |
 | K2 CAD | — | 是 | 需主机（可能不可行） | 待开工 |
 | E1 边缘栏参数化 | — | 是 | 需双屏 | 待开工 |
@@ -201,16 +201,16 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
 - 真机验收仍待做：串流一次后接两块手柄看诊断报告分类、driver、arrival 文案与日志。
   `hardware_validated=false` 直到完成；M1 类型/能力通告仍属于下一里程碑，不在本波宣完成。
 
-## 7. 下一步执行节奏（2026-10-22 盘点后固化）
+## 7. 下一步执行节奏（2026-10-23 刷新，至 pipeline 409 / build1957）
 
-1. **0.1 真机验收（先于新代码）**：本机日常应用仍是 build 1926，0.1 诊断代码在 1933 里。
-   用验收过的 1933 产物替换日常应用（旧版留备份目录），串流一次、接两块手柄，
-   导出诊断报告核对分类/driver/未通告文案。通过即把 0.1 的 hardware_validated 翻 true。
-2. **0.2 开发（下一提交）**：先写单手柄发包录制对比脚本（等价基线），再拆 per-device 状态表。
-   等价证不出来就停，按计划 §4 风险节处理。
-3. **M1 起**：依赖 0.2 完成；能力只通告已实现的。
-4. 键盘 K1/E1/P2 与控制器波次无依赖，可在 0.2 真机验收期间并行另开提交，
-   但每个提交独立门禁、独立回滚。
+1. **0.1 真机验收（待用户）**：日常应用已装 build1933（0.1 诊断代码）。
+   串流一次、接两块手柄，导出诊断报告核对分类/driver/未通告文案。
+   通过即把 0.1 的 hardware_validated 翻 true。
+2. **0.2 + M1 + M2 + M3 + M4.1/M4.2 代码均已完成**（per-device 状态表、逐字节线基线、
+   arrival/能力/拔出、三回调 + 按号震动、IMU、PS 电量、PS 触摸板），真机验收合并做：
+   同一场双手柄串流顺带核对震动按号、IMU/电量/触摸在主机侧的表现。
+3. **下一代码波次**：M4 收尾（Joy-Con 0x2006/2007 + 触摸板退化路径），或并行走
+   K1 文本注入 / E1 侧边栏参数化 / P2 对等项（各自独立提交、独立门禁、独立回滚）。
 
 
 ### 2026-10-23 复核纠正
