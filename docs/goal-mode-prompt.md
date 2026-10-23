@@ -1,14 +1,14 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-23 E1/K1.1 收口后刷新）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-24 P2-1 收口后刷新）
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-23 E1 build-warning 修复后）
+## 1. 当前基点（截至 2026-10-24 P2-1 收口后）
 
-- 代码基点 main = `0918e913`（E1 build-warning 修复：edge-sensor 声明挪进 `(MouseCapture)` category）。
-- pipeline #428 = 8/8 success；evidence `moonlight-ci-evidence/20261023-e1-buildwarning-fix/`；本地门禁 91 通过 / 0 失败 / 15 跳过。
-- 最新 DMG：`build1959`（E1/K1.1, sha256 `3c1f84418ff577a43eb4f24e46aab28f7d0646bdc5539d41a1ea2c3933ea50d7`）、`build1958`（goal-mode 提示词 docs-only, sha256 `64e876ced50bff2e5b8c0f1dad95c1013dad8c144b779d977bb5a6877a6a5ef0`）。用户日常 `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
+- 代码基点 main = `9426623b`（P2-1：自由鼠标相对位移改走 `LiSendMouseMoveAsMousePositionEventCtx`，开关默认关）。
+- pipeline #430 = 8/8 success；evidence `moonlight-ci-evidence/20261024-p2-1-relative-mouse-as-absolute/`；本地门禁 95 通过 / 0 失败 / 15 跳过（artifact-only）。
+- 最新 DMG：`build1968`（P2-1, arm64, 8 284 337 字节, sha256 `89d557aa4a8afbd5bf652befdcc9e084eefcb0c2fec53c1d2a2dce97d157b3ac`，`hdiutil verify` VALID，`codesign --verify --deep --strict` 通过，ad hoc 签名，Developer ID 公证仍未验收）。用户日常 `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
 - 镜像 60 refs 与 GitLab 完全一致；不绕过门禁。
-- `hardware_validated=false` 保留：0.2/M1/M2/M3/M4 全是代码层完成 + 真机待取证。
+- `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/E1/P2-1 全是代码层完成 + 真机待取证。
 
 ## 2. 已完成（代码层；CI/产物验收；真机仍待）
 
@@ -22,6 +22,7 @@
 | M4 Joy-Con 收口 | `7c5b687f` | 代码完成 / 真机待 | 单只 Joy-Con 057E:2006/2007 |
 | K1.1 可打印 Unicode | `34e921a3`/`798050d9`/`08616a19` | 代码完成 / 真机待 | 与键码路径互斥 |
 | E1 边缘栏参数化 | `622132b3` | 代码完成 / 真机待 | 感应带 8–16pt / 驻留 60–300ms / 收起 300–1000ms，默认值 = 现常量 |
+| P2-1 自由鼠标走绝对坐标 wire path | `9426623b` | 代码完成 / 真机待 | 默认关闭；UI 纯新增；谓词三条件，5 秒绝对参考 |
 
 ## 3. 待开工（按优先级，不依赖真机排期）
 
@@ -33,7 +34,7 @@
 - 门控：scancode 0x8000 路径 + 快捷键注册 + 月亮动作配置的真谓词回放；至少 3 项行为变异（无 CAS 走 / 误发送到非 SAS / 与现有 Ctrl+Alt+Tab 等组合冲突）。
 
 ### 3.2 P2 对等补齐（各自独立小提交，可与 K2 并行）
-1. **`LiSendMouseMoveAsMousePositionEvent`**：相对模式在桌面档改发增量绝对化事件，旧路径保留；UI 开关默认关。
+1. ~~`LiSendMouseMoveAsMousePositionEvent`~~ —— 已落地于 `9426623b`（见 §2）。
 2. **重连退避状态机**：现有 5 种触发点统一退避（1s/3s/9s 最多 N 次）+ "主机确认消失即停"判据；重连期间输入入队上限保留。
 3. **qt 对等项打包**：`muteOnFocusLoss` / `backgroundGamepad`（失焦时手柄继续/暂停发事件）/ `playAudioOnHost` UI 开关（协议参数已在 launch URL），每项独立开关、默认维持现行为。
 4. **桌面档绝对鼠标默认关**（已写明：旧游戏兼容场景别开）。
@@ -116,7 +117,7 @@
 
 ## 11. 下一步执行（按本文件 §3 顺序推进）
 
-下一波开工顺序：**K2 Ctrl+Alt+Del 先行**（独立小提交，立即可上 CI），并行**P2-1 `LiSendMouseMoveAsMousePositionEvent`**（桌面档鼠标默认关），并行**P2-3 qt 对等项打包**（muteOnFocusLoss / backgroundGamepad / playAudioOnHost）。P2-2 重连退避与 K1.2 marked text 排第二波，等 K2/P2-1/P2-3 收口后再启动，避免单次 PR 跨度过大。每波按 §6 CICD 标准交付，evidence JSON 写齐 `hardware_validated=false` 与 mirror refs。
+下一波开工顺序：P2-1 (`9426623b`) 已落地，**P2-3 qt 对等项打包**（muteOnFocusLoss / backgroundGamepad / playAudioOnHost，各自独立小提交，默认关）可立即推进；**K2 Ctrl+Alt+Del** 仍要用户先在 build1968+ 真机验证 Sunshine / GFE 主机侧 SAS 能否拉起才能开 commit（拉不起就降级为提示，不虚报）。P2-2 重连退避与 K1.2 marked text 排第二波。每波按 §6 CICD 标准交付，evidence JSON 写齐 `hardware_validated=false` 与 mirror refs。
 
 ---
 
@@ -135,3 +136,15 @@
 - **P2-2 重连退避**：依赖现有 Diagnostics / Connection.m 的退避点位识别，可在 P2-1 / P2-3 收口后并行开工。
 - **K1.2 marked text**：碰键盘接收路径，碰前必须重跑 17 个键盘门禁；任一红即整段关闭。
 
+---
+
+## 14. 本轮（2026-10-24）已落地的代码工作
+
+- **P2-1 自由鼠标走绝对坐标 wire path**：commit `9426623b`，pipeline #430 = 8/8 success；
+  谓词 `HIDShouldRouteRelativeAsAbsolute`（`Limelight/Input/HIDSupport_Internal.h:851`）
+  三条件 = 设置开关 + `mouseMode == "remote"` + 5 秒内有有效绝对参考；UI 仅在 remote
+  模式下显示，默认 false 完全保留旧路径。门禁 `scripts/relative-mouse-as-absolute-tests.py`（24 正向 + 4 行为变异 + 4 self-test 植陷），constraints-audit self-test 段调用本
+  门禁的 `--self-test`。详见 `docs/baseline-2026-10-22.md` §13。
+- 真机侧仍待：主机侧（Sunshine / GFE）连续绝对跟随、首次无参考不跳屏幕中心、
+  锁定模式 / 手柄鼠标仍走相对包、窗口化 / 无边框桌面档主机跟随。
+  `hardware_validated=false` 不变。
