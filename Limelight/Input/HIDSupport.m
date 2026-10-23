@@ -2270,7 +2270,26 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(HIDSupport *support,
     }
 
     HIDDispatchInput(self, inputLease, ^{
-        LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
+        // P2-1: when the host wants the cursor expressed in absolute coordinates,
+        // forward the relative delta through LiSendMouseMoveAsMousePositionEvent
+        // instead of the pure relative wire packet. The host maintains
+        // absCurrentPosX/Y across calls, so as long as the session has produced
+        // a fresh absolute pointer reference inside the staleness window, the
+        // delta accumulates from the correct cursor origin. Sessions that have
+        // never sent an absolute event keep the legacy relative packet so the
+        // cursor does not snap to (0,0) on the host.
+        BOOL useAbsoluteWire = NO;
+        short p2ReferenceWidth = 0;
+        short p2ReferenceHeight = 0;
+        if (HIDShouldRouteRelativeAsAbsolute(self, &p2ReferenceWidth, &p2ReferenceHeight)) {
+            useAbsoluteWire = YES;
+        }
+        if (useAbsoluteWire) {
+            LiSendMouseMoveAsMousePositionEventCtx(inputCtx, moveX, moveY,
+                                                   p2ReferenceWidth, p2ReferenceHeight);
+        } else {
+            LiSendMouseMoveEventCtx(inputCtx, moveX, moveY);
+        }
     });
     if ([sourceTag isEqualToString:@"mouseMoved"]) {
         [self noteMotionSource:sourceTag
