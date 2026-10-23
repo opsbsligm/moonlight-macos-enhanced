@@ -2,10 +2,10 @@
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-23 E1/K1.1 收口后）
+## 1. 当前基点（截至 2026-10-23 E1 build-warning 修复后）
 
-- 代码基点 main = `622132b3`（E1 边缘栏参数化）+ `08616a19`（goal-mode prompt / campaign plan 收口）。
-- pipeline #409 / #414 / #419 / #423 / #428 全部 8/8 success；本地门禁 91 通过 / 0 失败 / 15 跳过。
+- 代码基点 main = `0918e913`（E1 build-warning 修复：edge-sensor 声明挪进 `(MouseCapture)` category）。
+- pipeline #428 = 8/8 success；evidence `moonlight-ci-evidence/20261023-e1-buildwarning-fix/`；本地门禁 91 通过 / 0 失败 / 15 跳过。
 - 最新 DMG：`build1959`（E1/K1.1, sha256 `3c1f84418ff577a43eb4f24e46aab28f7d0646bdc5539d41a1ea2c3933ea50d7`）、`build1958`（goal-mode 提示词 docs-only, sha256 `64e876ced50bff2e5b8c0f1dad95c1013dad8c144b779d977bb5a6877a6a5ef0`）。用户日常 `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
 - 镜像 60 refs 与 GitLab 完全一致；不绕过门禁。
 - `hardware_validated=false` 保留：0.2/M1/M2/M3/M4 全是代码层完成 + 真机待取证。
