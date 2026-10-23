@@ -341,7 +341,11 @@ static const double MOUSE_SPEED_DIVISOR = 2.5;
 
 -(void) updateFinished:(Controller*)controller
 {
-    if (!_shouldSendInputEvents) {
+    // P2-3b: gate gamepad wire output on suspendControllerEvents too, so the
+    // MFi driver stays in lockstep with the CoreHID driver across a focus
+    // flip. Keyboard / mouse forwarding lives behind shouldSendInputEvents
+    // only, so this gate does not affect them.
+    if (!_shouldSendInputEvents || _suspendControllerEvents) {
         return;
     }
     

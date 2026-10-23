@@ -124,6 +124,11 @@ struct Settings: Encodable, Decodable {
   // P2-3a muteOnFocusLoss: drop AudioQueue output volume to zero while the
   // app is inactive. Default false keeps audio playing through focus loss.
   let muteOnFocusLoss: Bool?
+  // P2-3b backgroundGamepad: when YES, a focus flip suppresses controller
+  // events (arrival / axis / motion / touch / battery) but leaves keyboard
+  // and mouse forwarding untouched. Default false preserves the shipped
+  // behaviour of forwarding gamepad input regardless of focus.
+  let backgroundGamepad: Bool?
   let swapMouseButtons: Bool?
   let reverseScrollDirection: Bool?
   let touchscreenMode: Int?
@@ -279,6 +284,7 @@ struct Settings: Encodable, Decodable {
       absoluteMouseMode: absoluteMouseMode,
       relativeMouseAsAbsolute: relativeMouseAsAbsolute,
       muteOnFocusLoss: muteOnFocusLoss,
+      backgroundGamepad: backgroundGamepad,
       swapMouseButtons: swapMouseButtons,
       reverseScrollDirection: reverseScrollDirection,
       touchscreenMode: touchscreenMode,
@@ -539,6 +545,7 @@ extension SettingsClass {
       absoluteMouseMode: settings.absoluteMouseMode,
       relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
       muteOnFocusLoss: settings.muteOnFocusLoss,
+      backgroundGamepad: settings.backgroundGamepad,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,

@@ -48,6 +48,7 @@ static BOOL initialized = YES;
 @interface HIDSupport : NSObject
 @property int controllerDriver;
 @property BOOL shouldSendInputEvents;
+@property BOOL suspendControllerEvents;
 @property void *inputContext;
 @property uint64_t generation;
 @property NSMutableDictionary *deviceControllerTable;

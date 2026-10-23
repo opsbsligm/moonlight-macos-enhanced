@@ -810,6 +810,8 @@
 "Clipboard Sync" = "剪贴板同步";
 "Gamepad Menu Long Press Toggles Mouse Mode" = "手柄 Menu 长按切换鼠标模式";
 "Gamepad Menu Long Press Toggles Mouse Mode detail" = "手柄长按 Menu 超过约一秒后松开，会把指针交给手柄模拟鼠标。若游戏需要这个长按动作，关闭后 Menu 仍作为普通按键发往主机，键盘上的鼠标模式快捷键不受影响。";
+"Background Gamepad Input" = "后台持续发送手柄输入";
+"Background Gamepad detail" = "当串流窗口不在前台窗口时，停止向主机发送手柄事件（按键、动作、触摸板、电量），键盘与鼠标输入依然正常发送。关闭时保持 shipped 行为——始终发送手柄输入。";
 "Command Key Sends Control" = "Command 键发送 Control";
 "Command Key Sends Control detail" = "关闭时 Command 发送 Windows 键，与 Parsec、UU 远程、Steam Link 的读法一致，也是本应用一直的行为。开启后 Command 组合键一律改为发送 Control，适合习惯用 Control 复制粘贴保存的玩家；它会作用于所有 Command 组合，包含用 Command 绑定的规则，以保证键盘行为一致。代价是不再有按键发送 Windows 键：若主机需要 Win 组合键，请保持关闭。Mac 本机的快捷键（如 Command-Q、Command-Tab）不受影响。";
 "Pointer Enter Activates Stream" = "指针移入窗口时激活串流";

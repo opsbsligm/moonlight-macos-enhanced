@@ -376,6 +376,26 @@ highFreqMotor:(unsigned short)highFreqMotor {
                     [focusConn setAudioFocusMuted:YES];
                 }
             }
+            // P2-3b: gate controller wire output on backgroundGamepad. The
+            // keyboard + mouse paths keep working because their only gate
+            // is shouldSendInputEvents, which stays YES through this
+            // focus flip.
+            BOOL backgroundGamepadWindow = NO;
+            if (weakSelf.app.host.uuid) {
+                NSDictionary *windowGamepadPrefs = [SettingsClass getSettingsFor:weakSelf.app.host.uuid];
+                id windowGamepadValue = windowGamepadPrefs[@"backgroundGamepad"];
+                if ([windowGamepadValue respondsToSelector:@selector(boolValue)]) {
+                    backgroundGamepadWindow = [windowGamepadValue boolValue];
+                }
+            }
+            if (backgroundGamepadWindow) {
+                if (weakSelf.hidSupport != nil) {
+                    weakSelf.hidSupport.suspendControllerEvents = YES;
+                }
+                if (weakSelf.controllerSupport != nil) {
+                    weakSelf.controllerSupport.suspendControllerEvents = YES;
+                }
+            }
         }
     }];
     self.windowDidBecomeKeyNotification = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidBecomeKeyNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
@@ -400,6 +420,17 @@ highFreqMotor:(unsigned short)highFreqMotor {
                     Connection *activeConn = [Connection currentConnection];
                     if (activeConn != nil) {
                         [activeConn setAudioFocusMuted:NO];
+                    }
+                    // P2-3b: unconditionally restore controller forwarding
+                    // when the stream window regains key focus. The mirror of
+                    // the audio path above so a session that lost focus with
+                    // backgroundGamepad=on does not stay suspended after the
+                    // user comes back.
+                    if (weakSelf.hidSupport != nil) {
+                        weakSelf.hidSupport.suspendControllerEvents = NO;
+                    }
+                    if (weakSelf.controllerSupport != nil) {
+                        weakSelf.controllerSupport.suspendControllerEvents = NO;
                     }
                 }
             }
@@ -459,6 +490,26 @@ highFreqMotor:(unsigned short)highFreqMotor {
                 [focusConn setAudioFocusMuted:YES];
             }
         }
+        // P2-3b: same gate as the window-resign-key path above. Mirrors
+        // the audio path so the controller wire and the audio renderer
+        // both pause when the whole app loses focus, while keyboard and
+        // mouse keep forwarding.
+        BOOL backgroundGamepadApp = NO;
+        if (weakSelf.app.host.uuid) {
+            NSDictionary *resignGamepadPrefs = [SettingsClass getSettingsFor:weakSelf.app.host.uuid];
+            id resignGamepadValue = resignGamepadPrefs[@"backgroundGamepad"];
+            if ([resignGamepadValue respondsToSelector:@selector(boolValue)]) {
+                backgroundGamepadApp = [resignGamepadValue boolValue];
+            }
+        }
+        if (backgroundGamepadApp) {
+            if (weakSelf.hidSupport != nil) {
+                weakSelf.hidSupport.suspendControllerEvents = YES;
+            }
+            if (weakSelf.controllerSupport != nil) {
+                weakSelf.controllerSupport.suspendControllerEvents = YES;
+            }
+        }
     }];
     self.appDidBecomeActiveObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidBecomeActiveNotification object:NSApp queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         weakSelf.globalInactivePointerInsideStreamView = NO;
@@ -479,6 +530,17 @@ highFreqMotor:(unsigned short)highFreqMotor {
         Connection *activeConn = [Connection currentConnection];
         if (activeConn != nil) {
             [activeConn setAudioFocusMuted:NO];
+        }
+        // P2-3b: unconditionally clear the controller suspension when the
+        // app becomes active again. Pairs with the resign path above; the
+        // unconditional restore matches the audio pattern so a session
+        // that lost focus with backgroundGamepad=on does not stay
+        // suspended after the user comes back to the app.
+        if (weakSelf.hidSupport != nil) {
+            weakSelf.hidSupport.suspendControllerEvents = NO;
+        }
+        if (weakSelf.controllerSupport != nil) {
+            weakSelf.controllerSupport.suspendControllerEvents = NO;
         }
     }];
 

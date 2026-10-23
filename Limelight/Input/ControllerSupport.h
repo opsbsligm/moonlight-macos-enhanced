@@ -28,6 +28,13 @@
 
 @interface ControllerSupport : NSObject
 @property(nonatomic) BOOL shouldSendInputEvents;
+/// P2-3b backgroundGamepad: while YES the MFi driver refuses to forward
+/// gamepad events (axis / button / trigger / motion) to the host even when
+/// shouldSendInputEvents is YES, so the app can keep keyboard + mouse
+/// forwarding alive across a focus flip while refusing gamepad input the
+/// player is no longer in a position to see. Default NO matches the
+/// shipped behaviour of "always forward gamepad input regardless of focus".
+@property(nonatomic) BOOL suspendControllerEvents;
 @property(nonatomic) BOOL gamepadMouseModeEnabled;
 @property(nonatomic, assign) void *inputContext;
 #if !TARGET_OS_IPHONE
