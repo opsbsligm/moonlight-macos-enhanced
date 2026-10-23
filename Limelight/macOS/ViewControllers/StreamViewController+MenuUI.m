@@ -4,6 +4,7 @@
 //
 
 #import "StreamViewController_Internal.h"
+#import "StreamViewController+MouseCapture.h"
 #import "DeviceRedirectionPanelModel.h"
 #import "USBScanPolicy.h"
 #import "USBMenuStatus.h"
