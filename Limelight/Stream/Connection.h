@@ -86,5 +86,6 @@ typedef struct {
 - (void)notifyInputStreamReadyForMicrophoneControlIfNeeded;
 - (void)terminate;
 - (void)main;
+- (void)setAudioFocusMuted:(BOOL)muted;
 
 @end

@@ -3557,6 +3557,19 @@ check(relative_routing_rules.returncode == 0,
       "the relative-mouse-as-absolute self-test failed:\n"
       + (relative_routing_rules.stdout + relative_routing_rules.stderr)[-900:])
 
+# P2-3a mute-on-focus-loss: same parity shape as the relative-mouse gate.
+# Workflow lists it, local-gates.sh runs it, the parity rule needs to see
+# the local half actually run the same self-test that CI runs.
+mof_rules = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "mute-on-focus-loss-tests.py"),
+     "--self-test"],
+    capture_output=True, text=True, cwd=root)
+check(mof_rules.returncode == 0,
+      "the mute-on-focus-loss self-test stays green"
+      if mof_rules.returncode == 0 else
+      "the mute-on-focus-loss self-test failed:\n"
+      + (mof_rules.stdout + mof_rules.stderr)[-900:])
+
 # What a DMG has to be is a three-part rule, and until now the repository had none
 # of it: the packaging step fell back from create-dmg to a bare `hdiutil create`
 # with `||`, which succeeds and produces an image with no Applications drop target,

@@ -4,11 +4,11 @@
 
 ## 1. 当前基点（截至 2026-10-24 P2-1 收口后）
 
-- 代码基点 main = `9426623b`（P2-1：自由鼠标相对位移改走 `LiSendMouseMoveAsMousePositionEventCtx`，开关默认关）。
-- pipeline #430 = 8/8 success；evidence `moonlight-ci-evidence/20261024-p2-1-relative-mouse-as-absolute/`；本地门禁 95 通过 / 0 失败 / 15 跳过（artifact-only）。
-- 最新 DMG：`build1968`（P2-1, arm64, 8 284 337 字节, sha256 `89d557aa4a8afbd5bf652befdcc9e084eefcb0c2fec53c1d2a2dce97d157b3ac`，`hdiutil verify` VALID，`codesign --verify --deep --strict` 通过，ad hoc 签名，Developer ID 公证仍未验收）。用户日常 `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
+- 代码基点 main = `<P2-3a 待提交>`（P2-3a：失焦静音，仅 LegacyQueue 音频后端；Direct / Enhanced 留 TODO，默认 false）。
+- pipeline 待跑（提交后 30s 再查准确 SHA）；evidence 待落 `moonlight-ci-evidence/20261024-p2-3a-mute-on-focus-loss/`；本地门禁 96 通过 / 1 失败（`liquid-glass-tab-bar-tests.py` inspector SIGSEGV，clean tree 同，CI Mac M2 runner 通过的环境差异）/ 15 跳过。
+- 最新 DMG：上轮 `build1968`（P2-1, arm64, sha256 `89d557aa4a8afbd5bf652befdcc9e084eefcb0c2fec53c1d2a2dce97d157b3ac`）；本轮 build 号未定（commit 时 CI 会注入）。用户日常 `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
 - 镜像 60 refs 与 GitLab 完全一致；不绕过门禁。
-- `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/E1/P2-1 全是代码层完成 + 真机待取证。
+- `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/E1/P2-1/P2-3a 全是代码层完成 + 真机待取证。
 
 ## 2. 已完成（代码层；CI/产物验收；真机仍待）
 
@@ -23,6 +23,7 @@
 | K1.1 可打印 Unicode | `34e921a3`/`798050d9`/`08616a19` | 代码完成 / 真机待 | 与键码路径互斥 |
 | E1 边缘栏参数化 | `622132b3` | 代码完成 / 真机待 | 感应带 8–16pt / 驻留 60–300ms / 收起 300–1000ms，默认值 = 现常量 |
 | P2-1 自由鼠标走绝对坐标 wire path | `9426623b` | 代码完成 / 真机待 | 默认关闭；UI 纯新增；谓词三条件，5 秒绝对参考 |
+| P2-3a 失焦静音（LegacyQueue only）| `<P2-3a 待提交>` | 代码完成 / CI 待 / 真机待 | `Connection.setAudioFocusMuted:` 入口 + LegacyQueue AudioQueueSetParameter 路径；Direct/Enhanced TODO；默认 false |
 
 ## 3. 待开工（按优先级，不依赖真机排期）
 
@@ -43,10 +44,13 @@
 
 - `playAudioOnHost` —— 已存在（xib checkbox → `playAudioOnPC` → launch URL
   `localAudioPlayMode=%d`）；roadmap 描述已修，不留 TODO。
-- `muteOnFocusLoss` —— 三后端（LegacyQueue / Direct / Enhanced）分阶段接入。
-  计划先做 LegacyQueue：`AudioQueueSetParameter` 设 `kAudioQueueParam_Volume=0`
-  + 失焦挂起、聚焦恢复；Direct / Enhanced 后端 mark TODO，单独 commit 跟进。
-  默认 off，开关挂 `inputSettings`（设值与设备无关）。
+- `muteOnFocusLoss` —— **LegacyQueue 已收口（`<P2-3a 待提交>`）**；Direct / Enhanced
+  仍 mark TODO，单独 commit 跟进（三后端共用 `Connection.setAudioFocusMuted:` 入口，
+  follow-up 只需在 `Connection.m` 内部为新后端补 `AudioUnitSetParameter` /
+  `AVAudioEngine outputVolume` 路径，不改 StreamViewController 接线与 SettingsModel）。
+- `backgroundGamepad` —— HID 输入路径加失焦门控；失焦期间丢弃 `controllerAxis` /
+  `controllerButton` 事件但保留 keyboard 与鼠标；默认 off。
+  三项各独立 commit，避免单 PR 跨度过大。
 - `backgroundGamepad` —— HID 输入路径加失焦门控；失焦期间丢弃 `controllerAxis` /
   `controllerButton` 事件但保留 keyboard 与鼠标；默认 off。
   三项各独立 commit，避免单 PR 跨度过大。
@@ -129,7 +133,7 @@
 
 ## 11. 下一步执行（按本文件 §3 顺序推进）
 
-下一波开工顺序：P2-1 (`9426623b`) 已落地，**P2-3 qt 对等项打包**（muteOnFocusLoss / backgroundGamepad / playAudioOnHost，各自独立小提交，默认关）可立即推进；**K2 Ctrl+Alt+Del** 仍要用户先在 build1968+ 真机验证 Sunshine / GFE 主机侧 SAS 能否拉起才能开 commit（拉不起就降级为提示，不虚报）。P2-2 重连退避与 K1.2 marked text 排第二波。每波按 §6 CICD 标准交付，evidence JSON 写齐 `hardware_validated=false` 与 mirror refs。
+下一波开工顺序：P2-3a `muteOnFocusLoss`（LegacyQueue only）已落地，**P2-3b `backgroundGamepad`** 与 **P2-3c playAudioOnHost 已是事实门禁描述** 各自独立小提交（默认关）可立即推进；**K2 Ctrl+Alt+Del** 仍要用户先在新 build 上真机验证 Sunshine / GFE 主机侧 SAS 能否拉起才能开 commit（拉不起就降级为提示，不虚报）。P2-2 重连退避与 K1.2 marked text 排第二波。每波按 §6 CICD 标准交付，evidence JSON 写齐 `hardware_validated=false` 与 mirror refs。
 
 ---
 

@@ -78,7 +78,12 @@ def run_self_test():
         ),
         (
             STORE,
-            "relativeMouseAsAbsolute: relativeMouseAsAbsolute,\n      swapMouseButtons: swapMouseButtons,",
+            # Tolerate any sibling toggles (e.g. P2-3a muteOnFocusLoss)
+            # inserted between these two lines by later commits.
+            re.compile(
+                r"relativeMouseAsAbsolute: relativeMouseAsAbsolute,\n"
+                r"      [^\n]*\n"
+                r"      swapMouseButtons: swapMouseButtons,"),
             "/* P2-1 PLANTED: registration dropped */\n      swapMouseButtons: swapMouseButtons,",
             "SettingsStore.applyToSettings lost registration",
         ),
@@ -93,11 +98,17 @@ def run_self_test():
         full = os.path.join(ROOT, rel)
         with open(full, encoding="utf-8") as fh:
             original = fh.read()
-        idx = original.find(needle)
+        if hasattr(needle, "search"):
+            m = needle.search(original)
+            idx = m.start() if m else -1
+            length = (m.end() - m.start()) if m else 0
+        else:
+            idx = original.find(needle)
+            length = len(needle)
         if idx < 0:
             check(False, "self-test defect for %s: needle not found" % rel.split("/")[-1])
             continue
-        planted = original[:idx] + replacement + original[idx+len(needle):]
+        planted = original[:idx] + replacement + original[idx+length:]
         with open(full, "w", encoding="utf-8") as fh:
             fh.write(planted)
         try:
@@ -220,7 +231,10 @@ def main():
         ),
         (
             STORE,
-            "relativeMouseAsAbsolute: relativeMouseAsAbsolute,\n      swapMouseButtons: swapMouseButtons,",
+            re.compile(
+                r"relativeMouseAsAbsolute: relativeMouseAsAbsolute,\n"
+                r"      [^\n]*\n"
+                r"      swapMouseButtons: swapMouseButtons,"),
             "/* MUTATION: registration dropped */\n      swapMouseButtons: swapMouseButtons,",
             "SettingsStore.applyToSettings lost relativeMouseAsAbsolute registration",
         ),
@@ -236,11 +250,17 @@ def main():
         full = os.path.join(ROOT, rel)
         with open(full, encoding="utf-8") as fh:
             original = fh.read()
-        idx = original.find(needle)
+        if hasattr(needle, "search"):
+            m = needle.search(original)
+            idx = m.start() if m else -1
+            length = (m.end() - m.start()) if m else 0
+        else:
+            idx = original.find(needle)
+            length = len(needle)
         if idx < 0:
             check(False, "mutation %s: needle not found, could not plant defect" % label)
             continue
-        mutated = original[:idx] + replacement + original[idx+len(needle):]
+        mutated = original[:idx] + replacement + original[idx+length:]
         with open(full, "w", encoding="utf-8") as fh:
             fh.write(mutated)
         try:
