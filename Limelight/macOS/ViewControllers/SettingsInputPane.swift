@@ -291,6 +291,46 @@ struct InputView: View {
           hintKey: "Summon On Arrival detail",
           boolBinding: $settingsModel.edgeSensorSummonOnArrival
         )
+
+        // E1 parameterisation: three sliders that override the shipped compile-time
+        // constants. Defaults equal those constants, so a fresh install ships the
+        // same hand-feel as before; nudging them is a write to SettingsModel which
+        // posts mouseSettingsChanged and the stream re-reads on capture.
+        MouseTuningSliderRow(
+          title: "Edge Sensor Band Width",
+          value: Binding(
+            get: { settingsModel.edgeSensorBandWidthPoints == 0 ? 12.0 : settingsModel.edgeSensorBandWidthPoints },
+            set: { settingsModel.edgeSensorBandWidthPoints = $0 }
+          ),
+          range: 8.0...16.0,
+          step: 0.5,
+          minLabel: "8pt",
+          maxLabel: "16pt"
+        )
+        MouseTuningSliderRow(
+          title: "Edge Sensor Dwell",
+          value: Binding(
+            get: { settingsModel.edgeSensorDwellSeconds == 0 ? 0.12 : settingsModel.edgeSensorDwellSeconds },
+            set: { settingsModel.edgeSensorDwellSeconds = $0 }
+          ),
+          range: 0.060...0.300,
+          step: 0.005,
+          minLabel: "60ms",
+          maxLabel: "300ms",
+          valueFormatter: { v in "\(Int((v * 1000).rounded()))ms" }
+        )
+        MouseTuningSliderRow(
+          title: "Edge Menu Auto Collapse",
+          value: Binding(
+            get: { settingsModel.edgeMenuAutoCollapseSeconds == 0 ? 0.45 : settingsModel.edgeMenuAutoCollapseSeconds },
+            set: { settingsModel.edgeMenuAutoCollapseSeconds = $0 }
+          ),
+          range: 0.30...1.00,
+          step: 0.01,
+          minLabel: "300ms",
+          maxLabel: "1000ms",
+          valueFormatter: { v in "\(Int((v * 1000).rounded()))ms" }
+        )
       }
 
       Divider()

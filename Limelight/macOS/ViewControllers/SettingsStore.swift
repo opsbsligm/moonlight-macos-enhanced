@@ -32,6 +32,9 @@ struct Settings: Encodable, Decodable {
   let showLocalCursor: Bool?
   let edgeSensorSummon: Bool?
   let edgeSensorSummonOnArrival: Bool?
+  let edgeSensorBandWidthPoints: Double?
+  let edgeSensorDwellSeconds: Double?
+  let edgeMenuAutoCollapseSeconds: Double?
   let systemKeyboardShortcutCapture: Int?
   let enableMicrophone: Bool?
   let streamResolutionScale: Bool?
@@ -197,6 +200,9 @@ struct Settings: Encodable, Decodable {
       showLocalCursor: showLocalCursor,
       edgeSensorSummon: edgeSensorSummon,
       edgeSensorSummonOnArrival: edgeSensorSummonOnArrival,
+      edgeSensorBandWidthPoints: edgeSensorBandWidthPoints,
+      edgeSensorDwellSeconds: edgeSensorDwellSeconds,
+      edgeMenuAutoCollapseSeconds: edgeMenuAutoCollapseSeconds,
       systemKeyboardShortcutCapture: systemKeyboardShortcutCapture,
       enableMicrophone: enableMicrophone,
       streamResolutionScale: streamResolutionScale,
@@ -446,6 +452,9 @@ extension SettingsClass {
       showLocalCursor: settings.showLocalCursor,
       edgeSensorSummon: settings.edgeSensorSummon,
       edgeSensorSummonOnArrival: settings.edgeSensorSummonOnArrival,
+      edgeSensorBandWidthPoints: settings.edgeSensorBandWidthPoints,
+      edgeSensorDwellSeconds: settings.edgeSensorDwellSeconds,
+      edgeMenuAutoCollapseSeconds: settings.edgeMenuAutoCollapseSeconds,
       systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: resolvedStreamResolutionScale,

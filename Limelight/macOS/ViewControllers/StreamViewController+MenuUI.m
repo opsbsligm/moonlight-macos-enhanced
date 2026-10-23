@@ -411,7 +411,7 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
 // Both the clock that fires and the line that reports the return read it here, so the log
 // can never disagree with the timer that produced it.
 - (NSTimeInterval)edgeMenuReturnDelay {
-    return self.edgeMenuPointerHasVisited ? MLEdgeMenuAutoCollapseDelay : MLEdgeMenuSummonGraceDelay;
+    return self.edgeMenuPointerHasVisited ? [self edgeMenuAutoCollapseDelay] : MLEdgeMenuSummonGraceDelay;
 }
 
 // Expanded, menu and drag are the states where the controls are on screen and may hold the
@@ -471,15 +471,16 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
 - (NSRect)edgeSensorActivationRectInBounds:(NSRect)bounds {
     NSRect handle = [self expandedFrameForEdgeMenuButtonInBounds:bounds];
     NSRect region = handle;
+    CGFloat bandWidth = [self edgeSensorBandWidthPoints];
     switch (self.edgeMenuDockEdge) {
-        case MLFreeMouseExitEdgeLeft: region.size.width = MLEdgeSensorBandWidth; break;
+        case MLFreeMouseExitEdgeLeft: region.size.width = bandWidth; break;
         case MLFreeMouseExitEdgeRight:
-            region.origin.x = NSMaxX(bounds) - MLEdgeSensorBandWidth;
-            region.size.width = MLEdgeSensorBandWidth; break;
+            region.origin.x = NSMaxX(bounds) - bandWidth;
+            region.size.width = bandWidth; break;
         case MLFreeMouseExitEdgeTop:
-            region.origin.y = NSMaxY(bounds) - MLEdgeSensorBandWidth;
-            region.size.height = MLEdgeSensorBandWidth; break;
-        case MLFreeMouseExitEdgeBottom: region.size.height = MLEdgeSensorBandWidth; break;
+            region.origin.y = NSMaxY(bounds) - bandWidth;
+            region.size.height = bandWidth; break;
+        case MLFreeMouseExitEdgeBottom: region.size.height = bandWidth; break;
         default: return NSZeroRect;
     }
     return NSIntersectionRect(region, bounds);
