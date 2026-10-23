@@ -842,6 +842,42 @@ static inline BOOL HIDShouldSuppressRelativeMouse(HIDSupport *support) {
     return untilMs > 0 && LiGetMillis() < untilMs;
 }
 
+// P2-1: route relative mouse delta through the absolute-position wire path.
+// Only true when (a) the per-host setting is on, (b) free-mouse / remote mode
+// is active, and (c) the session has produced a fresh absolute pointer
+// reference within the staleness window. The staleness gate is what keeps a
+// session that never sent an absolute event from snapping the host cursor to
+// (0,0) on the first delta.
+static inline BOOL HIDShouldRouteRelativeAsAbsolute(HIDSupport *support,
+                                                    short *outReferenceWidth,
+                                                    short *outReferenceHeight) {
+  if (outReferenceWidth != NULL) *outReferenceWidth = 0;
+  if (outReferenceHeight != NULL) *outReferenceHeight = 0;
+  if (support == nil || support.host == nil) return NO;
+  if (![SettingsClass relativeMouseAsAbsoluteFor:support.host.uuid]) return NO;
+  NSString *mouseMode = [SettingsClass mouseModeFor:support.host.uuid];
+  if (![mouseMode isEqualToString:@"remote"]) return NO;
+  short width = 0;
+  short height = 0;
+  uint64_t ageMs = 0;
+  NSString * __autoreleasing source = nil;
+  if (![support getLastAbsolutePointerHostX:NULL
+                                      hostY:NULL
+                             referenceWidth:&width
+                            referenceHeight:&height
+                                      ageMs:&ageMs
+                                     source:&source]) {
+    return NO;
+  }
+  if (width <= 0 || height <= 0) return NO;
+  // 5 second staleness window. Sessions that have not produced an absolute
+  // pointer event recently fall back to the legacy relative wire packet.
+  if (ageMs > 5000) return NO;
+  if (outReferenceWidth != NULL) *outReferenceWidth = width;
+  if (outReferenceHeight != NULL) *outReferenceHeight = height;
+  return YES;
+}
+
 static inline void HIDInvalidateCoreHIDFreeMouseAbsoluteSync(HIDSupport *support) {
     support.coreHIDFreeMouseAbsoluteSyncScheduled = NO;
     support.coreHIDFreeMouseAbsoluteSyncToken += 1;

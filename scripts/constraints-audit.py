@@ -3539,6 +3539,24 @@ check(analyzer_rules.returncode == 0,
       "the analyzer self-test failed:\n"
       + (analyzer_rules.stdout + analyzer_rules.stderr)[-900:])
 
+
+# The free-mouse routing gate covers a real protocol wire
+# (LiSendMouseMoveAsMousePositionEventCtx) that the parity rule above needs to
+# see run locally: the workflow lists it, the aggregate runs it through
+# local-gates.sh, and the only way to prove the local half actually exercises
+# the same self-test the CI job does is to call the script here. It is
+# python-only and the self-test subcommand is the one with deterministic
+# runtime, so the cost is the same shape as the glass/analyzer rules above.
+relative_routing_rules = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "relative-mouse-as-absolute-tests.py"),
+     "--self-test"],
+    capture_output=True, text=True, cwd=root)
+check(relative_routing_rules.returncode == 0,
+      "the free-mouse wire path self-test stays green"
+      if relative_routing_rules.returncode == 0 else
+      "the relative-mouse-as-absolute self-test failed:\n"
+      + (relative_routing_rules.stdout + relative_routing_rules.stderr)[-900:])
+
 # What a DMG has to be is a three-part rule, and until now the repository had none
 # of it: the packaging step fell back from create-dmg to a bare `hdiutil create`
 # with `||`, which succeeds and produces an image with no Applications drop target,

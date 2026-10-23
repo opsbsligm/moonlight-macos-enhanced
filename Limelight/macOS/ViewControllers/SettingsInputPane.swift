@@ -277,6 +277,19 @@ struct InputView: View {
         boolBinding: $settingsModel.showLocalCursor
       )
 
+      if settingsModel.mouseMode == "remote" {
+        // P2-1: relative mouse delta routed through the absolute-position wire
+        // path. Default false; turning this on rewires free-mouse motion through
+        // LiSendMouseMoveAsMousePositionEvent so hosts that consume absolute
+        // coordinates see a continuous cursor. Locked-mouse / gamepad paths
+        // intentionally keep their existing relative-only wire format.
+        ToggleCell(
+          title: "Relative Mouse Sends Absolute Position",
+          hintKey: "Relative Mouse As Absolute detail",
+          boolBinding: $settingsModel.relativeMouseAsAbsolute
+        )
+      }
+
       Divider()
 
       ToggleCell(
