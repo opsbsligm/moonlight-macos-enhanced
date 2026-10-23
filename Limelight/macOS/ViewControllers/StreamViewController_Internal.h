@@ -567,13 +567,12 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) CGFloat edgeSensorBandWidthOverridePoints;
 @property (nonatomic) NSTimeInterval edgeSensorDwellOverrideSeconds;
 @property (nonatomic) NSTimeInterval edgeMenuAutoCollapseOverrideSeconds;
-// The single source of truth for the live dwell, sensor band and auto-collapse
-// delay: each reads the override and clamps to the published range, so an
-// out-of-band write from a future setting never widens the band past 16pt or
-// stalls the dwell beyond 300ms.
-- (NSTimeInterval)edgeSensorDwellSeconds;
-- (CGFloat)edgeSensorBandWidthPoints;
-- (NSTimeInterval)edgeMenuAutoCollapseDelay;
+// The clamped dwell / band / auto-collapse accessors live in the MouseCapture
+// category. Their declarations are intentionally NOT on the primary class: the
+// primary class cannot fulfil them, and putting the promise here only made
+// clang emit -Wincomplete-implementation plus a -Wobjc-protocol-method-
+// implementation cross-warning every time the category redefined them.
+// Callers must #import "StreamViewController+MouseCapture.h" to see them.
 @property (nonatomic, strong) NSTimer *edgeSensorDwellTimer;
 @property (nonatomic) double edgeSensorIgnoreMotionUntilMs;
 @property (nonatomic) BOOL edgeSensorMustLeaveHoverRegion;

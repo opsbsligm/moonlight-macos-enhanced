@@ -4,6 +4,7 @@
 //
 
 #import "StreamViewController_Internal.h"
+#import "StreamViewController+MouseCapture.h"
 #import "Moonlight-Swift.h"
 #import "PointerEntryPolicy.h"
 #import <dlfcn.h>
