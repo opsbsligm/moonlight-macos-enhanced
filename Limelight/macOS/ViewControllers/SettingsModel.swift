@@ -472,6 +472,33 @@ class SettingsModel: ObservableObject {
       postMouseSettingsChanged("edgeSensorSummon")
     }
   }
+  // E1 parameterisation: the three published hand-feel numbers. Zero means
+  // "no preference written" and the stream falls back to the shipped compile-time
+  // constant, which is the regression anchor every change is compared against.
+  // The UI clamps to the published range before writing, so an in-app write here
+  // is always in range; the setter exists so a future feature can clear the value
+  // by writing 0 without the slider having to know about it.
+  @Published var edgeSensorBandWidthPoints: Double {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+      postMouseSettingsChanged("edgeSensorSummon")
+    }
+  }
+  @Published var edgeSensorDwellSeconds: Double {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+      postMouseSettingsChanged("edgeSensorSummon")
+    }
+  }
+  @Published var edgeMenuAutoCollapseSeconds: Double {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+      postMouseSettingsChanged("edgeSensorSummon")
+    }
+  }
 
   // 0 follows fullscreen, 1 also captures a windowed stream, 2 leaves every system
   // shortcut on this Mac -- the last of which is the regression anchor for capture.
@@ -1335,6 +1362,9 @@ class SettingsModel: ObservableObject {
     enableMicrophone = Self.defaultEnableMicrophone
     streamResolutionScale = Self.defaultStreamResolutionScale
     streamResolutionScaleRatio = Self.defaultStreamResolutionScaleRatio
+    edgeSensorBandWidthPoints = Self.defaultEdgeSensorBandWidthPoints
+    edgeSensorDwellSeconds = Self.defaultEdgeSensorDwellSeconds
+    edgeMenuAutoCollapseSeconds = Self.defaultEdgeMenuAutoCollapseSeconds
 
     selectedVideoRendererMode = Self.defaultVideoRendererMode
     selectedVideoCodec = Self.defaultVideoCodec

@@ -117,6 +117,16 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 @property BOOL edgeMenuTemporaryReleaseActive;
 @property MLEdgeMenuPhase edgeMenuPhase;
 @property NSUInteger edgeMenuLifecycleToken;
+// E1 parameterisation: the runtime probe mirrors the production getter shape so
+// the live band / dwell / auto-collapse path stays exercisable when the harness
+// copies production methods out of MouseCapture.m. Default zero falls back to
+// the shipped constant, which is what every test wants unless it asks otherwise.
+@property CGFloat edgeSensorBandWidthOverridePoints;
+@property NSTimeInterval edgeSensorDwellOverrideSeconds;
+@property NSTimeInterval edgeMenuAutoCollapseOverrideSeconds;
+- (NSTimeInterval)edgeSensorDwellSeconds;
+- (CGFloat)edgeSensorBandWidthPoints;
+- (NSTimeInterval)edgeMenuAutoCollapseDelay;
 @property NSMenu *streamMenu;
 @property NSPoint edgeMenuButtonPanStartOrigin;
 - (void)rebuildStreamMenu;
@@ -1135,6 +1145,12 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (BOOL)noteLockedEdgeFlickMotionForEvent:',
         '- (void)summonEdgeMenuDockForEdge:',
         '- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer', '- (void)mouseDown:', '- (void)mouseUp:',
+        # E1 getters: the runtime probe mirrors the production overrides so a
+        # live test that exercises the dwell timer or the activation rect sees
+        # the same override/clamp/fallback shape the shipping code does.
+        '- (NSTimeInterval)edgeSensorDwellSeconds',
+        '- (CGFloat)edgeSensorBandWidthPoints',
+        '- (NSTimeInterval)edgeMenuAutoCollapseDelay',
     ]
     methods = "\n".join(method(objc, sig) for sig in signatures)
     methods += "\n" + "\n".join(method(menu, sig) for sig in (
@@ -1185,7 +1201,11 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('keyboard entry never takes the dock', '[self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@\"control-center-shortcut\"];', ';'),
                 ('keyboard entry reports a dock it never opened', '[self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"control-center-shortcut"];\n    return self.edgeMenuButtonExpanded;', '[self summonEdgeMenuDockForEdge:self.edgeMenuDockEdge reason:@"control-center-shortcut"];\n    return NO;'),
                 ('a summoned bar is left on screen forever', '    [self handleEdgeMenuHover];\n    [self attachEdgeMenuPanelToWindowIfNeeded];', '    [self attachEdgeMenuPanelToWindowIfNeeded];'),
-                ('the summon grace collapses into the hover delay', 'return self.edgeMenuPointerHasVisited ? MLEdgeMenuAutoCollapseDelay : MLEdgeMenuSummonGraceDelay;', 'return MLEdgeMenuAutoCollapseDelay;'),
+                # E1 parameterisation rewrote the bare-constant read into a
+                # [self edgeMenuAutoCollapseDelay] call; the negative control
+                # still has to fail-open on a constants-only shortcut so a future
+                # change that drops the getter is caught here.
+                ('the summon grace collapses into the hover delay', 'return self.edgeMenuPointerHasVisited ? [self edgeMenuAutoCollapseDelay] : MLEdgeMenuSummonGraceDelay;', 'return MLEdgeMenuAutoCollapseDelay;'),
                 ('the keyboard entry is a one-way switch', 'if (self.edgeMenuButtonExpanded && !self.edgeMenuDragging) {\n        [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:self.edgeMenuTemporaryReleaseActive];\n        return YES;\n    }', 'if (NO) {\n        [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:self.edgeMenuTemporaryReleaseActive];\n        return YES;\n    }'),
                 ('a press during a drag drops the bar out of the pointer', 'if (self.edgeMenuButtonExpanded && !self.edgeMenuDragging) {', 'if (self.edgeMenuButtonExpanded) {'),
                 ('a bar that vanished on its own is not a return', 'if ([self edgeMenuPhaseIsOnScreen:previousPhase] && ![self edgeMenuPhaseIsOnScreen:phase]) {', 'if (self.edgeMenuPointerHasVisited && [self edgeMenuPhaseIsOnScreen:previousPhase] && ![self edgeMenuPhaseIsOnScreen:phase]) {'),

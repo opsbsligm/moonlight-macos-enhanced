@@ -2534,6 +2534,11 @@ CI_ONLY = {
     "controller-motion-event-tests.py": "clang_and_sdk",
     "controller-battery-event-tests.py": "clang_and_sdk",
     "controller-touch-event-tests.py": "clang_and_sdk",
+    # E1 sidebar parameterisation: the gate compiles a tiny C harness that calls
+    # the three getters with the same constant table Internal.h exposes, and
+    # that harness needs Apple's clang and SDK; same reason as the controller
+    # baselines above. The marker that has to stay true is the toolchain call.
+    "edge-sensor-e1-clamp-tests.py": "clang_and_sdk",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})

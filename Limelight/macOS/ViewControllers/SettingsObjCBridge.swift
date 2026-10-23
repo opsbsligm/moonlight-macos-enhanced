@@ -120,6 +120,12 @@ class SettingsClass: NSObject {
         // Whether that band opens the dock on arrival or only lights the tab first.
         // Absent means the UU-style arrival behavior, the shipped default.
         "edgeSensorSummonOnArrival": settings.edgeSensorSummonOnArrival ?? true,
+        // E1 parameter overrides: zero means "no preference written" and the stream
+        // falls back to the shipped compile-time constant. Absent is read as zero,
+        // which is the same answer a fresh install and an upgrade both give.
+        "edgeSensorBandWidthPoints": settings.edgeSensorBandWidthPoints ?? 0,
+        "edgeSensorDwellSeconds": settings.edgeSensorDwellSeconds ?? 0,
+        "edgeMenuAutoCollapseSeconds": settings.edgeMenuAutoCollapseSeconds ?? 0,
         // The stream reads this to decide when the system's global hotkeys are its own.
         // Anything it does not recognise is read back as "follow fullscreen".
         "systemKeyboardShortcutCapture": settings.systemKeyboardShortcutCapture ?? 0,
@@ -341,6 +347,9 @@ class SettingsClass: NSObject {
       showLocalCursor: settings.showLocalCursor,
       edgeSensorSummon: settings.edgeSensorSummon,
       edgeSensorSummonOnArrival: settings.edgeSensorSummonOnArrival,
+      edgeSensorBandWidthPoints: settings.edgeSensorBandWidthPoints,
+      edgeSensorDwellSeconds: settings.edgeSensorDwellSeconds,
+      edgeMenuAutoCollapseSeconds: settings.edgeMenuAutoCollapseSeconds,
       systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,
@@ -457,6 +466,9 @@ class SettingsClass: NSObject {
         showLocalCursor: updated.showLocalCursor,
         edgeSensorSummon: updated.edgeSensorSummon,
         edgeSensorSummonOnArrival: updated.edgeSensorSummonOnArrival,
+        edgeSensorBandWidthPoints: updated.edgeSensorBandWidthPoints,
+        edgeSensorDwellSeconds: updated.edgeSensorDwellSeconds,
+        edgeMenuAutoCollapseSeconds: updated.edgeMenuAutoCollapseSeconds,
         systemKeyboardShortcutCapture: updated.systemKeyboardShortcutCapture,
         enableMicrophone: updated.enableMicrophone,
         streamResolutionScale: updated.streamResolutionScale,
@@ -569,6 +581,9 @@ class SettingsClass: NSObject {
       showLocalCursor: settings.showLocalCursor,
       edgeSensorSummon: settings.edgeSensorSummon,
       edgeSensorSummonOnArrival: settings.edgeSensorSummonOnArrival,
+      edgeSensorBandWidthPoints: settings.edgeSensorBandWidthPoints,
+      edgeSensorDwellSeconds: settings.edgeSensorDwellSeconds,
+      edgeMenuAutoCollapseSeconds: settings.edgeMenuAutoCollapseSeconds,
       systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,

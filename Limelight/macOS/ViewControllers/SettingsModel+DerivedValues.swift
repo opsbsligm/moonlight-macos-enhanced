@@ -1112,6 +1112,12 @@ extension SettingsModel {
   // UU-style arrival summoning: the dwell opens the bar outright. Off restores the
   // two-step light-then-click protocol, kept as the behavior anchor for that design.
   static let defaultEdgeSensorSummonOnArrival = true
+  // E1 parameterisation defaults: zero means "no preference written" and the stream
+  // falls back to the shipped compile-time constant. A new install and an upgrade
+  // both land here, so the shipped hand-feel is preserved without further code.
+  static let defaultEdgeSensorBandWidthPoints = 0.0
+  static let defaultEdgeSensorDwellSeconds = 0.0
+  static let defaultEdgeMenuAutoCollapseSeconds = 0.0
 
   // Which moments the app takes the system's global hotkeys for the stream. The raw values
   // are the numbers the stream's own enum uses, so the bridge is a pass-through.
