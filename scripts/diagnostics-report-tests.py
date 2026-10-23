@@ -338,6 +338,9 @@ int main(void) {
         check(MLControllerFamilyForIds(0x057E, 0x2009) == MLControllerFamilyNintendo &&
               MLControllerProtocolTypeForFamily(MLControllerFamilyNintendo) == 0x03,
               "a Pro Controller maps to Nintendo and LI_CTYPE_NINTENDO");
+        check(MLControllerFamilyForIds(0x057E, 0x2006) == MLControllerFamilyNintendo &&
+              MLControllerFamilyForIds(0x057E, 0x2007) == MLControllerFamilyNintendo,
+              "a lone left or right Joy-Con is named Nintendo, matching the HID path");
         check(MLControllerFamilyForIds(0x1234, 0x5678) == MLControllerFamilyUnknown &&
               MLControllerProtocolTypeForFamily(MLControllerFamilyUnknown) == 0x00,
               "an unknown pad stays unknown and maps to LI_CTYPE_UNKNOWN");

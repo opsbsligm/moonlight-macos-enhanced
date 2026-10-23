@@ -18,8 +18,8 @@
 // Betop / KingKong: 0x2DC8:0x2000/0x2020/0x2100 (BTP-A1T2/A1U2/A1S2).
 // Sony: 0x054C:0x09CC and 0x05C4 are DualShock 4 (wired and BT), 0x0CE6 is DualSense.
 // Nintendo: 0x057E:0x2009 is the Pro Controller. The single Joy-Cons (0x2006 left, 0x2007
-//   right) are absent on purpose for now -- their report layout differs from the Pro's, so
-//   claiming them here before the parser reads them would hand a Joy-Con the wrong map.
+//   right) join it: a lone Joy-Con reports through the same simple state layout the HID
+//   path parses, so the arrival and the inventory name it the same family.
 static MLControllerFamily MLControllerFamilyForKnownPair(NSUInteger vendorId, NSUInteger productId) {
     switch (vendorId) {
         case 0x045E:
@@ -45,7 +45,7 @@ static MLControllerFamily MLControllerFamilyForKnownPair(NSUInteger vendorId, NS
             }
             break;
         case 0x057E:
-            if (productId == 0x2009) {
+            if (productId == 0x2009 || productId == 0x2006 || productId == 0x2007) {
                 return MLControllerFamilyNintendo;
             }
             break;

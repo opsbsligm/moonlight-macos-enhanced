@@ -486,7 +486,11 @@ static inline UInt16 usbIdFromDevice(IOHIDDeviceRef device, NSString *key) {
 static inline BOOL isNintendo(IOHIDDeviceRef device) {
     UInt16 vendorId = usbIdFromDevice(device, @kIOHIDVendorIDKey);
     UInt16 productId = usbIdFromDevice(device, @kIOHIDProductIDKey);
-    return vendorId == 0x057E && (productId == 0x2009);
+    // 0x2009 Pro Controller, 0x2006 left Joy-Con, 0x2007 right Joy-Con. A lone
+    // Joy-Con reports through the same 0x3F simple state layout this path parses,
+    // so it is recognized with the Pro rather than given a second parser.
+    return vendorId == 0x057E &&
+        (productId == 0x2009 || productId == 0x2006 || productId == 0x2007);
 }
 
 static inline BOOL isXbox(IOHIDDeviceRef device) {

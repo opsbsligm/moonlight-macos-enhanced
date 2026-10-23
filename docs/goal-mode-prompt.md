@@ -2,8 +2,8 @@
 
 ## 2026-10-23 现场复核（覆盖下方历史描述，本波刷新至 pipeline 409）
 
-- 已验证代码基点：`6cb96e60`（空提交重触发；触摸板代码在 `c0707e70`）；GitLab pipeline 409 八项成功，build1957 DMG 已验收（SHA256 2f4fac89…，验收目录 moonlight-ci-evidence/20261023-touch-event）。跳过项不算通过。
-- M2 三回调全部接通；M3 setMotionEventState 已接（PS4/PS5 状态包六轴原生携带，启用语义=主机请求即发，按类型节流 + SDL HIDAPI 比例换算 + 拔出/断流/显式停止三路径统一 stop）；M4.1 电池 + M4.2 PS 触摸板均已接（电量字节解码/12 位坐标 DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 BATTERY_STATE/TOUCHPAD，新门禁各 6 变异全拦 + self-test）。M4 仅剩 Joy-Con 扩容（057E:2006/2007）与触摸板退化路径。
+- 已验证代码基点：`cd42716a`（GitLab main，pipeline 414 八项成功）；其下 `c0707e70` 的触摸板代码由 pipeline 409 build1957 DMG 验收（SHA256 2f4fac89…，验收目录 moonlight-ci-evidence/20261023-touch-event）。跳过项不算通过。M4.3/M4.4 代码在本波提交，待对应 pipeline。
+- M2 三回调全部接通；M3 setMotionEventState 已接（PS4/PS5 状态包六轴原生携带，启用语义=主机请求即发，按类型节流 + SDL HIDAPI 比例换算 + 拔出/断流/显式停止三路径统一 stop）；M4 全部子项代码完成：M4.1 电池、M4.2 PS 触摸板（12 位坐标 DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 BATTERY_STATE/TOUCHPAD）、M4.3 单只 Joy-Con 识别（isNintendo + 诊断身份表补 057E:2006/2007，走既有 0x3F 简单状态解析，arrival 判 NINTENDO，device-table 门禁真谓词回放 + 回归变异全拦）、M4.4 触摸板退化路径（派发前查 LiGetHostFeatureFlagsCtx 的 LI_FF_CONTROLLER_TOUCH_EVENTS，主机不支持即停发，touch 门禁 8 变异全拦）。本地综合门禁 91 通过 / 0 失败 / 15 跳过。
 - M3 边界：计划中的 PS4 0x05 / PS5 0x09 feature report 显式启用写未实现（HID 状态包本身携带六轴字节，启用即"主机请求→发送"），完成边界仍以真机主机侧读到非零六轴 + 断流后无残留请求为准。
 - `hardware_validated=false`：PS5 BT 短包存疑、未抓真机 IMU/电量/触摸报文；日常应用现为 build1933（0.1 诊断代码），build1957 未替换日常应用。
 - CI 基建教训（2026-10-23）：gitlab-ctl reconfigure 后 nginx :80 按 external_url 变 SSL-only，纯 HTTP 全 400；Linux VM runner 改 `https://www.bsligm.com:8445` + tls_skip_verify（备份 config.toml.bak-20261023）；Mac M2 runner 曾短暂失联且 macos tag 丢失，误加给 VM runner 后 job 落到 Linux（swiftlint 缺失）。**reconfigure 后必须回读 runner URL 与 tag**；本地 push 被 :80 阻时直接推 8445 HTTPS，不改 remote。
