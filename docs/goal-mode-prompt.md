@@ -1,5 +1,19 @@
 # Moonlight macOS Enhanced — 目标模式提示词（2026-10-22 刷新）
 
+## 2026-10-23 K1 增量复核
+
+- 发布基点为 `7c5b687f`，pipeline 419 八项成功，build1959 DMG 已验收，证据见
+  `moonlight-ci-evidence/20261023-m4-closeout/release-verification.json`。
+- M4 完成措辞收紧：Joy-Con 当前只有身份分类/协议类型回放，缺真实报文兼容性证明；
+  主机不支持触摸时仅停发，鼠标 clickpad 退化尚未实现，因此 M4 整体仍为部分完成。
+  下段历史中的“M4 全部子项代码完成”不能作为完整功能验收。
+- K1.1 本波实现事件内已有可打印 Unicode 的转发，与键码路径互斥；不把
+  `NSEvent.characters` 当作输入法提交回调。ASCII、Cmd/Ctrl/Option 快捷键、
+  功能键、控制字符仍走原键码路径，已持有的 wire 键不被 repeat 改走文本。
+  异步块捕获 NSData，读取字节发生在发送时。候选窗、marked text、输入法提交、
+  文本长按重复及真机主机输入效果仍待 K1.2 和硬件验收。
+- 本波代码与新增真实 keyDown/keyUp 回放的发布状态，以对应 SHA 的 CI 为准。
+
 ## 2026-10-23 现场复核（覆盖下方历史描述，本波刷新至 pipeline 409）
 
 - 已验证代码基点：`cd42716a`（GitLab main，pipeline 414 八项成功）；其下 `c0707e70` 的触摸板代码由 pipeline 409 build1957 DMG 验收（SHA256 2f4fac89…，验收目录 moonlight-ci-evidence/20261023-touch-event）。跳过项不算通过。M4.3/M4.4 代码在本波提交，待对应 pipeline。

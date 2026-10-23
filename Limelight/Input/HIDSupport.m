@@ -13,6 +13,7 @@
 #import "HIDKeyboardQuirkFilter.h"
 #import "HIDSupport+Inventory.h"
 #import "MLControllerInventory.h"
+#import "KeyboardTextRouting.h"
 
 #import <IOKit/hid/IOHIDElement.h>
 #import <IOKit/hid/IOHIDKeys.h>  // kIOHIDPrimaryUsagePageKey: what kind of device a node claims to be
@@ -1679,6 +1680,21 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     [self.keyboardSuppressedKeyDownKeyCodes removeObject:physical];
     [self syncKeyboardModifierStateForEvent:event];
     short translated = savedCode != nil ? savedCode.shortValue : [self translateKeyCodeWithEvent:event];
+    NSData *committed = savedCode == nil ? HIDUnicodeTextForEvent(event) : nil;
+    if (committed != nil && committed.length > 0) {
+        // Text owns this edge; no key-code DOWN or orphan UP accompanies it.
+        // An existing wire-key owner always keeps its original route.
+        HIDInputLease textLease = HIDAcquireInputContext(self);
+        PML_INPUT_STREAM_CONTEXT textCtx = textLease.context;
+        if (HIDValidateInputContext(textCtx, "keyDown")) {
+            HIDDispatchInput(self, textLease, ^{
+                // Capture the data, not a pointer into an object released
+                // before this queued block runs.
+                LiSendUtf8TextEventCtx(textCtx, committed.bytes, (unsigned int)committed.length);
+            });
+        }
+        return;
+    }
     if (translated == 0) {
         return;
     }
