@@ -971,6 +971,15 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  // P2-3a muteOnFocusLoss: when the stream window or the whole app loses
+  // focus, drop the audio renderer to silent; restoring focus brings the
+  // renderer back. Default false keeps the existing always-audible behaviour.
+  @Published var muteOnFocusLoss: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var swapMouseButtons: Bool {
     didSet {
       guard !isLoading else { return }
@@ -1424,6 +1433,7 @@ class SettingsModel: ObservableObject {
     quitAppAfterStream = Self.defaultQuitAppAfterStream
     absoluteMouseMode = Self.defaultAbsoluteMouseMode
     relativeMouseAsAbsolute = Self.defaultRelativeMouseAsAbsolute
+    muteOnFocusLoss = Self.defaultMuteOnFocusLoss
     swapMouseButtons = Self.defaultSwapMouseButtons
     reverseScrollDirection = Self.defaultReverseScrollDirection
     pointerSensitivity = Self.defaultPointerSensitivity

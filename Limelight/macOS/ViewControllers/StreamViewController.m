@@ -357,6 +357,25 @@ highFreqMotor:(unsigned short)highFreqMotor {
             }
             [weakSelf hideEdgeMenuForInactiveSpaceIfNeeded];
             [weakSelf requestMouseUncaptureWhenSafeWithReason:@"window-resigned-key" code:@"MUC003"];
+            // P2-3a: focus-loss mute. Same gate as the app-resign path
+            // above; window-resign-key can fire inside an active app
+            // (Cmd+`, click on another window), so the audio backend
+            // should pause while another window in the same app is in
+            // front, matching the qt default.
+            BOOL muteOnFocusLossWindow = NO;
+            if (weakSelf.app.host.uuid) {
+                NSDictionary *windowPrefs = [SettingsClass getSettingsFor:weakSelf.app.host.uuid];
+                id windowValue = windowPrefs[@"muteOnFocusLoss"];
+                if ([windowValue respondsToSelector:@selector(boolValue)]) {
+                    muteOnFocusLossWindow = [windowValue boolValue];
+                }
+            }
+            if (muteOnFocusLossWindow) {
+                Connection *focusConn = [Connection currentConnection];
+                if (focusConn != nil) {
+                    [focusConn setAudioFocusMuted:YES];
+                }
+            }
         }
     }];
     self.windowDidBecomeKeyNotification = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidBecomeKeyNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
@@ -375,6 +394,13 @@ highFreqMotor:(unsigned short)highFreqMotor {
                     [weakSelf scheduleDeferredMouseCaptureRearmWithReason:@"window-became-key" delay:0.10];
                     [weakSelf scheduleDeferredMouseCaptureRearmWithReason:@"window-became-key" delay:0.28];
                     [weakSelf scheduleDeferredMouseCaptureRearmWithReason:@"window-became-key" delay:0.60];
+                    // P2-3a: restore audio on focus regain. Unconditional
+                    // restore (same reasoning as the appDidBecomeActive
+                    // path above).
+                    Connection *activeConn = [Connection currentConnection];
+                    if (activeConn != nil) {
+                        [activeConn setAudioFocusMuted:NO];
+                    }
                 }
             }
         } else {
@@ -410,6 +436,29 @@ highFreqMotor:(unsigned short)highFreqMotor {
         [weakSelf hideEdgeMenuForInactiveSpaceIfNeeded];
         [weakSelf restoreSystemHotkeySuppressionForReason:@"app-resigned-active"];
         [weakSelf requestMouseUncaptureWhenSafeWithReason:@"app-resigned-active" code:@"MUC006"];
+        // P2-3a: mute stream audio when the host app loses focus, gated on
+        // the per-host muteOnFocusLoss preference (default off). Read via
+        // the ObjCBridge dictionary so the Swift getter does not need an
+        // @objc(muteOnFocusLossFor:) rename, and the value stays in lock
+        // step with every other per-host preference that lives in the
+        // same dictionary. The Connection no-ops on the LegacyQueue
+        // backend when no audio queue exists yet, and on Direct / Enhanced
+        // backends until a follow-up commit wires their equivalent volume
+        // hooks.
+        BOOL muteOnFocusLoss = NO;
+        if (weakSelf.app.host.uuid) {
+            NSDictionary *resignPrefs = [SettingsClass getSettingsFor:weakSelf.app.host.uuid];
+            id resignValue = resignPrefs[@"muteOnFocusLoss"];
+            if ([resignValue respondsToSelector:@selector(boolValue)]) {
+                muteOnFocusLoss = [resignValue boolValue];
+            }
+        }
+        if (muteOnFocusLoss) {
+            Connection *focusConn = [Connection currentConnection];
+            if (focusConn != nil) {
+                [focusConn setAudioFocusMuted:YES];
+            }
+        }
     }];
     self.appDidBecomeActiveObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidBecomeActiveNotification object:NSApp queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
         weakSelf.globalInactivePointerInsideStreamView = NO;
@@ -423,6 +472,14 @@ highFreqMotor:(unsigned short)highFreqMotor {
         [weakSelf scheduleDeferredMouseCaptureRearmWithReason:@"app-became-active" delay:0.10];
         [weakSelf scheduleDeferredMouseCaptureRearmWithReason:@"app-became-active" delay:0.28];
         [weakSelf scheduleDeferredMouseCaptureRearmWithReason:@"app-became-active" delay:0.60];
+        // P2-3a: undo the focus-loss mute when the host app becomes active
+        // again. Always restore, regardless of the preference, so a session
+        // that was muted while the user toggled the option off mid-resign
+        // doesn't leave audio silently held at 0.
+        Connection *activeConn = [Connection currentConnection];
+        if (activeConn != nil) {
+            [activeConn setAudioFocusMuted:NO];
+        }
     }];
 
     self.activeSpaceDidChangeObserver = [[[NSWorkspace sharedWorkspace] notificationCenter]

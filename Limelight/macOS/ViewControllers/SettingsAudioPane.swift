@@ -52,6 +52,19 @@ struct AudioView: View {
 
           Divider()
 
+          // P2-3a: mute the stream audio when the host app loses focus
+          // (window resignKey / app resignActive). Default false. Currently
+          // honoured only by the LegacyQueue audio backend; Direct / Enhanced
+          // backends silently no-op until a follow-up commit wires their
+          // equivalent volume hooks.
+          ToggleCell(
+            title: "Mute Audio on Focus Loss",
+            hintKey: "Mute Audio on Focus Loss detail",
+            boolBinding: $settingsModel.muteOnFocusLoss
+          )
+
+          Divider()
+
           FormCell(title: "Sound Mode", contentWidth: 250) {
             AudioModeSegmentedPicker(
               selection: $settingsModel.selectedAudioOutputMode,
