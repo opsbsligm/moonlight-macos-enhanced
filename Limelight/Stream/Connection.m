@@ -181,6 +181,8 @@ typedef NS_ENUM(NSInteger, MLAudioRendererBackend) {
     int _audioDeviceChannelCount;
     int _audioRenderChannelCount;
     MLAudioRendererBackend _audioRendererBackend;
+    BOOL _audioFocusMuted;
+    float _audioFocusLastAppliedVolume;
 
     AudioQueueRef _audioQueue;
     AudioQueueBufferRef _audioBuffers[AUDIO_QUEUE_BUFFERS];
@@ -1056,6 +1058,45 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
     }
 }
 
+// P2-3a muteOnFocusLoss: only the LegacyQueue backend honours focus loss
+// today (it owns the AudioQueue we can set kAudioQueueParam_Volume on).
+// The Direct and Enhanced backends route through different volume APIs
+// (AudioUnitSetParameter / AVAudioEngine outputVolume); a follow-up
+// commit will add an equivalent hook without changing this entry point.
+- (void)setAudioFocusMuted:(BOOL)muted {
+    if (_audioFocusMuted == muted) {
+        return;
+    }
+    _audioFocusMuted = muted;
+    if (_audioRendererBackend != MLAudioRendererBackendLegacyQueue ||
+        _audioQueue == NULL) {
+        // Direct / Enhanced: TODO; left untouched so a later commit can
+        // extend without re-plumbing.
+        return;
+    }
+    const float target = muted ? 0.0f : 1.0f;
+    if (muted) {
+        // Cache the live output volume so a future focus regain can
+        // resume at the same level; LegacyQueue keeps the user-set
+        // slider on _audioVolumeMultiplier, which we don't touch here.
+        float current = 1.0f;
+        UInt32 size = sizeof(current);
+        (void)AudioQueueGetParameter(_audioQueue, kAudioQueueParam_Volume, &current);
+        (void)size;
+        _audioFocusLastAppliedVolume = current;
+    }
+    OSStatus status = AudioQueueSetParameter(_audioQueue,
+                                            kAudioQueueParam_Volume,
+                                            target);
+    if (status != noErr) {
+        Log(LOG_W, @"Focus mute AudioQueue set volume failed: muted=%d target=%f status=%d",
+            muted ? 1 : 0, target, (int)status);
+        return;
+    }
+    Log(LOG_I, @"Focus mute audio updated: backend=%d muted=%d target=%f lastApplied=%f",
+        (int)_audioRendererBackend, muted ? 1 : 0, target, _audioFocusLastAppliedVolume);
+}
+
 - (void)copyPCMFrames:(UInt32)frameCount toInterleavedBuffer:(short *)outputBuffer
 {
     if (outputBuffer == NULL || _audioCircularBuffer == NULL || _channelCount <= 0) {
@@ -1926,6 +1967,12 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
 
     _audioRendererBackend = MLAudioRendererBackendLegacyQueue;
     _audioRenderChannelCount = 0;
+    // A freshly built AudioQueue always starts at kAudioQueueParam_Volume=1.
+    // Clear the focus-mute latch so the next session's first resign event
+    // actually calls AudioQueueSetParameter instead of short-circuiting on
+    // a stale YES from the prior session.
+    _audioFocusMuted = NO;
+    _audioFocusLastAppliedVolume = 1.0f;
 }
 
 static OSStatus RenderDirectAudioUnit(void *inRefCon,
@@ -2370,6 +2417,8 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
 
     _hostAddress = config.host;
     _audioVolumeMultiplier = 1.0f;
+    _audioFocusMuted = NO;
+    _audioFocusLastAppliedVolume = 1.0f;
     _stateLock = OS_UNFAIR_LOCK_INIT;
     _audioOutputMode = config.audioOutputMode;
     _enhancedAudioOutputTarget = (int)MLResolveEnhancedOutputTarget((MLAudioEnhancedOutputTarget)config.enhancedAudioOutputTarget);

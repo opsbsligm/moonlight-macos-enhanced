@@ -236,6 +236,7 @@ class SettingsClass: NSObject {
         "absoluteMouseMode": settings.absoluteMouseMode,
         "relativeMouseAsAbsolute": settings.relativeMouseAsAbsolute,
         "swapMouseButtons": settings.swapMouseButtons,
+        "muteOnFocusLoss": settings.muteOnFocusLoss,
         "reverseScrollDirection": settings.reverseScrollDirection,
         "gamepadMouseMode": settings.gamepadMouseMode,
         "mouseMode": settings.mouseMode,
@@ -420,6 +421,7 @@ class SettingsClass: NSObject {
 
       absoluteMouseMode: settings.absoluteMouseMode,
       relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
+      muteOnFocusLoss: settings.muteOnFocusLoss,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
@@ -534,6 +536,7 @@ class SettingsClass: NSObject {
         quitAppAfterStream: updated.quitAppAfterStream,
         absoluteMouseMode: updated.absoluteMouseMode,
         relativeMouseAsAbsolute: updated.relativeMouseAsAbsolute,
+        muteOnFocusLoss: updated.muteOnFocusLoss,
         swapMouseButtons: updated.swapMouseButtons,
         reverseScrollDirection: updated.reverseScrollDirection,
         touchscreenMode: updated.touchscreenMode,
@@ -656,6 +659,7 @@ class SettingsClass: NSObject {
 
       absoluteMouseMode: settings.absoluteMouseMode,
       relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
+      muteOnFocusLoss: settings.muteOnFocusLoss,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
@@ -1583,6 +1587,13 @@ class SettingsClass: NSObject {
       return settings.relativeMouseAsAbsolute ?? SettingsModel.defaultRelativeMouseAsAbsolute
     }
     return SettingsModel.defaultRelativeMouseAsAbsolute
+  }
+
+  @objc static func muteOnFocusLoss(for key: String) -> Bool {
+    if let settings = Settings.getSettings(for: key) {
+      return settings.muteOnFocusLoss ?? SettingsModel.defaultMuteOnFocusLoss
+    }
+    return SettingsModel.defaultMuteOnFocusLoss
   }
 
   @objc static func swapMouseButtons(for key: String) -> Bool {
