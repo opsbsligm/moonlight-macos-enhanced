@@ -229,6 +229,16 @@ highFreqMotor:(unsigned short)highFreqMotor {
     }];
 }
 
+- (void)motionEventState:(unsigned short)controllerNumber
+              motionType:(unsigned char)motionType
+           reportRateHz:(unsigned short)reportRateHz {
+    [self forwardIfCurrentNamed:@"motionEventState" block:^(id<MLStreamScopedCallbackOwner> owner) {
+        if ([owner respondsToSelector:@selector(motionEventState:motionType:reportRateHz:)]) {
+            [owner motionEventState:controllerNumber motionType:motionType reportRateHz:reportRateHz];
+        }
+    }];
+}
+
 @end
 
 @implementation StreamViewController
@@ -1834,6 +1844,18 @@ highFreqMotor:(unsigned short)highFreqMotor {
                                            leftTriggerMotor:leftTriggerMotor
                                           rightTriggerMotor:rightTriggerMotor];
         }
+    }
+}
+
+- (void)motionEventState:(unsigned short)controllerNumber
+              motionType:(unsigned char)motionType
+           reportRateHz:(unsigned short)reportRateHz {
+    // IMU reporting is a pad capability like the lightbar: no dedicated setting,
+    // just gate on input being forwarded.
+    if (self.hidSupport.shouldSendInputEvents) {
+        [self.hidSupport setMotionEventStateForControllerNumber:(int)controllerNumber
+                                                   motionType:motionType
+                                                 reportRateHz:reportRateHz];
     }
 }
 

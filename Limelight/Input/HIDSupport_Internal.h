@@ -80,6 +80,24 @@
 // RGB bit only where a real lightbar write exists (PS4/PS5). Decided once at
 // creation, next to protocolType, so the arrival and the write path agree.
 @property (nonatomic) uint16_t capabilities;
+// Motion sensor types the host is currently requesting (LI_MOTION_TYPE_*
+// values, OR'd). Set by setMotionEventState, cleared on removal and stream
+// end; the state-packet path pushes a frame only for active types, so a
+// request the pad never delivers costs nothing and a stopped sensor stops
+// sending the moment the last state packet stops arriving.
+@property (nonatomic) uint8_t motionActiveTypes;
+// Send pacing per sensor type per device: the host asks for a rate in Hz,
+// the pad can only offer the state-packet rate it actually runs at, and the
+// interval between sends is what turns the request into a limit. 0 ms means
+// the type is not active; a sub-millisecond request clamps to 1 ms.
+@property (nonatomic) uint16_t motionAccelIntervalMs;
+@property (nonatomic) uint16_t motionGyroIntervalMs;
+// Last send timestamp per sensor type: both types ride the same state packet,
+// so a shared stamp would let the accelerometer frame suppress the gyroscope
+// frame of the same millisecond. 0 means "never sent this session", so the
+// first frame of a type is always sent.
+@property (nonatomic) uint64_t lastMotionAccelAtMs;
+@property (nonatomic) uint64_t lastMotionGyroAtMs;
 @property (nonatomic) PS4StatePacket_t lastPS4State;
 @property (nonatomic) PS5StatePacket_t lastPS5State;
 @property (nonatomic) SwitchSimpleStatePacket_t lastSimpleSwitchState;
