@@ -365,10 +365,12 @@ jobs:
         python3 scripts/controller-trigger-rumble-routing-tests.py
         python3 scripts/controller-motion-event-tests.py
         python3 scripts/controller-battery-event-tests.py
+        python3 scripts/controller-touch-event-tests.py
         python3 scripts/controller-event-baseline.py --self-test
         python3 scripts/controller-wire-baseline.py --self-test
         python3 scripts/controller-motion-event-tests.py --self-test
         python3 scripts/controller-battery-event-tests.py --self-test
+        python3 scripts/controller-touch-event-tests.py --self-test
 
     - name: Verify device-specific C filtering preserves real keyboard input
       run: python3 scripts/keyboard-source-quirk-tests.py

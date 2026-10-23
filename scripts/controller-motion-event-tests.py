@@ -96,6 +96,7 @@ static const uint16_t LI_CCAP_RGB_LED = 0x80;
 static const uint16_t LI_CCAP_ACCEL = 0x10;
 static const uint16_t LI_CCAP_GYRO = 0x20;
 static const uint16_t LI_CCAP_BATTERY_STATE = 0x40;
+static const uint16_t LI_CCAP_TOUCHPAD = 0x08;
 static const uint8_t LI_MOTION_TYPE_ACCEL = 0x01;
 static const uint8_t LI_MOTION_TYPE_GYRO = 0x02;
 static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
@@ -154,6 +155,12 @@ static void HIDDispatchInput(HIDSupport *s, HIDInputLease lease, dispatch_block_
 @property uint64_t lastMotionGyroAtMs;
 @property PS4StatePacket_t lastPS4State;
 @property PS5StatePacket_t lastPS5State;
+@property BOOL touchPressed;
+@property BOOL touchPressed2;
+@property uint32_t touchPointerId;
+@property float touchLastX, touchLastY;
+@property uint32_t touchPointerId2;
+@property float touchLastX2, touchLastY2;
 @end
 @implementation HIDDeviceControllerEntry
 @end

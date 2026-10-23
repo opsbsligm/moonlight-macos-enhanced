@@ -103,6 +103,17 @@
 // sent even when it already looks like the default.
 @property (nonatomic) uint8_t previousBatteryState;
 @property (nonatomic) uint8_t previousBatteryPercentage;
+// PS touchpad session state per finger slot. The pointer id is locked for the
+// life of a press (taken from the packet counter at the down edge), so a
+// release/re-press cycle cannot drift the host's active-pointer bookkeeping.
+// lastX/lastY are the normalized coordinates the last MOVE actually sent, so
+// a packet that only re-announces an unchanged touch does not re-send it.
+@property (nonatomic) BOOL touchPressed;
+@property (nonatomic) BOOL touchPressed2;
+@property (nonatomic) uint32_t touchPointerId;
+@property (nonatomic) float touchLastX, touchLastY;
+@property (nonatomic) uint32_t touchPointerId2;
+@property (nonatomic) float touchLastX2, touchLastY2;
 @property (nonatomic) PS4StatePacket_t lastPS4State;
 @property (nonatomic) PS5StatePacket_t lastPS5State;
 @property (nonatomic) SwitchSimpleStatePacket_t lastSimpleSwitchState;
