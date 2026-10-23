@@ -961,6 +961,16 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  // P2-1: route relative mouse delta through the absolute-position wire path so
+  // hosts that consume absolute coordinates (some CAD / drawing apps, plus hosts
+  // that ignore relative deltas in windowed fullscreen) see a continuous cursor.
+  // Default false keeps the existing relative-only wire format intact.
+  @Published var relativeMouseAsAbsolute: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var swapMouseButtons: Bool {
     didSet {
       guard !isLoading else { return }
@@ -1413,6 +1423,7 @@ class SettingsModel: ObservableObject {
 
     quitAppAfterStream = Self.defaultQuitAppAfterStream
     absoluteMouseMode = Self.defaultAbsoluteMouseMode
+    relativeMouseAsAbsolute = Self.defaultRelativeMouseAsAbsolute
     swapMouseButtons = Self.defaultSwapMouseButtons
     reverseScrollDirection = Self.defaultReverseScrollDirection
     pointerSensitivity = Self.defaultPointerSensitivity
