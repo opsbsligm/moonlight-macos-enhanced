@@ -168,6 +168,7 @@ static void HIDDispatchInput(HIDSupport *s, HIDInputLease lease, dispatch_block_
 @property(strong) NSMutableDictionary<NSString *, HIDDeviceControllerEntry *> *deviceControllerTable;
 @property NSInteger controllerDriver;
 @property BOOL shouldSendInputEvents;
+@property BOOL suspendControllerEvents;
 @end
 @implementation HIDSupport
 - (uint8_t)protocolTypeForDevice:(IOHIDDeviceRef)d { (void)d; return 1; }

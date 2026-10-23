@@ -106,6 +106,18 @@ struct InputView: View {
         boolBinding: $settingsModel.gamepadMenuLongPressTogglesMouseMode
       )
 
+      // P2-3b: defaults to false so the shipped behaviour of forwarding
+      // gamepad input regardless of focus is preserved. Turning this on
+      // suppresses controller events (arrival / axis / motion / touch /
+      // battery) whenever the stream window is not the focused window,
+      // while keyboard and mouse forwarding keep working through the same
+      // focus flip.
+      ToggleCell(
+        title: "Background Gamepad Input",
+        hintKey: "Background Gamepad detail",
+        boolBinding: $settingsModel.backgroundGamepad
+      )
+
       Divider()
 
       PickerSettingRow(

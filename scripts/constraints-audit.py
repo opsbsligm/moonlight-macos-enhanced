@@ -3570,6 +3570,19 @@ check(mof_rules.returncode == 0,
       "the mute-on-focus-loss self-test failed:\n"
       + (mof_rules.stdout + mof_rules.stderr)[-900:])
 
+# P2-3b backgroundGamepad: same parity shape as the mute-on-focus-loss gate.
+# Workflow lists it, local-gates.sh runs it, the parity rule needs to see
+# the local half actually run the same self-test that CI runs.
+bgp_rules = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "background-gamepad-tests.py"),
+     "--self-test"],
+    capture_output=True, text=True, cwd=root)
+check(bgp_rules.returncode == 0,
+      "the background-gamepad self-test stays green"
+      if bgp_rules.returncode == 0 else
+      "the background-gamepad self-test failed:\n"
+      + (bgp_rules.stdout + bgp_rules.stderr)[-900:])
+
 # What a DMG has to be is a three-part rule, and until now the repository had none
 # of it: the packaging step fell back from create-dmg to a bare `hdiutil create`
 # with `||`, which succeeds and produces an image with no Applications drop target,
