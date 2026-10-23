@@ -65,8 +65,15 @@ Parsec 文档在取证时 403，UU 只有宣传页：两者只列"对方宣称�
 - ➕ Sunshine HTTP 扩展：目标显示器/虚拟显示器/screenMode/HDR 亮度覆盖（HttpManager.m:403-450），qt 没有。
 - ➕ 剪贴板同步（fork 私有协议 LiBindClipboardSession）、WOL、每主机快捷键、诊断导出、15s 无帧自动重连
   + payload stall 重连（Diagnostics.m:110-116/1074/1100）。
-- qt 有而我们无（streamingpreferences.h 逐项核对）：`playAudioOnHost`（UI 层；launch URL 已带 localAudioPlayMode 参数）、
-  `muteOnFocusLoss`、`backgroundGamepad`、`packetSize`、`detectNetworkBlocking`、renderer 选择（我们纯 Metal，不适用）、
+- qt 有而我们无（streamingpreferences.h 逐项核对，2026-10-24 复核）：
+  `playAudioOnHost` —— 实际已存在：`GeneralPrefsPaneView.xib` 的 "Play sound on host" checkbox
+  → `TemporarySettings.playAudioOnPC` → `StreamConfiguration.playAudioOnPC` →
+  launch URL `localAudioPlayMode=%d`（HttpManager.m:526/609）。roadmap 此格此行原本描述
+  不准确；改为 "已存在"，不留 TODO。
+  `muteOnFocusLoss` —— 当前 audio 三后端（LegacyQueue / Direct / Enhanced）均无失焦静音
+  钩子；下一波按后端分阶段接入，LegacyQueue 优先。
+  `backgroundGamepad` —— 当前 HID 输入路径无失焦门控；下一波独立小提交。
+  `packetSize`、`detectNetworkBlocking`、renderer 选择（我们纯 Metal，不适用）、
   `quitAppAfter`（我们有等价：StreamViewController.m 已存在）、23 种语言（我们中英双语）。
 - README《当前边界》维持：USB 重定向冻结（Developer ID）、自动更新待实现（Developer ID+Sparkle）。
 
