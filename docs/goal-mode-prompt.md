@@ -40,20 +40,18 @@
 3. ~~qt 对等项打包~~ —— 拆为 §3.2.1 三条独立计划。
 4. **桌面档绝对鼠标默认关**（已写明：旧游戏兼容场景别开）。
 
-### 3.2.1 P2-3 重排（2026-10-24 现场复核后）
+### 3.2.1 P2-3 收口状态（2026-10-24 P2-3b 落地后复核）
 
 - `playAudioOnHost` —— 已存在（xib checkbox → `playAudioOnPC` → launch URL
   `localAudioPlayMode=%d`）；roadmap 描述已修，不留 TODO。
-- `muteOnFocusLoss` —— **LegacyQueue 已收口（`<P2-3a 待提交>`）**；Direct / Enhanced
-  仍 mark TODO，单独 commit 跟进（三后端共用 `Connection.setAudioFocusMuted:` 入口，
-  follow-up 只需在 `Connection.m` 内部为新后端补 `AudioUnitSetParameter` /
+- `muteOnFocusLoss` —— **LegacyQueue 已收口**（commit `4e6fba87`，pipeline #433 = 8/8 success）。
+  Direct / Enhanced 仍 mark TODO，单独 commit 跟进（三后端共用 `Connection.setAudioFocusMuted:`
+  入口，follow-up 只需在 `Connection.m` 内部为新后端补 `AudioUnitSetParameter` /
   `AVAudioEngine outputVolume` 路径，不改 StreamViewController 接线与 SettingsModel）。
-- `backgroundGamepad` —— HID 输入路径加失焦门控；失焦期间丢弃 `controllerAxis` /
-  `controllerButton` 事件但保留 keyboard 与鼠标；默认 off。
-  三项各独立 commit，避免单 PR 跨度过大。
-- `backgroundGamepad` —— HID 输入路径加失焦门控；失焦期间丢弃 `controllerAxis` /
-  `controllerButton` 事件但保留 keyboard 与鼠标；默认 off。
-  三项各独立 commit，避免单 PR 跨度过大。
+- `backgroundGamepad` —— **已收口**（commit `26d20062`，pipeline #434 = 8/8 success）。
+  HID 6 个 controller-wire 入口 + MFi `updateFinished:` 同步加门；4 个焦点观察者对称
+  （window/app resign 按 per-host pref 写 YES，window/app become 无条件恢复 NO）；
+  默认 off 保留 shipped 行为；键盘 + 鼠标路径不挂新门。详见 §14 + baseline §15。
 
 ### 3.3 K1.2 marked text / 候选窗 / 输入法提交（依赖 K1.1 已收口）
 - 真机中文注入未验收；marked text、候选窗、输入法提交、长按重复均属 K1.2。
@@ -164,3 +162,21 @@
 - 真机侧仍待：主机侧（Sunshine / GFE）连续绝对跟随、首次无参考不跳屏幕中心、
   锁定模式 / 手柄鼠标仍走相对包、窗口化 / 无边框桌面档主机跟随。
   `hardware_validated=false` 不变。
+
+- **P2-3a 失焦静音（LegacyQueue only，默认 off）**：commit `4e6fba87`，pipeline #433 = 8/8 success；
+  `Connection.setAudioFocusMuted:` 公共接口 + latch + 缓存前次音量，仅 LegacyQueue 走
+  `AudioQueueSetParameter(kAudioQueueParam_Volume)`；Direct / Enhanced 路径显式 short-circuit。
+  UI `SettingsAudioPane` 新增 `ToggleCell("Mute Stream Audio on Focus Loss")`，per-host 默认 false
+  保留 shipped 行为；窗口 + app 两层 resign/become 观察者对称。门禁
+  `scripts/mute-on-focus-loss-tests.py`（38 正向 + 5 变异 + 5 self-test plants）。详见
+  `docs/baseline-2026-10-22.md` §14。`hardware_validated=false` 不变。
+- **P2-3b 失焦抑制手柄事件（默认 off）**：commit `26d20062`，pipeline #434 = 8/8 success；
+  新增独立门 `HIDSupport.suspendControllerEvents` + `ControllerSupport.suspendControllerEvents`
+  （不复用 `shouldSendInputEvents`：那会同时抑制键盘 + 鼠标），6 个 controller-wire 入口 +
+  MFi `updateFinished:` 同步加门。新增 per-host `backgroundGamepad` 默认 false；
+  `SettingsInputPane` 加 `ToggleCell("Background Gamepad Input")`（不改 mouseMode Picker
+  与既有 absoluteMouseMode / relativeMouseAsAbsolute 控件）；4 个焦点观察者对称
+  （window/app resign 按 pref 写 YES，window/app become 无条件恢复 NO，与 P2-3a 音频
+  恢复路径同形）。键盘 + 鼠标路径不挂任何新门。门禁
+  `scripts/background-gamepad-tests.py`（33 正向 + 6 变异 + 6 self-test plants）。
+  详见 `docs/baseline-2026-10-22.md` §15。`hardware_validated=false` 不变。
