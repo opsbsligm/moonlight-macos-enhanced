@@ -1,18 +1,24 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-22 刷新）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-23 现场刷新）
 
-## 2026-10-23 K1 增量复核
+## 2026-10-23 K1.1 与 M4 发布复核
 
-- 发布基点为 `7c5b687f`，pipeline 419 八项成功，build1959 DMG 已验收，证据见
-  `moonlight-ci-evidence/20261023-m4-closeout/release-verification.json`。
-- M4 完成措辞收紧：Joy-Con 当前只有身份分类/协议类型回放，缺真实报文兼容性证明；
-  主机不支持触摸时仅停发，鼠标 clickpad 退化尚未实现，因此 M4 整体仍为部分完成。
-  下段历史中的“M4 全部子项代码完成”不能作为完整功能验收。
-- K1.1 本波实现事件内已有可打印 Unicode 的转发，与键码路径互斥；不把
-  `NSEvent.characters` 当作输入法提交回调。ASCII、Cmd/Ctrl/Option 快捷键、
-  功能键、控制字符仍走原键码路径，已持有的 wire 键不被 repeat 改走文本。
-  异步块捕获 NSData，读取字节发生在发送时。候选窗、marked text、输入法提交、
-  文本长按重复及真机主机输入效果仍待 K1.2 和硬件验收。
-- 本波代码与新增真实 keyDown/keyUp 回放的发布状态，以对应 SHA 的 CI 为准。
+- 代码基点 `798050d9`，pipeline 423 八项 success（lint:toolchain / audit:python /
+  download-deps / build-app / test-app / audit:sources / package-dmg / publish-github），
+  镜像 60 refs 一致。
+- M4.1–M4.4 完成：Joy-Con `057E:2006/2007` 已识别为任天堂家族；PS 触摸板
+  在 `LiGetHostFeatureFlagsCtx & LI_FF_CONTROLLER_TOUCH_EVENTS` 不支持时停发；
+  设备表与触摸板门禁真实方法编译回放 + 14 变异全拦；M4 整体仍是部分完成，
+  真机报文兼容性与主机侧 touch/电量/Joy-Con 状态仍 `hardware_validated=false`。
+- K1.1 实现事件内已有可打印 Unicode 的转发，与键码路径互斥。ASCII、
+  Cmd/Ctrl/Option 快捷键、功能键、控制字符仍走原键码路径；已持有的 wire 键
+  不被 repeat 改走文本；异步块捕获 `__strong NSData`，发送时读字节。
+- K1.1 不等于 IME 已提交文本：marked text、候选窗、输入法提交、文本长按
+  重复、真机中文注入效果属 K1.2，仍待实现 + 真机验收。
+- 真机验收基线：build1933 不含 K1.1/M4 代码，build1959 不含 798050d9 起的 K1.1
+  CI wiring，下一轮真机验收需重新构建对应 SHA 的产物。
+- 本地键盘门禁复核：`key-state-heal-tests.py` 的 shipping 一遍 0 失败，4 个
+  known-bad 变体各失败 1–5 项正是门禁要证明的捕获能力；读日志时不要把
+  `known-bad` 段的预期 `FAIL` 当成回归。
 
 ## 2026-10-23 现场复核（覆盖下方历史描述，本波刷新至 pipeline 409）
 
@@ -31,9 +37,18 @@
 
 持续完成 Moonlight macOS Enhanced 的对标作战。先读 AGENTS.md、基线、作战计划和本段现场纠正，再核对 Git、源码、准确 SHA 的流水线。沿用当前目标，增量执行，不把文档勾选或绿色编译当成功能完成。
 
-优先完成 M1 正确性：只在 inputQueue 验证 lease 后访问 C context；依据发送返回值与会话代数记录通告，失败允许重试；HID/MFi 输入隔离；重连、空闲热插拔、移除清位有真实行为回放；恢复手柄鼠标模式与 per-device 输入之间的一致性；能力位仅报告实际实现，按号震动未完成不得泛称支持多手柄震动。不要用异步块后的局部 BOOL 判断发送成功，不新增主线程/输入队列互等死锁。
+输入面代码已交付（0.2 per-device 状态表、M1 通告与清位、M2 三回调按号震动、M3
+六轴、M4 电池/触摸板/Joy-Con、K1.1 文本与键码互斥），CI 全绿即视为代码通过，
+不等于功能完成：手柄、触摸板、六轴、电量、真机中文一律 `hardware_validated=false`，
+直到用对应 SHA 产物在真机 + Sunshine/GFE 主机侧取证。DualSense 自适应扳机不等于
+Xbox impulse trigger，Joy-Con 不得直接套 Pro Controller 解析；没实现的能力不向主机通告。
 
-然后补完整单手柄事件序列基线和双设备回放，准备与提交对应的 CI 产物，再分别记录真机验收。后续依次推进 K1 文本与键码互斥、K2 安全注意序列可行性、E1 侧边栏参数化、P2 重连和会话选项。M2/M3/M4 在生命周期可靠后推进；DualSense 自适应扳机不等于 Xbox impulse trigger，Joy-Con 不得直接套 Pro Controller 解析。
+下一开发重点：在真机验收排期之外，优先推进未开工且不依赖硬件的对标项——E1 全屏侧边栏
+参数化（感应带 8–16pt、驻留 60–300ms、收起 300–1000ms 变设置项，默认值 = 现编译期
+常量，甩动阈值与冷却维持常量；门控先证明自己会失败再放开）、K2 安全注意序列可行性、
+P2 对等补齐（重连退避、失焦静音/后台手柄/主机出声开关、桌面档绝对鼠标默认关）。
+K1.2（marked text / 候选窗 / 输入法提交）触碰键盘接收路径，若 17 个键盘门禁任一无法
+转绿则只保留 K1.1。
 
 对标范围完整保留：Moonlight Qt、原项目上游、协议 fork、Sunshine 与基地版，以及 Parsec、网易 UU、Horizon、Citrix、深信服、锐捷。分别维护输入、会话恢复、显示音频、设备重定向、诊断与交付能力矩阵；每格区分源码、官方资料、实测、宣传和未知。既有文档未覆盖的产品继续列为待调研，不编造成已完成全面对标。
 
@@ -49,32 +64,35 @@ moonlight-common-c fork @386e79c（协议层）、Sunshine（主机）、基地�
 竞品 Citrix Horizon / Parsec / 网易 UU / ToDesk。执行波次见
 `docs/campaign-plan-2026-10-20.md`，不可撼动基线见 `docs/baseline-2026-10-22.md`。
 
-1. **0.1 控制器探针真机验收** ⏳（代码完成 `a85c5879`，1933 产物已验收）
-   诊断报告已能输出 vid:pid/族/传输/电池/驱动/未通告文案。真机验收 = 装 1933 后
+1. **0.1 控制器探针真机验收** ⏳（代码完成，仅差真机）
+   诊断报告已能输出 vid:pid/族/传输/电池/驱动/未通告文案。真机验收 = 装对应产物后
    串流一次接两块手柄，核对分类、driver、arrival 文案与日志。`hardware_validated=false`。
-2. **0.2 per-device 状态表** ⏳（下一开发重点）
-   HID 驱动仍是单一 `Controller`（`HIDSupport_Internal.h:49`）、mask 硬编码 1
-   （`HIDSupport.m:1263`）。第一步：单手柄发包逐字节等价录制基线；再按设备索引拆状态，
-   playerIndex 由连接顺序分配。等价证不出来就停（计划 §4 风险节）。
-3. **M1 类型/能力通告 + mask 修正 + 拔出清位** ⏳（依赖 0.2）
-   `LiSendControllerArrivalEvent` 全仓 0 调用。首轮只报 `ANALOG_TRIGGERS|RUMBLE`，
-   没实现的不报。验收 = Sunshine 主机侧虚拟手柄类型随设备变化 + 拔出及时断开。
-4. **M2 三回调 + 按号震动** ⏳（依赖 M1）
-   `rumbleTriggers`/`setControllerLED` 接线；震动先按 controllerNumber 找设备
-   （现在 HID 路径 `getFirstDevice`，第二只手柄的震动必丢）。
-5. **M3 陀螺仪/加速度计** ⏳（依赖 M1）
-   解析字段已在 PS4/PS5 状态包里，缺的是启用 feature report + 节流 + 单位换算 + 关闭复原。
-6. **M4 电池/触摸板/Joy-Con 扩容** ⏳（依赖 M1）
-   isNintendo 补 057E:2006/2007；评估 fork 对齐 `LI_CTYPE_STEAM`/`DUAL_TOUCHPAD`/`TouchEvent2`。
-7. **K1 中文/文本注入** ⏳（无依赖，可并行）
-   `LiSendUtf8TextEvent` 0 调用 = 键盘面最后硬缺口。先已提交文本与 keyCode 互斥，
-   marked text 单独提交单独验收。
-8. **K2 Ctrl+Alt+Del** ⏳（无依赖，可并行）
+2. **0.2 per-device 状态表** ✅代码 / ⏳真机
+   `HIDDeviceControllerEntry` + `deviceControllerTable` 已落地（每设备独立 Controller、
+   playerIndex、mask 位、变化检测器）；单手柄逐字节线基线已录制
+   （`scripts/controller-wire-baseline.py`，21 用例/8 变异）。双手柄真机待验证。
+3. **M1 类型/能力通告 + 拔出清位** ✅代码 / ⏳主机侧验收
+   `LiSendControllerArrivalEventCtx` 已接（HIDSupport.m:1321），能力位按设备实际实现
+   逐项通告；发送结果按会话代数记账、拔出幂等清位已有真实回放。主机侧虚拟手柄类型
+   与断开时序 `hardware_validated=false`。
+4. **M2 三回调 + 按号震动** ✅代码 / ⏳真机
+   rumble 按 controllerNumber 路由并按设备去重；setControllerLED、rumbleTriggers 已接，
+   TRIGGER_RUMBLE/RGB 能力位仅对真正具备的家族通告。
+5. **M3 陀螺仪/加速度计** ✅代码 / ⏳真机
+   setMotionEventState 已接（PS4/PS5 状态包六轴 + 按类型节流 + SDL HIDAPI 比例换算 +
+   三路径统一 stop）；无 feature report 显式启用写，差异已记录。
+6. **M4 电池/触摸板/Joy-Con 扩容** ✅代码 / ⏳真机
+   PS 系电池、PS 触摸板（12 位坐标状态机）、Joy-Con 057E:2006/2007 识别、
+   主机不支持触摸即停发均已完成；真机报文兼容性未验证。
+7. **K1 中文/文本注入** ⏳（K1.1 ✅代码，K1.2 未开工）
+   K1.1：`LiSendUtf8TextEventCtx` 已接，与键码路径互斥，门禁 6 变异全拦。
+   K1.2：marked text/候选窗/输入法提交未做；真机中文注入未验收。
+8. **K2 Ctrl+Alt+Del** ✗未开工（无依赖，可并行）
    扩展 scancode `0x8000` 路径已在用；先真机验可行性，拉不起 SAS 就降级为提示。
-9. **E1 全屏侧边栏参数化** ⏳（无依赖，可并行）
+9. **E1 全屏侧边栏参数化** ✗未开工（无依赖，可并行）
    感应带 8–16pt/驻留 60–300ms/收起 300–1000ms 变设置项，默认值 = 现常量；
    甩动阈值与冷却维持编译期常量。门控先改再改默认。
-10. **P2 对等补齐** ⏳（各自独立小提交）
+10. **P2 对等补齐** ✗未开工（各自独立小提交）
     重连退避状态机；`muteOnFocusLoss`/`backgroundGamepad`/`playAudioOnHost` UI 开关；
     桌面档绝对鼠标默认关。
 11. **历史遗留（保持状态）**：29ms 队列延迟（pacer 未接入，持续改善未闭合）、
