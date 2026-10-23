@@ -95,6 +95,7 @@ static const uint16_t LI_CCAP_TRIGGER_RUMBLE = 0x04;
 static const uint16_t LI_CCAP_RGB_LED = 0x80;
 static const uint16_t LI_CCAP_ACCEL = 0x10;
 static const uint16_t LI_CCAP_GYRO = 0x20;
+static const uint16_t LI_CCAP_BATTERY_STATE = 0x40;
 static const uint8_t LI_MOTION_TYPE_ACCEL = 0x01;
 static const uint8_t LI_MOTION_TYPE_GYRO = 0x02;
 static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;

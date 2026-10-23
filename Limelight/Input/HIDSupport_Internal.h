@@ -98,6 +98,11 @@
 // first frame of a type is always sent.
 @property (nonatomic) uint64_t lastMotionAccelAtMs;
 @property (nonatomic) uint64_t lastMotionGyroAtMs;
+// Last battery state/percentage actually put on the wire for this device.
+// 0xFF means "never sent this session", so the pad's first reading is always
+// sent even when it already looks like the default.
+@property (nonatomic) uint8_t previousBatteryState;
+@property (nonatomic) uint8_t previousBatteryPercentage;
 @property (nonatomic) PS4StatePacket_t lastPS4State;
 @property (nonatomic) PS5StatePacket_t lastPS5State;
 @property (nonatomic) SwitchSimpleStatePacket_t lastSimpleSwitchState;
