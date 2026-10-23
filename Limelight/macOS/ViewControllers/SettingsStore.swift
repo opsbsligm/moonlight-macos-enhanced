@@ -118,6 +118,9 @@ struct Settings: Encodable, Decodable {
 
   // Input Settings
   let absoluteMouseMode: Bool?
+  // P2-1: relative mouse delta routed through the absolute-position wire path.
+  // Default false preserves the existing relative-only wire format.
+  let relativeMouseAsAbsolute: Bool?
   let swapMouseButtons: Bool?
   let reverseScrollDirection: Bool?
   let touchscreenMode: Int?
@@ -271,6 +274,7 @@ struct Settings: Encodable, Decodable {
       dimNonHoveredArtwork: dimNonHoveredArtwork,
       quitAppAfterStream: quitAppAfterStream,
       absoluteMouseMode: absoluteMouseMode,
+      relativeMouseAsAbsolute: relativeMouseAsAbsolute,
       swapMouseButtons: swapMouseButtons,
       reverseScrollDirection: reverseScrollDirection,
       touchscreenMode: touchscreenMode,
@@ -529,6 +533,7 @@ extension SettingsClass {
       quitAppAfterStream: settings.quitAppAfterStream,
 
       absoluteMouseMode: settings.absoluteMouseMode,
+      relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,

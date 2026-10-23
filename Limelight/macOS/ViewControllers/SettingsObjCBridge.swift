@@ -234,6 +234,7 @@ class SettingsClass: NSObject {
         "dimNonHoveredArtwork": settings.dimNonHoveredArtwork,
         "quitAppAfterStream": settings.quitAppAfterStream,
         "absoluteMouseMode": settings.absoluteMouseMode,
+        "relativeMouseAsAbsolute": settings.relativeMouseAsAbsolute,
         "swapMouseButtons": settings.swapMouseButtons,
         "reverseScrollDirection": settings.reverseScrollDirection,
         "gamepadMouseMode": settings.gamepadMouseMode,
@@ -418,6 +419,7 @@ class SettingsClass: NSObject {
       quitAppAfterStream: settings.quitAppAfterStream,
 
       absoluteMouseMode: settings.absoluteMouseMode,
+      relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
@@ -531,6 +533,7 @@ class SettingsClass: NSObject {
         dimNonHoveredArtwork: updated.dimNonHoveredArtwork,
         quitAppAfterStream: updated.quitAppAfterStream,
         absoluteMouseMode: updated.absoluteMouseMode,
+        relativeMouseAsAbsolute: updated.relativeMouseAsAbsolute,
         swapMouseButtons: updated.swapMouseButtons,
         reverseScrollDirection: updated.reverseScrollDirection,
         touchscreenMode: updated.touchscreenMode,
@@ -652,6 +655,7 @@ class SettingsClass: NSObject {
       quitAppAfterStream: settings.quitAppAfterStream,
 
       absoluteMouseMode: settings.absoluteMouseMode,
+      relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
@@ -1572,6 +1576,13 @@ class SettingsClass: NSObject {
       return settings.absoluteMouseMode ?? SettingsModel.defaultAbsoluteMouseMode
     }
     return SettingsModel.defaultAbsoluteMouseMode
+  }
+
+  @objc static func relativeMouseAsAbsolute(for key: String) -> Bool {
+    if let settings = Settings.getSettings(for: key) {
+      return settings.relativeMouseAsAbsolute ?? SettingsModel.defaultRelativeMouseAsAbsolute
+    }
+    return SettingsModel.defaultRelativeMouseAsAbsolute
   }
 
   @objc static func swapMouseButtons(for key: String) -> Bool {

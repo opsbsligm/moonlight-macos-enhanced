@@ -1081,6 +1081,10 @@ extension SettingsModel {
   static let defaultAppArtworkHeight: CGFloat? = nil
   static let defaultQuitAppAfterStream = false
   static let defaultAbsoluteMouseMode = false
+  // P2-1: false == keep current relative-only wire path. Hosts that need a
+  // continuous absolute cursor (CAD / windowed-fullscreen) opt in by flipping
+  // this on per-host.
+  static let defaultRelativeMouseAsAbsolute = false
   static let defaultSwapMouseButtons = false
   static let defaultReverseScrollDirection = false
   static let defaultPointerSensitivity: CGFloat = 1.0
