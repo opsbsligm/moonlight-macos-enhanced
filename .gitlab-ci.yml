@@ -224,8 +224,10 @@ audit:sources:
     - python3 scripts/controller-rumble-routing-tests.py
     - python3 scripts/controller-led-routing-tests.py
     - python3 scripts/controller-trigger-rumble-routing-tests.py
+    - python3 scripts/controller-motion-event-tests.py
     - python3 scripts/controller-event-baseline.py --self-test
     - python3 scripts/controller-wire-baseline.py --self-test
+    - python3 scripts/controller-motion-event-tests.py --self-test
   rules: *pipeline_rules
 
 # --- Package -----------------------------------------------------------------

@@ -179,4 +179,7 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 - (void)triggersRumbleForControllerNumber:(int)number
                      leftTriggerMotor:(unsigned short)leftTriggerMotor
                     rightTriggerMotor:(unsigned short)rightTriggerMotor;
+- (void)setMotionEventStateForControllerNumber:(int)number
+                                  motionType:(uint8_t)motionType
+                                reportRateHz:(uint16_t)reportRateHz;
 @end

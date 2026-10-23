@@ -32,6 +32,9 @@
 - (void)triggersRumble:(unsigned short)controllerNumber
        leftTriggerMotor:(unsigned short)leftTriggerMotor
       rightTriggerMotor:(unsigned short)rightTriggerMotor;
+- (void)motionEventState:(unsigned short)controllerNumber
+              motionType:(unsigned char)motionType
+           reportRateHz:(unsigned short)reportRateHz;
 
 @end
 

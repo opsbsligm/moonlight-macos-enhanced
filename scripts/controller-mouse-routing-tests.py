@@ -92,6 +92,11 @@ static NSString *const HIDGamepadQuitNotification = @"quit";
 @property UInt8 previousLEDBlue;
 @property UInt8 previousLeftTriggerMotor;
 @property UInt8 previousRightTriggerMotor;
+@property uint8_t motionActiveTypes;
+@property uint16_t motionAccelIntervalMs;
+@property uint16_t motionGyroIntervalMs;
+@property uint64_t lastMotionAccelAtMs;
+@property uint64_t lastMotionGyroAtMs;
 @end
 @implementation HIDDeviceControllerEntry
 @end
@@ -116,6 +121,7 @@ static NSString *const HIDGamepadQuitNotification = @"quit";
 - (void)setControllerMouseMode:(BOOL)enabled forEntry:(HIDDeviceControllerEntry *)entry;
 - (void)sendControllerRemovalForEntry:(HIDDeviceControllerEntry *)entry;
 - (void)resetControllerStateForEntry:(HIDDeviceControllerEntry *)entry;
+- (void)stopMotionEventsForEntry:(HIDDeviceControllerEntry *)entry;
 - (void)updateButtonFlags:(int)flag entry:(HIDDeviceControllerEntry *)entry state:(BOOL)set;
 - (void)recordRelativeInputDiagnosticsFrom:(NSString *)s rawDeltaX:(CGFloat)x rawDeltaY:(CGFloat)y
     sentDeltaX:(short)sx sentDeltaY:(short)sy suppressed:(BOOL)suppressed;
@@ -128,6 +134,7 @@ static int LiSendMultiControllerEventCtx(void *ctx, int slot, int mask, int butt
 }
 static void LiSendMouseMoveEventCtx(void *ctx, short x, short y) { [moves addObject:@[@(x),@(y)]]; }
 @implementation HIDSupport
+- (void)stopMotionEventsForEntry:(HIDDeviceControllerEntry *)entry {}
 - (uint8_t)protocolTypeForDevice:(IOHIDDeviceRef)d { return LI_CTYPE_XBOX; }
 - (uint32_t)supportedButtonFlagsForDevice:(IOHIDDeviceRef)d { return 0xffff; }
 - (BOOL)gamepadMenuLongPressTogglesMouseModeEnabled { return self.gestureEnabled; }

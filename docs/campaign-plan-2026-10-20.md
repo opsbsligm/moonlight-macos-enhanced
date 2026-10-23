@@ -152,7 +152,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
  | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（21 用例/8 变异）；per-device 拆分完成（每设备独立 Controller/playerIndex/mask 位/变化检测器），9aa5c6b9 pipeline 388 8/8 全绿，本地 xcodebuild 无第一方 warning；双手柄真机待验证（hardware_validated=false） |
 | M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 代码完成（arrival 通告/真实 mask/拔出清位/诊断报告记录通告类型），本地门禁 77 过 + 基线 21 用例等价；主机侧虚拟手柄类型验证待真机（hardware_validated=false） |
 | 0.2b HID 鼠标路由 | 0.2 | 是 | 双手柄本机 | 代码完成（每设备 gesture、单一指针 owner 接管/恢复、进入中性帧、拔出只清 owner），routing 门禁 13 正向+8 变异，pipeline 396；双手柄真机待验证（hardware_validated=false） |
-| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地，PS4/PS5 写灯回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告）；rumbleTriggers 已接（Xbox/KingKong 扳机马达=标准震动包两字段，独立去重不踩机身马达，TRIGGER_RUMBLE 能力位仅对 Xbox/KingKong 通告，PS 系扳机=自适应 effect 属 setAdaptiveTriggers 范畴故不通告），routing 门禁各 4 正向+2 变异；setMotionEventState 仍待开工；真机待验证（hardware_validated=false） |
+| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地，PS4/PS5 写灯回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告）；rumbleTriggers 已接（Xbox/KingKong 扳机马达=标准震动包两字段，独立去重不踩机身马达，TRIGGER_RUMBLE 能力位仅对 Xbox/KingKong 通告，PS 系扳机=自适应 effect 属 setAdaptiveTriggers 范畴故不通告），setMotionEventState 已接（PS4/PS5 IMU 状态包驱动 + 按类型节流，换算取 SDL HIDAPI 上游比例，新门禁 6 变异全拦）；三回调全部已接，真机待验证（hardware_validated=false） |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 待开工 |
 | M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | 待开工 |
 | K1 文本注入 | — | 是 | 需主机输入法 | 待开工 |
@@ -380,3 +380,48 @@ macOS 侧第二个三回调落地：`rumbleTriggers`（扳机马达）。主机�
 - Release 构建 first-party 零 warning；本地门禁 85 passed / 0 failed / 15 skipped。
 - 边界：`setMotionEventState`（陀螺仪/加速度计，需传感器会话 + 周期上报）仍待开工；
   Xbox 扳机写路径只验证了去重与路由，未抓真机报文，`hardware_validated=false` 保持。
+
+### M2 setMotionEventState（IMU 上报）接线（2026-10-23，待本提交 CI）
+
+macOS 侧第三个三回调落地，M2 的三回调至此全部接通：`setMotionEventState`
+（陀螺仪/加速度计上报开关与速率）。主机按 player index 点名某只手柄要哪个
+传感器、什么 Hz（0=停）。此前 C 层已解码分发但 macOS 从未注册回调，PS4/PS5
+状态包里现成的六轴字节一只样本都没发过。
+
+- 回调链补齐（照 rumbleTriggers 对称）：`Connection.m` 新增
+  `ClSetMotionEventState` 并注册 `_clCallbacks.setMotionEventState`；
+  `ConnectionCallbacks` 加可选 `motionEventState:motionType:reportRateHz:`；
+  forwarder 转发；`StreamViewController` owner 只 gate `shouldSendInputEvents`
+  （IMU 是手柄能力项，同 lightbar 无独立设置），调
+  `setMotionEventStateForControllerNumber:motionType:reportRateHz:`。
+- 数据通路（状态包驱动，非 timer）：PS4/PS5 状态包到达且 12 个 IMU 字节变化
+  才 push；采样率上限 = 状态包率（BT 约 125Hz），无 timer 无 use-after-free。
+  流结束（`setInputContext:` 的 NULL 分支）与拔出（`resetControllerStateForEntry:`）
+  自动 stop。
+- 单位换算依据：`LiSendControllerMotionEvent` 协议单位是 m/s² 与 deg/s，比例取
+  SDL HIDAPI 上游 PS4/PS5 驱动（/tmp/sdl_ps4.c、/tmp/sdl_ps5.c 核实）：
+  PS4 gyro 16 计数/deg/s、accel 8192 计数/g（×9.80665 转 m/s²）；
+  PS5 gyro 1024 计数/deg/s、accel 同 8192/g。
+- 节流模型：Hz → 最小发送间隔 ms（`(hz>=1000)?1:(1000/hz)`），同类型窗口内
+  合帧、**accel 与 gyro 各自独立节流**（互不拖累），per-type 时间戳。
+- 能力位只在能兑现处通告：仅 `isPS4||isPS5` 加 `LI_CCAP_ACCEL|LI_CCAP_GYRO`；
+  Xbox/KingKong 状态包无 IMU 字节，不通告。
+- PS4 分支 `HIDCopyReportPayload` 的 required 长度从触发器后扩到
+  `offsetof(_rgucPad1)`（覆盖 12 IMU 字节）；copy 本就拷全结构体，required 只是
+  门槛。PS5 10 字节短包（offset=2）仍按原 required 拒绝，行为与改前一致
+  （BT 状态包通常 64 字节，10 字节包的存在存疑，真机 BT 不工作再查）。
+- PS4/PS5 回调重构为"先比较后刷新"：inputChanged 走原按钮/轴比较链，
+  motionChanged 用 12 字节 memcmp 独立判定，互不干扰。
+- 新门禁 `scripts/controller-motion-event-tests.py` 编译真实四个方法 +
+  entryForDevice，四 pad（2 PS4 + 1 PS5 + 1 Xbox）回放：按号路由/回退、PS 系
+  能力位、PS4 换算（1600 raw→100 deg/s；8192 raw→9.80665 m/s²）、双类型同包
+  ACCEL 先 GYRO 后、100Hz=10ms 节流、双类型独立节流（200Hz gyro + 10Hz accel）、
+  PS5 读自己快照按 1024 换算、gate（非激活/驱动切换/输入关）、stop 清理；
+  6 项行为变异全拦。`--self-test` 把同一批变异种进 harness 自身副本证明
+  harness 会失败（不碰源码树，可在门禁序列里跑）。
+- 五个既有 harness 的 entry 桩补 motion 五属性 + ACCEL/GYRO 常量；
+  mouse harness 另补 `stopMotionEventsForEntry:` 声明与空桩
+  （resetControllerStateForEntry 现会调它）。
+- 边界：C 层有 Sunshine-only 门（无 `LI_FF_CONTROLLER_TOUCH_EVENTS` 返回
+  LI_ERR_UNSUPPORTED），GFE 主机每发一次失败但无害；未抓真机 IMU 报文，
+  `hardware_validated=false` 保持；PS5 BT 短包存疑项未闭合。
