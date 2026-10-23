@@ -2,8 +2,9 @@
 
 ## 2026-10-23 现场复核（覆盖下方历史描述）
 
-- 已验证代码基点：`b8925df6`（rumbleTriggers 接线）；GitLab pipeline 402 八项成功。在其上 M2 第三回调 `setMotionEventState` 已接完（PS4/PS5 IMU 状态包驱动、按类型独立节流、换算取 SDL HIDAPI 上游比例），新门禁 6 变异全拦 + `--self-test`，Release 构建 first-party 零 warning，全部门禁待本提交 CI 定论。跳过项不算通过。
-- M2 三回调至此全部接通（rumble/LED/triggersRumble/setMotionEventState）；`hardware_validated=false`，PS5 BT 短包存疑项未闭合。
+- 已验证代码基点：`75ed217d`（M2 setMotionEventState 接线）；GitLab pipeline 406 八项成功，build1954 DMG 已验收。在其上 M4.1 电池上报已接完，Release 构建 first-party 零 warning，待本提交 CI 定论。跳过项不算通过。
+- M2 三回调全部接通（rumble/LED/triggersRumble/setMotionEventState）；M4.1 电池上报已接（PS4/PS5 电量字节解码 + 有线位，仅 PS 系通告 BATTERY_STATE，新门禁 6 变异全拦 + self-test）。控制器协议面 M1/M2/M3/M4 代码至此全部落地，触摸板/Joy-Con 扩容（M4 剩余）为下一块。
+- `hardware_validated=false`：PS5 BT 短包存疑、未抓真机 IMU/电量报文；build1954 未替换日常应用。
 - 0.2 已拆出 per-device 表，并修复表未初始化、同型号设备 key 合并、借用 CF 对象释放与满槽复用 0。真实方法编译回放及三项行为变异通过。
 - 0.2 仍缺完整发送序列等价证据；tuple 回放不能代替它。M1 已有 arrival 调用，但发送结果、驱动隔离、会话代数、拔出清位、鼠标模式与能力真实性尚未闭环。
 - 通告生命周期已新增修复：输入队列按会话代数去重，发送失败不记录成功；诊断回调校验代数与设备存活；绑定和热插拔补空闲通告；拔出通过有效 lease 幂等清位。真实方法回放及四项变异通过，发布状态以本提交对应 CI 为准，仍不代表 M1 全部交付。

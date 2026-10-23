@@ -97,6 +97,8 @@ static NSString *const HIDGamepadQuitNotification = @"quit";
 @property uint16_t motionGyroIntervalMs;
 @property uint64_t lastMotionAccelAtMs;
 @property uint64_t lastMotionGyroAtMs;
+@property uint8_t previousBatteryState;
+@property uint8_t previousBatteryPercentage;
 @end
 @implementation HIDDeviceControllerEntry
 @end
