@@ -544,6 +544,13 @@ jobs:
       # to type them. Measured on this repository's sources: about a minute of compiles.
       run: python3 scripts/edge-sensor-summon-tests.py --self-test
 
+    - name: Verify the E1 sidebar parameters clamp and fall back to the shipped constants
+      # E1 made the band's width, dwell and auto-collapse user-facing; this gate proves
+      # the override defaults to zero so the shipped hand-feel is preserved, and that
+      # an out-of-range setting is clamped to the published range. Same shape as the
+      # edge-sensor-summon check above, smaller and self-contained.
+      run: python3 scripts/edge-sensor-e1-clamp-tests.py --self-test
+
     - name: Verify the system hotkey handoff is paired in both directions
       # Taking the player's Mission Control, Launchpad, Spotlight and input-source switch is a
       # WindowServer call Apple neither documents nor links, and a suppression that outlives the

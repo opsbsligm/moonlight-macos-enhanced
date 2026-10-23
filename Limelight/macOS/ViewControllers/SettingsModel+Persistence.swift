@@ -129,6 +129,9 @@ extension SettingsModel {
     showLocalCursor = Self.defaultShowLocalCursor
     edgeSensorSummon = Self.defaultEdgeSensorSummon
     edgeSensorSummonOnArrival = Self.defaultEdgeSensorSummonOnArrival
+    edgeSensorBandWidthPoints = Self.defaultEdgeSensorBandWidthPoints
+    edgeSensorDwellSeconds = Self.defaultEdgeSensorDwellSeconds
+    edgeMenuAutoCollapseSeconds = Self.defaultEdgeMenuAutoCollapseSeconds
     systemKeyboardShortcutCapture = Self.defaultSystemKeyboardShortcutCapture
     enableMicrophone = Self.defaultEnableMicrophone
     streamResolutionScale = Self.defaultStreamResolutionScale
@@ -266,6 +269,9 @@ extension SettingsModel {
       showLocalCursor = settings.showLocalCursor ?? Self.defaultShowLocalCursor
       edgeSensorSummon = settings.edgeSensorSummon ?? Self.defaultEdgeSensorSummon
       edgeSensorSummonOnArrival = settings.edgeSensorSummonOnArrival ?? Self.defaultEdgeSensorSummonOnArrival
+      edgeSensorBandWidthPoints = settings.edgeSensorBandWidthPoints ?? Self.defaultEdgeSensorBandWidthPoints
+      edgeSensorDwellSeconds = settings.edgeSensorDwellSeconds ?? Self.defaultEdgeSensorDwellSeconds
+      edgeMenuAutoCollapseSeconds = settings.edgeMenuAutoCollapseSeconds ?? Self.defaultEdgeMenuAutoCollapseSeconds
       systemKeyboardShortcutCapture =
         settings.systemKeyboardShortcutCapture ?? Self.defaultSystemKeyboardShortcutCapture
       enableMicrophone = settings.enableMicrophone ?? Self.defaultEnableMicrophone
@@ -699,6 +705,9 @@ extension SettingsModel {
       showLocalCursor: showLocalCursor,
       edgeSensorSummon: edgeSensorSummon,
       edgeSensorSummonOnArrival: edgeSensorSummonOnArrival,
+      edgeSensorBandWidthPoints: edgeSensorBandWidthPoints,
+      edgeSensorDwellSeconds: edgeSensorDwellSeconds,
+      edgeMenuAutoCollapseSeconds: edgeMenuAutoCollapseSeconds,
       systemKeyboardShortcutCapture: systemKeyboardShortcutCapture,
       enableMicrophone: enableMicrophone,
       streamResolutionScale: streamResolutionScale,

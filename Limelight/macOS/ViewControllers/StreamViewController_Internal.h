@@ -110,6 +110,11 @@ static CGFloat const MLEdgeMenuInteractionOutwardPadding = 6.0;
 static CGFloat const MLEdgeMenuInteractionInwardPadding = 8.0;
 static CGFloat const MLEdgeMenuInteractionVerticalPadding = 8.0;
 static NSTimeInterval const MLEdgeMenuAutoCollapseDelay = 0.45;
+// E1 parameterisation: the shipped 450ms is the regression anchor. A range wider than
+// 300-1000ms lets the bar either out-race the pointer or hand it back so late that a
+// dismissal looks frozen.
+static NSTimeInterval const MLEdgeMenuAutoCollapseMinSeconds = 0.30;
+static NSTimeInterval const MLEdgeMenuAutoCollapseMaxSeconds = 1.00;
 
 // One timer, two honest durations, chosen by one fact the timer already reads.
 // 450ms is what a pointer that has just left the bar deserves. A bar summoned by a
@@ -127,11 +132,20 @@ static NSTimeInterval const MLEdgeMenuSummonGraceDelay = 2.5;
 // 12pt is wide enough to stop on reliably after a release yet shallow enough that a
 // pointer parked anywhere but against the dock never qualifies.
 static CGFloat const MLEdgeSensorBandWidth = 12.0;
+// E1 parameterisation: 12pt is what shipping proves; the slider widens to 16pt for
+// a pointer that overshoots and narrows to 8pt so a parked cursor against the edge
+// never reopens the bar from the title bar above it.
+static CGFloat const MLEdgeSensorBandWidthMinPoints = 8.0;
+static CGFloat const MLEdgeSensorBandWidthMaxPoints = 16.0;
 // Lighting the tab is feedback, not an action: it sends nothing, opens nothing and leaves
 // the pointer with the game. A quarter second of it made a pointer that was already at the
 // edge read as ignored, so the wait is now below the threshold where a hover response feels
 // delayed, while still being a timer so the fire-time revalidation keeps its meaning.
 static NSTimeInterval const MLEdgeSensorDwellSeconds = 0.12;
+// E1 parameterisation: the shipped 120ms reads as instant; letting it drift above
+// 300ms turns arrival into a deliberate hover that the player will keep missing.
+static NSTimeInterval const MLEdgeSensorDwellMinSeconds = 0.060;
+static NSTimeInterval const MLEdgeSensorDwellMaxSeconds = 0.300;
 // Locked game motion has no local cursor to hover with, and a player who never
 // releases the pointer has no edge to arrive at. The pointer entry for that mode
 // is a flick: one continuous same-direction push at the docked edge, fast enough
@@ -547,6 +561,19 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 // Whether a completed dwell opens the dock outright (UU-style arrival) or only lights
 // the tab and waits for a click. Read with the other edge-sensor preferences.
 @property (nonatomic) BOOL edgeSensorSummonOnArrival;
+// E1 overrides for the three published hand-feel numbers. Zero / not set means
+// "follow the compile-time constant", which is the shipped default and the
+// regression anchor every change is compared against.
+@property (nonatomic) CGFloat edgeSensorBandWidthOverridePoints;
+@property (nonatomic) NSTimeInterval edgeSensorDwellOverrideSeconds;
+@property (nonatomic) NSTimeInterval edgeMenuAutoCollapseOverrideSeconds;
+// The single source of truth for the live dwell, sensor band and auto-collapse
+// delay: each reads the override and clamps to the published range, so an
+// out-of-band write from a future setting never widens the band past 16pt or
+// stalls the dwell beyond 300ms.
+- (NSTimeInterval)edgeSensorDwellSeconds;
+- (CGFloat)edgeSensorBandWidthPoints;
+- (NSTimeInterval)edgeMenuAutoCollapseDelay;
 @property (nonatomic, strong) NSTimer *edgeSensorDwellTimer;
 @property (nonatomic) double edgeSensorIgnoreMotionUntilMs;
 @property (nonatomic) BOOL edgeSensorMustLeaveHoverRegion;

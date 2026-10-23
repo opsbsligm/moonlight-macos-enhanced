@@ -751,9 +751,48 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     id arrival = prefs ? prefs[@"edgeSensorSummonOnArrival"] : nil;
     // A dictionary from before this key existed means the shipped default: arrival opens.
     self.edgeSensorSummonOnArrival = arrival ? [arrival boolValue] : YES;
+    // E1 parameterisation: each override is read from prefs and clamped on the
+    // getter, so a fresh install (absent key) leaves the override at 0 and the
+    // getter falls back to the shipped compile-time constant -- the regression
+    // anchor every change is compared against.
+    id band = prefs ? prefs[@"edgeSensorBandWidthPoints"] : nil;
+    self.edgeSensorBandWidthOverridePoints = band ? [band doubleValue] : 0;
+    id dwell = prefs ? prefs[@"edgeSensorDwellSeconds"] : nil;
+    self.edgeSensorDwellOverrideSeconds = dwell ? [dwell doubleValue] : 0;
+    id collapse = prefs ? prefs[@"edgeMenuAutoCollapseSeconds"] : nil;
+    self.edgeMenuAutoCollapseOverrideSeconds = collapse ? [collapse doubleValue] : 0;
     if (!self.edgeSensorSummonEnabled) {
         [self resetEdgeSensorSummonState];
     }
+}
+
+// E1 parameter getters: read the override and clamp to the published range so a
+// setting older than this build, or one hand-edited by the test harness, cannot
+// widen the band past 16pt or stall the dwell beyond 300ms. A zero override means
+// "no preference written" and falls back to the shipped constant; that path is
+// the regression anchor for every change in this file.
+- (NSTimeInterval)edgeSensorDwellSeconds {
+    NSTimeInterval override = self.edgeSensorDwellOverrideSeconds;
+    if (override <= 0) return MLEdgeSensorDwellSeconds;
+    if (override < MLEdgeSensorDwellMinSeconds) return MLEdgeSensorDwellMinSeconds;
+    if (override > MLEdgeSensorDwellMaxSeconds) return MLEdgeSensorDwellMaxSeconds;
+    return override;
+}
+
+- (CGFloat)edgeSensorBandWidthPoints {
+    CGFloat override = self.edgeSensorBandWidthOverridePoints;
+    if (override <= 0) return MLEdgeSensorBandWidth;
+    if (override < MLEdgeSensorBandWidthMinPoints) return MLEdgeSensorBandWidthMinPoints;
+    if (override > MLEdgeSensorBandWidthMaxPoints) return MLEdgeSensorBandWidthMaxPoints;
+    return override;
+}
+
+- (NSTimeInterval)edgeMenuAutoCollapseDelay {
+    NSTimeInterval override = self.edgeMenuAutoCollapseOverrideSeconds;
+    if (override <= 0) return MLEdgeMenuAutoCollapseDelay;
+    if (override < MLEdgeMenuAutoCollapseMinSeconds) return MLEdgeMenuAutoCollapseMinSeconds;
+    if (override > MLEdgeMenuAutoCollapseMaxSeconds) return MLEdgeMenuAutoCollapseMaxSeconds;
+    return override;
 }
 
 - (void)resetEdgeSensorSummonState {
@@ -798,7 +837,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     NSUInteger token = self.edgeMenuLifecycleToken;
     NSRect bounds = self.view.bounds;
     __weak typeof(self) weakSelf = self;
-    self.edgeSensorDwellTimer = [NSTimer timerWithTimeInterval:MLEdgeSensorDwellSeconds repeats:NO block:^(NSTimer *timer) {
+    self.edgeSensorDwellTimer = [NSTimer timerWithTimeInterval:[self edgeSensorDwellSeconds] repeats:NO block:^(NSTimer *timer) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf || timer != strongSelf.edgeSensorDwellTimer) return;
         strongSelf.edgeSensorDwellTimer = nil;
@@ -849,7 +888,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     self.edgeMenuHandleArmed = YES;
     [self updateEdgeMenuButtonAppearance];
     Log(LOG_D, @"[diag] Edge handle armed: edge=%ld band=%.0fpt dwell=%.0fms pointer held=1 opened=0",
-        (long)edge, MLEdgeSensorBandWidth, MLEdgeSensorDwellSeconds * 1000.0);
+        (long)edge, [self edgeSensorBandWidthPoints], [self edgeSensorDwellSeconds] * 1000.0);
 }
 
 - (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason {
@@ -862,7 +901,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     [self activateEdgeMenuDockForExitEdge:edge];
     self.edgeMenuTemporaryReleaseActive = wasCaptured && !self.userReleasedInput;
     Log(LOG_I, @"[diag] Edge controls opened: reason=%@ edge=%ld capturedBefore=%d band=%.0fpt dwell=%.0fms",
-        reason, (long)edge, wasCaptured, MLEdgeSensorBandWidth, MLEdgeSensorDwellSeconds * 1000.0);
+        reason, (long)edge, wasCaptured, [self edgeSensorBandWidthPoints], [self edgeSensorDwellSeconds] * 1000.0);
 }
 
 // The locked-mode edge entry. Locked events carry no trusted position, but they do

@@ -233,6 +233,7 @@ audit:sources:
     - python3 scripts/controller-battery-event-tests.py --self-test
     - python3 scripts/controller-touch-event-tests.py --self-test
     - python3 scripts/keyboard-unicode-routing-tests.py
+    - python3 scripts/edge-sensor-e1-clamp-tests.py --self-test
   rules: *pipeline_rules
 
 # --- Package -----------------------------------------------------------------
