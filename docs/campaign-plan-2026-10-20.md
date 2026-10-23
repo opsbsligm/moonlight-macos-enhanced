@@ -152,7 +152,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
  | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（21 用例/8 变异）；per-device 拆分完成（每设备独立 Controller/playerIndex/mask 位/变化检测器），9aa5c6b9 pipeline 388 8/8 全绿，本地 xcodebuild 无第一方 warning；双手柄真机待验证（hardware_validated=false） |
 | M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 代码完成（arrival 通告/真实 mask/拔出清位/诊断报告记录通告类型），本地门禁 77 过 + 基线 21 用例等价；主机侧虚拟手柄类型验证待真机（hardware_validated=false） |
 | 0.2b HID 鼠标路由 | 0.2 | 是 | 双手柄本机 | 代码完成（每设备 gesture、单一指针 owner 接管/恢复、进入中性帧、拔出只清 owner），routing 门禁 13 正向+8 变异，pipeline 396；双手柄真机待验证（hardware_validated=false） |
-| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地：C 回调→forwarder→owner→按号写灯，PS4/PS5 写路径回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告），routing 门禁各 4 正向+2 变异；rumbleTriggers/setMotionEventState 仍待开工；PS4/PS5 真机待验证（hardware_validated=false） |
+| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地，PS4/PS5 写灯回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告）；rumbleTriggers 已接（Xbox/KingKong 扳机马达=标准震动包两字段，独立去重不踩机身马达，TRIGGER_RUMBLE 能力位仅对 Xbox/KingKong 通告，PS 系扳机=自适应 effect 属 setAdaptiveTriggers 范畴故不通告），routing 门禁各 4 正向+2 变异；setMotionEventState 仍待开工；真机待验证（hardware_validated=false） |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 待开工 |
 | M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | 待开工 |
 | K1 文本注入 | — | 是 | 需主机输入法 | 待开工 |
@@ -347,3 +347,36 @@ macOS 侧三回调此前一个都没接，主机发来的灯色包被 `FakeCallb
 - Release 构建 first-party 零 warning；本地门禁 84 passed / 0 failed / 15 skipped。
 - 边界：`rumbleTriggers`/`setMotionEventState` 仍待开工；PS4/PS5 写路径只验证了
   去重、马达回显与路由，未抓真机报文，`hardware_validated=false` 保持。
+
+### M2 rumbleTriggers（扳机马达）接线（2026-10-23，待本提交 CI）
+
+macOS 侧第二个三回调落地：`rumbleTriggers`（扳机马达）。主机按 player index 点名
+某只手柄的扳机震动，C 层已解码分发但 macOS 未接。扳机马达与机身马达同属
+"按编号路由的马达写"，但报文因设备而异，计划明确警告"只通告能兑现的能力"：
+
+- 回调链补齐：`Connection.m` 新增 `ClRumbleTriggers` 并注册到 `_clCallbacks.rumbleTriggers`；
+  `ConnectionCallbacks` 加可选 `triggersRumble:leftTriggerMotor:rightTriggerMotor:`；
+  forwarder 转发；`StreamViewController` owner gated 在 rumble 设置 + 输入转发上，
+  调 `triggersRumbleForControllerNumber:`（扳机马达本质是 rumble 的扳机版，跟随同一 rumble 设置）。
+- 写路径只对能兑现的设备实现：Xbox/KingKong 的扳机马达就是标准震动输出报告的两个
+  字段（byte 4=左、byte 5=右），报文已在发货 body rumble 代码里可见，可兑现；
+  `writeTriggerRumbleToDevice:` 只对 Xbox/KingKong 写，其它设备直接返回（主机 over-reach）。
+- 独立去重避免互踩：扳机马达用 `previousLeft/RightTriggerMotor` 单独去重，不复用机身
+  马达的 `previousLow/HighFreqMotor`——否则进行中的机身震动与扳机震动会各自把对方的
+  值当重复而丢帧。0xFF=本会话未写过。
+- 能力位只在能兑现处通告：entry 创建时 `isXbox||isKingKong` 决定是否加
+  `LI_CCAP_TRIGGER_RUMBLE`。PS 系的扳机马达是自适应 effect 数组
+  （`rgucLeft/RightTriggerEffect`），属 `setAdaptiveTriggers` 范畴、本路径未驱动，
+  故对 PS 系不通告扳机马达位——主机不会向 PS 要它给不了的扳机反馈。
+- 新门禁 `scripts/controller-trigger-rumble-routing-tests.py` 编译真实
+  `triggersRumbleForControllerNumber:` / `rumbleDeviceForPlayerIndex:` /
+  `writeTriggerRumbleToDevice:` / `entryForDevice:`，双 Xbox pad 回放：按号路由、
+  first-device 回退、与机身马达去重互不干扰、每设备扳机去重（两 pad 首帧都写、
+  各自重复被抑制、单 pad 变更只到该 pad）；两项行为变异（编号被忽略、去重退回共享）
+  均须被断言拦截。
+- 五个既有 harness（device-table/mouse-routing/rumble-routing/led-routing）的 entry 桩
+  补触发马达去重属性；entryForDevice 现引用 isXbox/isKingKong 与 TRIGGER_RUMBLE，相应
+  补桩（mouse 桩 import 真实 Limelight.h，宏已有）。
+- Release 构建 first-party 零 warning；本地门禁 85 passed / 0 failed / 15 skipped。
+- 边界：`setMotionEventState`（陀螺仪/加速度计，需传感器会话 + 周期上报）仍待开工；
+  Xbox 扳机写路径只验证了去重与路由，未抓真机报文，`hardware_validated=false` 保持。

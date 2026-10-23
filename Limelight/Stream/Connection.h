@@ -29,6 +29,9 @@
                     red:(unsigned char)red
                   green:(unsigned char)green
                    blue:(unsigned char)blue;
+- (void)triggersRumble:(unsigned short)controllerNumber
+       leftTriggerMotor:(unsigned short)leftTriggerMotor
+      rightTriggerMotor:(unsigned short)rightTriggerMotor;
 
 @end
 
