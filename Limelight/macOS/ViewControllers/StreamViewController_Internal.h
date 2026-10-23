@@ -567,12 +567,6 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) CGFloat edgeSensorBandWidthOverridePoints;
 @property (nonatomic) NSTimeInterval edgeSensorDwellOverrideSeconds;
 @property (nonatomic) NSTimeInterval edgeMenuAutoCollapseOverrideSeconds;
-// The clamped dwell / band / auto-collapse accessors live in the MouseCapture
-// category. Their declarations are intentionally NOT on the primary class: the
-// primary class cannot fulfil them, and putting the promise here only made
-// clang emit -Wincomplete-implementation plus a -Wobjc-protocol-method-
-// implementation cross-warning every time the category redefined them.
-// Callers must #import "StreamViewController+MouseCapture.h" to see them.
 @property (nonatomic, strong) NSTimer *edgeSensorDwellTimer;
 @property (nonatomic) double edgeSensorIgnoreMotionUntilMs;
 @property (nonatomic) BOOL edgeSensorMustLeaveHoverRegion;
@@ -897,6 +891,13 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @end
 
 @interface StreamViewController (MouseCapture) <KeyboardNotifiableDelegate>
+// Edge-sensor accessors live on this category because the primary class
+// cannot implement them. Moving them here (instead of leaving them on the
+// primary interface) stops clang from emitting -Wincomplete-implementation
+// and the matching -Wobjc-protocol-method-implementation cross-warning.
+- (NSTimeInterval)edgeSensorDwellSeconds;
+- (CGFloat)edgeSensorBandWidthPoints;
+- (NSTimeInterval)edgeMenuAutoCollapseDelay;
 - (BOOL)reasonAllowsImmediateCaptureInFreeMouseMode:(NSString *)reason;
 - (BOOL)remoteDesktopCaptureReasonRequiresPointerInside:(NSString *)reason;
 - (uint64_t)freeMouseEdgeUncaptureSuppressionDurationMsForReason:(NSString *)reason;
