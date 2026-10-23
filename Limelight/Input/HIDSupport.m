@@ -3177,6 +3177,8 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         entry.previousLEDRed = 0xFF;
         entry.previousLEDGreen = 0xFF;
         entry.previousLEDBlue = 0xFF;
+        entry.previousLeftTriggerMotor = 0xFF;
+        entry.previousRightTriggerMotor = 0xFF;
         // The layout decision is made once, from the device, at the moment the
         // entry exists: every later announce reads it instead of re-asking the bus.
         entry.protocolType = [self protocolTypeForDevice:device];
@@ -3184,9 +3186,21 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         // Same once-at-creation rule for capabilities: RGB is advertised only
         // for a pad that has a lightbar write, so the host stops asking an
         // Xbox or Switch for a color it can never be given.
-        entry.capabilities = isPS4(device) || isPS5(device)
-            ? (kHIDArrivalCapabilities | LI_CCAP_RGB_LED)
-            : kHIDArrivalCapabilities;
+        // Each capability is a promise the host will keep using, so it is
+        // added only where this tree has a write that can honor it.
+        uint16_t capabilities = kHIDArrivalCapabilities;
+        if (isPS4(device) || isPS5(device)) {
+            capabilities |= LI_CCAP_RGB_LED;
+        }
+        // Xbox/KingKong's trigger motors are the two fields of the standard
+        // output report, so a trigger rumble is a real write. The PS families'
+        // trigger motors are the adaptive-effect arrays (setAdaptiveTriggers
+        // territory), which this path does not drive, so the bit stays off for
+        // them until that lands.
+        if (isXbox(device) || isKingKong(device)) {
+            capabilities |= LI_CCAP_TRIGGER_RUMBLE;
+        }
+        entry.capabilities = capabilities;
         table[key] = entry;
     }
     return entry;

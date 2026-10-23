@@ -33,12 +33,15 @@ static MLGamepadMenuGesture MLGamepadMenuGestureIdle(void) {
 }
 static const uint16_t LI_CCAP_ANALOG_TRIGGERS = 0x01;
 static const uint16_t LI_CCAP_RUMBLE = 0x02;
+static const uint16_t LI_CCAP_TRIGGER_RUMBLE = 0x04;
 static const uint16_t LI_CCAP_RGB_LED = 0x80;
 static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
-static BOOL isPS4(IOHIDDeviceRef device) __attribute__((unused));
 static BOOL isPS4(IOHIDDeviceRef device) { (void)device; return NO; }
-static BOOL isPS5(IOHIDDeviceRef device) __attribute__((unused));
 static BOOL isPS5(IOHIDDeviceRef device) { (void)device; return NO; }
+static BOOL isXbox(IOHIDDeviceRef device) __attribute__((unused));
+static BOOL isXbox(IOHIDDeviceRef device) { (void)device; return NO; }
+static BOOL isKingKong(IOHIDDeviceRef device) __attribute__((unused));
+static BOOL isKingKong(IOHIDDeviceRef device) { (void)device; return NO; }
 @interface Controller : NSObject
 @property int lastButtonFlags;
 @property MLGamepadMenuGesture menuGesture;
@@ -57,6 +60,8 @@ static BOOL isPS5(IOHIDDeviceRef device) { (void)device; return NO; }
 @property UInt8 previousLEDRed;
 @property UInt8 previousLEDGreen;
 @property UInt8 previousLEDBlue;
+@property UInt8 previousLeftTriggerMotor;
+@property UInt8 previousRightTriggerMotor;
 @end
 @implementation HIDDeviceControllerEntry
 @end

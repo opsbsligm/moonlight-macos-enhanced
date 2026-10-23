@@ -219,6 +219,16 @@ highFreqMotor:(unsigned short)highFreqMotor {
     }];
 }
 
+- (void)triggersRumble:(unsigned short)controllerNumber
+       leftTriggerMotor:(unsigned short)leftTriggerMotor
+      rightTriggerMotor:(unsigned short)rightTriggerMotor {
+    [self forwardIfCurrentNamed:@"triggersRumble" block:^(id<MLStreamScopedCallbackOwner> owner) {
+        if ([owner respondsToSelector:@selector(triggersRumble:leftTriggerMotor:rightTriggerMotor:)]) {
+            [owner triggersRumble:controllerNumber leftTriggerMotor:leftTriggerMotor rightTriggerMotor:rightTriggerMotor];
+        }
+    }];
+}
+
 @end
 
 @implementation StreamViewController
@@ -1812,6 +1822,18 @@ highFreqMotor:(unsigned short)highFreqMotor {
     // for a color costs nothing here.
     if (self.hidSupport.shouldSendInputEvents) {
         [self.hidSupport ledForControllerNumber:(int)controllerNumber red:red green:green blue:blue];
+    }
+}
+
+- (void)triggersRumble:(unsigned short)controllerNumber leftTriggerMotor:(unsigned short)leftTriggerMotor rightTriggerMotor:(unsigned short)rightTriggerMotor {
+    // Trigger motors are rumble on the triggers, so they follow the same rumble
+    // setting as the body motors and the same input-forwarding gate.
+    if ([SettingsClass rumbleFor:self.app.host.uuid]) {
+        if (self.hidSupport.shouldSendInputEvents) {
+            [self.hidSupport triggersRumbleForControllerNumber:(int)controllerNumber
+                                           leftTriggerMotor:leftTriggerMotor
+                                          rightTriggerMotor:rightTriggerMotor];
+        }
     }
 }
 

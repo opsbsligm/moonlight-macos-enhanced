@@ -60,9 +60,7 @@ static int ps4SetReportCalls = 0;
 static int lastHigh = -1, lastLow = -1, lastRed = -1, lastGreen = -1, lastBlue = -1;
 // Regressed shared dedup state, what a pre-per-device guard would use for every pad.
 static uint8_t sharedRed __attribute__((unused)) = 0xFF, sharedGreen __attribute__((unused)) = 0xFF, sharedBlue __attribute__((unused)) = 0xFF;
-static BOOL isXbox(IOHIDDeviceRef device) __attribute__((unused));
 static BOOL isXbox(IOHIDDeviceRef device) { (void)device; return NO; }
-static BOOL isKingKong(IOHIDDeviceRef device) __attribute__((unused));
 static BOOL isKingKong(IOHIDDeviceRef device) { (void)device; return NO; }
 static BOOL isPS4(IOHIDDeviceRef device) { return device == (const void *)0x1 || device == (const void *)0x2; }
 static BOOL isPS5(IOHIDDeviceRef device) { return NO; }
@@ -101,6 +99,7 @@ static MLGamepadMenuGesture MLGamepadMenuGestureIdle(void) {
 // values do not change the replay, but the RGB bit is what the gate checks.
 static const uint16_t LI_CCAP_ANALOG_TRIGGERS = 0x01;
 static const uint16_t LI_CCAP_RUMBLE = 0x02;
+static const uint16_t LI_CCAP_TRIGGER_RUMBLE = 0x04;
 static const uint16_t LI_CCAP_RGB_LED = 0x80;
 static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
 @interface Controller : NSObject
@@ -121,6 +120,8 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
 @property uint8_t previousLEDRed;
 @property uint8_t previousLEDGreen;
 @property uint8_t previousLEDBlue;
+@property uint8_t previousLeftTriggerMotor;
+@property uint8_t previousRightTriggerMotor;
 @end
 @implementation HIDDeviceControllerEntry
 @end
