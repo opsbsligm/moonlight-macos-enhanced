@@ -507,6 +507,10 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
             // session's requests.
             for (HIDDeviceControllerEntry *candidate in self.deviceControllerTable.allValues) {
                 [self stopMotionEventsForEntry:candidate];
+                // A reconnected host has not seen this session's battery yet,
+                // so clear the dedup and let the next packet re-announce it.
+                candidate.previousBatteryState = 0xFF;
+                candidate.previousBatteryPercentage = 0xFF;
             }
         }
     };
@@ -2775,12 +2779,16 @@ void myHIDReportCallback (
             // by value, and a packet's twelve sensor bytes are one memcmp.
             PS4StatePacket_t prev4 = entry.lastPS4State;
             BOOL motionChanged = memcmp(&prev4.rgucGyroX, &state->rgucGyroX, 12) != 0;
+            BOOL batteryChanged = prev4.ucBatteryLevel != state->ucBatteryLevel;
             entry.lastPS4State = *state;
             if (inputChanged) {
                 [self sendControllerEventForEntry:entry];
             }
             if (motionChanged) {
                 [self pushMotionEventsForEntry:entry];
+            }
+            if (batteryChanged) {
+                [self pushBatteryEventForEntry:entry];
             }
         }
     } else if (isPS5(device)) {
@@ -2853,12 +2861,16 @@ void myHIDReportCallback (
             // Same compare, through the PS5 snapshot's own fields.
             PS5StatePacket_t prev5 = entry.lastPS5State;
             BOOL motionChanged = memcmp(&prev5.rgucGyroX, &state->rgucGyroX, 12) != 0;
+            BOOL batteryChanged = prev5.ucBatteryLevel != state->ucBatteryLevel;
             entry.lastPS5State = *state;
             if (inputChanged) {
                 [self sendControllerEventForEntry:entry];
             }
             if (motionChanged) {
                 [self pushMotionEventsForEntry:entry];
+            }
+            if (batteryChanged) {
+                [self pushBatteryEventForEntry:entry];
             }
         }
     } else if (isNintendo(device)) {
@@ -3235,6 +3247,9 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
             // state-packet path already copies onto the entry, so a motion
             // request can be honored without a second report channel.
             capabilities |= LI_CCAP_ACCEL | LI_CCAP_GYRO;
+            // The same packets carry a charge level, so the battery event is
+            // honorable for these two families only.
+            capabilities |= LI_CCAP_BATTERY_STATE;
         }
         // Xbox/KingKong's trigger motors are the two fields of the standard
         // output report, so a trigger rumble is a real write. The PS families'
@@ -3279,6 +3294,10 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     // its activation must go with it. Stream end keeps the table, and clears
     // the same fields from setInputContext.
     [self stopMotionEventsForEntry:entry];
+    // A re-plug may be on a different charge state than the removed pad, so
+    // the new session's first reading must not be suppressed as a repeat.
+    entry.previousBatteryState = 0xFF;
+    entry.previousBatteryPercentage = 0xFF;
 }
 
 // setMotionEventState: the host names the pad by player index and asks for
@@ -3429,6 +3448,49 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     }
     HIDDispatchInput(self, lease, ^{
         LiSendControllerMotionEventCtx(lease.context, (uint8_t)slot, motionType, x, y, z);
+    });
+}
+
+// Push the battery path, called from the state-packet branch when the
+// ucBatteryLevel byte moved. Both PS families store it in the same field and
+// with the same layout (per SDL HIDAPI): the low nibble is a 0-10 charge
+// level and bit 0x10 means the pad is on the wire (wired/charging dock).
+// Wired pads carry a meaningless level, so they report NOT_CHARGING with an
+// unknown percentage rather than a fake 0%. A level change is rare, so there
+// is no pacing guard - only the same per-device dedup the LED and motor
+// writes use, so the host's first reading is always honored (0xFF = never
+// sent this session).
+- (void)pushBatteryEventForEntry:(HIDDeviceControllerEntry *)entry {
+    if (self.controllerDriver != 0 || !self.shouldSendInputEvents) {
+        return;
+    }
+    const uint8_t raw = isPS5(entry.hidDevice) ? entry.lastPS5State.ucBatteryLevel
+                                               : entry.lastPS4State.ucBatteryLevel;
+    uint8_t state;
+    uint8_t percentage;
+    if (raw & 0x10) {
+        state = LI_BATTERY_STATE_NOT_CHARGING;
+        percentage = LI_BATTERY_PERCENTAGE_UNKNOWN;
+    } else {
+        state = LI_BATTERY_STATE_DISCHARGING;
+        percentage = (uint8_t)((raw & 0x0F) * 10);
+    }
+    if (state == entry.previousBatteryState &&
+        percentage == entry.previousBatteryPercentage) {
+        return;
+    }
+    entry.previousBatteryState = state;
+    entry.previousBatteryPercentage = percentage;
+    int slot = entry.playerIndex;
+    if (slot < 0 || slot >= 16 || entry.hidDevice == NULL) {
+        return;
+    }
+    HIDInputLease lease = HIDAcquireInputContext(self);
+    if (lease.context == NULL) {
+        return;
+    }
+    HIDDispatchInput(self, lease, ^{
+        LiSendControllerBatteryEventCtx(lease.context, (uint8_t)slot, state, percentage);
     });
 }
 
