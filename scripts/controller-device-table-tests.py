@@ -38,6 +38,7 @@ static const uint16_t LI_CCAP_RGB_LED = 0x80;
 static const uint16_t LI_CCAP_ACCEL = 0x10;
 static const uint16_t LI_CCAP_GYRO = 0x20;
 static const uint16_t LI_CCAP_BATTERY_STATE = 0x40;
+static const uint16_t LI_CCAP_TOUCHPAD = 0x08;
 static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE;
 static BOOL isPS4(IOHIDDeviceRef device) { (void)device; return NO; }
 static BOOL isPS5(IOHIDDeviceRef device) { (void)device; return NO; }
@@ -70,6 +71,12 @@ static BOOL isKingKong(IOHIDDeviceRef device) { (void)device; return NO; }
 @property uint16_t motionGyroIntervalMs;
 @property uint64_t lastMotionAccelAtMs;
 @property uint64_t lastMotionGyroAtMs;
+@property BOOL touchPressed;
+@property BOOL touchPressed2;
+@property uint32_t touchPointerId;
+@property float touchLastX, touchLastY;
+@property uint32_t touchPointerId2;
+@property float touchLastX2, touchLastY2;
 @end
 @implementation HIDDeviceControllerEntry
 @end

@@ -2,8 +2,8 @@
 
 ## 2026-10-23 现场复核（覆盖下方历史描述）
 
-- 已验证代码基点：`75ed217d`（M2 setMotionEventState 接线）；GitLab pipeline 406 八项成功，build1954 DMG 已验收。在其上 M4.1 电池上报已接完，Release 构建 first-party 零 warning，待本提交 CI 定论。跳过项不算通过。
-- M2 三回调全部接通（rumble/LED/triggersRumble/setMotionEventState）；M4.1 电池上报已接（PS4/PS5 电量字节解码 + 有线位，仅 PS 系通告 BATTERY_STATE，新门禁 6 变异全拦 + self-test）。控制器协议面 M1/M2/M3/M4 代码至此全部落地，触摸板/Joy-Con 扩容（M4 剩余）为下一块。
+- 已验证代码基点：`f5f5520a`（M4.1 电池上报）；GitLab pipeline 407 八项成功，build1955 DMG 已验收。在其上 M4.2 PS 触摸板已接完，Release 构建 first-party 零 warning，待本提交 CI 定论。跳过项不算通过。
+- M2 三回调全部接通；M4.1 电池上报 + M4.2 PS 触摸板均已接（电量字节解码/12 位坐标 DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 BATTERY_STATE/TOUCHPAD，新门禁各 6 变异全拦 + self-test）。控制器协议面代码基本落地，M4 仅剩 Joy-Con 扩容（057E:2006/2007）与触摸板退化路径。
 - `hardware_validated=false`：PS5 BT 短包存疑、未抓真机 IMU/电量报文；build1954 未替换日常应用。
 - 0.2 已拆出 per-device 表，并修复表未初始化、同型号设备 key 合并、借用 CF 对象释放与满槽复用 0。真实方法编译回放及三项行为变异通过。
 - 0.2 仍缺完整发送序列等价证据；tuple 回放不能代替它。M1 已有 arrival 调用，但发送结果、驱动隔离、会话代数、拔出清位、鼠标模式与能力真实性尚未闭环。
