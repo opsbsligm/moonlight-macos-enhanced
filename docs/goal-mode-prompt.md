@@ -36,8 +36,20 @@
 ### 3.2 P2 对等补齐（各自独立小提交，可与 K2 并行）
 1. ~~`LiSendMouseMoveAsMousePositionEvent`~~ —— 已落地于 `9426623b`（见 §2）。
 2. **重连退避状态机**：现有 5 种触发点统一退避（1s/3s/9s 最多 N 次）+ "主机确认消失即停"判据；重连期间输入入队上限保留。
-3. **qt 对等项打包**：`muteOnFocusLoss` / `backgroundGamepad`（失焦时手柄继续/暂停发事件）/ `playAudioOnHost` UI 开关（协议参数已在 launch URL），每项独立开关、默认维持现行为。
+3. ~~qt 对等项打包~~ —— 拆为 §3.2.1 三条独立计划。
 4. **桌面档绝对鼠标默认关**（已写明：旧游戏兼容场景别开）。
+
+### 3.2.1 P2-3 重排（2026-10-24 现场复核后）
+
+- `playAudioOnHost` —— 已存在（xib checkbox → `playAudioOnPC` → launch URL
+  `localAudioPlayMode=%d`）；roadmap 描述已修，不留 TODO。
+- `muteOnFocusLoss` —— 三后端（LegacyQueue / Direct / Enhanced）分阶段接入。
+  计划先做 LegacyQueue：`AudioQueueSetParameter` 设 `kAudioQueueParam_Volume=0`
+  + 失焦挂起、聚焦恢复；Direct / Enhanced 后端 mark TODO，单独 commit 跟进。
+  默认 off，开关挂 `inputSettings`（设值与设备无关）。
+- `backgroundGamepad` —— HID 输入路径加失焦门控；失焦期间丢弃 `controllerAxis` /
+  `controllerButton` 事件但保留 keyboard 与鼠标；默认 off。
+  三项各独立 commit，避免单 PR 跨度过大。
 
 ### 3.3 K1.2 marked text / 候选窗 / 输入法提交（依赖 K1.1 已收口）
 - 真机中文注入未验收；marked text、候选窗、输入法提交、长按重复均属 K1.2。
