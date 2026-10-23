@@ -501,6 +501,13 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         } else {
             [self.keyboardQuirkFilter stop];
             [self stopKeyboardStateHealTimer];
+            // Stream end is the sensor-stop request the host does not bother
+            // to send: clear every pad's activation so a reconnected host
+            // starts from "no sensors" instead of inheriting the previous
+            // session's requests.
+            for (HIDDeviceControllerEntry *candidate in self.deviceControllerTable.allValues) {
+                [self stopMotionEventsForEntry:candidate];
+            }
         }
     };
     if ([NSThread isMainThread]) {
@@ -2713,7 +2720,12 @@ void myHIDReportCallback (
                 
         
         if (!HIDCopyReportPayload(state, sizeof(*state),
-                                  offsetof(PS4StatePacket_t, ucTriggerRight) + 1,
+                                  // The copy spans the whole packet, so the
+                                  // six-axis bytes land in the snapshot too.
+                                  // The gate must still guarantee those bytes
+                                  // are present: a truncated packet (or the
+                                  // 10-byte PS5 BT variant) leaves them zero.
+                                  offsetof(PS4StatePacket_t, _rgucPad1),
                                   report, reportLength, offset)) return;
         UInt8 abxy = state->rgucButtonsHatAndCounter[0] >> 4;
         [self updateButtonFlags:X_FLAG entry:entry state:(abxy & 0x01) != 0];
@@ -2743,7 +2755,10 @@ void myHIDReportCallback (
         
         if (self.controllerDriver == 0) {
 
-            if (entry.lastPS4State.rgucButtonsHatAndCounter[0] != state->rgucButtonsHatAndCounter[0] ||
+            // Compare against the previous packet before refreshing it, so a
+            // button and a sensor change in the same packet are judged
+            // against the same baseline and each dispatches exactly once.
+            BOOL inputChanged = entry.lastPS4State.rgucButtonsHatAndCounter[0] != state->rgucButtonsHatAndCounter[0] ||
                 entry.lastPS4State.rgucButtonsHatAndCounter[1] != state->rgucButtonsHatAndCounter[1] ||
                 entry.lastPS4State.rgucButtonsHatAndCounter[2] != state->rgucButtonsHatAndCounter[2] ||
                 entry.lastPS4State.ucTriggerLeft != state->ucTriggerLeft ||
@@ -2752,10 +2767,20 @@ void myHIDReportCallback (
                 entry.lastPS4State.ucLeftJoystickY != state->ucLeftJoystickY ||
                 entry.lastPS4State.ucRightJoystickX != state->ucRightJoystickX ||
                 entry.lastPS4State.ucRightJoystickY != state->ucRightJoystickY ||
-                0)
-            {
+                0;
+            // The IMU moves on its own: a pad held still with the game idle
+            // still has six new sensor bytes, and the host's request is for
+            // those, not for the button state.
+            // Compare through a local copy: the property returns the struct
+            // by value, and a packet's twelve sensor bytes are one memcmp.
+            PS4StatePacket_t prev4 = entry.lastPS4State;
+            BOOL motionChanged = memcmp(&prev4.rgucGyroX, &state->rgucGyroX, 12) != 0;
+            entry.lastPS4State = *state;
+            if (inputChanged) {
                 [self sendControllerEventForEntry:entry];
-                entry.lastPS4State = *state;
+            }
+            if (motionChanged) {
+                [self pushMotionEventsForEntry:entry];
             }
         }
     } else if (isPS5(device)) {
@@ -2776,7 +2801,11 @@ void myHIDReportCallback (
         }
         
         if (!HIDCopyReportPayload(state, sizeof(*state),
-                                  offsetof(PS5StatePacket_t, rgucButtonsAndHat) + 3,
+                                  // Extend the copy to cover the 12 IMU bytes
+                                  // (GyroX..AccelZ) so the six-axis snapshot
+                                  // is populated; before this the required
+                                  // length stopped at the button bytes.
+                                  offsetof(PS5StatePacket_t, rgucTimer1),
                                   report, reportLength, offset)) return;
         UInt8 abxy = state->rgucButtonsAndHat[0] >> 4;
         [self updateButtonFlags:X_FLAG entry:entry state:(abxy & 0x01) != 0];
@@ -2806,7 +2835,10 @@ void myHIDReportCallback (
         
         if (self.controllerDriver == 0) {
 
-            if (entry.lastPS5State.rgucButtonsAndHat[0] != state->rgucButtonsAndHat[0] ||
+            // Same compare-before-refresh rule as the PS4 branch: both change
+            // flags are judged against the previous packet, then the snapshot
+            // refreshes once, then each side dispatches exactly once.
+            BOOL inputChanged = entry.lastPS5State.rgucButtonsAndHat[0] != state->rgucButtonsAndHat[0] ||
                 entry.lastPS5State.rgucButtonsAndHat[1] != state->rgucButtonsAndHat[1] ||
                 entry.lastPS5State.rgucButtonsAndHat[2] != state->rgucButtonsAndHat[2] ||
                 entry.lastPS5State.ucTriggerLeft != state->ucTriggerLeft ||
@@ -2815,10 +2847,18 @@ void myHIDReportCallback (
                 entry.lastPS5State.ucLeftJoystickY != state->ucLeftJoystickY ||
                 entry.lastPS5State.ucRightJoystickX != state->ucRightJoystickX ||
                 entry.lastPS5State.ucRightJoystickY != state->ucRightJoystickY ||
-                0)
-            {
+                0;
+            // The 12 sensor bytes of the PS5 packet sit at the same offsets
+            // as the PS4 ones, so the motion test shares the PS4 comparison.
+            // Same compare, through the PS5 snapshot's own fields.
+            PS5StatePacket_t prev5 = entry.lastPS5State;
+            BOOL motionChanged = memcmp(&prev5.rgucGyroX, &state->rgucGyroX, 12) != 0;
+            entry.lastPS5State = *state;
+            if (inputChanged) {
                 [self sendControllerEventForEntry:entry];
-                entry.lastPS5State = *state;
+            }
+            if (motionChanged) {
+                [self pushMotionEventsForEntry:entry];
             }
         }
     } else if (isNintendo(device)) {
@@ -3191,6 +3231,10 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
         uint16_t capabilities = kHIDArrivalCapabilities;
         if (isPS4(device) || isPS5(device)) {
             capabilities |= LI_CCAP_RGB_LED;
+            // The PS4/PS5 state packets carry six-axis IMU samples that the
+            // state-packet path already copies onto the entry, so a motion
+            // request can be honored without a second report channel.
+            capabilities |= LI_CCAP_ACCEL | LI_CCAP_GYRO;
         }
         // Xbox/KingKong's trigger motors are the two fields of the standard
         // output report, so a trigger rumble is a real write. The PS families'
@@ -3231,6 +3275,161 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     entry.controller.lastLeftStickY = 0;
     entry.controller.lastRightStickX = 0;
     entry.controller.lastRightStickY = 0;
+    // Removal ends the pad's sensor session: the entry leaves the table, so
+    // its activation must go with it. Stream end keeps the table, and clears
+    // the same fields from setInputContext.
+    [self stopMotionEventsForEntry:entry];
+}
+
+// setMotionEventState: the host names the pad by player index and asks for
+// (or stops) one sensor type. Bit layout matches the LI_MOTION_TYPE_* values
+// themselves, so the requested type doubles as its own activation bit. The
+// pad resolves through the same per-number path as rumble and the lightbar,
+// so a request for a slot no device owns is a no-op with the same fallback
+// behavior those writes already have.
+- (void)setMotionEventStateForControllerNumber:(int)number motionType:(uint8_t)motionType reportRateHz:(uint16_t)reportRateHz {
+    if (self.controllerDriver != 0 || number < 0 || number >= 16 ||
+        (motionType != LI_MOTION_TYPE_ACCEL && motionType != LI_MOTION_TYPE_GYRO)) {
+        return;
+    }
+    HIDDeviceControllerEntry *entry = nil;
+    for (HIDDeviceControllerEntry *candidate in self.deviceControllerTable.allValues) {
+        if (candidate.playerIndex == number) {
+            entry = candidate;
+            break;
+        }
+    }
+    if (entry == nil) {
+        IOHIDDeviceRef device = [self getFirstDevice];
+        if (device != NULL) {
+            entry = [self entryForDevice:device];
+        }
+    }
+    if (entry == nil) {
+        return;
+    }
+    if (reportRateHz == 0) {
+        entry.motionActiveTypes &= (uint8_t)~motionType;
+        if (motionType == LI_MOTION_TYPE_GYRO) {
+            entry.motionGyroIntervalMs = 0;
+        } else {
+            entry.motionAccelIntervalMs = 0;
+        }
+        return;
+    }
+    // Only PS4/PS5 state packets carry six-axis samples, so an activation
+    // request for anything else never produces a frame; leaving the bit set
+    // would only make the push path take a device check per state packet.
+    if (!isPS4(entry.hidDevice) && !isPS5(entry.hidDevice)) {
+        return;
+    }
+    entry.motionActiveTypes |= motionType;
+    // The host asked for reportRateHz; the pad's state packets run at their
+    // own cadence, so the request becomes a minimum send interval. A 0 Hz
+    // value would mean "as slow as possible" on the wire, but the host uses
+    // 0 for stop, so any nonzero rate here clamps to at most 1 ms apart.
+    const uint16_t intervalMs = (reportRateHz >= 1000) ? 1 : (uint16_t)(1000 / reportRateHz);
+    if (motionType == LI_MOTION_TYPE_GYRO) {
+        entry.motionGyroIntervalMs = intervalMs;
+    } else {
+        entry.motionAccelIntervalMs = intervalMs;
+    }
+}
+
+// The one call site for "this pad's sensors are done": removal, stream end
+// and the host's explicit stop all converge here so the clear cannot drift
+// between paths.
+- (void)stopMotionEventsForEntry:(HIDDeviceControllerEntry *)entry {
+    if (entry == nil) {
+        return;
+    }
+    entry.motionActiveTypes = 0;
+    entry.motionAccelIntervalMs = 0;
+    entry.motionGyroIntervalMs = 0;
+}
+
+// Push half of the motion path, called from the state-packet branch when the
+// 12 sensor bytes moved. The sample comes from the family's own snapshot
+// (the PS5 packet stores the same six axes in the same fields, typed as
+// PS5StatePacket_t). A type the host has not activated sends nothing; the
+// rate limit is the minimum send interval recorded at activation. Sampling
+// is bounded by the pad's state-packet rate either way, and the C layer
+// coalesces whatever slips through into one queued packet per type.
+- (void)pushMotionEventsForEntry:(HIDDeviceControllerEntry *)entry {
+    if (self.controllerDriver != 0 || !self.shouldSendInputEvents ||
+        entry.motionActiveTypes == 0) {
+        return;
+    }
+    // Both families store the six axes as six little-endian int16 pairs in
+    // the same fields, so the sample read is one code path per family: a
+    // copy of the family's own snapshot, decoded axis by axis.
+    const BOOL ps5 = isPS5(entry.hidDevice);
+    const int16_t gx = ps5 ? (int16_t)(entry.lastPS5State.rgucGyroX[0] | (entry.lastPS5State.rgucGyroX[1] << 8))
+                           : (int16_t)(entry.lastPS4State.rgucGyroX[0] | (entry.lastPS4State.rgucGyroX[1] << 8));
+    const int16_t gy = ps5 ? (int16_t)(entry.lastPS5State.rgucGyroY[0] | (entry.lastPS5State.rgucGyroY[1] << 8))
+                           : (int16_t)(entry.lastPS4State.rgucGyroY[0] | (entry.lastPS4State.rgucGyroY[1] << 8));
+    const int16_t gz = ps5 ? (int16_t)(entry.lastPS5State.rgucGyroZ[0] | (entry.lastPS5State.rgucGyroZ[1] << 8))
+                           : (int16_t)(entry.lastPS4State.rgucGyroZ[0] | (entry.lastPS4State.rgucGyroZ[1] << 8));
+    const int16_t ax = ps5 ? (int16_t)(entry.lastPS5State.rgucAccelX[0] | (entry.lastPS5State.rgucAccelX[1] << 8))
+                           : (int16_t)(entry.lastPS4State.rgucAccelX[0] | (entry.lastPS4State.rgucAccelX[1] << 8));
+    const int16_t ay = ps5 ? (int16_t)(entry.lastPS5State.rgucAccelY[0] | (entry.lastPS5State.rgucAccelY[1] << 8))
+                           : (int16_t)(entry.lastPS4State.rgucAccelY[0] | (entry.lastPS4State.rgucAccelY[1] << 8));
+    const int16_t az = ps5 ? (int16_t)(entry.lastPS5State.rgucAccelZ[0] | (entry.lastPS5State.rgucAccelZ[1] << 8))
+                           : (int16_t)(entry.lastPS4State.rgucAccelZ[0] | (entry.lastPS4State.rgucAccelZ[1] << 8));
+    // PS4 raw units follow the SDL HIDAPI PS4 driver (the upstream sensor
+    // source): 16 counts per deg/s, 8192 counts per g. PS5 is 1024 per deg/s
+    // with the same accelerometer range, per SDL_hidapi_ps5.
+    const float gyroDiv = isPS5(entry.hidDevice) ? 1024.0f : 16.0f;
+    const float accelDiv = 8192.0f;
+    const float g = 9.80665f;
+    const uint8_t types = entry.motionActiveTypes;
+    const uint64_t nowMs = (uint64_t)([[NSDate date] timeIntervalSince1970] * 1000.0);
+    for (uint8_t type = LI_MOTION_TYPE_ACCEL; type <= LI_MOTION_TYPE_GYRO; type <<= 1) {
+        if ((types & type) == 0) {
+            continue;
+        }
+        const float x = (type == LI_MOTION_TYPE_ACCEL) ? (ax / accelDiv) * g : gx / gyroDiv;
+        const float y = (type == LI_MOTION_TYPE_ACCEL) ? (ay / accelDiv) * g : gy / gyroDiv;
+        const float z = (type == LI_MOTION_TYPE_ACCEL) ? (az / accelDiv) * g : gz / gyroDiv;
+        [self sendMotionSampleToHostForEntry:entry motionType:type x:x y:y z:z nowMs:nowMs];
+    }
+}
+
+- (void)sendMotionSampleToHostForEntry:(HIDDeviceControllerEntry *)entry
+                            motionType:(uint8_t)motionType
+                                   x:(float)x y:(float)y z:(float)z
+                               nowMs:(uint64_t)nowMs {
+    int slot = entry.playerIndex;
+    if (slot < 0 || slot >= 16 || entry.hidDevice == NULL) {
+        return;
+    }
+    // Both sensor types ride the same state packet, so each type keeps its
+    // own pacing guard: the host's Hz request became a minimum interval at
+    // activation, and the first frame of a type is always sent because its
+    // stamp starts at 0.
+    const BOOL isGyro = (motionType == LI_MOTION_TYPE_GYRO);
+    uint64_t stamp = isGyro ? entry.lastMotionGyroAtMs : entry.lastMotionAccelAtMs;
+    uint16_t interval = isGyro ? entry.motionGyroIntervalMs : entry.motionAccelIntervalMs;
+    if (interval == 0) {
+        // Defensive: an active type without an interval is a request we did
+        // not record; do not turn it into a per-packet flood.
+        interval = 1;
+    }
+    if (stamp != 0 && nowMs - stamp < interval) {
+        return;
+    }
+    if (isGyro) {
+        entry.lastMotionGyroAtMs = nowMs;
+    } else {
+        entry.lastMotionAccelAtMs = nowMs;
+    }
+    HIDInputLease lease = HIDAcquireInputContext(self);
+    if (lease.context == NULL) {
+        return;
+    }
+    HIDDispatchInput(self, lease, ^{
+        LiSendControllerMotionEventCtx(lease.context, (uint8_t)slot, motionType, x, y, z);
+    });
 }
 
 @end
