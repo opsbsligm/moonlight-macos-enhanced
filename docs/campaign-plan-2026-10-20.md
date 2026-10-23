@@ -152,7 +152,7 @@ git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜
  | 0.2 per-device 状态表 | 0.1 | 是 | 双手柄本机 | 等价基线已交付（21 用例/8 变异）；per-device 拆分完成（每设备独立 Controller/playerIndex/mask 位/变化检测器），9aa5c6b9 pipeline 388 8/8 全绿，本地 xcodebuild 无第一方 warning；双手柄真机待验证（hardware_validated=false） |
 | M1 类型/能力通告 | 0.2 | 是 | 需 Sunshine/GFE 主机 | 代码完成（arrival 通告/真实 mask/拔出清位/诊断报告记录通告类型），本地门禁 77 过 + 基线 21 用例等价；主机侧虚拟手柄类型验证待真机（hardware_validated=false） |
 | 0.2b HID 鼠标路由 | 0.2 | 是 | 双手柄本机 | 代码完成（每设备 gesture、单一指针 owner 接管/恢复、进入中性帧、拔出只清 owner），routing 门禁 13 正向+8 变异，pipeline 396；双手柄真机待验证（hardware_validated=false） |
-| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地，PS4/PS5 写灯回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告）；rumbleTriggers 已接（Xbox/KingKong 扳机马达=标准震动包两字段，独立去重不踩机身马达，TRIGGER_RUMBLE 能力位仅对 Xbox/KingKong 通告，PS 系扳机=自适应 effect 属 setAdaptiveTriggers 范畴故不通告），setMotionEventState 已接（PS4/PS5 IMU 状态包驱动 + 按类型节流，换算取 SDL HIDAPI 上游比例，新门禁 6 变异全拦）；三回调全部已接；M4.1 电池上报已接（PS4/PS5 状态包电量字节解码 + 有线位，仅 PS 系通告 BATTERY_STATE，新门禁 6 变异全拦），真机待验证（hardware_validated=false） |
+| M2 三回调 + 按号震动 | M1 | 是 | 需 PS5 手柄 + 主机 | 按号震动完成（rumble 路由到 player index 指向的 pad，去重按设备）；setControllerLED 已接（macOS 侧三回调首个落地，PS4/PS5 写灯回显马达不互踩，RGB 能力位仅对 PS4/PS5 通告）；rumbleTriggers 已接（Xbox/KingKong 扳机马达=标准震动包两字段，独立去重不踩机身马达，TRIGGER_RUMBLE 能力位仅对 Xbox/KingKong 通告，PS 系扳机=自适应 effect 属 setAdaptiveTriggers 范畴故不通告），setMotionEventState 已接（PS4/PS5 IMU 状态包驱动 + 按类型节流，换算取 SDL HIDAPI 上游比例，新门禁 6 变异全拦）；三回调全部已接；M4.1 电池上报已接（PS4/PS5 状态包电量字节解码 + 有线位，仅 PS 系通告 BATTERY_STATE）；M4.2 PS 触摸板已接（12 位坐标解码 + DOWN/MOVE/UP 状态机 + pointer id 锁定，仅 PS 系通告 TOUCHPAD），新门禁各 6 变异全拦，真机待验证（hardware_validated=false） |
 | M3 陀螺仪 | M1 | 是 | 需 PS 系手柄 + 主机 | 待开工 |
 | M4 电池/触摸板/Joy-Con | M1 | 是 | 需对应硬件 | 待开工 |
 | K1 文本注入 | — | 是 | 需主机输入法 | 待开工 |
@@ -458,4 +458,39 @@ macOS 侧第三个三回调落地，M2 的三回调至此全部接通：`setMoti
   mouse harness 的 entry 桩补两个属性（reset 现引用它们）。
 - 边界：等级×10 的百分比是线性近似（PS 手柄上报的是等级而非精确百分比，
   与 qt/SDL 同样只到档位粒度）；C 层 Sunshine-only；未抓真机电量报文，
+  `hardware_validated=false` 保持。
+
+### M4.2 PS 触摸板上报接线（2026-10-23，待本提交 CI）
+
+控制器协议面 M4 的第二块：`LiSendControllerTouchEvent`（主机虚拟手柄触摸板）。
+PS4/PS5 状态包早已携带两个触摸点但 macOS 从未读取，主机侧永远看不到触摸板。
+
+- 数据源与解码依据：PS4/PS5 状态包已解析的 `ucTouchpadCounter{1,2}` +
+  `rgucTouchpadData{1,2}[3]`（每点 4 字节，两点共 8 字节连续）。语义取 SDL HIDAPI
+  上游：counter 顶位置位 = 手指抬起、低 7 位 = 按压计数（一次按压的稳定标识）；
+  12 位坐标 x = data[0]|((data[1]&0x0F)<<8)、y = (data[1]>>4)|(data[2]<<4)，
+  归一化 /4095.0 → 0-1。
+- 状态机：每点独立跟踪按下状态。none→active = DOWN（pointer id 在按下沿捕获并
+  锁定整个按压，真实 pad 的 counter 字节每包递增也不会漂移）；active 且坐标变 =
+  MOVE（未变的重复通告不重发）；active→none = UP；pressure 按下/移动 1.0、抬起 0.0。
+  DOWN 时记录坐标，避免同位置首包被误判为 MOVE。
+- 能力位纪律（同 M4.1）：`LI_CCAP_TOUCHPAD` 仅 PS4/PS5 通告；Xbox/Switch 不通告。
+- 触发：touch 8 字节 memcmp 变化才 push（PS4/PS5 回调新增 touchChanged，与
+  inputChanged/motionChanged/batteryChanged 并列）。
+- C 层 `LiSendControllerTouchEventCtx` 门控 `LI_FF_CONTROLLER_TOUCH_EVENTS`
+  （UNSUPPORTED 无害，与 battery 的 Sunshine-only 思路一致）；move/hover 可批处理
+  丢弃，down/up reliable。
+- 新门禁 `scripts/controller-touch-event-tests.py` 编译真实
+  `pushControllerTouchForEntry:` / `dispatchTouchForEntry:` /
+  `sendControllerTouchForEntry:` / `resetControllerStateForEntry:` /
+  `entryForDevice:`，四 pad（2 PS4 + 1 PS5 + 1 Xbox）回放：PS 系能力位（Xbox 无）、
+  空闲基线（两点 counter=0x80 不误发）、12 位解码（4095→1.0）、DOWN/MOVE/UP 转换、
+  坐标未变不重发、pointer id 锁定（counter 0x01→0x03 仍用 1）、两点独立、PS5 读自己
+  快照、gate（驱动/输入关）、reset 后同值重发；6 项行为变异全拦。
+  `--self-test` 把同一批变异种进 harness 自身副本（不碰源码树）。
+- 七个既有 harness 补 `LI_CCAP_TOUCHPAD=0x08` 常量与 touch 状态属性；mouse/battery
+  harness 的 entry 桩补 touch 属性（reset 现引用它们），touch harness 补
+  `stopMotionEventsForEntry:` 桩。
+- 边界：本波不做 host 不支持触摸板时的退化路径（计划里的鼠标仿真/clickpad），
+  也未做 Joy-Con 扩容（057E:2006/2007，M4 剩余最后一块）；未抓真机触摸报文，
   `hardware_validated=false` 保持。

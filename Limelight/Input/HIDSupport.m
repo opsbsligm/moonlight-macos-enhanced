@@ -511,6 +511,16 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
                 // so clear the dedup and let the next packet re-announce it.
                 candidate.previousBatteryState = 0xFF;
                 candidate.previousBatteryPercentage = 0xFF;
+                // Same for the touch session: a finger that was down when the
+                // stream ended is not on the pad when it resumes.
+                candidate.touchPressed = NO;
+                candidate.touchPressed2 = NO;
+                candidate.touchPointerId = 0;
+                candidate.touchLastX = 0.0f;
+                candidate.touchLastY = 0.0f;
+                candidate.touchPointerId2 = 0;
+                candidate.touchLastX2 = 0.0f;
+                candidate.touchLastY2 = 0.0f;
             }
         }
     };
@@ -2780,6 +2790,9 @@ void myHIDReportCallback (
             PS4StatePacket_t prev4 = entry.lastPS4State;
             BOOL motionChanged = memcmp(&prev4.rgucGyroX, &state->rgucGyroX, 12) != 0;
             BOOL batteryChanged = prev4.ucBatteryLevel != state->ucBatteryLevel;
+            // Eight bytes: two counter bytes plus three data bytes each.
+            BOOL touchChanged = memcmp(&prev4.ucTouchpadCounter1,
+                                       &state->ucTouchpadCounter1, 8) != 0;
             entry.lastPS4State = *state;
             if (inputChanged) {
                 [self sendControllerEventForEntry:entry];
@@ -2789,6 +2802,9 @@ void myHIDReportCallback (
             }
             if (batteryChanged) {
                 [self pushBatteryEventForEntry:entry];
+            }
+            if (touchChanged) {
+                [self pushControllerTouchForEntry:entry];
             }
         }
     } else if (isPS5(device)) {
@@ -2862,6 +2878,8 @@ void myHIDReportCallback (
             PS5StatePacket_t prev5 = entry.lastPS5State;
             BOOL motionChanged = memcmp(&prev5.rgucGyroX, &state->rgucGyroX, 12) != 0;
             BOOL batteryChanged = prev5.ucBatteryLevel != state->ucBatteryLevel;
+            BOOL touchChanged = memcmp(&prev5.ucTouchpadCounter1,
+                                       &state->ucTouchpadCounter1, 8) != 0;
             entry.lastPS5State = *state;
             if (inputChanged) {
                 [self sendControllerEventForEntry:entry];
@@ -2871,6 +2889,9 @@ void myHIDReportCallback (
             }
             if (batteryChanged) {
                 [self pushBatteryEventForEntry:entry];
+            }
+            if (touchChanged) {
+                [self pushControllerTouchForEntry:entry];
             }
         }
     } else if (isNintendo(device)) {
@@ -3250,6 +3271,9 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
             // The same packets carry a charge level, so the battery event is
             // honorable for these two families only.
             capabilities |= LI_CCAP_BATTERY_STATE;
+            // The same packets carry two touch points, so the touchpad event
+            // is honorable for these two families only.
+            capabilities |= LI_CCAP_TOUCHPAD;
         }
         // Xbox/KingKong's trigger motors are the two fields of the standard
         // output report, so a trigger rumble is a real write. The PS families'
@@ -3298,6 +3322,16 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     // the new session's first reading must not be suppressed as a repeat.
     entry.previousBatteryState = 0xFF;
     entry.previousBatteryPercentage = 0xFF;
+    // A re-plug starts from "no finger on the pad", so the touch session
+    // state must go with the entry.
+    entry.touchPressed = NO;
+    entry.touchPressed2 = NO;
+    entry.touchPointerId = 0;
+    entry.touchLastX = 0.0f;
+    entry.touchLastY = 0.0f;
+    entry.touchPointerId2 = 0;
+    entry.touchLastX2 = 0.0f;
+    entry.touchLastY2 = 0.0f;
 }
 
 // setMotionEventState: the host names the pad by player index and asks for
@@ -3492,6 +3526,121 @@ void myHIDDeviceRemovalCallback(void * _Nullable        context,
     HIDDispatchInput(self, lease, ^{
         LiSendControllerBatteryEventCtx(lease.context, (uint8_t)slot, state, percentage);
     });
+}
+
+// PS touchpad encoding follows the SDL HIDAPI PS4/PS5 driver: the top bit of
+// the counter is clear while the finger is down, the low seven bits count
+// presses (a stable identifier for the duration of one press), and the three
+// data bytes carry the 12-bit X/Y. Two physical touch points ride the same
+// packet, so each one is tracked independently below.
+
+- (void)sendControllerTouchForEntry:(HIDDeviceControllerEntry *)entry
+                            pointer:(uint32_t)pointerId
+                            eventType:(uint8_t)eventType
+                                  x:(float)x y:(float)y pressure:(float)pressure {
+    int slot = entry.playerIndex;
+    if (slot < 0 || slot >= 16 || entry.hidDevice == NULL) {
+        return;
+    }
+    HIDInputLease lease = HIDAcquireInputContext(self);
+    if (lease.context == NULL) {
+        return;
+    }
+    HIDDispatchInput(self, lease, ^{
+        LiSendControllerTouchEventCtx(lease.context, (uint8_t)slot, eventType, pointerId, x, y, pressure);
+    });
+}
+
+// Push one touch point of the PS touchpad, called from the state-packet branch
+// when the eight touch bytes moved. The raw byte layout differs only in field
+// order between the two families, so each family hands over its own decoded
+// (active, pointerId, x12, y12) and the transition logic is shared.
+- (void)pushControllerTouchForEntry:(HIDDeviceControllerEntry *)entry {
+    if (self.controllerDriver != 0 || !self.shouldSendInputEvents) {
+        return;
+    }
+    // A value copy, not &entry.lastPS4State: the property returns the struct
+    // by value, and taking the address of a property expression is a warning.
+    // Both families carry the two touch points in the same eight bytes, so the
+    // decode is one code path per family handed to the shared transition logic.
+    if (isPS5(entry.hidDevice)) {
+        PS5StatePacket_t s = entry.lastPS5State;
+        BOOL active1 = !(s.ucTouchpadCounter1 & 0x80);
+        uint8_t id1 = s.ucTouchpadCounter1 & 0x7F;
+        float x1 = (float)(s.rgucTouchpadData1[0] | ((s.rgucTouchpadData1[1] & 0x0F) << 8)) / 4095.0f;
+        float y1 = (float)((s.rgucTouchpadData1[1] >> 4) | (s.rgucTouchpadData1[2] << 4)) / 4095.0f;
+        BOOL active2 = !(s.ucTouchpadCounter2 & 0x80);
+        uint8_t id2 = s.ucTouchpadCounter2 & 0x7F;
+        float x2 = (float)(s.rgucTouchpadData2[0] | ((s.rgucTouchpadData2[1] & 0x0F) << 8)) / 4095.0f;
+        float y2 = (float)((s.rgucTouchpadData2[1] >> 4) | (s.rgucTouchpadData2[2] << 4)) / 4095.0f;
+        [self dispatchTouchForEntry:entry active:active1 id:id1 x:x1 y:y1
+                                active2:active2 id2:id2 x2:x2 y2:y2];
+    } else {
+        PS4StatePacket_t s = entry.lastPS4State;
+        BOOL active1 = !(s.ucTouchpadCounter1 & 0x80);
+        uint8_t id1 = s.ucTouchpadCounter1 & 0x7F;
+        float x1 = (float)(s.rgucTouchpadData1[0] | ((s.rgucTouchpadData1[1] & 0x0F) << 8)) / 4095.0f;
+        float y1 = (float)((s.rgucTouchpadData1[1] >> 4) | (s.rgucTouchpadData1[2] << 4)) / 4095.0f;
+        BOOL active2 = !(s.ucTouchpadCounter2 & 0x80);
+        uint8_t id2 = s.ucTouchpadCounter2 & 0x7F;
+        float x2 = (float)(s.rgucTouchpadData2[0] | ((s.rgucTouchpadData2[1] & 0x0F) << 8)) / 4095.0f;
+        float y2 = (float)((s.rgucTouchpadData2[1] >> 4) | (s.rgucTouchpadData2[2] << 4)) / 4095.0f;
+        [self dispatchTouchForEntry:entry active:active1 id:id1 x:x1 y:y1
+                                active2:active2 id2:id2 x2:x2 y2:y2];
+    }
+}
+
+// The shared transition machine for both touch points. A finger going from
+// absent to present is a DOWN (its pointer id is captured once and reused for
+// the whole press); a present finger moving is a MOVE (re-sent only when the
+// position changed); present to absent is an UP. Pressure is 1.0 while down
+// and 0.0 on the up edge.
+- (void)dispatchTouchForEntry:(HIDDeviceControllerEntry *)entry
+                       active:(BOOL)active id:(uint8_t)id
+                        x:(float)x y:(float)y
+                     active2:(BOOL)active2 id2:(uint8_t)id2
+                        x2:(float)x2 y2:(float)y2 {
+    BOOL pressed = entry.touchPressed;
+    uint32_t pid = pressed ? entry.touchPointerId : (uint32_t)id;
+    if (active && !pressed) {
+        entry.touchPressed = YES;
+        entry.touchPointerId = pid;
+        entry.touchLastX = x;
+        entry.touchLastY = y;
+        [self sendControllerTouchForEntry:entry pointer:pid eventType:LI_TOUCH_EVENT_DOWN x:x y:y pressure:1.0f];
+    } else if (active && pressed) {
+        if (x != entry.touchLastX || y != entry.touchLastY) {
+            entry.touchLastX = x;
+            entry.touchLastY = y;
+            [self sendControllerTouchForEntry:entry pointer:pid eventType:LI_TOUCH_EVENT_MOVE x:x y:y pressure:1.0f];
+        }
+    } else if (!active && pressed) {
+        entry.touchPressed = NO;
+        entry.touchLastX = 0.0f;
+        entry.touchLastY = 0.0f;
+        [self sendControllerTouchForEntry:entry pointer:pid eventType:LI_TOUCH_EVENT_UP x:x y:y pressure:0.0f];
+    }
+
+    BOOL pressed2 = entry.touchPressed2;
+    uint32_t pid2 = pressed2 ? entry.touchPointerId2 : (uint32_t)id2;
+    if (active2 && !pressed2) {
+        entry.touchPressed2 = YES;
+        entry.touchPointerId2 = pid2;
+        entry.touchLastX2 = x2;
+        entry.touchLastY2 = y2;
+        [self sendControllerTouchForEntry:entry pointer:pid2 eventType:LI_TOUCH_EVENT_DOWN x:x2 y:y2 pressure:1.0f];
+    } else if (active2 && pressed2) {
+        if (x2 != entry.touchLastX2 || y2 != entry.touchLastY2) {
+            entry.touchLastX2 = x2;
+            entry.touchLastY2 = y2;
+            [self sendControllerTouchForEntry:entry pointer:pid2 eventType:LI_TOUCH_EVENT_MOVE x:x2 y:y2 pressure:1.0f];
+        }
+    } else if (!active2 && pressed2) {
+        entry.touchPressed2 = NO;
+        entry.touchLastX2 = 0.0f;
+        entry.touchLastY2 = 0.0f;
+        [self sendControllerTouchForEntry:entry pointer:pid2 eventType:LI_TOUCH_EVENT_UP x:x2 y:y2 pressure:0.0f];
+    }
 }
 
 @end
