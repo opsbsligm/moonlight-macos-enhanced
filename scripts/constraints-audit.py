@@ -3621,6 +3621,7 @@ if run_battery:
                           os.path.join("scripts", "space-transition-held-key-tests.py"),
                           os.path.join("scripts", "keyboard-modifier-mapping-tests.py"),
                           os.path.join("scripts", "keyboard-shortcut-modifier-tests.py"),
+                          os.path.join("scripts", "keyboard-unicode-routing-tests.py"),
                           os.path.join("scripts", "stream-menu-addressing-tests.py"),
                           os.path.join("scripts", "video-enhancement-tests.py"),
                           os.path.join("scripts", "enhancement-engine-resolution-tests.py"),
