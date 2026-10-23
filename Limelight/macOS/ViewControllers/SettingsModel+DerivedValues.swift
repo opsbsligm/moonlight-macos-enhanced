@@ -1085,6 +1085,8 @@ extension SettingsModel {
   // continuous absolute cursor (CAD / windowed-fullscreen) opt in by flipping
   // this on per-host.
   static let defaultRelativeMouseAsAbsolute = false
+  // P2-3a: default false keeps audio playing while the app is inactive.
+  static let defaultMuteOnFocusLoss = false
   static let defaultSwapMouseButtons = false
   static let defaultReverseScrollDirection = false
   static let defaultPointerSensitivity: CGFloat = 1.0

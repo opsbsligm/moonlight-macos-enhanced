@@ -182,6 +182,7 @@ extension SettingsModel {
     quitAppAfterStream = Self.defaultQuitAppAfterStream
     absoluteMouseMode = Self.defaultAbsoluteMouseMode
     relativeMouseAsAbsolute = Self.defaultRelativeMouseAsAbsolute
+    muteOnFocusLoss = Self.defaultMuteOnFocusLoss
     swapMouseButtons = Self.defaultSwapMouseButtons
     reverseScrollDirection = Self.defaultReverseScrollDirection
     pointerSensitivity = Self.defaultPointerSensitivity
@@ -401,6 +402,7 @@ extension SettingsModel {
       absoluteMouseMode = settings.absoluteMouseMode ?? Self.defaultAbsoluteMouseMode
       relativeMouseAsAbsolute =
         settings.relativeMouseAsAbsolute ?? Self.defaultRelativeMouseAsAbsolute
+      muteOnFocusLoss = settings.muteOnFocusLoss ?? Self.defaultMuteOnFocusLoss
       swapMouseButtons = settings.swapMouseButtons ?? Self.defaultSwapMouseButtons
       reverseScrollDirection =
         settings.reverseScrollDirection ?? Self.defaultReverseScrollDirection
@@ -786,6 +788,7 @@ extension SettingsModel {
       quitAppAfterStream: quitAppAfterStream,
       absoluteMouseMode: absoluteMouseMode,
       relativeMouseAsAbsolute: relativeMouseAsAbsolute,
+      muteOnFocusLoss: muteOnFocusLoss,
       swapMouseButtons: swapMouseButtons,
       reverseScrollDirection: reverseScrollDirection,
       touchscreenMode: touchscreenMode,

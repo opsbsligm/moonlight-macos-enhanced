@@ -121,6 +121,9 @@ struct Settings: Encodable, Decodable {
   // P2-1: relative mouse delta routed through the absolute-position wire path.
   // Default false preserves the existing relative-only wire format.
   let relativeMouseAsAbsolute: Bool?
+  // P2-3a muteOnFocusLoss: drop AudioQueue output volume to zero while the
+  // app is inactive. Default false keeps audio playing through focus loss.
+  let muteOnFocusLoss: Bool?
   let swapMouseButtons: Bool?
   let reverseScrollDirection: Bool?
   let touchscreenMode: Int?
@@ -275,6 +278,7 @@ struct Settings: Encodable, Decodable {
       quitAppAfterStream: quitAppAfterStream,
       absoluteMouseMode: absoluteMouseMode,
       relativeMouseAsAbsolute: relativeMouseAsAbsolute,
+      muteOnFocusLoss: muteOnFocusLoss,
       swapMouseButtons: swapMouseButtons,
       reverseScrollDirection: reverseScrollDirection,
       touchscreenMode: touchscreenMode,
@@ -534,6 +538,7 @@ extension SettingsClass {
 
       absoluteMouseMode: settings.absoluteMouseMode,
       relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
+      muteOnFocusLoss: settings.muteOnFocusLoss,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
