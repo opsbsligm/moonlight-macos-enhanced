@@ -5,6 +5,7 @@ exercise device attribution leave its dependency nil; key-state-heal-tests.py
 supplies a controlled monitor and verifies attribution separately.
 """
 import re
+from pathlib import Path
 
 QUIRK_DECL = """
 @interface HIDKeyboardQuirkFilter : NSObject
@@ -15,6 +16,17 @@ QUIRK_DECL = """
 
 
 def apply(source):
+    if "HIDUnicodeTextForEvent(event)" in source:
+        header = Path(__file__).resolve().parents[1] / "Limelight/Input/KeyboardTextRouting.h"
+        source = '#import "' + str(header) + '"\n' + source
+        at = source.index("@interface ")
+        # Existing keyboard probes exercise the wire route. A text send in
+        # those scenarios is a regression rather than a silently ignored call.
+        source = source[:at] + """
+static int LiSendUtf8TextEventCtx(void *ctx, const char *text, unsigned int length) {
+    (void)ctx; (void)text; (void)length; abort();
+}
+""" + source[at:]
     if "HIDAcquireInputContext(" in source and "} HIDInputLease;" not in source:
         lease = """
 typedef struct { PML_INPUT_STREAM_CONTEXT context; uint64_t generation; } HIDInputLease;

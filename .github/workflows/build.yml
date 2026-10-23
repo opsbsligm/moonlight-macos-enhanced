@@ -371,6 +371,7 @@ jobs:
         python3 scripts/controller-motion-event-tests.py --self-test
         python3 scripts/controller-battery-event-tests.py --self-test
         python3 scripts/controller-touch-event-tests.py --self-test
+        python3 scripts/keyboard-unicode-routing-tests.py
 
     - name: Verify device-specific C filtering preserves real keyboard input
       run: python3 scripts/keyboard-source-quirk-tests.py

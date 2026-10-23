@@ -232,6 +232,7 @@ audit:sources:
     - python3 scripts/controller-motion-event-tests.py --self-test
     - python3 scripts/controller-battery-event-tests.py --self-test
     - python3 scripts/controller-touch-event-tests.py --self-test
+    - python3 scripts/keyboard-unicode-routing-tests.py
   rules: *pipeline_rules
 
 # --- Package -----------------------------------------------------------------
