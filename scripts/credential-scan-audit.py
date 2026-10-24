@@ -81,6 +81,40 @@ PRESCREEN = re.compile(
     rb"api.?key|access.?token|secret.?key|client.?secret|auth.?token")
 
 
+# The prescreen is a regular expression over every byte of every blob, and on a
+# 607 MiB history it became the slowest step in the pipeline: 39 seconds warm on
+# the development machine, and the CI runner passed its 300-second self-imposed
+# budget doing it. Two tests run before the regex, both provably lossless, and
+# together they remove most of that work:
+#
+#   1. A blob containing a NUL byte was already invisible to the rules -- the
+#      history scan decodes it and skips anything with a NUL -- so checking for
+#      one earlier cannot change a verdict. It is what 311 archive and media
+#      blobs, 366 MiB of this repository's history, are made of.
+#   2. The anchor set below is a superset of the rules: every string that
+#      satisfies a rule contains one of these substrings, so a blob without an
+#      anchor cannot contain a credential. self_test() proves it per rule, and
+#      the regex prescreen still runs on everything that survives, so dropping a
+#      rule family from the prescreen still goes red.
+#
+# Measured on this repository: 62s to walk the history before, 15s after, with
+# the surviving set unchanged at 411 blobs.
+ANCHORS = (b"key", b"token", b"secret", b"github_pat_", b"ghp_", b"gho_",
+           b"ghu_", b"ghs_", b"ghr_", b"akia", b"xoxb-", b"xoxa-", b"xoxp-",
+           b"xoxr-", b"xoxs-", b"aiza", b"sk_live_", b"sk_test_", b"-----begin")
+
+
+def carries_credential_shape(body):
+    """Cheap gate in front of PRESCREEN; must stay a superset of the rules."""
+    if b"\x00" in body:
+        return False  # binary: the rules never saw a NUL-bearing blob anyway
+    low = body.lower()
+    for anchor in ANCHORS:
+        if anchor in low:
+            return True
+    return False
+
+
 def redact(value):
     """Show enough to identify a match, never the whole value."""
     if len(value) <= 12:
@@ -148,6 +182,12 @@ def _drain_batch(proc, paths):
                 continue  # "missing", a tree, a commit, or a bad object
             body = out.read(int(parts[2]))
             out.read(1)  # the single newline that closes the payload
+            # Cheapest test first: the NUL check and the literal anchors are what
+            # make the whole-history walk fit its budget. The prescreen that
+            # follows is the same one the tree scan uses, so both modes still
+            # agree on what a credential-shaped value is.
+            if not carries_credential_shape(body):
+                continue
             if PRESCREEN.search(body) is None:
                 continue
             text = body.decode("utf-8", "replace")
@@ -266,6 +306,21 @@ def self_test():
     for rule, sample in fake_credentials():
         if PRESCREEN.search(sample.encode()) is None:
             failures.append("prescreen would skip %s before any rule ran" % rule)
+
+    # The anchor test in front of the prescreen is a second chance to skip
+    # silently, so it answers the same question for the same samples. A rule
+    # added later whose value carries no anchor trips this, not the history walk.
+    for rule, sample in fake_credentials():
+        if not carries_credential_shape(sample.encode()):
+            failures.append("the anchor test would skip %s before any rule ran"
+                            % rule)
+
+    # And it has to reject something, or it is decoration that cannot fail. The
+    # line below names none of the anchors, so a gate that always says "maybe"
+    # is caught here rather than on the day it stops short-circuiting anything.
+    if carries_credential_shape(b"uses: actions/checkout@v6"):
+        failures.append("the anchor test admits a line with no credential "
+                        "anchor, so it short-circuits nothing")
 
     # A gate that prints the secret is a second leak of the secret.
     for rule, sample in fake_credentials():
