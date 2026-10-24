@@ -80,9 +80,17 @@ static void HIDExecuteInputLeaseOnQueue(id support, HIDInputLease lease, dispatc
 static void LiSendMousePositionEventCtx(void *context, short x, short y, short width, short height) {
     [positions addObject:@[@(x), @(y), @(width), @(height)]];
 }
+@interface MLLocalIMESession : NSObject
+@property (nonatomic, strong) NSTextInputContext *context;
+@end
+@implementation MLLocalIMESession
+@end
 @interface HIDSupport : NSObject
 @property BOOL shouldSendInputEvents;
 @property BOOL keyboardTeardownAlreadyCalled;
+// The local-IME hooks in the extracted key methods read this session; the boundary
+// scenarios never start one, so the property staying nil keeps the real key path.
+@property (nonatomic, strong) MLLocalIMESession *imeSession;
 @property uint64_t inputCaptureGeneration;
 @property NSNumber *keyboardCapsLockState;
 @property HIDMouseDeltaAccumulator *mouseDeltaAccumulator;
@@ -126,6 +134,7 @@ static void LiSendMousePositionEventCtx(void *context, short x, short y, short w
 @end
 @implementation HIDSupport
 @synthesize shouldSendInputEvents = _shouldSendInputEvents;
+- (void)flushIMECommit {}
 - (void)syncScrollTraceDiagnosticsPreferenceToInputContext {}
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event {}
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event {}

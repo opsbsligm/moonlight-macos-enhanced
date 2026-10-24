@@ -96,8 +96,16 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 static unsigned short HIDRemappedKeyCodeForModifierKey(id support, unsigned short kc) { return 0; }
 static BOOL HIDIsModifierKeyCode(unsigned short kc) { return kc == 54 || kc == 59 || kc == 60 || kc == 61 || kc == 56 || kc == 62; }
 
+// K1.2 added an IME consultation to the shipping keyDown/keyUp; this harness
+// leaves the session nil, so the property needs a type and the flush a body.
+// Only the members the extracted code touches are declared.
+@interface MLLocalIMESession : NSObject
+@property (nonatomic, strong) id context;
+@end
+
 @interface MLKeyboardUnderProbe : NSObject
 @property (nonatomic) BOOL shouldSendInputEvents;
+@property (nonatomic, strong) MLLocalIMESession *imeSession;
 @property (nonatomic) BOOL keyboardHeldKeyReleaseInProgress;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
@@ -146,6 +154,9 @@ EPILOGUE = r"""
 }
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event {}
 - (short)translateKeyModifierWithEvent:(NSEvent *)event { return 0; }
+// The session stays nil in this harness; the flush is the no-op the nil check
+// in the shipping code already implies, kept here only so the class compiles.
+- (void)flushIMECommit {}
 // Held-back presses are answered "nothing is held back" here; key-state-heal-tests.py
 // is where that question has scenarios. Declared and answered because this class is
 // implemented by hand and -Wincomplete-implementation is an error.
@@ -174,7 +185,7 @@ LEGACY = r"""
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
                                        modifiers:(char)modifiers
-                                       timestamp:(NSTimeInterval)timestamp { return NO; }
+                                       timestamp:(NSTimeInterval)timestamp { (void)timestamp; return NO; }
 - (void)keyDown:(NSEvent *)event {
     short translated = [self translateKeyCodeWithEvent:event];
     if (translated == 0) return;
