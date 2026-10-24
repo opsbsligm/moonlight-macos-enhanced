@@ -14,10 +14,13 @@ This gate proves that:
   * Connection owns a `setAudioFocusMuted:` entry point and the
     `_audioFocusMuted` latch that prevents spurious
     AudioQueueSetParameter churn between focus flips,
-  * the volume hook only runs on the LegacyQueue backend -- Direct and
-    Enhanced backends no-op (no setter call, no cache write) until a
-    follow-up commit extends them through the same hook,
-  * the cleanup path resets the latch so a fresh AudioQueue on the
+  * all three audio backends honour the hook: LegacyQueue via
+    kAudioQueueParam_Volume, Direct via kAudioOutputUnitParameterValue_Volume,
+    Enhanced via mainMixerNode.outputVolume; Direct silences its render
+    callback while the latch is set -- none of them touch the per-host
+    volume slider (_audioVolumeMultiplier),
+  * a backend that is not (yet) built at mute time is a documented no-op,
+  * the cleanup path resets the latch so a fresh renderer on the
     next session is not held muted because the prior session resigned
     focus,
   * the per-host switch defaults to false (the shipped behaviour of
@@ -77,9 +80,15 @@ def run_self_test():
     cases = [
         (
             CONN_M,
-            "    if (_audioRendererBackend != MLAudioRendererBackendLegacyQueue ||\n        _audioQueue == NULL) {\n        // Direct / Enhanced: TODO",
-            "    /* MUTATION PLANTED: backend gate removed */\n    if (_audioQueue == NULL) {\n        return;\n    }",
-            "mute-on-focus-loss would now touch Direct/Enhanced backends (TODO leaked into shipped behaviour)",
+            "    if (conn->_audioFocusMuted) {",
+            "    if (NO) {  /* MUTATION PLANTED: Direct render gate removed */",
+            "Direct backend would no longer silence frames while focus is lost",
+        ),
+        (
+            CONN_M,
+            "        float current = _enhancedAudioEngine.mainMixerNode.outputVolume;\n        if (muted) {\n            _audioFocusLastAppliedVolume = current;\n        }",
+            "        float current = _enhancedAudioEngine.mainMixerNode.outputVolume;\n        (void)current;",
+            "Enhanced branch stopped caching the live volume on mute",
         ),
         (
             CONN_M,
@@ -176,11 +185,49 @@ def main():
         check("_audioQueue == NULL" in body,
               "setAudioFocusMuted: bails when AudioQueue is not yet built")
         check("AudioQueueSetParameter" in body and "kAudioQueueParam_Volume" in body,
-              "setAudioFocusMuted: only audio queue hook used")
+              "setAudioFocusMuted: LegacyQueue hook keeps kAudioQueueParam_Volume")
         check(body.count("AudioQueueSetParameter") == 1,
               "AudioQueueSetParameter called from exactly one site in setAudioFocusMuted:")
         check("AudioQueueGetParameter" in body and "_audioFocusLastAppliedVolume" in body,
-              "setAudioFocusMuted: caches prior volume on mute")
+              "setAudioFocusMuted: caches prior volume on mute (LegacyQueue)")
+        # --- Direct backend branch ------------------------------------------
+        check("MLAudioRendererBackendDirect" in body,
+              "setAudioFocusMuted: Direct backend branch present")
+        check("_audioUnit != NULL" in body,
+              "setAudioFocusMuted: Direct branch guards on _audioUnit != NULL")
+        check("direct_render_gate" in body,
+              "setAudioFocusMuted: Direct branch defers to the render callback gate")
+        # --- Enhanced backend branch ----------------------------------------
+        check("MLAudioRendererBackendEnhanced" in body,
+              "setAudioFocusMuted: Enhanced backend branch present")
+        check("_enhancedAudioEngine != nil" in body,
+              "setAudioFocusMuted: Enhanced branch guards on _enhancedAudioEngine != nil")
+        check("_enhancedAudioEngine.mainMixerNode.outputVolume = muted ? 0.0f : 1.0f" in body,
+              "setAudioFocusMuted: Enhanced branch drives mainMixerNode.outputVolume")
+        check("float current = _enhancedAudioEngine.mainMixerNode.outputVolume;" in body,
+              "setAudioFocusMuted: Enhanced branch reads live volume")
+        # LegacyQueue and Enhanced must actually store the cached volume so a
+        # branch that reads it but never caches is caught. (Direct silences
+        # its render callback instead, so it has no cached volume to store.)
+        check(body.count("_audioFocusLastAppliedVolume = current;") == 2,
+              "setAudioFocusMuted: LegacyQueue + Enhanced write the cached volume on mute")
+        # The old "Direct / Enhanced: TODO" short-circuit must be gone so a
+        # regression that resurrects it is caught.
+        check("Direct / Enhanced: TODO" not in body,
+              "setAudioFocusMuted: stale Direct/Enhanced TODO short-circuit removed")
+        # --- Direct render-callback silence gate ---------------------------
+        check("if (conn->_audioFocusMuted) {" in conn_m,
+              "RenderDirectAudioUnit silences every frame while focus-mute latch is set")
+        check("inNumberFrames * conn->_audioRenderChannelCount * sizeof(float));" in conn_m,
+              "render gate covers the interleaved output size")
+        gate_idx = conn_m.find("if (conn->_audioFocusMuted) {")
+        gate_end = conn_m.find("return noErr;", gate_idx)
+        gate_block = conn_m[gate_idx:gate_end] if gate_idx > 0 and gate_end > gate_idx else ""
+        check("memset(ioData->mBuffers[channel].mData, 0, inNumberFrames * sizeof(float));" in gate_block,
+              "render gate also silences deinterleaved buffers")
+        impl_start = conn_m.find("AudioBufferList *ioData) {\n    Connection *conn = (__bridge Connection *)inRefCon;")
+        check(gate_idx > impl_start,
+              "render gate lives inside the RenderDirectAudioUnit implementation (not the forward declaration)")
     check("BOOL _audioFocusMuted;" in conn_m and "float _audioFocusLastAppliedVolume;" in conn_m,
           "Connection keeps _audioFocusMuted and _audioFocusLastAppliedVolume iVars")
     # init must initialise the latch and cache to defaults. Walk braces to
@@ -332,9 +379,33 @@ def main():
     mutations = [
         (
             CONN_M,
-            "    if (_audioRendererBackend != MLAudioRendererBackendLegacyQueue ||\n        _audioQueue == NULL) {\n        // Direct / Enhanced: TODO",
-            "    /* MUTATION: backend gate dropped */\n    if (_audioQueue == NULL) {\n        return;\n    }",
-            "non-LegacyQueue backends would now also be muted (protocol leaked into shipped behaviour)",
+            "    if (_audioRendererBackend != MLAudioRendererBackendLegacyQueue ||\n        _audioQueue == NULL) {",
+            "    if (NO) {  /* MUTATION: LegacyQueue build gate dropped */",
+            "unbuilt LegacyQueue renderer would be dereferenced by the mute path",
+        ),
+        (
+            CONN_M,
+            "    if (conn->_audioFocusMuted) {",
+            "    if (NO) {  /* MUTATION: Direct render gate removed */",
+            "Direct backend would no longer silence frames while focus is lost",
+        ),
+        (
+            CONN_M,
+            "        } else {\n            for (UInt32 channel = 0; channel < ioData->mNumberBuffers; channel++) {\n                memset(ioData->mBuffers[channel].mData, 0, inNumberFrames * sizeof(float));\n                ioData->mBuffers[channel].mDataByteSize = inNumberFrames * sizeof(float);\n            }\n        }\n        return noErr;",
+            "        }\n        return noErr;  /* MUTATION: deinterleaved render gate removed */",
+            "deinterleaved Direct render buffers would no longer be silenced while focus is lost",
+        ),
+        (
+            CONN_M,
+            "        float current = _enhancedAudioEngine.mainMixerNode.outputVolume;\n        if (muted) {\n            _audioFocusLastAppliedVolume = current;\n        }",
+            "        float current = _enhancedAudioEngine.mainMixerNode.outputVolume;\n        (void)current;",
+            "Enhanced branch stopped caching the live volume on mute",
+        ),
+        (
+            CONN_M,
+            "        _enhancedAudioEngine.mainMixerNode.outputVolume = muted ? 0.0f : 1.0f;",
+            "        /* MUTATION: Enhanced branch removed */",
+            "Enhanced backend would no longer honour focus-loss mute",
         ),
         (
             CONN_M,
