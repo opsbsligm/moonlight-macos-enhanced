@@ -1091,6 +1091,10 @@ extension SettingsModel {
   // matching the shipped behaviour. Turning this on suppresses arrival / axis /
   // motion / touch / battery whenever the app is not the focused window.
   static let defaultBackgroundGamepad = false
+  // K1.2 local IME composition: default false keeps every shipped key path
+  // (code points + committed-text route) intact. Turning this on routes the
+  // active input method's composition through the stream so CJK input works.
+  static let defaultIMELocalComposition = false
   static let defaultSwapMouseButtons = false
   static let defaultReverseScrollDirection = false
   static let defaultPointerSensitivity: CGFloat = 1.0

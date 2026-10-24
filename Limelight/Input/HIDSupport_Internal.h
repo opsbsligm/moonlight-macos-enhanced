@@ -120,6 +120,10 @@
 @property (nonatomic) SwitchStatePacket_t lastSwitchState;
 @end
 
+// K1.2: local IME composition (default off). One session per capture; the
+// candidate window anchors at the stream view corner via the anchor rect.
+@class MLLocalIMESession;
+
 @interface HIDSupport () <CoreHIDMouseDriverDelegate>
 @property (nonatomic) dispatch_queue_t rumbleQueue;
 @property (nonatomic, strong) NSDictionary *mappings;
@@ -207,6 +211,12 @@
 
 /// Reentry guard for -releaseAllHeldKeys, matching the modifier release guard.
 @property (atomic) BOOL keyboardHeldKeyReleaseInProgress;
+// K1.2: the live composition session for the current capture. Its client
+// counts drafts and commits since capture began; the diagnostics snapshot
+// reports deltas, so the last-read watermark lives here.
+@property (nonatomic, strong) MLLocalIMESession *imeSession;
+@property (atomic) NSUInteger imeWatermarkCompositions;
+@property (atomic) NSUInteger imeWatermarkCommits;
 @property (atomic) BOOL coreHIDFreeMouseAbsoluteSyncScheduled;
 @property (atomic) uint64_t coreHIDFreeMouseAbsoluteSyncToken;
 @property (nonatomic) dispatch_queue_t inputQueue;
