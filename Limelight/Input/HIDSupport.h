@@ -27,6 +27,9 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 @property(nonatomic) NSInteger rawRelativeDeltaY;
 @property(nonatomic) NSInteger sentRelativeDeltaX;
 @property(nonatomic) NSInteger sentRelativeDeltaY;
+/// K1.2: drafts and commits the local IME produced since the last sample.
+@property(nonatomic) NSUInteger imeCompositions;
+@property(nonatomic) NSUInteger imeCommits;
 
 /// Packets that reached the host, counted per sender, relative and absolute apart.
 ///
@@ -48,6 +51,16 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 /// player is no longer in a position to see. Default NO matches the
 /// shipped behaviour of "always forward gamepad input regardless of focus".
 @property(atomic) BOOL suspendControllerEvents;
+/// K1.2 local IME composition, mirrored from the per-host setting. The
+/// stream window sets it from the persisted preference before arming
+/// capture and clears it on teardown, so a mid-stream setting flip cannot
+/// leave an active text input context the player can no longer see the
+/// candidate window of. Default NO keeps every shipped key path intact.
+@property(atomic) BOOL imeLocalCompositionEnabled;
+/// Screen-space anchor for the candidate window while composition is
+/// enabled: the top-left corner of the stream view in screen coordinates.
+/// Set by the stream window; (0,0,0,0) when the view is not on screen.
+@property(atomic) NSRect imeCandidateAnchorRect;
 @property(atomic) TemporaryHost *host;
 @property(atomic, assign) void *inputContext;
 @property(nonatomic, copy) HIDFreeMouseAbsoluteSyncHandler freeMouseAbsoluteSyncHandler;
@@ -57,6 +70,23 @@ typedef void (^HIDFreeMouseAbsoluteSyncHandler)(void);
 - (void)flagsChanged:(NSEvent *)event;
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
+
+/// K1.2: open the local composition session for this capture, when the
+/// setting is on, the input context is live, and the system input source
+/// is a select-capable non-ASCII keyboard (i.e. an input method). Called
+/// from the capture path after the input context is attached. Idempotent:
+/// calling it while a session is already open leaves it in place.
+- (void)beginIMECompositionIfEnabled;
+/// K1.2: any commit the system IME produced while capture was active goes
+/// to the host now; a draft that was still marked is discarded with the
+/// session. Safe when the session was never opened.
+- (void)flushIMECommit;
+/// K1.2: close the session, discarding any in-progress composition.
+- (void)endIMEComposition;
+/// K1.2: distinct non-empty drafts and committed insertions since the
+/// last snapshot, for the input diagnostics report.
+- (NSUInteger)imeCompositionsSinceLastSnapshot;
+- (NSUInteger)imeCommitsSinceLastSnapshot;
 
 /// Releases every remote key owned by this session and cancels deferred presses.
 ///
