@@ -1,14 +1,19 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-24 P2-1 收口后刷新）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-24 P2-3a 三后端收口刷新）
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-24 P2-1 收口后）
+## 1. 当前基点（截至 2026-10-24 P2-3a 三后端收口）
 
-- 代码基点 main = `81da9f95d4a6da310a203b962b9db1f012eab4f5`（含 P2-1 / P2-3a / P2-3b / P2-2a / MR 2 凭据扫描提速 + 镜像隔离）。下一波 P2-2b 已推到分支 `p2-2b-stall-watchdog-backoff`，MR 3 `https://www.bsligm.com:8445/moonlight/moonlight-macos-enhanced/-/merge_requests/3` 等 maintainer merge（Developer PAT 无 merge 权限）。
-- P2-2b commit `41477a83`：三处诊断 reconnect（connect-timeout-auto / startup-no-payload / payload-stall）接入退避状态机；`markHostConfirmedGoneWithReason:` 真 caller 只对 `ML_ERROR_GRACEFUL_TERMINATION (0)` 与 `ML_ERROR_UNEXPECTED_EARLY_TERMINATION (-102)` 触发。pipeline #471 8/8 success（515s），mirror #472 retry 8/8 success（452s），GitHub 分支头 SHA 与 GitLab 严格一致。
-- 最新 DMG：上轮 `build1972`（P2-3b, arm64, sha256 `276d6e0259924156aa3f3591b94e9f5b22e95b6cb4454f678731ad48ec64e0b0`）；本轮 build 待 maintainer merge + CI 注入。用户日常 `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
-- 本机 sweep：101 通过 / 0 失败 / 15 跳过（与上轮同基线；`liquid-glass-tab-bar-tests.py` 本机 inspector SIGSEGV 是已知环境差异，CI runner 通过）。
-- `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/E1/P2-1/P2-2a/P2-2b/P2-3a/P2-3b 全是代码层完成 + 真机待取证。
+- 代码基点 main = `81da9f95`。本轮 P2-3a 三后端失焦静音收口在分支 `p2-3a-direct-enhanced-backends`
+  （commit `254c5dc4`，待 MR 4 合并）。三后端均走 `Connection.setAudioFocusMuted:`：
+  LegacyQueue `kAudioQueueParam_Volume` / Enhanced `mainMixerNode.outputVolume` /
+  Direct 渲染回调按 latch 帧级静默。
+- pipeline 475（分支 `254c5dc4`）跑中；evidence 待落 `moonlight-ci-evidence/20261024-p2-3a-direct-enhanced/`；
+  本地门禁 101 通过 / 0 失败 / 15 跳过（`liquid-glass-tab-bar-tests.py` inspector 本机 SIGSEGV
+  为已知环境差异，CI Mac M2 runner 通过，不视作基线变化）。
+- 最新 DMG：上轮 `build1968`（P2-1, arm64, sha256 `89d557aa4a8afbd5bf652befdcc9e084eefcb0c2fec53c1d2a2dce97d157b3ac`）；本轮 build 号未定（commit 时 CI 会注入）。用户日常 `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
+- 镜像 60 refs 与 GitLab 完全一致；不绕过门禁。
+- `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/E1/P2-1/P2-3a 全是代码层完成 + 真机待取证。
 
 ## 2. 已完成（代码层；CI/产物验收；真机仍待）
 
@@ -50,10 +55,10 @@
 
 - `playAudioOnHost` —— 已存在（xib checkbox → `playAudioOnPC` → launch URL
   `localAudioPlayMode=%d`）；roadmap 描述已修，不留 TODO。
-- `muteOnFocusLoss` —— **LegacyQueue 已收口**（commit `4e6fba87`，pipeline #433 = 8/8 success）。
-  Direct / Enhanced 仍 mark TODO，单独 commit 跟进（三后端共用 `Connection.setAudioFocusMuted:`
-  入口，follow-up 只需在 `Connection.m` 内部为新后端补 `AudioUnitSetParameter` /
-  `AVAudioEngine outputVolume` 路径，不改 StreamViewController 接线与 SettingsModel）。
+- `muteOnFocusLoss` —— **三后端已收口**：LegacyQueue `4e6fba87`（#433）+ Direct/Enhanced `254c5dc4`
+  （pipeline 475 跑中）。Enhanced 走 `mainMixerNode.outputVolume`（mute 缓存当前值、regain 恢复 1.0）；
+  Direct 因 output unit 无公开 volume 参数（macOS SDK 下 `kAudioUnitParameters_Volume` 不存在，
+  编译实证）改为渲染回调按 latch 帧级静默。StreamViewController 接线与 SettingsModel 均不变。
 - `backgroundGamepad` —— **已收口**（commit `26d20062`，pipeline #434 = 8/8 success）。
   HID 6 个 controller-wire 入口 + MFi `updateFinished:` 同步加门；4 个焦点观察者对称
   （window/app resign 按 per-host pref 写 YES，window/app become 无条件恢复 NO）；
@@ -169,13 +174,13 @@
   锁定模式 / 手柄鼠标仍走相对包、窗口化 / 无边框桌面档主机跟随。
   `hardware_validated=false` 不变。
 
-- **P2-3a 失焦静音（LegacyQueue only，默认 off）**：commit `4e6fba87`，pipeline #433 = 8/8 success；
-  `Connection.setAudioFocusMuted:` 公共接口 + latch + 缓存前次音量，仅 LegacyQueue 走
-  `AudioQueueSetParameter(kAudioQueueParam_Volume)`；Direct / Enhanced 路径显式 short-circuit。
-  UI `SettingsAudioPane` 新增 `ToggleCell("Mute Stream Audio on Focus Loss")`，per-host 默认 false
-  保留 shipped 行为；窗口 + app 两层 resign/become 观察者对称。门禁
-  `scripts/mute-on-focus-loss-tests.py`（38 正向 + 5 变异 + 5 self-test plants）。详见
-  `docs/baseline-2026-10-22.md` §14。`hardware_validated=false` 不变。
+- **P2-3a 失焦静音（三后端，默认 off）**：LegacyQueue `4e6fba87`（#433）+
+  **Direct/Enhanced 收口 `254c5dc4`**（pipeline 475 跑中，待 MR 4）。`Connection.setAudioFocusMuted:`
+  公共接口 + latch 不变；LegacyQueue `kAudioQueueParam_Volume`、Enhanced
+  `mainMixerNode.outputVolume`（mute 缓存当前值）、Direct 渲染回调帧级静默（output unit 无公开
+  volume 参数）。UI `SettingsAudioPane` `ToggleCell` + 窗口/app 两层 resign/become 观察者不变。
+  门禁 `scripts/mute-on-focus-loss-tests.py` 扩到 63 正向 + 9 行为变异 + 6 self-test plants。详见
+  `docs/baseline-2026-10-22.md` P2-3a 三后端收口节。`hardware_validated=false` 不变。
 - **P2-3b 失焦抑制手柄事件（默认 off）**：commit `26d20062`，pipeline #434 = 8/8 success；
   新增独立门 `HIDSupport.suspendControllerEvents` + `ControllerSupport.suspendControllerEvents`
   （不复用 `shouldSendInputEvents`：那会同时抑制键盘 + 鼠标），6 个 controller-wire 入口 +
