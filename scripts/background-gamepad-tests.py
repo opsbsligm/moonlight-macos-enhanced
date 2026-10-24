@@ -252,9 +252,9 @@ def main():
     # Struct-copy mirrors (settings / updated / per-host): three distinct call sites.
     count_mirror = 0
     for variant in [
-        "absoluteMouseMode: settings.absoluteMouseMode,\n      relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,\n      muteOnFocusLoss: settings.muteOnFocusLoss,\n      backgroundGamepad: settings.backgroundGamepad,\n      swapMouseButtons: settings.swapMouseButtons,",
-        "absoluteMouseMode: updated.absoluteMouseMode,\n        relativeMouseAsAbsolute: updated.relativeMouseAsAbsolute,\n        muteOnFocusLoss: updated.muteOnFocusLoss,\n        backgroundGamepad: updated.backgroundGamepad,\n        swapMouseButtons: updated.swapMouseButtons,",
-        "      absoluteMouseMode: settings.absoluteMouseMode,\n      relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,\n      muteOnFocusLoss: settings.muteOnFocusLoss,\n      backgroundGamepad: settings.backgroundGamepad,\n      swapMouseButtons: settings.swapMouseButtons,\n      reverseScrollDirection: settings.reverseScrollDirection,",
+        "absoluteMouseMode: settings.absoluteMouseMode,\n      relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,\n      muteOnFocusLoss: settings.muteOnFocusLoss,\n      backgroundGamepad: settings.backgroundGamepad,\n      imeLocalComposition: settings.imeLocalComposition,\n      swapMouseButtons: settings.swapMouseButtons,",
+        "absoluteMouseMode: updated.absoluteMouseMode,\n        relativeMouseAsAbsolute: updated.relativeMouseAsAbsolute,\n        muteOnFocusLoss: updated.muteOnFocusLoss,\n        backgroundGamepad: updated.backgroundGamepad,\n        imeLocalComposition: updated.imeLocalComposition,\n        swapMouseButtons: updated.swapMouseButtons,",
+        "      absoluteMouseMode: settings.absoluteMouseMode,\n      relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,\n      muteOnFocusLoss: settings.muteOnFocusLoss,\n      backgroundGamepad: settings.backgroundGamepad,\n      imeLocalComposition: settings.imeLocalComposition,\n      swapMouseButtons: settings.swapMouseButtons,\n      reverseScrollDirection: settings.reverseScrollDirection,",
     ]:
         if variant in bridge:
             count_mirror += 1

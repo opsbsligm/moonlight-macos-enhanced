@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - 新增 "Allow"/"允许" 本地化键，覆盖 USB 设备页允许按钮翻译
+- **K1.2 本地输入法组合（Local IME Composition）**（per-host，默认关）：串流捕获期间用
+  `NSTextInputClient` 承接本地 marked text，候选确认按整串 UTF-8 提交到主机，回退/退格只
+  编辑本地草稿不打到主机；`imeLocalComposition` 贯穿 SettingsStore/SettingsModel/ObjC 桥与
+  设置页 Input 面板（纯新增 ToggleCell，不动已验收控件）；诊断区新增 composition/commit 计数。
 
 ### Fixed
 - 设置窗口卡片布局响应式：`.frame(maxWidth: .infinity)` + 弹性宽度范围（minWidth: 400, idealWidth: 680, maxWidth: 800）

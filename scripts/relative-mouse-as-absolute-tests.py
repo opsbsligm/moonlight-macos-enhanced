@@ -78,11 +78,12 @@ def run_self_test():
         ),
         (
             STORE,
-            # Tolerate any sibling toggles (e.g. P2-3a muteOnFocusLoss)
-            # inserted between these two lines by later commits.
+            # Tolerate any sibling toggles (P2-3a muteOnFocusLoss,
+            # P2-3b backgroundGamepad, K1.2 imeLocalComposition, ...) inserted
+            # between these two lines by later commits.
             re.compile(
                 r"relativeMouseAsAbsolute: relativeMouseAsAbsolute,\n"
-                r"(?:      [^\n]*\n){1,2}"
+                r"(?:      [^\n]*\n){1,3}"
                 r"      swapMouseButtons: swapMouseButtons,"),
             "/* P2-1 PLANTED: registration dropped */\n      swapMouseButtons: swapMouseButtons,",
             "SettingsStore.applyToSettings lost registration",
@@ -233,7 +234,7 @@ def main():
             STORE,
             re.compile(
                 r"relativeMouseAsAbsolute: relativeMouseAsAbsolute,\n"
-                r"(?:      [^\n]*\n){1,2}"
+                r"(?:      [^\n]*\n){1,3}"
                 r"      swapMouseButtons: swapMouseButtons,"),
             "/* MUTATION: registration dropped */\n      swapMouseButtons: swapMouseButtons,",
             "SettingsStore.applyToSettings lost relativeMouseAsAbsolute registration",
