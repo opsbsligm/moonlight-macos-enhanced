@@ -73,7 +73,7 @@ audit:python:
   stage: lint
   tags: [macos]
   cache: {}
-  timeout: 20 minutes
+  timeout: 30 minutes
   before_script:
     - *fetch_submodules
   dependencies: []
@@ -267,12 +267,11 @@ package-dmg:
     - if: '$CI_COMMIT_TAG'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
-# --- GitHub mirror sync (best practice: GitLab = source of truth) ------------
-# Runs on the untagged VM runner (linux has git + ssh, and the VM can reach
-# github.com). Pushes the full mirror via the repo deploy key (GH_DEPLOY_KEY,
-# file variable, write-enabled). The stage barrier includes DMG packaging.
+# --- GitHub mirror sync (GitLab is the source of truth) ---------------------
+# A fixed service holds the GitHub key and verifies this job and all gates.
 publish-github:
   stage: mirror
+  tags: [gitlab-mirror]
   resource_group: github-mirror
   timeout: 10 minutes
   interruptible: false
@@ -282,7 +281,8 @@ publish-github:
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "web"'
   script:
-    - bash scripts/ci/publish-github.sh
+    - MIRROR_DRY_RUN=1 python3 scripts/ci/publish-github.py
+    - python3 scripts/ci/publish-github.py
 
 # --- Notarize (placeholder) --------------------------------------------------
 # Enable once a Developer ID Application certificate is available as CI/CD
