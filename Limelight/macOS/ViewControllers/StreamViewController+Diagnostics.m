@@ -111,8 +111,18 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
             strongSelf.shouldAttemptReconnect &&
             [strongSelf isAutomaticRecoveryModeEnabled]) {
             strongSelf.didAutoReconnectAfterTimeout = YES;
-            [strongSelf showReconnectOverlayWithMessage:MLString(@"The network is not responding, trying to reconnect…", nil)]; 
-            [strongSelf attemptReconnectWithReason:@"connect-timeout-auto"]; 
+            // P2-2b: hand the decision to the backoff state machine so retries
+            // join the shared 1s/3s/9s budget instead of bypassing it. The
+            // one-shot flag still lives here so manual expert mode never
+            // auto-recovers regardless of which path fires.
+            if ([strongSelf scheduleBackoffReconnectWithTrigger:MLReconnectTriggerNoFrameStall
+                                                          reason:@"connect-timeout-auto"]) {
+                return;
+            }
+            // Backoff rejected (host-gone or budget already spent this session).
+            // Fall through to the diagnostics overlay so the user still sees
+            // the manual-expert surface, matching the pre-P2-2 behaviour.
+            [strongSelf showReconnectOverlayWithMessage:MLString(@"The network is not responding, trying to reconnect…", nil)];
             return;
         }
 
@@ -1071,7 +1081,13 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
                 self.streamHealthLastPayloadReconnectMs = nowMs;
                 Log(LOG_W, @"[diag] No video payload %.1fs after connection start, attempting reconnect",
                     startupNoPayloadMs / 1000.0);
-                [self attemptReconnectWithReason:@"startup-no-payload-reconnect"];
+                // P2-2b: route through the backoff state machine. Caller-side
+                // cooldown stays -- it keeps the health timer from scheduling
+                // a fresh attempt on every tick and burning the budget.
+                if (![self scheduleBackoffReconnectWithTrigger:MLReconnectTriggerPayloadStall
+                                                        reason:@"startup-no-payload-reconnect"]) {
+                    Log(LOG_I, @"[diag] startup-no-payload backoff rejected (host-gone or budget spent)");
+                }
             } else {
                 Log(LOG_W, @"[diag] No video payload %.1fs after connection start, manual expert mode keeps stream parameters",
                     startupNoPayloadMs / 1000.0);
@@ -1097,7 +1113,13 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
             Log(LOG_W, @"[diag] Persistent payload stall (%lus >= %lu) detected, attempting reconnect",
                 (unsigned long)self.streamHealthNoPayloadStreak,
                 (unsigned long)kPayloadStallReconnectThreshold);
-            [self attemptReconnectWithReason:@"payload-stall-reconnect"];
+            // P2-2b: hand the decision to the backoff state machine. The
+            // caller-side cooldown remains so each health timer tick cannot
+            // burn a fresh attempt from the shared budget.
+            if (![self scheduleBackoffReconnectWithTrigger:MLReconnectTriggerPayloadStall
+                                                    reason:@"payload-stall-reconnect"]) {
+                Log(LOG_I, @"[diag] payload-stall backoff rejected (host-gone or budget spent)");
+            }
         } else {
             Log(LOG_W, @"[diag] Persistent payload stall (%lus >= %lu) detected, manual expert mode holds parameters",
                 (unsigned long)self.streamHealthNoPayloadStreak,
