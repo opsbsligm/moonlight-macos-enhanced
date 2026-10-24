@@ -3435,7 +3435,8 @@ check(analyzer.returncode == 0, "the analyzer gate can tell a clean tree from a 
 # job now passes --history explicitly: since the battery moved to its own job,
 # the fast job is the only thing on every push that can see a secret in an older
 # commit, and the history walk costs 79 measured seconds there, not 97x anything.
-scan_flags = ["--history"] if (run_battery or "--history" in flags) else []
+# Full history is now larger than 600 MB; keep all rules with a bounded budget.
+scan_flags = ["--history", "--timeout", "900"] if (run_battery or "--history" in flags) else []
 credential = subprocess.run(
     [sys.executable, os.path.join(root, "scripts", "credential-scan-audit.py")]
     + scan_flags,
