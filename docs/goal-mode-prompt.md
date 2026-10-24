@@ -14,10 +14,7 @@
     `Connection.setAudioFocusMuted:` 单入口覆盖 LegacyQueue `kAudioQueueParam_Volume` /
     Enhanced `mainMixerNode.outputVolume`（mute 缓存当前值、regain 恢复 1.0）/
     Direct 渲染回调按 latch 帧级静默（output unit 无公开 volume 参数，编译实证）。
-- GitLab 19 merge 机制（本波踩坑，见 baseline §16）：codex PAT 是 Developer 级无 merge 权限，
-  须走 VM root + `gitlab-rails runner` 调 `MergeService`；审批 `approvals_required=1`，
-  作者自批不计 → 由非作者 `liguangming`（admin, id=1）批准；`params[:sha]` 必须等于
-  `source_branch_sha`。
+- 审批边界：开发分支 → MR → 准确 SHA 的 CI → 实际审核者审批。禁止借 VM root 或 Rails 代替他人审批。
 - 镜像 64 refs 与 GitLab 完全一致；不绕过门禁。
 - 最新 DMG：`build1978`（P2-3a 三后端落地，arm64，本轮 pipeline #482 产物）。用户日常
   `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
@@ -55,7 +52,7 @@
 1. ~~`LiSendMouseMoveAsMousePositionEvent`~~ —— 已落地于 `9426623b`（见 §2）。
 2. 重连退避状态机：
    - ~~terminated + stage-failed + menu retry~~ —— P2-2a (`c5c87fd2`) 已收口（main 8/8 success）。
-   - ~~connect-timeout + startup-no-payload + payload-stall 三个诊断触发点 + host-gone 真 caller~~ —— P2-2b (`41477a83`) 已收口（pipeline #471 8/8 success、mirror #472 retry 8/8 success、MR 3 等 maintainer merge）。
+   - ~~connect-timeout + startup-no-payload + payload-stall 三个诊断触发点 + host-gone 真 caller~~ —— P2-2b (`41477a83`) 已收口（已合并，历史 pipeline #471/#473 success）。
    - 当前覆盖全部 5 类自动 trigger 与 menu retry；host-gone 仅在 graceful (0) 与 unexpected-early (-102) 触发；transient 错误码仍走退避。
 3. ~~qt 对等项打包~~ —— 拆为 §3.2.1 三条独立计划。
 4. **桌面档绝对鼠标默认关**（已写明：旧游戏兼容场景别开）。
@@ -76,13 +73,9 @@
 
 ### 3.3 K1.2 marked text / 候选窗 / 输入法提交（依赖 K1.1 已收口）
 - 真机中文注入未验收；marked text、候选窗、输入法提交、长按重复均属 K1.2。
-- 现状（2026-10-24 复核）：全仓无任何 `NSTextInputClient` 实现，IME 组合态事件
-  （`setMarkedText:range:selectionRange:` / `insertText:replacementRange:` / `unmarkText`）
-  当前被 AppKit 当普通 keyDown 走键码路径，中文输入在主机侧表现为逐次物理键码而非
-  候选词提交。K1.2 = 新建 `HIDIMETextClient`（NSTextInputClient）挂到
-  StreamViewController 的 firstResponder 链，把 insertText 走
-  `LiSendUtf8TextEventCtx`（与 K1.1 同协议）、marked text 做本地状态跟踪（协议层
-  无 marked 事件，见 §15 设计决策）。
+- 现状：没有接通的 `NSTextInputClient` 路径。仅回放 `insertText:` 不构成真实输入法验收。
+- 下一实现须为默认关闭的本地输入法选项；使用公开 TIS 属性读取 API，不能把不透明输入源强转字典，不能按语言白名单判断组合输入法。
+- 组合文本保存实际字符串、选区与屏幕坐标；提交、取消、焦点丢失、断流均需覆盖。原始键码与文本按物理按键保持所有权互斥；不能把提交文本中的换行全部删除后补一个 Enter。
 - 触碰键盘接收路径——若 6 个键盘门禁脚本（keyboard-concurrency /
   keyboard-modifier-mapping / keyboard-shortcut-modifier / keyboard-source-quirk /
   keyboard-unicode-routing / held-modifier-keyboard-pair）任一无法转绿，**只保留 K1.1**，K1.2 关闭。
@@ -111,14 +104,14 @@
 1. 改代码 → `bash scripts/local-gates.sh`（默认快速，完整变异电池仅 `--all`）→ 0 failed，skip 逐项列名
 2. 新行为 → 新增门控脚本（必须含 self-test，证明自己会失败）并接入 CI
 3. `git -c user.email="codex-agent@homelab.local" -c user.name="Codex Agent" commit`
-4. `git push gitlab main`（https://172.16.130.252:8445/moonlight/moonlight-macos-enhanced.git）；push 后等 30s+ 再查准确 SHA 对应 pipeline，全绿才算通过；失败修复后重推，不绕过
+4. `git push gitlab <branch>`，创建指向受保护 main 的 MR；push 后等 30s+ 再查准确 SHA 对应 pipeline，全绿才算通过；失败修复后重推，不绕过
 5. GitHub（opsbsligm）由 `publish-github` job 单向镜像，只读，不手推
 6. 每波写一份 `moonlight-ci-evidence/<日期>-<主题>/release-verification.json`，记录 commit / pipeline / DMG / SHA256 / `hardware_validated` / mirror refs
 
 ## 7. 对标范围（持续维护，不缩水）
 
 - 来源矩阵：`moonlight-qt`（上游客户端）/ `moonlight-common-c`（协议 fork @386e79c）/ `Sunshine` + 基地版（主机）。
-- 竞品矩阵：`Citrix Horizon`（ADMX 证据）/ `Parsec`（无证据，不断言）/ `网易 UU 远程`（宣传面，手机赛道不与桌面客户端直接对照）/ `深信服 aDesk` / `锐捷云桌面`（如需新增列入"待调研"）。
+- 竞品矩阵：`Citrix` 与 `Horizon`（分别评估；旧 ADMX 证据需核对归属）/ `Parsec`（无证据，不断言）/ `网易 UU 远程`（宣传面，手机赛道不与桌面客户端直接对照）/ `深信服 aDesk` / `锐捷云桌面`（如需新增列入"待调研"）。
 - 每格区分：源码 / 官方资料 / 实测 / 宣传 / 未知；既有文档未覆盖的产品继续列为"待调研"，**不编造**已完成全面对标。
 
 ## 8. 关键文件（修改前必须先读）
@@ -159,66 +152,24 @@
 - 对标矩阵原文：`docs/competitive-polish-roadmap-2026-10-20.md`
 - 输入映射证据：`docs/input-mapping-benchmark.md`、`docs/input-mapping-design.md`、`docs/input-mapping-review.md`
 
-## 11. 下一步执行（按本文件 §3 顺序推进，2026-10-24 P2-2b/P2-3a 合并后刷新）
+## 11. 下一步执行
 
-P2-1 / P2-2a / P2-2b / P2-3a（三后端）/ P2-3b 全部已在 main 收口（见 §2），P2 对等补齐
-代码层完成。**下一波开工顺序**：
-1. **K1.2 marked text / 输入法提交**（纯代码可先行；§3.3 现状与门禁边界已写明）：
-   新建 `HIDIMETextClient` 接入 NSTextInputClient 协议；insertText → `LiSendUtf8TextEventCtx`
-   与 K1.1 同协议；marked text 本地跟踪（协议层无 marked 事件）；候选窗选择/回车提交/
-   Esc 取消三态。真机中文注入仍待 build 1978+ 用户验收，`hardware_validated=false`。
-2. **K2 Ctrl+Alt+Del**：仍要用户先在新 build 真机验证 Sunshine / GFE 主机侧 SAS 能否
-   拉起才能开 commit（拉不起就降级为提示，不虚报）。
-3. **P2-3a 三后端真机听觉验收**：装 build1978+ → 选 Direct/Enhanced 音频输出 →
-   失焦/复焦 → 听音量变化 + 滑杆不变（独立真机波，不阻塞 K1.2）。
-每波按 §6 CICD 标准交付，evidence JSON 写齐 `hardware_validated=false` 与 mirror refs。
+1. K1.2：默认关闭的本地输入法实验项，按 §15 的验收契约先建行为回放再接入口。公开 API 使用须查 SDK 与官方文档；不能借动态 selector 绕过不存在的公开 API。
+2. 真机矩阵：使用同一待验收构建覆盖输入、手柄、边栏、音频与重连；每项分别保存主机/客户端版本和结果。
+3. K2：验证主机侧安全注意序列的实际支持，再决定动作入口或提供明确的不可用提示。
+4. 补全对标来源矩阵，按 §7 分别列产品与证据层级；不得以旧矩阵缺失项直接推断当前代码缺失。
+5. 每波开发分支、MR、准确 SHA CI、实际审核者审批；审核未完成保留 MR，不代批。
 
----
+## 12. 历史与现状的界限
 
-## 12. 本轮已落地的非代码工作（2026-10-23 现场刷新）
+历史 CI、DMG、应用安装版本与 refs 数量均注明原验证波次，可能随开发变化。当前交付必须重新读回准确 ref 的流水线与产物；跳过项不能算通过。硬件未验收继续保留 `hardware_validated=false`。
 
-- `docs/baseline-2026-10-22.md` §10 增补：E1/K1.1 收口（v3 核验增量，硬件验证仍 `false`）。
-- `docs/goal-mode-prompt.md` 整体刷新到当前 main = `622132b3` 基点；§3 / §11 明确下一波优先项。
-- 对标矩阵与 roadmap 未动（P0/P1/P2 仍成立），已在 §7 显式列出维护边界。
+## 15. 本轮 review 与下一波验收契约（2026-10-24）
 
-## 13. 未落地的代码工作（等待用户/真机配合，2026-10-24 刷新）
-
-按 AGENTS.md "硬件验证前不写成已完成" 原则，以下必须在用户确认协议可行性后再开 commit：
-
-- **K2 Ctrl+Alt+Del**：扩展 scancode `0x8000` 路径已在 HIDSupport.m 使用（0x8014 等），但
-  **Sunshine / GFE 主机侧对 `Ctrl+Alt+Del` 三键同按的 SAS 拉起行为未经实测**。先要用户
-  配合在真机一次：装 build1978+ → 串流 → 用本地键盘直接发 "Ctrl+Alt+Del" 三键 → 主机侧
-  是否拉起 SAS？若拉起，K2 直接做月亮动作 `sendCtrlAltDel`；若拉不起，降级为"提示用户用
-  主机端工具"，不虚报。
-- **K1.2 marked text**：纯代码可先行（§3.3），但真机中文注入验收必须等 build1978+。
-
----
-
-## 14. 已落地的代码工作（2026-10-23 ~ 2026-10-24）
-
-- **P2-1 自由鼠标走绝对坐标 wire path**：commit `9426623b`，pipeline #430 = 8/8 success；
-  谓词 `HIDShouldRouteRelativeAsAbsolute`（`Limelight/Input/HIDSupport_Internal.h:851`）
-  三条件 = 设置开关 + `mouseMode == "remote"` + 5 秒内有有效绝对参考；UI 仅在 remote
-  模式下显示，默认 false 完全保留旧路径。门禁 `scripts/relative-mouse-as-absolute-tests.py`（24 正向 + 4 行为变异 + 4 self-test 植陷），constraints-audit self-test 段调用本
-  门禁的 `--self-test`。详见 `docs/baseline-2026-10-22.md` §13。
-- 真机侧仍待：主机侧（Sunshine / GFE）连续绝对跟随、首次无参考不跳屏幕中心、
-  锁定模式 / 手柄鼠标仍走相对包、窗口化 / 无边框桌面档主机跟随。
-  `hardware_validated=false` 不变。
-
-- **P2-3a 失焦静音（三后端，默认 off）**：LegacyQueue `4e6fba87`（#433）+
-  **Direct/Enhanced 收口 `254c5dc4`**（pipeline 475 跑中，待 MR 4）。`Connection.setAudioFocusMuted:`
-  公共接口 + latch 不变；LegacyQueue `kAudioQueueParam_Volume`、Enhanced
-  `mainMixerNode.outputVolume`（mute 缓存当前值）、Direct 渲染回调帧级静默（output unit 无公开
-  volume 参数）。UI `SettingsAudioPane` `ToggleCell` + 窗口/app 两层 resign/become 观察者不变。
-  门禁 `scripts/mute-on-focus-loss-tests.py` 扩到 63 正向 + 9 行为变异 + 6 self-test plants。详见
-  `docs/baseline-2026-10-22.md` P2-3a 三后端收口节。`hardware_validated=false` 不变。
-- **P2-3b 失焦抑制手柄事件（默认 off）**：commit `26d20062`，pipeline #434 = 8/8 success；
-  新增独立门 `HIDSupport.suspendControllerEvents` + `ControllerSupport.suspendControllerEvents`
-  （不复用 `shouldSendInputEvents`：那会同时抑制键盘 + 鼠标），6 个 controller-wire 入口 +
-  MFi `updateFinished:` 同步加门。新增 per-host `backgroundGamepad` 默认 false；
-  `SettingsInputPane` 加 `ToggleCell("Background Gamepad Input")`（不改 mouseMode Picker
-  与既有 absoluteMouseMode / relativeMouseAsAbsolute 控件）；4 个焦点观察者对称
-  （window/app resign 按 pref 写 YES，window/app become 无条件恢复 NO，与 P2-3a 音频
-  恢复路径同形）。键盘 + 鼠标路径不挂任何新门。门禁
-  `scripts/background-gamepad-tests.py`（33 正向 + 6 变异 + 6 self-test plants）。
-  详见 `docs/baseline-2026-10-22.md` §15。`hardware_validated=false` 不变。
+- 已撤下本轮未接入的 K1.2 草稿：存在输入源误判、组合范围丢失、候选窗坐标为零、提交函数缺输入准入门等问题。未发布，既有输入路径不变。
+- 当前 §2 表示代码/历史 CI 状态；本轮未重新验证硬件、安装版本、DMG 哈希或全仓镜像，不将这些历史值作为当前验收结论。
+- 首要交付：K1.2 默认关闭实验项，先建立真实方法回放与失败变异，再接生产入口。覆盖英文/游戏按键不变、组合提交/取消、AttributedString、重复键、同键切换路由、失焦/断流取消、候选窗屏幕坐标。
+- 第二交付：统一真机验收矩阵：双控制器身份与隔离、主机能力通告/反馈、中文提交、全屏单双屏边栏、三音频后端焦点恢复、断网退避与主机关闭。
+- 对标补证：moonlight-qt 与本项目源码上游分别列版本；Sunshine 与基地版明确仓库身份；Parsec、UU、Horizon、Citrix、深信服、锐捷分别列来源/平台/版本/验证日期/未知项。旧矩阵保留为历史，不把宣传升级为实测。
+- AI Native 定位：诊断数据结构化、关键事件可订阅、验证结果回流知识库、自然语言动作可追溯；Agent-first OS 与 Agent Swarm 先作架构探索，不引入常驻代理或改变串流热路径。
+- 发布边界：默认行为、原生设置 tabs、已验收边栏手感、协议能力诚实及冻结项均保持；每波交付准确 SHA、MR、CI、跳过清单与 `hardware_validated`。
