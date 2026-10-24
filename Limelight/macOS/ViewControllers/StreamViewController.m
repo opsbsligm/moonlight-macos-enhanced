@@ -479,10 +479,9 @@ highFreqMotor:(unsigned short)highFreqMotor {
         // the ObjCBridge dictionary so the Swift getter does not need an
         // @objc(muteOnFocusLossFor:) rename, and the value stays in lock
         // step with every other per-host preference that lives in the
-        // same dictionary. The Connection no-ops on the LegacyQueue
-        // backend when no audio queue exists yet, and on Direct / Enhanced
-        // backends until a follow-up commit wires their equivalent volume
-        // hooks.
+        // same dictionary. Connection.setAudioFocusMuted: honours all three
+        // audio backends; it no-ops only when the selected backend is not
+        // built yet at mute time.
         BOOL muteOnFocusLoss = NO;
         if (weakSelf.app.host.uuid) {
             NSDictionary *resignPrefs = [SettingsClass getSettingsFor:weakSelf.app.host.uuid];

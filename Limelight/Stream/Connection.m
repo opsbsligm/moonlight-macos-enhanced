@@ -1058,20 +1058,42 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
     }
 }
 
-// P2-3a muteOnFocusLoss: only the LegacyQueue backend honours focus loss
-// today (it owns the AudioQueue we can set kAudioQueueParam_Volume on).
-// The Direct and Enhanced backends route through different volume APIs
-// (AudioUnitSetParameter / AVAudioEngine outputVolume); a follow-up
-// commit will add an equivalent hook without changing this entry point.
+// P2-3a muteOnFocusLoss: every audio backend honours focus loss through
+// this single entry point. Each backend caches its own live output volume
+// before muting (kAudioQueueParam_Volume / kAudioOutputUnitParameterValue_Volume /
+// mainMixerNode.outputVolume) and restores it on focus regain, so the
+// user's per-host volume slider (_audioVolumeMultiplier) is never touched.
 - (void)setAudioFocusMuted:(BOOL)muted {
     if (_audioFocusMuted == muted) {
         return;
     }
     _audioFocusMuted = muted;
+    if (_audioRendererBackend == MLAudioRendererBackendEnhanced &&
+        _enhancedAudioEngine != nil) {
+        float current = _enhancedAudioEngine.mainMixerNode.outputVolume;
+        if (muted) {
+            _audioFocusLastAppliedVolume = current;
+        }
+        _enhancedAudioEngine.mainMixerNode.outputVolume = muted ? 0.0f : 1.0f;
+        Log(LOG_I, @"Focus mute audio updated: backend=%d muted=%d target=%f lastApplied=%f",
+            (int)_audioRendererBackend, muted ? 1 : 0, muted ? 0.0f : 1.0f, _audioFocusLastAppliedVolume);
+        return;
+    }
+    if (_audioRendererBackend == MLAudioRendererBackendDirect &&
+        _audioUnit != NULL) {
+        // The Direct output unit exposes no volume parameter, so the render
+        // callback silences every frame while the latch above is set; regaining
+        // focus clears the latch and audio resumes at normal makeup gain. No
+        // volume is cached here because the user's per-host slider is applied
+        // to the PCM path (copyPCMFrames), not to this unit.
+        Log(LOG_I, @"Focus mute audio updated: backend=%d muted=%d direct_render_gate=%d",
+            (int)_audioRendererBackend, muted ? 1 : 0, muted ? 1 : 0);
+        return;
+    }
     if (_audioRendererBackend != MLAudioRendererBackendLegacyQueue ||
         _audioQueue == NULL) {
-        // Direct / Enhanced: TODO; left untouched so a later commit can
-        // extend without re-plumbing.
+        // Backend not (yet) built: nothing to mute; the latch still flipped
+        // above so the first real resign event after build re-applies.
         return;
     }
     const float target = muted ? 0.0f : 1.0f;
@@ -1989,6 +2011,24 @@ static OSStatus RenderDirectAudioUnit(void *inRefCon,
     UInt32 framesRemaining = inNumberFrames;
     UInt32 frameOffset = 0;
     BOOL interleaved = ioData->mNumberBuffers == 1 && conn->_audioRenderChannelCount > 1;
+    // P2-3a: honour focus-loss mute for the Direct backend. The output unit
+    // has no volume parameter, so while the latch is set the callback zeroes
+    // every frame; regaining focus clears the latch and the normal makeup
+    // gain path resumes.
+    if (conn->_audioFocusMuted) {
+        if (interleaved) {
+            memset(ioData->mBuffers[0].mData, 0,
+                   inNumberFrames * conn->_audioRenderChannelCount * sizeof(float));
+            ioData->mBuffers[0].mDataByteSize =
+                inNumberFrames * conn->_audioRenderChannelCount * sizeof(float);
+        } else {
+            for (UInt32 channel = 0; channel < ioData->mNumberBuffers; channel++) {
+                memset(ioData->mBuffers[channel].mData, 0, inNumberFrames * sizeof(float));
+                ioData->mBuffers[channel].mDataByteSize = inNumberFrames * sizeof(float);
+            }
+        }
+        return noErr;
+    }
     while (framesRemaining > 0) {
         UInt32 chunkFrames = MIN(framesRemaining, (UInt32)AUDIO_RENDER_SCRATCH_FRAMES);
         [conn copyPCMFrames:chunkFrames toInterleavedBuffer:conn->_audioRenderScratchBuffer];
