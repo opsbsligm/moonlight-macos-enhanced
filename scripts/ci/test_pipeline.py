@@ -115,6 +115,10 @@ class PipelineTests(Sandbox):
         self.assertNotIn("needs", publisher, "DAG needs must not bypass the stage barrier")
         self.assertEqual(publisher["resource_group"], "github-mirror")
         self.assertFalse(publisher["interruptible"])
+        self.assertEqual(publisher["tags"], ["gitlab-mirror"])
+        self.assertEqual(publisher["script"], [
+            "MIRROR_DRY_RUN=1 python3 scripts/ci/publish-github.py",
+            "python3 scripts/ci/publish-github.py"])
         for name in gates + ["package-dmg", "publish-github"]:
             self.assertIn("timeout", CI[name])
             self.assertFalse(CI[name].get("allow_failure", False))
