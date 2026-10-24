@@ -2293,7 +2293,17 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
 }
 
 - (void)reconnectFromMenu:(id)sender {
-    [self attemptReconnectWithReason:@"menu"]; 
+    // P2-2: the user's own retry goes through the state machine so it burns no
+    // backoff attempt, cancels any countdown already running, and lands on the
+    // same executor as every automatic retry.
+    [self.reconnector requestImmediateReconnectFromMenuWithReason:@"menu"
+                                                beginReconnectNow:^(MLReconnectTrigger trigger,
+                                                                    NSUInteger attempt,
+                                                                    NSString *reason) {
+        (void)trigger;
+        (void)attempt;
+        [self attemptReconnectWithReason:reason ?: @"menu"];
+    }];
 }
 
 - (void)selectConnectionMethodFromMenu:(NSMenuItem *)sender {

@@ -7,6 +7,7 @@
 //
 
 #import "StreamViewController_Internal.h"
+#import "MLStreamReconnector.h"
 
 static NSScreen *MLScreenContainingMouseLocation(void) {
     NSPoint mouseLocation = [NSEvent mouseLocation];
@@ -265,6 +266,12 @@ highFreqMotor:(unsigned short)highFreqMotor {
     self.didAutoReconnectAfterTimeout = NO;
     self.streamOpQueue = [[NSOperationQueue alloc] init];
     self.streamOpQueue.maxConcurrentOperationCount = 1;
+    if (!self.reconnector) {
+        // P2-2: state machine that owns the backoff timer + attempt counter.
+        // Single instance for the controller lifetime; cleared on successful
+        // reconnect, cancelled on user-initiated disconnect.
+        self.reconnector = [[MLStreamReconnector alloc] init];
+    }
     self.streamHealthSawPayload = NO;
     self.streamHealthNoPayloadStreak = 0;
     self.streamHealthNoDecodeStreak = 0;
@@ -697,6 +704,9 @@ highFreqMotor:(unsigned short)highFreqMotor {
     // If we are intentionally stopping, don't attempt auto-reconnect.
     self.shouldAttemptReconnect = NO;
     self.reconnectInProgress = NO;
+    // P2-2: user-initiated stop cancels any in-flight backoff so the timer
+    // never fires after the window has been torn down.
+    [self.reconnector cancelWithReason:reason ?: @"user-stop"];
 
     // Treat window close / quit shortcuts as a user-initiated disconnect to avoid
     // showing transient "connection is slow" warnings during teardown.
@@ -1157,6 +1167,10 @@ highFreqMotor:(unsigned short)highFreqMotor {
 - (void)prepareForStreaming {
     [self stopStreamHealthDiagnostics];
     [self resetStreamHealthDiagnostics];
+    // P2-2: starting a generation ends any pending attempt, but the backoff
+    // budget stays spent. Every retry lands here, so clearing the count would
+    // make each attempt wait one second again and the ceiling never be reached.
+    [self.reconnector resetForNextAttemptWithReason:@"new-stream-generation"];
     self.pendingDisconnectSource = nil;
     self.activeStreamGeneration += 1;
     NSUInteger streamGeneration = self.activeStreamGeneration;
@@ -1686,6 +1700,11 @@ highFreqMotor:(unsigned short)highFreqMotor {
         self.pendingDisconnectSource = nil;
         [self startStreamHealthDiagnostics];
         self.streamHealthConnectionStartedMs = [self nowMs];
+        // P2-2: the stream is real now, so the backoff budget is returned and
+        // any pending attempt is dropped. The reconnect overlay is hidden by
+        // the reconnectInProgress block below, the same way it always was.
+        [self.reconnector recordSuccess];
+        self.reconnectAttemptCount = 0;
         [self refreshInputDiagnosticsPreference];
         [self scheduleInitialRenderedFrameCheckForGeneration:self.activeStreamGeneration remainingAttempts:80];
 
@@ -1864,11 +1883,22 @@ highFreqMotor:(unsigned short)highFreqMotor {
              return;
         }
 
-        // Once a stream has been established, any termination here should close the stream window
-        // instead of leaving the last frame or an error page behind. Launch/setup failures are
-        // handled separately by stageFailed/launchFailed.
+        // P2-2: the backoff state machine decides whether this termination is
+        // worth a retry and when to try. When it takes ownership we keep the
+        // window open; the teardown and relaunch still go through
+        // attemptReconnectWithReason:, the one executor that already releases
+        // HID state, preserves the window mode, bumps the generation and
+        // suppresses the transient warnings.
+        NSString *termReason = [NSString stringWithFormat:@"connection-terminated:%d", errorCode];
+        if ([self scheduleBackoffReconnectWithTrigger:MLReconnectTriggerConnectionTerminated
+                                               reason:termReason]) {
+            Log(LOG_I, @"[diag] Reconnect scheduled: attempt=%lu reason=%@",
+                (unsigned long)self.reconnector.attemptCount, termReason);
+            return;
+        }
+        // Backoff exhausted or host gone: close the window as before.
         if (errorCode != 0) {
-            Log(LOG_W, @"[diag] Closing stream window after non-zero termination code: %d", errorCode);
+            Log(LOG_W, @"[diag] Closing stream window after non-zero termination code: %d (no reconnect)", errorCode);
         }
 
         if ([SettingsClass quitAppAfterStreamFor:self.app.host.uuid]) {
@@ -1888,6 +1918,9 @@ highFreqMotor:(unsigned short)highFreqMotor {
         return;
     }
     Log(LOG_I, @"Stage %s failed: %ld", stageName, (long)errorCode);
+    // The handler zeroes that marker a few lines down; the backoff gate has to
+    // know whether a connection ever existed for this attempt.
+    BOOL hadEstablishedConnection = (self.streamHealthConnectionStartedMs != 0);
     self.connectWatchdogToken += 1;
     [self.hidSupport tearDownKeyboardStateForSessionEnd:"stage-failed"];
     [self.controllerSupport releaseRemoteMouseButtonsForUncapture];
@@ -1903,6 +1936,20 @@ highFreqMotor:(unsigned short)highFreqMotor {
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
             [weakSelf.streamMan stopStream];
         });
+    }
+    // P2-2: a stage failure before any connection existed usually means a
+    // transient handshake problem while the host is still up, so it goes
+    // through the same backoff. After a connection did exist, a stage failure
+    // usually means protocol drift -- close as before.
+    if (!hadEstablishedConnection &&
+        self.shouldAttemptReconnect && !self.disconnectWasUserInitiated) {
+        NSString *stageReason = [NSString stringWithFormat:@"stage-failed:%s", stageName ?: "unknown"];
+        if ([self scheduleBackoffReconnectWithTrigger:MLReconnectTriggerStageFailed
+                                               reason:stageReason]) {
+            Log(LOG_I, @"[diag] Stage-failed reconnect scheduled: attempt=%lu reason=%@",
+                (unsigned long)self.reconnector.attemptCount, stageReason);
+            return;
+        }
     }
     [self closeWindowFromMainQueueWithMessage:[NSString stringWithFormat:@"%s failed with error %d", stageName, errorCode]];
 }
@@ -2508,6 +2555,79 @@ highFreqMotor:(unsigned short)highFreqMotor {
             snapshot.name.UTF8String ?: "");
         [self applyReceivedClipboardSnapshot:snapshot];
     });
+}
+
+#pragma mark - P2-2 reconnect backoff
+
+// One decision point for every automatic trigger. Returns YES when the
+// reconnector took ownership -- the caller then keeps the window open and says
+// nothing more; NO means the caller closes/reports exactly as before.
+- (BOOL)scheduleBackoffReconnectWithTrigger:(MLReconnectTrigger)trigger
+                                     reason:(NSString *)reason {
+    NSAssert([NSThread isMainThread], @"backoff scheduling must run on the main thread");
+    __weak typeof(self) weakSelf = self;
+    BOOL scheduled = [self.reconnector requestReconnectFromTrigger:trigger
+                                                        withReason:reason
+                                                   startupElapsedMs:[self streamStartupElapsedMs]
+                                                   shouldReconnect:^BOOL{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return NO;
+        }
+        // The manual reconnect path gates on these two flags; the backoff has
+        // to respect the same gates or a user stop would resurrect the stream.
+        return strongSelf.shouldAttemptReconnect && !strongSelf.disconnectWasUserInitiated;
+    }
+                                                beginReconnectNow:^(MLReconnectTrigger fireTrigger,
+                                                                    NSUInteger attempt,
+                                                                    NSString *fireReason) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
+        // The user can close the window while the timer is running.
+        if (strongSelf.stopStreamInProgress || strongSelf.disconnectWasUserInitiated ||
+            strongSelf.reconnector.hostConfirmedGone) {
+            Log(LOG_I, @"[diag] Backoff attempt skipped: stop=%d user=%d hostGone=%d",
+                strongSelf.stopStreamInProgress ? 1 : 0,
+                strongSelf.disconnectWasUserInitiated ? 1 : 0,
+                strongSelf.reconnector.hostConfirmedGone ? 1 : 0);
+            strongSelf.reconnectInProgress = NO;
+            [strongSelf hideReconnectOverlay];
+            return;
+        }
+        Log(LOG_I, @"[diag] Backoff attempt fired: trigger=%ld attempt=%lu reason=%@",
+            (long)fireTrigger, (unsigned long)attempt, fireReason ?: @"");
+        // attemptReconnectWithReason: shows its own overlay and counts attempts,
+        // so the retry shares one execution path with the manual and stall paths.
+        [strongSelf attemptReconnectWithReason:fireReason ?: @"backoff"];
+    }];
+    if (scheduled) {
+        // Retire the connect watchdog for the length of the wait. It keeps the
+        // token from surfacing a second error overlay over the countdown, and
+        // without this its own auto-reconnect could start an attempt that
+        // bypasses the budget. prepareForStreaming arms a fresh watchdog when
+        // the attempt actually starts. reconnectInProgress stays clear: the
+        // manual executor rejects a request while that flag is set, so claiming
+        // it here would make the scheduled attempt refuse itself.
+        self.connectWatchdogToken += 1;
+        NSString *msg = [NSString stringWithFormat:MLString(@"Reconnecting… (%ld of %ld)", nil),
+                         (long)self.reconnector.attemptCount, (long)self.reconnector.maxAttempts];
+        [self showReconnectOverlayWithMessage:msg];
+    }
+    return scheduled;
+}
+
+- (uint64_t)streamStartupElapsedMs {
+    if (self.streamHealthConnectionStartedMs == 0) {
+        return 0;
+    }
+    return [self nowMs] - self.streamHealthConnectionStartedMs;
+}
+
+- (void)markHostConfirmedGoneFromDiagnosticsWithReason:(NSString *)reason {
+    NSAssert([NSThread isMainThread], @"marking the host gone must run on the main thread");
+    [self.reconnector markHostConfirmedGoneWithReason:reason ?: @"diagnostics"];
 }
 
 @end

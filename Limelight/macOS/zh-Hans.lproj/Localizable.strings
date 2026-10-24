@@ -320,6 +320,7 @@
 "Poor Connection" = "⚠️ 连接质量差";
 "Reconnecting…" = "重新连接中…";
 "Reconnecting… (%ld)" = "重新连接中…（%ld）";
+"Reconnecting… (%ld of %ld)" = "重新连接中…（第 %1$ld / %2$ld 次）";
 
 "Gamepad Mouse Emulation (!)" = "手柄模拟鼠标";
 "Gamepad Mouse Hint" = "使用手柄模拟鼠标。右摇杆移动，A 键点击。";

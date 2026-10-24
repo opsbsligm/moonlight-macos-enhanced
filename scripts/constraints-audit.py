@@ -3583,6 +3583,20 @@ check(bgp_rules.returncode == 0,
       "the background-gamepad self-test failed:\n"
       + (bgp_rules.stdout + bgp_rules.stderr)[-900:])
 
+# P2-2 reconnect backoff: same parity shape as the background-gamepad gate.
+# The workflow lists it, local-gates.sh runs it, and the parity rule needs to see
+# the local half actually run the same self-test CI runs -- otherwise a countdown
+# regression is only caught on a runner, which is the gap this rule exists to close.
+rco_rules = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "reconnect-backoff-tests.py"),
+     "--self-test"],
+    capture_output=True, text=True, cwd=root)
+check(rco_rules.returncode == 0,
+      "the reconnect-backoff self-test stays green"
+      if rco_rules.returncode == 0 else
+      "the reconnect-backoff self-test failed:\n"
+      + (rco_rules.stdout + rco_rules.stderr)[-900:])
+
 # What a DMG has to be is a three-part rule, and until now the repository had none
 # of it: the packaging step fell back from create-dmg to a bare `hdiutil create`
 # with `||`, which succeeds and produces an image with no Applications drop target,

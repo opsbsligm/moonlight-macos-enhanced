@@ -10,6 +10,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import "StreamViewMac.h"
 #import "GlassOverlayContainer.h"
+#import "MLStreamReconnector.h"
 #import "AppsViewController.h"
 #import "NSWindow+Moonlight.h"
 #import "AlertPresenter.h"
@@ -404,6 +405,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) BOOL useSystemControllerDriver;
 @property (nonatomic, strong) StreamManager *streamMan;
 @property (nonatomic, strong) NSOperationQueue *streamOpQueue;
+@property (nonatomic, strong) MLStreamReconnector *reconnector;
 @property (nonatomic, readonly) StreamViewMac *streamView;
 @property (nonatomic, strong) id windowDidExitFullScreenNotification;
 @property (nonatomic, strong) id windowDidEnterFullScreenNotification;
@@ -746,6 +748,13 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (void)stopClipboardMonitor;
 - (void)handleClipboardMonitorTick;
 - (void)sendCurrentLocalClipboardIfNeeded;
+
+// P2-2 reconnect backoff. The decision lives in MLStreamReconnector; these are
+// the stream controller's own entry points, implemented next to the triggers
+// that call them, so they belong to the main class rather than a category.
+- (BOOL)scheduleBackoffReconnectWithTrigger:(MLReconnectTrigger)trigger reason:(NSString *)reason;
+- (uint64_t)streamStartupElapsedMs;
+- (void)markHostConfirmedGoneFromDiagnosticsWithReason:(NSString *)reason;
 
 @end
 
