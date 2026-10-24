@@ -1,4 +1,4 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-24 P2-2b + P2-3a 双 MR 合并落地刷新）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-25 K1.2/SAS 门禁在途刷新）
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
@@ -15,6 +15,11 @@
     Enhanced `mainMixerNode.outputVolume`（mute 缓存当前值、regain 恢复 1.0）/
     Direct 渲染回调按 latch 帧级静默（output unit 无公开 volume 参数，编译实证）。
 - 审批边界：开发分支 → MR → 准确 SHA 的 CI → 实际审核者审批。禁止借 VM root 或 Rails 代替他人审批。
+- 在途待 owner（liguangming）Web UI 批 MR（Codex 账号 Developer 不能自批）：
+  - **MR 5** = 本刷新（`docs-goal-mode-refresh-b65db5fb`）；
+  - **MR 6** = K1.2 本地输入法组合（`k1-2-local-ime-composition` @ `5c0dbfa3`，pipeline #487 7/7 success）；
+  - **MR 7** = SAS 门禁补进 GitLab（`ci/sas-preset-gate` @ `7223f23d`，pipeline #489 7/7 success，
+    merge pipeline #490 全绿）。evidence 20261025-k1-2-local-ime/。
 - 镜像 64 refs 与 GitLab 完全一致；不绕过门禁。
 - 最新 DMG：`build1978`（P2-3a 三后端落地，arm64，本轮 pipeline #482 产物）。用户日常
   `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
@@ -38,15 +43,22 @@
 | P2-2b 诊断触发器 + host-gone 真 caller | `41477a83`（merge `3b5ae07c`）| 代码完成 / CI 全绿（#471/#473）/ 真机待 | connect-timeout / startup-no-payload / payload-stall 接入退避；graceful + unexpected-early trigger `markHostConfirmedGoneFromDiagnosticsWithReason:`；transient 错误码仍走退避 |
 | P2-3a 失焦静音（三后端）| `4e6fba87` + `dc1135bc`（merge `b65db5fb`）| 代码完成 / CI 全绿（#482）/ 真机待 | `Connection.setAudioFocusMuted:` 单入口：LegacyQueue `kAudioQueueParam_Volume` / Enhanced `mainMixerNode.outputVolume` / Direct 渲染回调帧级静默；默认 false |
 | P2-3b 失焦抑制手柄事件 | `26d20062` | 代码完成 / CI 全绿 / 真机待 | 6 个 controller-wire 入口 + MFi `updateFinished:` 加门；4 焦点观察者对称；默认 off；键盘/鼠标不挂门 |
+| K1.2 本地输入法组合 | `5c0dbfa3`（MR 6，待批） | 代码完成 / CI 全绿（#487）/ 真机待 | `HIDLocalIME` NSTextInputClient；per-host `imeLocalComposition` 默认 off；uncapture 先 flush 再 end；`keyboard-ime-routing-tests` 双管线 |
+| SAS 预置规则 GitLab 门禁 | `7223f23d`（MR 7，待批） | CI 全绿（#489/#490）/ 待合 | `sas-preset-tests.py` 补进 GitLab test job；SAS 功能本体早在 `6968286d`（翻译规则预置） |
 
 ## 3. 待开工（按优先级，不依赖真机排期）
 
 > 所有未开工项必须遵守：默认值 = 当前行为、UI 纯新增、门控先证明自己会失败再放开。
 
-### 3.1 K2 Ctrl+Alt+Del（无依赖，可并行）
-- 扩展 scancode 0x8000 路径已在用；新增月亮动作 `sendCtrlAltDel`，走现有扩展 scancode。
-- 先真机验证 Sunshine / GFE 主机能否拉起 SAS；拉不起则降级为"提示用户用主机端工具"，**不虚报**。
-- 门控：scancode 0x8000 路径 + 快捷键注册 + 月亮动作配置的真谓词回放；至少 3 项行为变异（无 CAS 走 / 误发送到非 SAS / 与现有 Ctrl+Alt+Tab 等组合冲突）。
+### 3.1 K2 Ctrl+Alt+Del（2026-10-25 复核：功能本体已存在）
+- **SAS 能力本体早在 `6968286d`（2026-09-20）落地**：`KeyboardTranslationProfile.secureAttentionSequencePresetRule()`
+  在设置 > 快捷键 > "Add Preset Rule" 提供预置翻译规则，Ctrl+Option+FwdDel（macOS 键位）→
+  Ctrl+Alt+FwdDel（主机 SAS 键位），走已有 translation-rule 机制，`sas-preset-tests.py` 守护。
+- 机制选择 = 发现性而非新机制：macOS 不像 Windows 吞 SAS，普通转发路径本就能送三键；玩家缺的是找到它的方式。
+- **剩余缺口（已修，MR 7）**：该门禁此前只接在 GitHub workflow（镜像侧），GitLab 事实源缺跑 →
+  `7223f23d` 补进 GitLab test job。
+- **真机验证仍待**：用户装新 build 串流 → 用预置规则（或默认 Ctrl+Alt+FwdDel 直发）→ 主机 SAS 是否拉起。
+  拉不起 → 文档降级为"提示用主机端工具"，不虚报。
 
 ### 3.2 P2 对等补齐（各自独立小提交，可与 K2 并行）
 1. ~~`LiSendMouseMoveAsMousePositionEvent`~~ —— 已落地于 `9426623b`（见 §2）。
@@ -72,6 +84,9 @@
   默认 off 保留 shipped 行为；键盘 + 鼠标路径不挂新门。详见 §14 + baseline §15。
 
 ### 3.3 K1.2 marked text / 候选窗 / 输入法提交（依赖 K1.1 已收口）
+- 实现已提交（MR 6 `5c0dbfa3`，见 §2）：`HIDLocalIME`（`MLLocalIMETextClient` + `MLLocalIMESession`）挂
+  keyDown/keyUp/flagsChanged；`HIDIMECurrentInputSourceComposes` 走 TIS 公开属性；候选窗屏幕坐标；
+  原始键码与文本所有权互斥；断流 uncapture 先 flush 再 end。验收契约以 §15 为准，真机取证待 owner 批 MR 后。
 - 真机中文注入未验收；marked text、候选窗、输入法提交、长按重复均属 K1.2。
 - 现状：没有接通的 `NSTextInputClient` 路径。仅回放 `insertText:` 不构成真实输入法验收。
 - 下一实现须为默认关闭的本地输入法选项；使用公开 TIS 属性读取 API，不能把不透明输入源强转字典，不能按语言白名单判断组合输入法。
@@ -154,11 +169,15 @@
 
 ## 11. 下一步执行
 
-1. K1.2：默认关闭的本地输入法实验项，按 §15 的验收契约先建行为回放再接入口。公开 API 使用须查 SDK 与官方文档；不能借动态 selector 绕过不存在的公开 API。
-2. 真机矩阵：使用同一待验收构建覆盖输入、手柄、边栏、音频与重连；每项分别保存主机/客户端版本和结果。
-3. K2：验证主机侧安全注意序列的实际支持，再决定动作入口或提供明确的不可用提示。
-4. 补全对标来源矩阵，按 §7 分别列产品与证据层级；不得以旧矩阵缺失项直接推断当前代码缺失。
-5. 每波开发分支、MR、准确 SHA CI、实际审核者审批；审核未完成保留 MR，不代批。
+（2026-10-25 刷新）**代码层里程碑 0.1→P2 已全部在 main**；在途 MR 5/6/7 待 owner 批，批准后 main 即含 K1.2 + SAS 门禁。
+
+1. **owner 批 MR**（Web UI，顺序不限，建议 MR 7 先行、MR 6 次之、MR 5 收尾）；每 MR 合入后回读 main pipeline 全绿。
+2. **真机验收矩阵**（不阻塞代码侧）：用户装新 DMG（build ≥ 1978）→ 串流 → 逐项取证：
+   0.1 双手柄诊断分类 / 0.2 双手柄互不覆盖 / M1–M4 主机侧类型、震动、IMU、电量、触摸板 /
+   K1.1 中文 + emoji / **K1.2 本地输入法组合（MR 6 合入后 build 上开 per-host 开关验 §15 契约）** /
+   K2 SAS 拉起 / E1 单双屏边栏 / P2-1 绝对鼠标 / P2-2 断网退避与主机关闭 / P2-3a 三后端失焦静音 / P2-3b 后台手柄抑制。
+3. **下一波代码**（若 owner 认可继续）：补全对标来源矩阵（§7 分产品列证据层级），其余 P2 对等项已全落地，无新增开工项。
+4. 每波开发分支、MR、准确 SHA CI、实际审核者审批；审核未完成保留 MR，不代批。
 
 ## 12. 历史与现状的界限
 
