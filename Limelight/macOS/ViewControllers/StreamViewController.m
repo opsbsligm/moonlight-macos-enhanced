@@ -1889,6 +1889,17 @@ highFreqMotor:(unsigned short)highFreqMotor {
         // attemptReconnectWithReason:, the one executor that already releases
         // HID state, preserves the window mode, bumps the generation and
         // suppresses the transient warnings.
+        // P2-2b: tell the backoff state machine when the host has confirmed
+        // it is gone, so any pending timer stops and further triggers are
+        // rejected. These two codes are the only ones the moonlight-common-c
+        // set documents as "host-initiated or unexpected host-side drop";
+        // everything else is a transient we should still try to recover from.
+        if (errorCode == ML_ERROR_GRACEFUL_TERMINATION ||
+            errorCode == ML_ERROR_UNEXPECTED_EARLY_TERMINATION) {
+            NSString *goneReason = [NSString stringWithFormat:@"connection-terminated-host-gone:%d", errorCode];
+            [self markHostConfirmedGoneFromDiagnosticsWithReason:goneReason];
+            Log(LOG_I, @"[diag] Host confirmed gone (errorCode=%d); stopping further reconnect attempts", errorCode);
+        }
         NSString *termReason = [NSString stringWithFormat:@"connection-terminated:%d", errorCode];
         if ([self scheduleBackoffReconnectWithTrigger:MLReconnectTriggerConnectionTerminated
                                                reason:termReason]) {
