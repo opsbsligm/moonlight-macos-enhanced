@@ -242,6 +242,7 @@ audit:sources:
     - python3 scripts/reconnect-backoff-tests.py --self-test
     - python3 scripts/keyboard-unicode-routing-tests.py
     - python3 scripts/keyboard-ime-routing-tests.py
+    - python3 scripts/sas-preset-tests.py
     - python3 scripts/edge-sensor-e1-clamp-tests.py --self-test
   rules: *pipeline_rules
 
