@@ -875,6 +875,21 @@ jobs:
       # title comparison to prove the English case can still fail.
       run: python3 scripts/stream-menu-addressing-tests.py
 
+    - name: Verify a dropped stream retries with backoff rather than forever
+      # Three shapes made the old reconnect behaviour impossible to reason about:
+      # every trigger carried its own inline decision, the attempt counter was
+      # refunded by the very retry path it had just started, and the countdown
+      # timer sat in the default runloop mode inside a fullscreen space. Each is
+      # a behaviour, not a compile error. The harness reads the state machine and
+      # both call sites and asks: does a retry run on the one executor, does the
+      # budget survive the generation it started, does a coalesce spend a second
+      # attempt, and is the countdown a localised sentence rather than a literal.
+      # Fourteen planted defects have to turn it red; three of them did while
+      # this change was being written, which is what the battery is for.
+      run: |
+        python3 scripts/reconnect-backoff-tests.py
+        python3 scripts/reconnect-backoff-tests.py --self-test
+
     - name: Verify the settings page renders embedded
       # Goals that are visual cannot be signed off by a compile, and the two
       # visual goals here were waiting on a human eye that was not available. The

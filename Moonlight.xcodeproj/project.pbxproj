@@ -107,6 +107,8 @@
 				"macOS/Helpers/Functional/NSNumber+F.m",
 				macOS/Helpers/Helpers.m,
 				macOS/Helpers/MLPageBaseView.m,
+				macOS/Helpers/MLStreamReconnector.m,
+				macOS/Helpers/MLStreamReconnector.h,
 				macOS/Helpers/ImageFader.m,
 				macOS/Helpers/LanguageManager.swift,
 				macOS/Helpers/MASPreferences/MASPreferencesWindow.xib,
