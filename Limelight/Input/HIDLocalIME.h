@@ -1,6 +1,7 @@
 #pragma once
 #import <AppKit/AppKit.h>
 
+NS_ASSUME_NONNULL_BEGIN
 // K1.2 local IME composition (default off). The document half of the pair the
 // system text input context types into: it holds the in-progress marked text
 // and the committed text that HIDSupport sends to the host. One client per
@@ -40,6 +41,7 @@
 // Cancel any in-progress composition, deactivate the context, reset the client.
 - (void)end;
 // Return the pending commit (and clear it), or nil when there is none.
-- (NSString *)drainCommit;
+- (nullable NSString *)drainCommit;
 
 @end
+NS_ASSUME_NONNULL_END
