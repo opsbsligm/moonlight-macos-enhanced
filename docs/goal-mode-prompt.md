@@ -4,11 +4,11 @@
 
 ## 1. 当前基点（截至 2026-10-24 P2-1 收口后）
 
-- 代码基点 main = `<P2-3a 待提交>`（P2-3a：失焦静音，仅 LegacyQueue 音频后端；Direct / Enhanced 留 TODO，默认 false）。
-- pipeline 待跑（提交后 30s 再查准确 SHA）；evidence 待落 `moonlight-ci-evidence/20261024-p2-3a-mute-on-focus-loss/`；本地门禁 96 通过 / 1 失败（`liquid-glass-tab-bar-tests.py` inspector SIGSEGV，clean tree 同，CI Mac M2 runner 通过的环境差异）/ 15 跳过。
-- 最新 DMG：上轮 `build1968`（P2-1, arm64, sha256 `89d557aa4a8afbd5bf652befdcc9e084eefcb0c2fec53c1d2a2dce97d157b3ac`）；本轮 build 号未定（commit 时 CI 会注入）。用户日常 `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
-- 镜像 60 refs 与 GitLab 完全一致；不绕过门禁。
-- `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/E1/P2-1/P2-3a 全是代码层完成 + 真机待取证。
+- 代码基点 main = `81da9f95d4a6da310a203b962b9db1f012eab4f5`（含 P2-1 / P2-3a / P2-3b / P2-2a / MR 2 凭据扫描提速 + 镜像隔离）。下一波 P2-2b 已推到分支 `p2-2b-stall-watchdog-backoff`，MR 3 `https://www.bsligm.com:8445/moonlight/moonlight-macos-enhanced/-/merge_requests/3` 等 maintainer merge（Developer PAT 无 merge 权限）。
+- P2-2b commit `41477a83`：三处诊断 reconnect（connect-timeout-auto / startup-no-payload / payload-stall）接入退避状态机；`markHostConfirmedGoneWithReason:` 真 caller 只对 `ML_ERROR_GRACEFUL_TERMINATION (0)` 与 `ML_ERROR_UNEXPECTED_EARLY_TERMINATION (-102)` 触发。pipeline #471 8/8 success（515s），mirror #472 retry 8/8 success（452s），GitHub 分支头 SHA 与 GitLab 严格一致。
+- 最新 DMG：上轮 `build1972`（P2-3b, arm64, sha256 `276d6e0259924156aa3f3591b94e9f5b22e95b6cb4454f678731ad48ec64e0b0`）；本轮 build 待 maintainer merge + CI 注入。用户日常 `/Applications/MoonlightEnhanced.app` 仍是 **build1926**，真机验收前需装新 DMG。
+- 本机 sweep：101 通过 / 0 失败 / 15 跳过（与上轮同基线；`liquid-glass-tab-bar-tests.py` 本机 inspector SIGSEGV 是已知环境差异，CI runner 通过）。
+- `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/E1/P2-1/P2-2a/P2-2b/P2-3a/P2-3b 全是代码层完成 + 真机待取证。
 
 ## 2. 已完成（代码层；CI/产物验收；真机仍待）
 
@@ -23,7 +23,10 @@
 | K1.1 可打印 Unicode | `34e921a3`/`798050d9`/`08616a19` | 代码完成 / 真机待 | 与键码路径互斥 |
 | E1 边缘栏参数化 | `622132b3` | 代码完成 / 真机待 | 感应带 8–16pt / 驻留 60–300ms / 收起 300–1000ms，默认值 = 现常量 |
 | P2-1 自由鼠标走绝对坐标 wire path | `9426623b` | 代码完成 / 真机待 | 默认关闭；UI 纯新增；谓词三条件，5 秒绝对参考 |
-| P2-3a 失焦静音（LegacyQueue only）| `<P2-3a 待提交>` | 代码完成 / CI 待 / 真机待 | `Connection.setAudioFocusMuted:` 入口 + LegacyQueue AudioQueueSetParameter 路径；Direct/Enhanced TODO；默认 false |
+| P2-2a 退避状态机（terminated/stage/menu）| `c5c87fd2` | 代码完成 / 真机待 | `MLStreamReconnector` 1s/3s/9s，host-gone wrapper 写出但当时无 production caller |
+| P2-2b 诊断触发器 + host-gone 真 caller | `41477a83` | 代码完成 / CI 全绿 / 真机待 | connect-timeout / startup-no-payload / payload-stall 接入退避；graceful + unexpected-early trigger `markHostConfirmedGoneFromDiagnosticsWithReason:` |
+| P2-3a 失焦静音（LegacyQueue only）| `4e6fba87` | 代码完成 / CI 全绿 / 真机待 | `Connection.setAudioFocusMuted:` 入口 + LegacyQueue AudioQueueSetParameter 路径；Direct/Enhanced TODO；默认 false |
+| P2-3b 失焦抑制手柄事件 | `26d20062` | 代码完成 / CI 全绿 / 真机待 | 6 个 controller-wire 入口 + MFi `updateFinished:` 加门；4 焦点观察者对称；默认 off；键盘/鼠标不挂门 |
 
 ## 3. 待开工（按优先级，不依赖真机排期）
 
@@ -36,7 +39,10 @@
 
 ### 3.2 P2 对等补齐（各自独立小提交，可与 K2 并行）
 1. ~~`LiSendMouseMoveAsMousePositionEvent`~~ —— 已落地于 `9426623b`（见 §2）。
-2. **重连退避状态机**：现有 5 种触发点统一退避（1s/3s/9s 最多 N 次）+ "主机确认消失即停"判据；重连期间输入入队上限保留。
+2. 重连退避状态机：
+   - ~~terminated + stage-failed + menu retry~~ —— P2-2a (`c5c87fd2`) 已收口（main 8/8 success）。
+   - ~~connect-timeout + startup-no-payload + payload-stall 三个诊断触发点 + host-gone 真 caller~~ —— P2-2b (`41477a83`) 已收口（pipeline #471 8/8 success、mirror #472 retry 8/8 success、MR 3 等 maintainer merge）。
+   - 当前覆盖全部 5 类自动 trigger 与 menu retry；host-gone 仅在 graceful (0) 与 unexpected-early (-102) 触发；transient 错误码仍走退避。
 3. ~~qt 对等项打包~~ —— 拆为 §3.2.1 三条独立计划。
 4. **桌面档绝对鼠标默认关**（已写明：旧游戏兼容场景别开）。
 

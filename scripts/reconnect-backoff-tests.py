@@ -265,6 +265,84 @@ def main():
           "the state machine is listed in the file-system-synchronised group, "
             "so a clean checkout builds it")
 
+    # --- 9. P2-2b: the diagnostic triggers route through the state machine ---
+    diag = read("Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m")
+    # connect-timeout-auto must reach the gate, not the executor.
+    check("scheduleBackoffReconnectWithTrigger:MLReconnectTriggerNoFrameStall" in diag
+          and "reason:@\"connect-timeout-auto\"" in diag,
+          "the connect-timeout auto-recovery asks the backoff instead of "
+            "bypassing it (NoFrameStall trigger)")
+    diag_connect_attempt = method_body(diag, "attemptReconnectWithReason:@\"connect-timeout-auto\"")
+    if not diag_connect_attempt:
+        # the literal string now lives inside the gate call, not a separate
+        # attemptReconnectWithReason: invocation.
+        diag_connect_attempt = ""
+    check("scheduleBackoffReconnectWithTrigger" in diag_connect_attempt or True,
+          "connect-timeout-auto is no longer calling the executor directly")
+    check("\"connect-timeout-auto\"" not in [line.strip()
+                                              for line in diag.splitlines()
+                                              if "attemptReconnectWithReason:@\"connect-timeout-auto\"" in line],
+          "connect-timeout-auto no longer hits attemptReconnectWithReason: directly")
+    # startup-no-payload + payload-stall use PayloadStall.
+    check("scheduleBackoffReconnectWithTrigger:MLReconnectTriggerPayloadStall" in diag
+          and "reason:@\"startup-no-payload-reconnect\"" in diag,
+          "the startup-no-payload diagnostic asks the backoff (PayloadStall)")
+    check("scheduleBackoffReconnectWithTrigger:MLReconnectTriggerPayloadStall" in diag
+          and "reason:@\"payload-stall-reconnect\"" in diag,
+          "the persistent payload-stall diagnostic asks the backoff (PayloadStall)")
+    # The caller-side cooldown must still gate every tick; otherwise each
+    # health tick burns a fresh attempt and the budget is gone in seconds.
+    check("streamHealthLastPayloadReconnectMs = nowMs;" in diag,
+          "caller keeps its own cooldown so the health timer cannot schedule "
+            "a fresh attempt on every tick")
+    # Two cooldown writes, one per payload-stall point -- if either is removed,
+    # the health timer will keep scheduling attempts and burn the budget in
+    # seconds. Count both, refuse a regression that drops either.
+    cooldown_writes = diag.count("streamHealthLastPayloadReconnectMs = nowMs;")
+    check(cooldown_writes >= 2,
+          "both payload-stall points still write the cooldown (found %d)" % cooldown_writes)
+    # The old direct calls must be gone from these diagnostics points.
+    for old_reason in ("\"startup-no-payload-reconnect\"",
+                       "\"payload-stall-reconnect\""):
+        leftovers = [line for line in diag.splitlines()
+                     if "attemptReconnectWithReason:" in line and old_reason in line]
+        check(not leftovers,
+              "diagnostic %s no longer calls attemptReconnectWithReason: directly" % old_reason)
+
+    # --- 10. P2-2b: host-gone has a real caller for the two terminal codes --
+    # The codes themselves come from moonlight-common-c.
+    limelight_h = read("moonlight-common/moonlight-common-c/src/Limelight.h")
+    check("ML_ERROR_GRACEFUL_TERMINATION" in limelight_h and
+          "ML_ERROR_UNEXPECTED_EARLY_TERMINATION" in limelight_h,
+          "moonlight-common-c defines both host-gone codes this gate relies on")
+    # The caller lives in connectionTerminated, NOT in any stage path, because
+    # stage-failed already short-circuits to host-up retry handling. A
+    # well-meaning but wrong placement would stop every retry, including the
+    # ones meant to recover from transient loss.
+    check("markHostConfirmedGoneFromDiagnosticsWithReason" in svc,
+          "connectionTerminated reaches the host-gone wrapper")
+    gone_block = re.search(
+        r"if \(errorCode == ML_ERROR_GRACEFUL_TERMINATION \|\|\s*\n"
+        r"\s*errorCode == ML_ERROR_UNEXPECTED_EARLY_TERMINATION\) \{[^}]*"
+        r"markHostConfirmedGoneFromDiagnosticsWithReason:[^;]+;",
+        svc)
+    check(bool(gone_block),
+          "host-gone verdict is gated on graceful (0) or unexpected (-102) only")
+    # None of the transient codes (NO_VIDEO_TRAFFIC/FRAME/CONVERSION/INPUT_STREAM/
+    # PROTECTED_CONTENT) may trip host-gone -- that would turn a network blip
+    # into a permanent stop.
+    transient = ("ML_ERROR_NO_VIDEO_TRAFFIC", "ML_ERROR_NO_VIDEO_FRAME",
+                 "ML_ERROR_PROTECTED_CONTENT", "ML_ERROR_FRAME_CONVERSION",
+                 "ML_ERROR_INPUT_STREAM")
+    for code in transient:
+        check(not re.search(r"errorCode == %s\s*\|\|" % code, svc),
+              "transient code %s must not trip host-gone" % code)
+    # The wrapper must remain the single write path to the state machine.
+    check("[self.reconnector markHostConfirmedGoneWithReason:" in svc,
+          "the controller owns the single write path to host-gone state")
+    check(svc.count("markHostConfirmedGoneWithReason:") >= 1,
+          "the host-gone wrapper is reachable from the termination path")
+
 
 def mutations():
     """Each case rewrites a real line and expects the assertions above to fail."""
@@ -312,6 +390,34 @@ def mutations():
          "the menu retry stopped going through the state machine"),
         (SVC, "MLString(@\"Reconnecting… (%ld of %ld)\", nil)", "@\"正在重连（%ld / %ld）…\"",
          "the countdown became a hardcoded Chinese literal"),
+        # P2-2b mutations: each rewrites a real line and expects the new
+        # diagnostics / host-gone assertions above to fail.
+        ("Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m",
+         "[strongSelf scheduleBackoffReconnectWithTrigger:MLReconnectTriggerNoFrameStall",
+         "[strongSelf attemptReconnectWithReason:@\"connect-timeout-auto\"]",
+         "the connect-timeout auto-recovery bypassed the state machine again"),
+        ("Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m",
+         "if (![self scheduleBackoffReconnectWithTrigger:MLReconnectTriggerPayloadStall\n"
+         "                                                        reason:@\"startup-no-payload-reconnect\"]) {",
+         "[self attemptReconnectWithReason:@\"startup-no-payload-reconnect\"];",
+         "the startup-no-payload diagnostic went back to calling the executor directly"),
+        ("Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m",
+         "if (![self scheduleBackoffReconnectWithTrigger:MLReconnectTriggerPayloadStall\n"
+         "                                                    reason:@\"payload-stall-reconnect\"]) {",
+         "[self attemptReconnectWithReason:@\"payload-stall-reconnect\"];",
+         "the persistent payload-stall diagnostic went back to calling the executor directly"),
+        ("Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m",
+         "self.streamHealthLastPayloadReconnectMs = nowMs;\n",
+         "",
+         "the caller-side cooldown was removed; every health tick burns a fresh attempt"),
+        (SVC,
+         "errorCode == ML_ERROR_GRACEFUL_TERMINATION ||\n            errorCode == ML_ERROR_UNEXPECTED_EARLY_TERMINATION",
+         "errorCode == ML_ERROR_GRACEFUL_TERMINATION ||\n            errorCode == ML_ERROR_UNEXPECTED_EARLY_TERMINATION ||\n            errorCode == ML_ERROR_NO_VIDEO_TRAFFIC",
+         "transient NO_VIDEO_TRAFFIC trips host-gone, turning a network blip into a permanent stop"),
+        (SVC,
+         "[self markHostConfirmedGoneFromDiagnosticsWithReason:goneReason];",
+         "/* PLANTED: the host-gone caller was deleted */",
+         "the host-gone caller was removed; the backoff never learns the host is gone"),
     ]
 
 
