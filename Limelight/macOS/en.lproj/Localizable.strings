@@ -320,6 +320,7 @@
 "Poor Connection" = "⚠️ Poor Connection";
 "Reconnecting…" = "Reconnecting…";
 "Reconnecting… (%ld)" = "Reconnecting… (%ld)";
+"Reconnecting… (%ld of %ld)" = "Reconnecting… (%1$ld of %2$ld)";
 
 "Gamepad Mouse Emulation (!)" = "Gamepad Mouse Emulation";
 "Gamepad Mouse Hint" = "Use the gamepad as a mouse. Right stick moves, A clicks.";
