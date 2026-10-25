@@ -35,6 +35,11 @@ struct Settings: Encodable, Decodable {
   let edgeSensorBandWidthPoints: Double?
   let edgeSensorDwellSeconds: Double?
   let edgeMenuAutoCollapseSeconds: Double?
+  // Wave C: the three remaining sidebar hand-feel numbers, same zero-means-
+  // shipped-constant contract as the E1 trio above.
+  let edgeMenuSummonGraceSeconds: Double?
+  let edgeSensorFlickMinTravelPoints: Double?
+  let edgeMenuHandleIdleThicknessPoints: Double?
   let systemKeyboardShortcutCapture: Int?
   let enableMicrophone: Bool?
   let streamResolutionScale: Bool?
@@ -217,6 +222,9 @@ struct Settings: Encodable, Decodable {
       edgeSensorBandWidthPoints: edgeSensorBandWidthPoints,
       edgeSensorDwellSeconds: edgeSensorDwellSeconds,
       edgeMenuAutoCollapseSeconds: edgeMenuAutoCollapseSeconds,
+      edgeMenuSummonGraceSeconds: edgeMenuSummonGraceSeconds,
+      edgeSensorFlickMinTravelPoints: edgeSensorFlickMinTravelPoints,
+      edgeMenuHandleIdleThicknessPoints: edgeMenuHandleIdleThicknessPoints,
       systemKeyboardShortcutCapture: systemKeyboardShortcutCapture,
       enableMicrophone: enableMicrophone,
       streamResolutionScale: streamResolutionScale,
@@ -473,6 +481,9 @@ extension SettingsClass {
       edgeSensorBandWidthPoints: settings.edgeSensorBandWidthPoints,
       edgeSensorDwellSeconds: settings.edgeSensorDwellSeconds,
       edgeMenuAutoCollapseSeconds: settings.edgeMenuAutoCollapseSeconds,
+      edgeMenuSummonGraceSeconds: settings.edgeMenuSummonGraceSeconds,
+      edgeSensorFlickMinTravelPoints: settings.edgeSensorFlickMinTravelPoints,
+      edgeMenuHandleIdleThicknessPoints: settings.edgeMenuHandleIdleThicknessPoints,
       systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: resolvedStreamResolutionScale,
