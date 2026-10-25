@@ -761,6 +761,14 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     self.edgeSensorDwellOverrideSeconds = dwell ? [dwell doubleValue] : 0;
     id collapse = prefs ? prefs[@"edgeMenuAutoCollapseSeconds"] : nil;
     self.edgeMenuAutoCollapseOverrideSeconds = collapse ? [collapse doubleValue] : 0;
+    // Wave C: the three remaining sidebar numbers, same absent-key-means-zero
+    // contract as the E1 trio above.
+    id grace = prefs ? prefs[@"edgeMenuSummonGraceSeconds"] : nil;
+    self.edgeMenuSummonGraceOverrideSeconds = grace ? [grace doubleValue] : 0;
+    id flick = prefs ? prefs[@"edgeSensorFlickMinTravelPoints"] : nil;
+    self.edgeSensorFlickMinTravelOverridePoints = flick ? [flick doubleValue] : 0;
+    id idle = prefs ? prefs[@"edgeMenuHandleIdleThicknessPoints"] : nil;
+    self.edgeMenuHandleIdleThicknessOverridePoints = idle ? [idle doubleValue] : 0;
     if (!self.edgeSensorSummonEnabled) {
         [self resetEdgeSensorSummonState];
     }
@@ -792,6 +800,34 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     if (override <= 0) return MLEdgeMenuAutoCollapseDelay;
     if (override < MLEdgeMenuAutoCollapseMinSeconds) return MLEdgeMenuAutoCollapseMinSeconds;
     if (override > MLEdgeMenuAutoCollapseMaxSeconds) return MLEdgeMenuAutoCollapseMaxSeconds;
+    return override;
+}
+
+// Wave C: the same zero-means-shipped-constant contract as the E1 getters above.
+- (NSTimeInterval)edgeMenuSummonGraceSeconds {
+    NSTimeInterval override = self.edgeMenuSummonGraceOverrideSeconds;
+    if (override <= 0) return MLEdgeMenuSummonGraceDelay;
+    if (override < MLEdgeMenuSummonGraceMinSeconds) return MLEdgeMenuSummonGraceMinSeconds;
+    if (override > MLEdgeMenuSummonGraceMaxSeconds) return MLEdgeMenuSummonGraceMaxSeconds;
+    return override;
+}
+
+- (CGFloat)edgeSensorFlickMinTravelPoints {
+    CGFloat override = self.edgeSensorFlickMinTravelOverridePoints;
+    if (override <= 0) return MLEdgeSensorFlickMinTravel;
+    if (override < MLEdgeSensorFlickMinTravelMinPoints) return MLEdgeSensorFlickMinTravelMinPoints;
+    if (override > MLEdgeSensorFlickMinTravelMaxPoints) return MLEdgeSensorFlickMinTravelMaxPoints;
+    return override;
+}
+
+// The idle tab thickness lives on the handle view, not the stream view
+// controller, so the clamp belongs to it: this only hands the view the prefilled
+// value, and MLEdgeMenuHandleView falls back to the shipped 14pt at zero.
+- (CGFloat)edgeMenuHandleIdleThicknessPoints {
+    CGFloat override = self.edgeMenuHandleIdleThicknessOverridePoints;
+    if (override <= 0) return MLEdgeMenuHandleIdleThickness;
+    if (override < MLEdgeMenuHandleIdleThicknessMinPoints) return MLEdgeMenuHandleIdleThicknessMinPoints;
+    if (override > MLEdgeMenuHandleIdleThicknessMaxPoints) return MLEdgeMenuHandleIdleThicknessMaxPoints;
     return override;
 }
 
@@ -906,7 +942,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 
 // The locked-mode edge entry. Locked events carry no trusted position, but they do
 // carry deltas, and a flick is made of deltas: one stroke, one direction toward the
-// docked edge, at least MLEdgeSensorFlickMinTravel points inside
+// docked edge, at least [self edgeSensorFlickMinTravelPoints] points inside
 // MLEdgeSensorFlickWindowSeconds. Every guard is aimed at a real false trigger:
 // a reversed frame ends the stroke (corrective aim), a pause longer than
 // MLEdgeSensorFlickResteerGapSeconds ends it (a drag), and the cooldown keeps the
@@ -954,7 +990,7 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         Log(LOG_I, @"[diag] Edge flick trace: travel=%.0f along=%.0f age=%.0fms",
             travel, along, now - self.edgeSensorFlickSegmentStartMs);
     }
-    if (travel >= MLEdgeSensorFlickMinTravel && now - self.edgeSensorFlickSegmentStartMs <= MLEdgeSensorFlickWindowSeconds * 1000.0) {
+    if (travel >= [self edgeSensorFlickMinTravelPoints] && now - self.edgeSensorFlickSegmentStartMs <= MLEdgeSensorFlickWindowSeconds * 1000.0) {
         self.edgeSensorFlickTravel = 0;
         self.edgeSensorFlickSegmentStartMs = 0;
         self.edgeSensorFlickDirection = 0;

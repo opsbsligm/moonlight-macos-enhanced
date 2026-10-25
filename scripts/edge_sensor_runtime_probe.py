@@ -124,9 +124,18 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 @property CGFloat edgeSensorBandWidthOverridePoints;
 @property NSTimeInterval edgeSensorDwellOverrideSeconds;
 @property NSTimeInterval edgeMenuAutoCollapseOverrideSeconds;
+// Wave C: the three remaining sidebar overrides, same zero-means-shipped
+// constant contract as the E1 trio, so the copied production getters behave
+// in the harness exactly as they behave in the stream.
+@property NSTimeInterval edgeMenuSummonGraceOverrideSeconds;
+@property CGFloat edgeSensorFlickMinTravelOverridePoints;
+@property CGFloat edgeMenuHandleIdleThicknessOverridePoints;
 - (NSTimeInterval)edgeSensorDwellSeconds;
 - (CGFloat)edgeSensorBandWidthPoints;
 - (NSTimeInterval)edgeMenuAutoCollapseDelay;
+- (CGFloat)edgeMenuHandleIdleThicknessPoints;
+- (CGFloat)edgeSensorFlickMinTravelPoints;
+- (NSTimeInterval)edgeMenuSummonGraceSeconds;
 @property NSMenu *streamMenu;
 @property NSPoint edgeMenuButtonPanStartOrigin;
 - (void)rebuildStreamMenu;
@@ -1151,6 +1160,11 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (NSTimeInterval)edgeSensorDwellSeconds',
         '- (CGFloat)edgeSensorBandWidthPoints',
         '- (NSTimeInterval)edgeMenuAutoCollapseDelay',
+        # Wave C getters: the same override/clamp/fallback shape, and the
+        # copied production methods now call them instead of bare constants.
+        '- (CGFloat)edgeMenuHandleIdleThicknessPoints',
+        '- (CGFloat)edgeSensorFlickMinTravelPoints',
+        '- (NSTimeInterval)edgeMenuSummonGraceSeconds',
     ]
     methods = "\n".join(method(objc, sig) for sig in signatures)
     methods += "\n" + "\n".join(method(menu, sig) for sig in (
@@ -1205,7 +1219,8 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 # [self edgeMenuAutoCollapseDelay] call; the negative control
                 # still has to fail-open on a constants-only shortcut so a future
                 # change that drops the getter is caught here.
-                ('the summon grace collapses into the hover delay', 'return self.edgeMenuPointerHasVisited ? [self edgeMenuAutoCollapseDelay] : MLEdgeMenuSummonGraceDelay;', 'return MLEdgeMenuAutoCollapseDelay;'),
+                # Wave C moved the else-branch onto the same getter shape.
+                ('the summon grace collapses into the hover delay', 'return self.edgeMenuPointerHasVisited ? [self edgeMenuAutoCollapseDelay] : [self edgeMenuSummonGraceSeconds];', 'return MLEdgeMenuAutoCollapseDelay;'),
                 ('the keyboard entry is a one-way switch', 'if (self.edgeMenuButtonExpanded && !self.edgeMenuDragging) {\n        [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:self.edgeMenuTemporaryReleaseActive];\n        return YES;\n    }', 'if (NO) {\n        [self deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:self.edgeMenuTemporaryReleaseActive];\n        return YES;\n    }'),
                 ('a press during a drag drops the bar out of the pointer', 'if (self.edgeMenuButtonExpanded && !self.edgeMenuDragging) {', 'if (self.edgeMenuButtonExpanded) {'),
                 ('a bar that vanished on its own is not a return', 'if ([self edgeMenuPhaseIsOnScreen:previousPhase] && ![self edgeMenuPhaseIsOnScreen:phase]) {', 'if (self.edgeMenuPointerHasVisited && [self edgeMenuPhaseIsOnScreen:previousPhase] && ![self edgeMenuPhaseIsOnScreen:phase]) {'),
@@ -1217,12 +1232,16 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('arrival at the edge still grabs the pointer', '    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;', '    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];\n    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;'),
                 ('the tab ignores where the player dragged it', 'return minValue + available * MIN(MAX(self.edgeMenuButtonEdgeRatio, 0.0), 1.0);', 'return minValue + available * 0.5;'),
                 ('the lit tab shrinks under the pointer that is clicking it', '        if (![self edgeSensorPointIsOnVisibleHandle:point]) [self resetEdgeSensorSummonState];', '        if (YES) [self resetEdgeSensorSummonState];'),
-                ('locked flick opens on any motion', 'if (travel >= MLEdgeSensorFlickMinTravel', 'if (travel >= 0.0'),
-                ('locked flick ignores the stroke age', 'if (travel >= MLEdgeSensorFlickMinTravel && now - self.edgeSensorFlickSegmentStartMs <= MLEdgeSensorFlickWindowSeconds * 1000.0', 'if (travel >= MLEdgeSensorFlickMinTravel'),
+                # Wave C: the production check reads the clamped getter, so the
+                # anchors follow the getter call; the shipped-constant fallback
+                # is asserted through the new getter-mutation controls below.
+                ('locked flick opens on any motion', 'if (travel >= [self edgeSensorFlickMinTravelPoints]', 'if (travel >= 0.0'),
+                ('locked flick ignores the stroke age', 'if (travel >= [self edgeSensorFlickMinTravelPoints] && now - self.edgeSensorFlickSegmentStartMs <= MLEdgeSensorFlickWindowSeconds * 1000.0', 'if (travel >= [self edgeSensorFlickMinTravelPoints]'),
                 ('locked flick ignores the cooldown', 'if (now < self.edgeSensorFlickCooldownUntilMs) {', 'if (NO) {'),
                 ('locked flick counts a reversed stroke', 'self.edgeSensorFlickTravel = 0;\n        self.edgeSensorFlickDirection = 0;\n        self.edgeSensorFlickSegmentStartMs = 0;\n        return NO;', 'self.edgeSensorFlickDirection = 0;\n        return NO;'),
                 ('the hit rect ignores what the player can see', 'NSRect handle = [self edgeMenuVisibleHandleRectInBounds:self.view.bounds];', 'NSRect handle = [self edgeMenuInteractionRectInBounds:self.view.bounds];'),
-                ('arming is invisible', 'return self.edgeMenuHandleArmed ? MLEdgeMenuHandleArmedThickness : MLEdgeMenuHandleIdleThickness;', 'return MLEdgeMenuHandleIdleThickness;'),
+                # Wave C: the idle branch reads the clamped getter, not the constant.
+                ('arming is invisible', 'return self.edgeMenuHandleArmed ? MLEdgeMenuHandleArmedThickness : [self edgeMenuHandleIdleThicknessPoints];', 'return MLEdgeMenuHandleIdleThickness;'),
                 ('the click target reads the wrong axis for a horizontal dock', 'BOOL verticalDock = self.edgeMenuDockEdge == MLFreeMouseExitEdgeLeft ||\n                        self.edgeMenuDockEdge == MLFreeMouseExitEdgeRight;', 'BOOL verticalDock = YES;'),
                 ('the click target reads the wrong axis for a vertical dock', 'BOOL verticalDock = self.edgeMenuDockEdge == MLFreeMouseExitEdgeLeft ||\n                        self.edgeMenuDockEdge == MLFreeMouseExitEdgeRight;', 'BOOL verticalDock = NO;'),
                 ('the armed light never goes out', 'if (self.edgeMenuHandleArmed) {\n        self.edgeMenuHandleArmed = NO;\n        [self updateEdgeMenuButtonAppearance];\n    }', 'if (NO) {\n        self.edgeMenuHandleArmed = NO;\n        [self updateEdgeMenuButtonAppearance];\n    }'),

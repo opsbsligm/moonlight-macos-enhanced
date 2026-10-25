@@ -356,6 +356,44 @@ struct InputView: View {
           maxLabel: "1000ms",
           valueFormatter: { v in "\(Int((v * 1000).rounded()))ms" }
         )
+
+        // Wave C: the three remaining sidebar numbers. Defaults equal the shipped
+        // constants (2.5s / 700pt / 14pt), so a fresh install ships the same
+        // hand-feel; the stream re-reads on the next capture, like the E1 trio.
+        MouseTuningSliderRow(
+          title: "Summon Grace (Keyboard)",
+          value: Binding(
+            get: { settingsModel.edgeMenuSummonGraceSeconds == 0 ? 2.5 : settingsModel.edgeMenuSummonGraceSeconds },
+            set: { settingsModel.edgeMenuSummonGraceSeconds = $0 }
+          ),
+          range: 1.0...6.0,
+          step: 0.1,
+          minLabel: "1s",
+          maxLabel: "6s",
+          valueFormatter: { v in String(format: "%.1fs", v) }
+        )
+        MouseTuningSliderRow(
+          title: "Flick Stroke Distance",
+          value: Binding(
+            get: { settingsModel.edgeSensorFlickMinTravelPoints == 0 ? 700 : settingsModel.edgeSensorFlickMinTravelPoints },
+            set: { settingsModel.edgeSensorFlickMinTravelPoints = $0 }
+          ),
+          range: 400...1200,
+          step: 10,
+          minLabel: "400pt",
+          maxLabel: "1200pt"
+        )
+        MouseTuningSliderRow(
+          title: "Handle Idle Thickness",
+          value: Binding(
+            get: { settingsModel.edgeMenuHandleIdleThicknessPoints == 0 ? 14 : settingsModel.edgeMenuHandleIdleThicknessPoints },
+            set: { settingsModel.edgeMenuHandleIdleThicknessPoints = $0 }
+          ),
+          range: 10...20,
+          step: 1,
+          minLabel: "10pt",
+          maxLabel: "20pt"
+        )
       }
 
       Divider()

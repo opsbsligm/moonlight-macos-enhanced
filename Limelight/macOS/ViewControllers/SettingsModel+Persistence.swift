@@ -132,6 +132,9 @@ extension SettingsModel {
     edgeSensorBandWidthPoints = Self.defaultEdgeSensorBandWidthPoints
     edgeSensorDwellSeconds = Self.defaultEdgeSensorDwellSeconds
     edgeMenuAutoCollapseSeconds = Self.defaultEdgeMenuAutoCollapseSeconds
+    edgeMenuSummonGraceSeconds = Self.defaultEdgeMenuSummonGraceSeconds
+    edgeSensorFlickMinTravelPoints = Self.defaultEdgeSensorFlickMinTravelPoints
+    edgeMenuHandleIdleThicknessPoints = Self.defaultEdgeMenuHandleIdleThicknessPoints
     systemKeyboardShortcutCapture = Self.defaultSystemKeyboardShortcutCapture
     enableMicrophone = Self.defaultEnableMicrophone
     streamResolutionScale = Self.defaultStreamResolutionScale
@@ -276,6 +279,9 @@ extension SettingsModel {
       edgeSensorBandWidthPoints = settings.edgeSensorBandWidthPoints ?? Self.defaultEdgeSensorBandWidthPoints
       edgeSensorDwellSeconds = settings.edgeSensorDwellSeconds ?? Self.defaultEdgeSensorDwellSeconds
       edgeMenuAutoCollapseSeconds = settings.edgeMenuAutoCollapseSeconds ?? Self.defaultEdgeMenuAutoCollapseSeconds
+      edgeMenuSummonGraceSeconds = settings.edgeMenuSummonGraceSeconds ?? Self.defaultEdgeMenuSummonGraceSeconds
+      edgeSensorFlickMinTravelPoints = settings.edgeSensorFlickMinTravelPoints ?? Self.defaultEdgeSensorFlickMinTravelPoints
+      edgeMenuHandleIdleThicknessPoints = settings.edgeMenuHandleIdleThicknessPoints ?? Self.defaultEdgeMenuHandleIdleThicknessPoints
       systemKeyboardShortcutCapture =
         settings.systemKeyboardShortcutCapture ?? Self.defaultSystemKeyboardShortcutCapture
       enableMicrophone = settings.enableMicrophone ?? Self.defaultEnableMicrophone
@@ -717,6 +723,9 @@ extension SettingsModel {
       edgeSensorBandWidthPoints: edgeSensorBandWidthPoints,
       edgeSensorDwellSeconds: edgeSensorDwellSeconds,
       edgeMenuAutoCollapseSeconds: edgeMenuAutoCollapseSeconds,
+      edgeMenuSummonGraceSeconds: edgeMenuSummonGraceSeconds,
+      edgeSensorFlickMinTravelPoints: edgeSensorFlickMinTravelPoints,
+      edgeMenuHandleIdleThicknessPoints: edgeMenuHandleIdleThicknessPoints,
       systemKeyboardShortcutCapture: systemKeyboardShortcutCapture,
       enableMicrophone: enableMicrophone,
       streamResolutionScale: streamResolutionScale,
