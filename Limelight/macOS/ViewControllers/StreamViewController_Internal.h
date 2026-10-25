@@ -427,6 +427,9 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) BOOL inputDiagnosticsFinalized;
 @property (nonatomic) BOOL inputDiagnosticsDetailActiveForStream;
 @property (nonatomic) NSUInteger inputDiagnosticsMouseMoveEvents;
+// K1.2: drafts and commits the local IME produced during this stream.
+@property (nonatomic) NSUInteger inputDiagnosticsIMECompositions;
+@property (nonatomic) NSUInteger inputDiagnosticsIMECommits;
 @property (nonatomic) NSUInteger inputDiagnosticsNonZeroRelativeEvents;
 @property (nonatomic) NSUInteger inputDiagnosticsRelativeDispatches;
 @property (nonatomic) NSUInteger inputDiagnosticsAbsoluteDispatches;

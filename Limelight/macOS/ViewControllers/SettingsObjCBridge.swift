@@ -238,6 +238,7 @@ class SettingsClass: NSObject {
         "swapMouseButtons": settings.swapMouseButtons,
         "muteOnFocusLoss": settings.muteOnFocusLoss,
         "backgroundGamepad": settings.backgroundGamepad,
+        "imeLocalComposition": settings.imeLocalComposition,
         "reverseScrollDirection": settings.reverseScrollDirection,
         "gamepadMouseMode": settings.gamepadMouseMode,
         "mouseMode": settings.mouseMode,
@@ -424,6 +425,7 @@ class SettingsClass: NSObject {
       relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
       muteOnFocusLoss: settings.muteOnFocusLoss,
       backgroundGamepad: settings.backgroundGamepad,
+      imeLocalComposition: settings.imeLocalComposition,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
@@ -540,6 +542,7 @@ class SettingsClass: NSObject {
         relativeMouseAsAbsolute: updated.relativeMouseAsAbsolute,
         muteOnFocusLoss: updated.muteOnFocusLoss,
         backgroundGamepad: updated.backgroundGamepad,
+        imeLocalComposition: updated.imeLocalComposition,
         swapMouseButtons: updated.swapMouseButtons,
         reverseScrollDirection: updated.reverseScrollDirection,
         touchscreenMode: updated.touchscreenMode,
@@ -664,6 +667,7 @@ class SettingsClass: NSObject {
       relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
       muteOnFocusLoss: settings.muteOnFocusLoss,
       backgroundGamepad: settings.backgroundGamepad,
+      imeLocalComposition: settings.imeLocalComposition,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
@@ -1591,6 +1595,13 @@ class SettingsClass: NSObject {
       return settings.relativeMouseAsAbsolute ?? SettingsModel.defaultRelativeMouseAsAbsolute
     }
     return SettingsModel.defaultRelativeMouseAsAbsolute
+  }
+
+  @objc static func imeLocalComposition(for key: String) -> Bool {
+    if let settings = Settings.getSettings(for: key) {
+      return settings.imeLocalComposition ?? SettingsModel.defaultIMELocalComposition
+    }
+    return SettingsModel.defaultIMELocalComposition
   }
 
   @objc static func muteOnFocusLoss(for key: String) -> Bool {
