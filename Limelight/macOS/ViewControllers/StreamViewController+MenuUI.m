@@ -411,7 +411,7 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
 // Both the clock that fires and the line that reports the return read it here, so the log
 // can never disagree with the timer that produced it.
 - (NSTimeInterval)edgeMenuReturnDelay {
-    return self.edgeMenuPointerHasVisited ? [self edgeMenuAutoCollapseDelay] : MLEdgeMenuSummonGraceDelay;
+    return self.edgeMenuPointerHasVisited ? [self edgeMenuAutoCollapseDelay] : [self edgeMenuSummonGraceSeconds];
 }
 
 // Expanded, menu and drag are the states where the controls are on screen and may hold the
@@ -643,7 +643,7 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
 }
 
 - (CGFloat)edgeMenuHandleThickness {
-    return self.edgeMenuHandleArmed ? MLEdgeMenuHandleArmedThickness : MLEdgeMenuHandleIdleThickness;
+    return self.edgeMenuHandleArmed ? MLEdgeMenuHandleArmedThickness : [self edgeMenuHandleIdleThicknessPoints];
 }
 
 // Where the tab both is and can be seen, in the stream view's own bounds. The click
@@ -899,6 +899,9 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
     // and the phase transition clears the flag before the bar is on screen anyway.
     self.edgeMenuButton.armedAppearance = self.edgeMenuHandleArmed && !self.edgeMenuButtonExpanded;
     self.edgeMenuButton.dockEdge = self.edgeMenuDockEdge;
+    // Wave C: push the clamped idle-tab thickness so the drawing and the
+    // hit-test measure the same tab; zero is read as the shipped 14pt.
+    self.edgeMenuButton.idleThicknessPoints = [self edgeMenuHandleIdleThicknessPoints];
 }
 
 - (void)handleEdgeMenuButtonDragWithState:(NSGestureRecognizerState)state translation:(NSPoint)translation {
