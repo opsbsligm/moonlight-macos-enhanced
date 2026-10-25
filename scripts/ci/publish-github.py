@@ -22,7 +22,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-for attempt in range(3):
+# Backoff schedule: 5s, 15s, 30s, 60s, 120s (total ~230s).
+# The 3-attempt/7s-total schedule from the original version could not survive
+# a mirror-controller restart (observed 8-min outage, pipeline #510).
+_BACKOFF = [5, 15, 30, 60, 120]
+for attempt, delay in enumerate(_BACKOFF):
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method='POST',
         headers={'Content-Type': 'application/json', 'JOB-TOKEN': token})
     try:
@@ -37,11 +41,12 @@ for attempt in range(3):
             reason = value.get('error', 'controller_rejected')
         except (ValueError, OSError):
             reason = 'controller_unavailable'
-        if exc.code not in (502, 503, 504) or attempt == 2:
+        if exc.code not in (502, 503, 504) or attempt == len(_BACKOFF) - 1:
             print(f'Mirror rejected: HTTP {exc.code}, {reason}', file=sys.stderr)
             raise SystemExit(1)
     except (urllib.error.URLError, TimeoutError, OSError):
-        if attempt == 2:
-            print('Mirror controller unavailable', file=sys.stderr)
+        if attempt == len(_BACKOFF) - 1:
+            print('Mirror controller unavailable after '
+                  + str(len(_BACKOFF)) + ' attempts', file=sys.stderr)
             raise SystemExit(1)
-    time.sleep(2 ** attempt)
+    time.sleep(delay)
