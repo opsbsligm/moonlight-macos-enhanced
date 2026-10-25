@@ -4,7 +4,7 @@
 
 | 角色 | 对象 | 在本仓库中的形态 |
 | --- | --- | --- |
-| 上游客户端 | moonlight-stream/moonlight-qt | 源码快照（`/tmp/qt_gamepad.cpp`、streamingpreferences.h 等，抓取时 HTTP 200） |
+| 上游客户端 | moonlight-stream/moonlight-qt | 钉 tag `v6.2.0`（commit `de2467e433821664cdd2224aad8c89a625be1ad9`），快照已入库 `docs/evidence/qt-snapshot/`（含 blob SHA 与行号索引） |
 | 协议层 | moonlight-stream/moonlight-common-c | 我们的 fork `moonlight/moonlight-common-c`，pin 在 `386e79c`，含自有增强（剪贴板同步、7.1.4、HDR dynamic-range、输入边缘完整性） |
 | 下游主机 | Sunshine | 经 `Limelight/Network/HttpManager.m` 的显示/虚拟显示器/screenMode/HDR 亮度覆盖扩展 |
 | 基地版 | skyhua0224/moonlight-macos-enhanced | 本仓库的起点，2026-10 起完全独立（README） |
@@ -107,7 +107,7 @@ Parsec 文档在取证时 403，UU 只有宣传页：两者只列"对方宣称�
 4. **电池 + 触摸板 + 设备面扩容**：IOHID `BatteryPercent`/`BatteryLocation` 属性 → `LiSendControllerBatteryEvent`；
    PS4/PS5 触摸板 HID 元素 → `LiSendControllerTouchEvent`；isNintendo 补 057E:2006/2007（单只 Joy-Con），
    能力含 `LI_CCAP_TOUCHPAD|LI_CCAP_BATTERY_STATE|LI_CCAP_RGB_LED`（按型号裁剪）。
-   顺带评估把 common-c fork 与上游对齐 `LI_CTYPE_STEAM`/`LI_CCAP_DUAL_TOUCHPAD`/`TouchEvent2`（上游已验证存在）。
+   顺带评估把 common-c fork 与上游对齐 `LI_CTYPE_STEAM`/`LI_CCAP_DUAL_TOUCHPAD`/`TouchEvent2`（上游已验证存在；回吸范围与冲突面见 `docs/common-c-drift-2026-10-26.md`）。
 
 设置页对应增量（遵守 UI 外观规则，纯新增行）：控制器行内展开"原生能力"状态芯片（类型/陀螺仪/触摸板/电池 已通告与否），
 让用户能看到握手结果而不是猜。
@@ -154,5 +154,6 @@ grep -n "0x2009" Limelight/Input/HIDSupport_Internal.h                          
 sed -n '100,162p' Limelight/macOS/ViewControllers/StreamViewController_Internal.h               # 边缘栏编译期常量
 ```
 
-上游对照文件：`/tmp/qt_gamepad.cpp`（ArrivalEvent:763、battery:154、TouchEvent2:485、三个回调实现:901/915/950）、
-`/tmp/qt_limelight_upstream.h`（LI_CTYPE_STEAM:781、DUAL_TOUCHPAD:790、TouchEvent2:809）。
+上游对照文件（2026-10-25 钉版本复核，行号以入库快照为准）：
+`docs/evidence/qt-snapshot/gamepad.cpp`（ArrivalEvent:763、battery:116（旧误记 154）、TouchEvent2:485、三个回调实现:901/915/950）；
+协议常量在其 pin 的 common-c（`f900dd4`）`src/Limelight.h`：LI_CTYPE_STEAM:781、DUAL_TOUCHPAD:790、touchpad index 0/1 说明:807-808。
