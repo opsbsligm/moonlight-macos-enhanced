@@ -17,6 +17,18 @@
     NSRect _compactHitRect;
 }
 
+// Wave C: the idle tab's thickness, clamped to the published 10-20pt range. The
+// stored idleThicknessPoints may be zero (nothing written) or out of range; the
+// shipped 14pt is the fallback, so a fresh install draws the exact tab it drew
+// before this setting existed.
+- (CGFloat)effectiveIdleThickness {
+    CGFloat value = self.idleThicknessPoints;
+    if (value <= 0) return MLEdgeMenuHandleIdleThickness;
+    if (value < MLEdgeMenuHandleIdleThicknessMinPoints) return MLEdgeMenuHandleIdleThicknessMinPoints;
+    if (value > MLEdgeMenuHandleIdleThicknessMaxPoints) return MLEdgeMenuHandleIdleThicknessMaxPoints;
+    return value;
+}
+
 - (instancetype)initWithFrame:(NSRect)frameRect {
     self = [super initWithFrame:frameRect];
     if (self) {
@@ -148,7 +160,7 @@
     // starts at that edge and grows inwards, and the rectangle the view controller
     // hits-tests (edgeMenuVisibleHandleRectInBounds:) describes the same strip.
     BOOL armed = self.armedAppearance;
-    CGFloat thickness = armed ? MLEdgeMenuHandleArmedThickness : MLEdgeMenuHandleIdleThickness;
+    CGFloat thickness = armed ? MLEdgeMenuHandleArmedThickness : [self effectiveIdleThickness];
     CGFloat shortest = MIN(NSWidth(self.bounds), NSHeight(self.bounds));
     CGFloat along = MIN(MLEdgeMenuHandleLength, shortest - 8.0);
     // A docked left or right edge runs along y, a top or bottom edge along x. The
