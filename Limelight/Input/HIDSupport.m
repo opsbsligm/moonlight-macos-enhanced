@@ -14,6 +14,7 @@
 #import "HIDSupport+Inventory.h"
 #import "MLControllerInventory.h"
 #import "KeyboardTextRouting.h"
+#import "HIDLocalIME.h"
 
 #import <IOKit/hid/IOHIDElement.h>
 #import <IOKit/hid/IOHIDKeys.h>  // kIOHIDPrimaryUsagePageKey: what kind of device a node claims to be
@@ -591,6 +592,8 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
         snapshot.rawRelativeDeltaY = self.inputDiagnosticsRawRelativeDeltaY;
         snapshot.sentRelativeDeltaX = self.inputDiagnosticsSentRelativeDeltaX;
         snapshot.sentRelativeDeltaY = self.inputDiagnosticsSentRelativeDeltaY;
+        snapshot.imeCompositions = [self imeCompositionsSinceLastSnapshot];
+        snapshot.imeCommits = [self imeCommitsSinceLastSnapshot];
         // Taken and cleared rather than read, like every other field here: a report that
         // sampled the same sender twice would credit it twice, and one that sampled after a
         // clear would show a sender that had already been counted.
@@ -1614,6 +1617,16 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     if (event == nil || event.type != NSEventTypeFlagsChanged) {
         return;
     }
+    // K1.2: an input method that owns the modifier (for example Shift
+    // switching kana mode) keeps it; the host must not learn about a toggle
+    // the player made to the method, not to the game.
+    if (self.imeSession != nil && self.shouldSendInputEvents) {
+        BOOL imeConsumed = [self.imeSession.context handleEvent:event];
+        [self flushIMECommit];
+        if (imeConsumed) {
+            return;
+        }
+    }
 
     // What the player is physically holding is recorded whether or not this
     // particular event can be forwarded. A modifier that came down while the
@@ -1682,6 +1695,19 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     NSNumber *physical = @(event.keyCode);
     NSNumber *savedCode = self.keyboardForwardedKeyDownKeyCodes[physical];
     Log(LOG_D, @"[inputdiag] keyboard-wire down kVK=%hu repeat=%d", event.keyCode, event.isARepeat);
+
+    // K1.2: a key the active composition consumed is composition input, not
+    // wire input. The session keeps no per-key record, so the release that
+    // follows is paired the same way keyUp consumes it; the settings-page
+    // suppressor is the only per-key debt that can be owed across the pair.
+    if (self.imeSession != nil) {
+        BOOL imeConsumed = [self.imeSession.context handleEvent:event];
+        [self flushIMECommit];
+        if (imeConsumed) {
+            [self noteKeyboardKeyDownSuppressedForEvent:event];
+            return;
+        }
+    }
     if (savedCode != nil && !event.isARepeat) {
         return; // A second delivery of the same physical edge is not a new press.
     }
@@ -1745,6 +1771,16 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     }
     Log(LOG_D, @"[inputdiag] keyboard-wire up kVK=%hu send=%d", event.keyCode, self.shouldSendInputEvents);
     NSNumber *physical = @(event.keyCode);
+    // K1.2: the composition owns the release of a press it took. If capture
+    // ends in between, the ordinary swallow below still holds: the key was
+    // never forwarded, so no UP is owed to the host.
+    if (self.imeSession != nil && self.shouldSendInputEvents) {
+        BOOL imeConsumed = [self.imeSession.context handleEvent:event];
+        [self flushIMECommit];
+        if (imeConsumed) {
+            return;
+        }
+    }
     NSDictionary *pending = self.keyboardHeldUnconfirmedKeyDowns[physical];
     NSNumber *savedCode = self.keyboardForwardedKeyDownKeyCodes[physical];
     [self.keyboardHeldUnconfirmedKeyDowns removeObjectForKey:physical];
@@ -1850,6 +1886,9 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
 }
 
 - (void)releaseAllHeldKeys {
+    // K1.2: a commit the IME produced before capture ended is real text the
+    // player meant to send; it rides the still-live input context now.
+    [self flushIMECommit];
     if (self.keyboardHeldKeyReleaseInProgress) {
         return;
     }
@@ -1870,6 +1909,123 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
         }
     }
     self.keyboardHeldKeyReleaseInProgress = NO;
+}
+
+
+// ---------------------------------------------------------------------------
+// K1.2: local IME composition (default off).
+//
+// The system text input context composes into our text client while capture is
+// active. Committed text goes to the host as one UTF-8 event; a draft still
+// marked is discarded when capture ends, so the host never sees a half-word.
+// Every key that passes to a composition is kept off the key-code path, so the
+// host never sees both a composed character and the physical key behind it.
+// ---------------------------------------------------------------------------
+
+// The current input source composes when it is a select-capable input method
+// (e.g. a CJK IME), not a plain Latin layout. The public TIS API answers the
+// question without reading a property as a dictionary.
+static BOOL HIDIMECurrentInputSourceComposes(void) {
+    TISInputSourceRef source = TISCopyCurrentKeyboardInputSource();
+    if (source == NULL) return NO;
+    @autoreleasepool {
+        // Both TIS answers are +1; release each the moment it is read.
+        CFStringRef nameKey = kTISPropertyInputSourceIsSelectCapable;
+        CFTypeRef value = TISGetInputSourceProperty(source, nameKey);
+        BOOL selectCapable = (value != NULL
+            && CFGetTypeID(value) == CFBooleanGetTypeID())
+            && CFBooleanGetValue((CFBooleanRef)value);
+        CFRelease(value);
+        BOOL composes = NO;
+        if (selectCapable) {
+            // A select-capable source that is just a Latin keyboard would
+            // swallow the very keys a game needs; only non-ASCII-capable
+            // methods compose.
+            composes = YES; // absent or unreadable name: answer by capability
+            CFTypeRef localized = TISGetInputSourceProperty(source, kTISPropertyLocalizedName);
+            if (localized != NULL && CFGetTypeID(localized) == CFStringGetTypeID()) {
+                NSString *name = (__bridge_transfer NSString *)localized;
+                composes = NO;
+                for (NSUInteger i = 0; i < name.length; i++) {
+                    if ([name characterAtIndex:i] > 0x7F) {
+                        composes = YES;
+                        break;
+                    }
+                }
+            }
+        }
+        CFRelease(source);
+        return composes;
+    }
+}
+
+- (void)beginIMECompositionIfEnabled {
+    if (!self.imeLocalCompositionEnabled) {
+        return;
+    }
+    if (self.imeSession != nil) {
+        return; // already composing for this capture
+    }
+    HIDInputLease probe = HIDAcquireInputContext(self);
+    if (!HIDValidateInputContext(probe.context, "beginIME")) {
+        return; // no live input channel to compose into
+    }
+    if (!HIDIMECurrentInputSourceComposes()) {
+        return; // plain keyboard; every key keeps its normal route
+    }
+    MLLocalIMETextClient *client = [MLLocalIMETextClient new];
+    client.anchorRect = self.imeCandidateAnchorRect;
+    MLLocalIMESession *session = [[MLLocalIMESession alloc] initWithClient:client];
+    [session begin];
+    self.imeSession = session;
+    Log(LOG_D, @"[inputdiag] ime begin anchor=%@", NSStringFromRect(self.imeCandidateAnchorRect));
+}
+
+- (void)flushIMECommit {
+    MLLocalIMESession *session = self.imeSession;
+    NSString *text = [session drainCommit];
+    if (text == nil || text.length == 0) {
+        return;
+    }
+    NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding allowLossyConversion:NO];
+    if (data.length == 0) {
+        return;
+    }
+    HIDInputLease lease = HIDAcquireInputContext(self);
+    PML_INPUT_STREAM_CONTEXT ctx = lease.context;
+    if (HIDValidateInputContext(ctx, "flushIMECommit")) {
+        NSData *captured = data;
+        HIDDispatchInput(self, lease, ^{
+            Log(LOG_D, @"[inputdiag] ime commit bytes=%lu", (unsigned long)captured.length);
+            LiSendUtf8TextEventCtx(ctx, captured.bytes, (unsigned int)captured.length);
+        });
+    }
+}
+
+- (void)endIMEComposition {
+    MLLocalIMESession *session = self.imeSession;
+    if (session == nil) {
+        return;
+    }
+    [session end];
+    self.imeSession = nil;
+    self.imeWatermarkCompositions = 0;
+    self.imeWatermarkCommits = 0;
+    Log(LOG_D, @"[inputdiag] ime end");
+}
+
+- (NSUInteger)imeCompositionsSinceLastSnapshot {
+    NSUInteger total = self.imeSession.compositions;
+    NSUInteger delta = total > self.imeWatermarkCompositions ? total - self.imeWatermarkCompositions : 0;
+    self.imeWatermarkCompositions = total;
+    return delta;
+}
+
+- (NSUInteger)imeCommitsSinceLastSnapshot {
+    NSUInteger total = self.imeSession.commits;
+    NSUInteger delta = total > self.imeWatermarkCommits ? total - self.imeWatermarkCommits : 0;
+    self.imeWatermarkCommits = total;
+    return delta;
 }
 
 - (void)tearDownKeyboardStateForSessionEnd:(const char *)reason {
@@ -1902,6 +2058,11 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     // Return owned keys while the context is attached, even though admission
     // is already closed. Cleanup does not depend on ordinary event forwarding.
     [self releaseAllHeldKeys];
+
+    // K1.2: the commit flush above already rode the live context; a draft
+    // that was still marked is discarded with the session, so the host
+    // never receives a half-composed word after the connection is gone.
+    [self endIMEComposition];
 
     // 1) Release remote modifier state FIRST, while inputContext may still
     //    be valid. This sends 8 KEY_ACTION_UP packets so the remote PC

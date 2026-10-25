@@ -184,6 +184,7 @@ extension SettingsModel {
     relativeMouseAsAbsolute = Self.defaultRelativeMouseAsAbsolute
     muteOnFocusLoss = Self.defaultMuteOnFocusLoss
     backgroundGamepad = Self.defaultBackgroundGamepad
+    imeLocalComposition = Self.defaultIMELocalComposition
     swapMouseButtons = Self.defaultSwapMouseButtons
     reverseScrollDirection = Self.defaultReverseScrollDirection
     pointerSensitivity = Self.defaultPointerSensitivity
@@ -405,6 +406,7 @@ extension SettingsModel {
         settings.relativeMouseAsAbsolute ?? Self.defaultRelativeMouseAsAbsolute
       muteOnFocusLoss = settings.muteOnFocusLoss ?? Self.defaultMuteOnFocusLoss
       backgroundGamepad = settings.backgroundGamepad ?? Self.defaultBackgroundGamepad
+      imeLocalComposition = settings.imeLocalComposition ?? Self.defaultIMELocalComposition
       swapMouseButtons = settings.swapMouseButtons ?? Self.defaultSwapMouseButtons
       reverseScrollDirection =
         settings.reverseScrollDirection ?? Self.defaultReverseScrollDirection
@@ -792,6 +794,7 @@ extension SettingsModel {
       relativeMouseAsAbsolute: relativeMouseAsAbsolute,
       muteOnFocusLoss: muteOnFocusLoss,
       backgroundGamepad: backgroundGamepad,
+      imeLocalComposition: imeLocalComposition,
       swapMouseButtons: swapMouseButtons,
       reverseScrollDirection: reverseScrollDirection,
       touchscreenMode: touchscreenMode,

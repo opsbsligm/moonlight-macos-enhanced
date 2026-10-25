@@ -680,6 +680,8 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
     self.inputDiagnosticsRawRelativeDeltaY += snapshot.rawRelativeDeltaY;
     self.inputDiagnosticsSentRelativeDeltaX += snapshot.sentRelativeDeltaX;
     self.inputDiagnosticsSentRelativeDeltaY += snapshot.sentRelativeDeltaY;
+    self.inputDiagnosticsIMECompositions += snapshot.imeCompositions;
+    self.inputDiagnosticsIMECommits += snapshot.imeCommits;
 
     [self mergeInputDiagnosticsBucket:self.inputDiagnosticsRelativeMotionBySource
                         fromDictionary:snapshot.relativeMotionBySource];
@@ -821,6 +823,9 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
     [parts addObject:[NSString stringWithFormat:@"suppressed=%lu", (unsigned long)self.inputDiagnosticsSuppressedRelativeEvents]];
     [parts addObject:[NSString stringWithFormat:@"rawΔ=(%ld,%ld)", (long)self.inputDiagnosticsRawRelativeDeltaX, (long)self.inputDiagnosticsRawRelativeDeltaY]];
     [parts addObject:[NSString stringWithFormat:@"sentΔ=(%ld,%ld)", (long)self.inputDiagnosticsSentRelativeDeltaX, (long)self.inputDiagnosticsSentRelativeDeltaY]];
+    if (self.inputDiagnosticsIMECompositions > 0 || self.inputDiagnosticsIMECommits > 0) {
+        [parts addObject:[NSString stringWithFormat:@"ime=%lu+%lu", (unsigned long)self.inputDiagnosticsIMECompositions, (unsigned long)self.inputDiagnosticsIMECommits]];
+    }
     [parts addObject:[NSString stringWithFormat:@"capture=%lu", (unsigned long)self.inputDiagnosticsCaptureArmedCount]];
     [parts addObject:[NSString stringWithFormat:@"captureSkip=%lu", (unsigned long)self.inputDiagnosticsCaptureSkipCount]];
     [parts addObject:[NSString stringWithFormat:@"uncapture=%lu", (unsigned long)self.inputDiagnosticsUncaptureCount]];

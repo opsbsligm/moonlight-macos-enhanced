@@ -990,6 +990,16 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  // K1.2 imeLocalComposition: when YES, the active system input method
+  // composes through the stream during capture, so CJK and other composed
+  // scripts can be typed into the host. Default false keeps the shipped
+  // key-code + committed-text routes untouched for every other language.
+  @Published var imeLocalComposition: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var swapMouseButtons: Bool {
     didSet {
       guard !isLoading else { return }
@@ -1445,6 +1455,7 @@ class SettingsModel: ObservableObject {
     relativeMouseAsAbsolute = Self.defaultRelativeMouseAsAbsolute
     muteOnFocusLoss = Self.defaultMuteOnFocusLoss
     backgroundGamepad = Self.defaultBackgroundGamepad
+    imeLocalComposition = Self.defaultIMELocalComposition
     swapMouseButtons = Self.defaultSwapMouseButtons
     reverseScrollDirection = Self.defaultReverseScrollDirection
     pointerSensitivity = Self.defaultPointerSensitivity

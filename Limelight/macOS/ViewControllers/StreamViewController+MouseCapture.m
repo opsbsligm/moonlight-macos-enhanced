@@ -3653,6 +3653,14 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
     self.controllerSupport.shouldSendInputEvents = YES;
     [self.hidSupport refreshKeyboardModifiersForCapture];
 
+    // K1.2: open the composition session for this capture when the per-host
+    // setting is on. The setting can flip mid-session; re-reading it on
+    // every capture keeps the two in lock step without an observer.
+    self.hidSupport.imeLocalCompositionEnabled =
+        [SettingsClass imeLocalCompositionFor:self.hidSupport.host.uuid];
+    self.hidSupport.imeCandidateAnchorRect = [self imeCandidateAnchorRect];
+    [self.hidSupport beginIMECompositionIfEnabled];
+
     self.pendingFreeMouseReentryEdge = MLFreeMouseExitEdgeNone;
     self.pendingFreeMouseReentryAtMs = 0;
     self.pendingMouseExitedRecapture = NO;
@@ -3668,6 +3676,18 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         [self isWindowFullscreen] ? 1 : 0,
         self.isRemoteDesktopMode ? 1 : 0,
         self.hidSupport.inputContext);
+}
+
+// K1.2: the candidate window anchors at the stream view's top-left corner
+// in screen coordinates; NSZeroRect when the view is not on screen yet.
+- (NSRect)imeCandidateAnchorRect {
+    NSView *view = self.view;
+    if (view == nil || view.window == nil) {
+        return NSZeroRect;
+    }
+    NSRect inWindow = [view convertRect:view.bounds toView:nil];
+    NSRect onScreen = [view.window convertRectToScreen:inWindow];
+    return NSMakeRect(NSMinX(onScreen), NSMinY(onScreen), 1.0, 1.0);
 }
 
 - (void)uncaptureMouse {
@@ -3698,6 +3718,12 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
 
     // New input is closed; owned releases still use the attached input context.
     [self.hidSupport releaseAllHeldKeys];
+    // K1.2: releaseAllHeldKeys above already flushed the last commit onto the
+    // still-live context. Only now does the session close and discard any
+    // draft that was still marked; ending it earlier would reset the client
+    // and drop that commit.
+    [self.hidSupport endIMEComposition];
+    self.hidSupport.imeLocalCompositionEnabled = NO;
     // The same reason, one tracker over: flagsChanged: stops reaching the sync
     // the moment input is off, so a modifier the host was told about has to be
     // returned here or it stays down over every pointer click that follows.

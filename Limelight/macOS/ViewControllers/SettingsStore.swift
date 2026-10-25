@@ -129,6 +129,9 @@ struct Settings: Encodable, Decodable {
   // and mouse forwarding untouched. Default false preserves the shipped
   // behaviour of forwarding gamepad input regardless of focus.
   let backgroundGamepad: Bool?
+  // K1.2: active input method composes through the stream during capture.
+  // Default false keeps every shipped key path intact.
+  let imeLocalComposition: Bool?
   let swapMouseButtons: Bool?
   let reverseScrollDirection: Bool?
   let touchscreenMode: Int?
@@ -285,6 +288,7 @@ struct Settings: Encodable, Decodable {
       relativeMouseAsAbsolute: relativeMouseAsAbsolute,
       muteOnFocusLoss: muteOnFocusLoss,
       backgroundGamepad: backgroundGamepad,
+      imeLocalComposition: imeLocalComposition,
       swapMouseButtons: swapMouseButtons,
       reverseScrollDirection: reverseScrollDirection,
       touchscreenMode: touchscreenMode,
@@ -546,6 +550,7 @@ extension SettingsClass {
       relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,
       muteOnFocusLoss: settings.muteOnFocusLoss,
       backgroundGamepad: settings.backgroundGamepad,
+      imeLocalComposition: settings.imeLocalComposition,
       swapMouseButtons: settings.swapMouseButtons,
       reverseScrollDirection: settings.reverseScrollDirection,
       touchscreenMode: settings.touchscreenMode,
