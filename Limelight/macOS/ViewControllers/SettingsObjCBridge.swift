@@ -126,6 +126,11 @@ class SettingsClass: NSObject {
         "edgeSensorBandWidthPoints": settings.edgeSensorBandWidthPoints ?? 0,
         "edgeSensorDwellSeconds": settings.edgeSensorDwellSeconds ?? 0,
         "edgeMenuAutoCollapseSeconds": settings.edgeMenuAutoCollapseSeconds ?? 0,
+        // Wave C: the three remaining sidebar overrides, read back as zero when
+        // absent so the stream falls back to the shipped constants.
+        "edgeMenuSummonGraceSeconds": settings.edgeMenuSummonGraceSeconds ?? 0,
+        "edgeSensorFlickMinTravelPoints": settings.edgeSensorFlickMinTravelPoints ?? 0,
+        "edgeMenuHandleIdleThicknessPoints": settings.edgeMenuHandleIdleThicknessPoints ?? 0,
         // The stream reads this to decide when the system's global hotkeys are its own.
         // Anything it does not recognise is read back as "follow fullscreen".
         "systemKeyboardShortcutCapture": settings.systemKeyboardShortcutCapture ?? 0,
@@ -354,6 +359,9 @@ class SettingsClass: NSObject {
       edgeSensorBandWidthPoints: settings.edgeSensorBandWidthPoints,
       edgeSensorDwellSeconds: settings.edgeSensorDwellSeconds,
       edgeMenuAutoCollapseSeconds: settings.edgeMenuAutoCollapseSeconds,
+      edgeMenuSummonGraceSeconds: settings.edgeMenuSummonGraceSeconds,
+      edgeSensorFlickMinTravelPoints: settings.edgeSensorFlickMinTravelPoints,
+      edgeMenuHandleIdleThicknessPoints: settings.edgeMenuHandleIdleThicknessPoints,
       systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,
@@ -477,6 +485,9 @@ class SettingsClass: NSObject {
         edgeSensorBandWidthPoints: updated.edgeSensorBandWidthPoints,
         edgeSensorDwellSeconds: updated.edgeSensorDwellSeconds,
         edgeMenuAutoCollapseSeconds: updated.edgeMenuAutoCollapseSeconds,
+        edgeMenuSummonGraceSeconds: updated.edgeMenuSummonGraceSeconds,
+        edgeSensorFlickMinTravelPoints: updated.edgeSensorFlickMinTravelPoints,
+        edgeMenuHandleIdleThicknessPoints: updated.edgeMenuHandleIdleThicknessPoints,
         systemKeyboardShortcutCapture: updated.systemKeyboardShortcutCapture,
         enableMicrophone: updated.enableMicrophone,
         streamResolutionScale: updated.streamResolutionScale,
@@ -596,6 +607,9 @@ class SettingsClass: NSObject {
       edgeSensorBandWidthPoints: settings.edgeSensorBandWidthPoints,
       edgeSensorDwellSeconds: settings.edgeSensorDwellSeconds,
       edgeMenuAutoCollapseSeconds: settings.edgeMenuAutoCollapseSeconds,
+      edgeMenuSummonGraceSeconds: settings.edgeMenuSummonGraceSeconds,
+      edgeSensorFlickMinTravelPoints: settings.edgeSensorFlickMinTravelPoints,
+      edgeMenuHandleIdleThicknessPoints: settings.edgeMenuHandleIdleThicknessPoints,
       systemKeyboardShortcutCapture: settings.systemKeyboardShortcutCapture,
       enableMicrophone: settings.enableMicrophone,
       streamResolutionScale: settings.streamResolutionScale,

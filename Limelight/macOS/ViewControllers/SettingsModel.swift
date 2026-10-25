@@ -499,6 +499,30 @@ class SettingsModel: ObservableObject {
       postMouseSettingsChanged("edgeSensorSummon")
     }
   }
+  // Wave C: the three remaining sidebar constants (keyboard-summon grace, flick
+  // stroke, idle tab thickness) join the E1 trio behind the same zero-means-
+  // shipped-constant contract.
+  @Published var edgeMenuSummonGraceSeconds: Double {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+      postMouseSettingsChanged("edgeSensorSummon")
+    }
+  }
+  @Published var edgeSensorFlickMinTravelPoints: Double {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+      postMouseSettingsChanged("edgeSensorSummon")
+    }
+  }
+  @Published var edgeMenuHandleIdleThicknessPoints: Double {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+      postMouseSettingsChanged("edgeSensorSummon")
+    }
+  }
 
   // 0 follows fullscreen, 1 also captures a windowed stream, 2 leaves every system
   // shortcut on this Mac -- the last of which is the regression anchor for capture.
@@ -1404,6 +1428,11 @@ class SettingsModel: ObservableObject {
     edgeSensorBandWidthPoints = Self.defaultEdgeSensorBandWidthPoints
     edgeSensorDwellSeconds = Self.defaultEdgeSensorDwellSeconds
     edgeMenuAutoCollapseSeconds = Self.defaultEdgeMenuAutoCollapseSeconds
+    // Wave C: the three remaining sidebar numbers, same zero-means-shipped-
+    // constant contract as the E1 trio above.
+    edgeMenuSummonGraceSeconds = Self.defaultEdgeMenuSummonGraceSeconds
+    edgeSensorFlickMinTravelPoints = Self.defaultEdgeSensorFlickMinTravelPoints
+    edgeMenuHandleIdleThicknessPoints = Self.defaultEdgeMenuHandleIdleThicknessPoints
 
     selectedVideoRendererMode = Self.defaultVideoRendererMode
     selectedVideoCodec = Self.defaultVideoCodec
