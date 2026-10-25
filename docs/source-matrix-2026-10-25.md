@@ -19,8 +19,8 @@
 
 | 产品 | 来源 | 平台/赛道 | 版本 | 验证日期 | 证据层级 | 未知项 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Citrix（客户端输入模型） | `FlorianSLZ/scloud` 钉 commit `2f32dfbfbb3c5855d87da8a5b874191afc9c5d37` 的 `Policies/ADMX/Citrix/Receiver-Intune.admx`；`fwmechanic/shell/citrix_alttab`；真实 `.ica` 文件 | Windows 为主 | ADMX 钉住 commit（仓库名 `scloud`，非 sclood——早期文档笔误已核） | 2026-10-25（钉住 URL 回读 HTTP 200；仓库 API 可达） | 上游已验证（机制级：热键表 + 三级键盘捕获，摘自 ADMX 本身） | 非运行时实测；不比较手感 |
-| Citrix Horizon | 同上 ADMX 证据 + 官方文档 | Windows/全平台 | 同上 | 2026-10-25 | 上游已验证（机制级）+ 仅宣传（产品能力） | ADMX 归属（Horizon 专用 vs 通用 Receiver）未逐节核对；无运行时证据 |
+| Citrix（客户端输入模型） | `FlorianSLZ/scloud` 钉 commit `2f32dfbfbb3c5855d87da8a5b874191afc9c5d37` 的 `Policies/ADMX/Citrix/Receiver-Intune.admx`；`fwmechanic/shell/citrix_alttab`；真实 `.ica` 文件 | Windows 为主 | ADMX 钉住 commit（仓库名 `scloud`，非 sclood——早期文档笔误已核） | 2026-10-25（钉住 URL 回读 HTTP 200；仓库 API 可达） | 上游已验证（机制级：可配热键表 + USB PNP 设备规则，摘自 ADMX 本身；119 个 policy 中 0 处提及 horizon） | 非运行时实测；不比较手感 |
+| Citrix Horizon | 同上 ADMX 证据 + 官方文档 | Windows/全平台 | 同上 | 2026-10-25 | 上游已验证（机制级）+ 仅宣传（产品能力） | 归属已核（2026-10-26）：ADMX 命名空间 `receiver.Policies.receiver`、119 个 policy、0 处提及 horizon，且 `<supersededAdm fileName="icaclient.adm"/>` ——是**通用 ICA Client**（覆盖 Horizon + classic Receiver + DaaS），非 Horizon 专用；"三级键盘捕获"措辞无 ADMX 直接支撑，已改为"可配热键表 + USB PNP 设备规则"；仍无运行时证据 |
 | Parsec | `parsec.com` 官网（2026-10-25 回读 302→首页可达） | Win/macOS/Linux/iOS/Android | 未钉版本 | 2026-10-25 | **仅宣传**（无源码/协议证据） | 禁止任何"我们超过 Parsec"类断言 |
 | 网易 UU 远程 | `uu.163.com` 官网（2026-10-25 回读 200） | 手机→PC 为主 | 未钉版本 | 2026-10-25 | **仅宣传**（300+ 触屏按键映射方案，宣传页可见） | 与 macOS 桌面客户端不同赛道，不直接对照 |
 | 深信服 aDesk | `sangfor.com.cn` 官网（2026-10-25 回读 200） | Windows 云桌面为主 | 未钉版本 | 2026-10-25 | **仅宣传 / 待调研** | 输入映射细节无公开可复核来源 |
