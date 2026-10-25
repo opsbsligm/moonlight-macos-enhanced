@@ -6,6 +6,7 @@
 #   deps     — download binary frameworks
 #   build    — compile the app
 #   test     — integration smoke test (bundle, signature, launch)
+#              plus the assertion battery (tag / main only)
 #   package  — produce a DMG (tag / main only)
 #   mirror   — serialized GitHub mirror after all applicable gates
 #
@@ -246,6 +247,39 @@ audit:sources:
     - python3 scripts/edge-sensor-e1-clamp-tests.py --self-test
   rules: *pipeline_rules
 
+# The full assertion battery: every guard we rely on is broken on purpose and
+# shown to be caught. Measured at 71 minutes (146 cases) on a clean local tree,
+# so it stays out of the fast path and runs on release branches only. It does
+# not need build artifacts: it mutates the checked-out source and asks each
+# gate about it. needs: [] keeps it from blocking the release DMG while it
+# runs for its full measured hour and a half on the single shared runner.
+# A failed battery on a tag is a release-blocker by construction; on main it
+# records drift between the last green tag and now.
+mutation-battery:
+  before_script:
+    - *fetch_submodules
+  stage: test
+  tags: [macos]
+  cache: {}
+  timeout: 150 minutes
+  needs: []
+  dependencies: []
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - |
+      set -euo pipefail
+      venv_dir="$(mktemp -d /tmp/moonlight-battery-venv.XXXXXX)"
+      trap 'rm -rf "$venv_dir"' EXIT
+      python3 -m venv "$venv_dir"
+      . "$venv_dir/bin/activate"
+      python -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
+      # The battery refuses a dirty checkout on its own, and the CI working
+      # directory is a fresh clone, so no --allow-dirty is needed. Each gate it
+      # invokes carries its own recursion flag internally.
+      python3 scripts/assertion-battery.py
+
 # --- Package -----------------------------------------------------------------
 # Produce a DMG only for tags (releases) and main branch pushes (nightly smoke).
 package-dmg:
@@ -257,6 +291,16 @@ package-dmg:
   timeout: 15 minutes
   dependencies:
     - build-app
+  # The battery job's `needs:` turns on DAG for this project, so without an
+  # explicit list the package stage would wait for the whole test stage,
+  # including the ~71-minute battery. Name the real gates directly: the DMG
+  # is ready once build plus both test jobs and the Python audit pass, and
+  # ships independently of the battery, which gates the release separately.
+  needs:
+    - build-app
+    - test-app
+    - audit:sources
+    - audit:python
   script:
     # package-dmg.sh reads CFBundleShortVersionString + CFBundleVersion from
     # Info.plist and names the DMG "Moonlight-<ver>-build<num>.dmg" — this
