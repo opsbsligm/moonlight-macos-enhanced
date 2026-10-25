@@ -3674,6 +3674,7 @@ if run_battery:
                           os.path.join("scripts", "input-bind-retry-tests.py"),
                           os.path.join("scripts", "input-boundary-tests.py"),
                           os.path.join("scripts", "keyboard-concurrency-tests.py"),
+                          os.path.join("scripts", "keyboard-ime-routing-tests.py"),
                           os.path.join("scripts", "held-key-identity-tests.py"),
                           os.path.join("scripts", "key-state-heal-tests.py"),
                           os.path.join("scripts", "held-modifier-keyboard-pair-tests.py"),

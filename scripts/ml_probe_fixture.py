@@ -16,6 +16,64 @@ QUIRK_DECL = """
 
 
 def apply(source):
+    # The local-IME hooks read a session the probe does not own: nil session means
+    # the real key path, and flush is a no-op until capture starts one.
+    if "self.imeSession" in source or "[self flushIMECommit]" in source:
+        if "@interface MLLocalIMESession" not in source:
+            # The extracted key methods send handleEvent: through the session,
+            # so a forward declaration is not enough.
+            at = source.find("@interface ")
+            source = source[:at] + (
+                "@interface MLLocalIMESession : NSObject\n"
+                "@property (nonatomic, strong) NSTextInputContext *context;\n"
+                "@end\n"
+            ) + source[at:]
+
+        def ime_interface(match):
+            block = match.group(0)
+            if ("keyDown:" in block or "keyboardForwardedKeyDownKeyCodes" in block) \
+                    and "imeSession" not in block:
+                block = block.replace("@end",
+                                      "@property (nonatomic, strong) MLLocalIMESession *imeSession;\n@end")
+            return block
+
+        source = re.sub(r"@interface\s+([A-Za-z_]\w*)\s*:\s*NSObject\b"
+                        r"(?:(?!@end).)*?@end",
+                        ime_interface, source, flags=re.S)
+
+        # The extracted key methods call flushIMECommit, so every probe class the
+        # session landed on needs the selector declared: a private extension after
+        # each such interface. The session being nil means no IME is active, so a
+        # no-op definition is behaviorally identical to the shipping one.
+        if "@class MLLocalIMESession;" not in source and "@interface MLLocalIMESession" not in source:
+            at = source.find("@interface ")
+            source = source[:at] + "@class MLLocalIMESession;\n" + source[at:]
+        extended = set()
+        for probe in re.finditer(
+                r"@interface\s+([A-Za-z_]\w*)\s*:\s*NSObject\b"
+                r"(?:(?!@end).)*?(?:keyDown:|keyboardForwardedKeyDownKeyCodes)"
+                r"(?:(?!@end).)*?imeSession(?:(?!@end).)*?@end",
+                source, flags=re.S):
+            cls = probe.group(1)
+            if re.search(r"flushIMECommit;", probe.group(0)):
+                continue
+            ins = ("\n@interface %s ()\n"
+                   "- (void)flushIMECommit;\n"
+                   "- (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event;\n"
+                   "@end\n" % cls)
+            source = (source[:probe.end()] + ins + source[probe.end():])
+            extended.add(cls)
+        # The session being nil means no IME is active, so the no-op definition is
+        # behaviorally identical to the shipping one.
+        for m in re.finditer(r"@implementation\s+([A-Za-z_]\w*)\b(?!\s*\()", source):
+            if m.group(1) not in extended:
+                continue
+            impl_end = source.index("@end", m.end())
+            body = source[m.start():impl_end]
+            if not re.search(r"^-\s*\(void\)\s*flushIMECommit\b", body, flags=re.M):
+                source = (source[:m.end()]
+                          + "\n- (void)flushIMECommit {}\n" + source[m.end():])
+
     if "HIDUnicodeTextForEvent(event)" in source:
         header = Path(__file__).resolve().parents[1] / "Limelight/Input/KeyboardTextRouting.h"
         source = '#import "' + str(header) + '"\n' + source
