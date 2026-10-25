@@ -1132,6 +1132,11 @@ extension SettingsModel {
   static let defaultEdgeSensorBandWidthPoints = 0.0
   static let defaultEdgeSensorDwellSeconds = 0.0
   static let defaultEdgeMenuAutoCollapseSeconds = 0.0
+  // Wave C: the three remaining sidebar numbers join the same contract; zero is
+  // the shipped constant, so a fresh install ships the exact previous hand-feel.
+  static let defaultEdgeMenuSummonGraceSeconds = 0.0
+  static let defaultEdgeSensorFlickMinTravelPoints = 0.0
+  static let defaultEdgeMenuHandleIdleThicknessPoints = 0.0
 
   // Which moments the app takes the system's global hotkeys for the stream. The raw values
   // are the numbers the stream's own enum uses, so the bridge is a pass-through.

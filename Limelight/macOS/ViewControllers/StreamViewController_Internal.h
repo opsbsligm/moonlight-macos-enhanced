@@ -99,6 +99,11 @@ static CGFloat const MLEdgeMenuButtonVisiblePeek = 34.0;
 // panel's own width is all "armed" means: the handle answers the pointer that arrived
 // at the edge, and the click is still what opens the bar.
 static CGFloat const MLEdgeMenuHandleIdleThickness = 14.0;
+// Wave C: the 14pt idle tab is the shipped hand-feel. Thinning it below 10pt makes
+// the target harder to see and hit; thickening it past 20pt starts to read as a
+// button, not a tab. The armed 30pt and the 48pt length stay fixed.
+static CGFloat const MLEdgeMenuHandleIdleThicknessMinPoints = 10.0;
+static CGFloat const MLEdgeMenuHandleIdleThicknessMaxPoints = 20.0;
 static CGFloat const MLEdgeMenuHandleArmedThickness = 30.0;
 static CGFloat const MLEdgeMenuHandleLength = 48.0;
 // A click may fall on the 2pt of air the tab floats on plus this much again, and no
@@ -125,6 +130,11 @@ static NSTimeInterval const MLEdgeMenuAutoCollapseMaxSeconds = 1.00;
 // the entry the player asked for looked broken. Until the pointer has actually been
 // on the bar, the bar waits.
 static NSTimeInterval const MLEdgeMenuSummonGraceDelay = 2.5;
+// Wave C: 2.5s is the shipped wait for a keyboard-summoned bar nobody has hovered.
+// Under 1s the bar closes before a pointer parked anywhere but the tab can reach
+// it; past 6s a summon nobody wanted lingers.
+static NSTimeInterval const MLEdgeMenuSummonGraceMinSeconds = 1.0;
+static NSTimeInterval const MLEdgeMenuSummonGraceMaxSeconds = 6.0;
 
 // Activation is a narrow local-pointer target at the dock, independent of the
 // expanded interaction region and of the host's resolution or mouse acceleration.
@@ -154,6 +164,11 @@ static NSTimeInterval const MLEdgeSensorDwellMaxSeconds = 0.300;
 // is ordinary aim; these thresholds ask for ~2800pt/s of pure one-way travel,
 // a reversed stroke breaks the accumulation, and a second flick waits two seconds.
 static CGFloat const MLEdgeSensorFlickMinTravel = 700.0;
+// Wave C: 700pt in 0.25s is the shipped one-way stroke. Below 400pt a deliberate
+// aim along the edge can fake a summon; past 1200pt the flick is a real swipe the
+// player must commit to, which is fine but no tighter than it needs to be.
+static CGFloat const MLEdgeSensorFlickMinTravelMinPoints = 400.0;
+static CGFloat const MLEdgeSensorFlickMinTravelMaxPoints = 1200.0;
 static NSTimeInterval const MLEdgeSensorFlickWindowSeconds = 0.25;
 static NSTimeInterval const MLEdgeSensorFlickResteerGapSeconds = 0.12;
 static NSTimeInterval const MLEdgeSensorFlickCooldownMs = 2000.0;
@@ -393,6 +408,9 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 // never hands the pointer over and never opens anything.
 @property (nonatomic) BOOL armedAppearance;
 @property (nonatomic) MLFreeMouseExitEdge dockEdge;
+// Wave C: zero means "use the shipped 14pt idle tab"; the armed 30pt and the
+// 48pt length never move. The stream view controller pushes the clamped pref.
+@property (nonatomic) CGFloat idleThicknessPoints;
 @end
 
 @interface MLEdgeMenuPanel : NSPanel
@@ -572,6 +590,11 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) CGFloat edgeSensorBandWidthOverridePoints;
 @property (nonatomic) NSTimeInterval edgeSensorDwellOverrideSeconds;
 @property (nonatomic) NSTimeInterval edgeMenuAutoCollapseOverrideSeconds;
+// Wave C: the three remaining sidebar constants, same "zero means follow the
+// shipped constant" contract as the E1 trio above.
+@property (nonatomic) NSTimeInterval edgeMenuSummonGraceOverrideSeconds;
+@property (nonatomic) CGFloat edgeSensorFlickMinTravelOverridePoints;
+@property (nonatomic) CGFloat edgeMenuHandleIdleThicknessOverridePoints;
 @property (nonatomic, strong) NSTimer *edgeSensorDwellTimer;
 @property (nonatomic) double edgeSensorIgnoreMotionUntilMs;
 @property (nonatomic) BOOL edgeSensorMustLeaveHoverRegion;
@@ -910,6 +933,9 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 - (NSTimeInterval)edgeSensorDwellSeconds;
 - (CGFloat)edgeSensorBandWidthPoints;
 - (NSTimeInterval)edgeMenuAutoCollapseDelay;
+- (CGFloat)edgeMenuHandleIdleThicknessPoints;
+- (CGFloat)edgeSensorFlickMinTravelPoints;
+- (NSTimeInterval)edgeMenuSummonGraceSeconds;
 - (BOOL)reasonAllowsImmediateCaptureInFreeMouseMode:(NSString *)reason;
 - (BOOL)remoteDesktopCaptureReasonRequiresPointerInside:(NSString *)reason;
 - (uint64_t)freeMouseEdgeUncaptureSuppressionDurationMsForReason:(NSString *)reason;
