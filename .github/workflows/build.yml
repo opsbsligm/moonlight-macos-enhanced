@@ -378,6 +378,7 @@ jobs:
         python3 scripts/mute-on-focus-loss-tests.py --self-test
         python3 scripts/background-gamepad-tests.py --self-test
         python3 scripts/keyboard-unicode-routing-tests.py
+        python3 scripts/keyboard-ime-routing-tests.py
 
     - name: Verify device-specific C filtering preserves real keyboard input
       run: python3 scripts/keyboard-source-quirk-tests.py

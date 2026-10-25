@@ -467,6 +467,17 @@ struct InputView: View {
 
       Divider()
 
+      // K1.2: composition through the stream. Only matters when an input
+      // method is active (CJK and friends); with a plain keyboard the HID
+      // layer never opens a session, so the switch is a no-op there.
+      ToggleCell(
+        title: "Local IME Composition",
+        hintKey: "Local IME Composition detail",
+        boolBinding: $settingsModel.imeLocalComposition
+      )
+
+      Divider()
+
       KeyboardTranslationRulesView(settingsModel: settingsModel)
 
       Divider()

@@ -89,6 +89,7 @@
 				Input/InputDiagnosticsLedger.m,
 				"Input/HIDSupport+Rumble.m",
 				"Input/HIDSupport+Scroll.m",
+				Input/HIDLocalIME.m,
 				Input/MLControllerInventory.m,
 				Input/Ticks.m,
 				Limelight.xcdatamodeld,
