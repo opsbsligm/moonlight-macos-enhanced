@@ -134,7 +134,7 @@
 | 用途 | 路径 |
 | --- | --- |
 | 标签页 UI（系统原生 tabs） | `Limelight/macOS/ViewControllers/LiquidGlass/LiquidGlassTabBar.swift` |
-| 帧节奏（待接入主循环） | `Limelight/Stream/MLFramePacer.h/.m` |
+| 帧节奏（已接入 VideoDecoderRenderer：6 处 `_pacer` 引用 + `MLFramePacerDelegate`，见 VideoDecoderRenderer.m:1546/1696/2124/3507/5952/6161/6209） | `Limelight/Stream/MLFramePacer.h/.m` |
 | 真正生效的帧队列 | `Limelight/Stream/VideoDecoderRenderer.m`（desiredEnhancedDrawableDepth / desiredPendingFramesForDisplayRefreshRate） |
 | 带宽追踪 | `Limelight/Stream/MLBandwidthTracker.h/.m` |
 | 解码渲染核心 | `Limelight/Stream/VideoDecoderRenderer.m` |
