@@ -6,8 +6,10 @@
 #   deps     — download binary frameworks
 #   build    — compile the app
 #   test     — integration smoke test (bundle, signature, launch)
-#              plus the assertion battery (tag / main only)
 #   package  — produce a DMG (tag / main only)
+#   verify   — assertion battery (tag / main only), once the whole build,
+#              test and packaging path is off the runner, so the long mutation
+#              sweep can never starve the gates it protects
 #   mirror   — serialized GitHub mirror after all applicable gates
 #
 # The Docker-based GitLab security templates are not enabled on shell runners.
@@ -25,6 +27,7 @@ stages:
   - build
   - test
   - package
+  - verify
   - mirror
 
 variables:
@@ -74,7 +77,11 @@ audit:python:
   stage: lint
   tags: [macos]
   cache: {}
-  timeout: 30 minutes
+  # Measured ~140s alone; pipeline 647 recorded 1803s (killed at the old
+  # 30m ceiling) while the mutation battery and security jobs shared the
+  # 8-core runner. The battery now runs after the mirror, but keep headroom
+  # for the remaining cross-pipeline overlap on concurrent=2.
+  timeout: 60 minutes
   before_script:
     - *fetch_submodules
   dependencies: []
@@ -251,18 +258,29 @@ audit:sources:
 # shown to be caught. Measured at 71 minutes (146 cases) on a clean local tree,
 # so it stays out of the fast path and runs on release branches only. It does
 # not need build artifacts: it mutates the checked-out source and asks each
-# gate about it. needs: [] keeps it from blocking the release DMG while it
-# runs for its full measured hour and a half on the single shared runner.
-# A failed battery on a tag is a release-blocker by construction; on main it
-# records drift between the last green tag and now.
+# gate about it.
+# It runs in its own verify stage, after package, with no needs: so the stage
+# barrier holds it until the build, both test jobs, both audits and the DMG are
+# done and off the runner. That is deliberate: it used to start immediately
+# beside the release path, and pipeline 647 watched it starve audit:python into
+# a timeout (trace gaps of 608s and 779s while load sat at 20-33 on eight
+# cores), skipping every downstream gate and leaving main with no DMG. A battery
+# that cannot run without damaging the gates it protects is not a gate.
+# The mirror still sits after it, so a failed battery keeps blocking the
+# GitHub release on a tag exactly as before; only the DMG artifact arrives early.
 mutation-battery:
   before_script:
     - *fetch_submodules
-  stage: test
+  stage: verify
   tags: [macos]
   cache: {}
-  timeout: 150 minutes
-  needs: []
+  # Pipeline 647 watched this job take 9302s (155 minutes) while it fought the
+  # release path for CPU, past the old 150-minute ceiling. Standalone it is a
+  # measured 71 minutes, so the extra headroom only covers cross-pipeline
+  # overlap on the shared runner; the resource_group below keeps two batteries
+  # from overlapping each other.
+  timeout: 180 minutes
+  resource_group: macos-battery
   dependencies: []
   rules:
     - if: '$CI_COMMIT_TAG'
@@ -291,11 +309,11 @@ package-dmg:
   timeout: 15 minutes
   dependencies:
     - build-app
-  # The battery job's `needs:` turns on DAG for this project, so without an
-  # explicit list the package stage would wait for the whole test stage,
-  # including the ~71-minute battery. Name the real gates directly: the DMG
-  # is ready once build plus both test jobs and the Python audit pass, and
-  # ships independently of the battery, which gates the release separately.
+  # Name the real gates directly instead of relying on the stage barrier: the
+  # DMG is ready once build plus both test jobs and the Python audits pass.
+  # The ~71-minute battery sits in the verify stage after this pipeline has
+  # shipped, so it can neither delay the DMG nor compete with it for the
+  # runner's cores.
   needs:
     - build-app
     - test-app

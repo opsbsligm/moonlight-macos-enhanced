@@ -109,6 +109,8 @@ class PipelineTests(Sandbox):
                     self.assertEqual(enabled and selected(CI[gate]["rules"], context), workflow)
                 self.assertEqual(enabled and selected(CI["package-dmg"]["rules"], context), package)
                 self.assertEqual(enabled and selected(CI["publish-github"]["rules"], context), mirror)
+                # The battery covers the same events as the DMG gate.
+                self.assertEqual(enabled and selected(CI["mutation-battery"]["rules"], context), package)
         publisher = CI["publish-github"]
         self.assertGreater(CI["stages"].index(publisher["stage"]),
                            CI["stages"].index(CI["package-dmg"]["stage"]))
@@ -123,6 +125,31 @@ class PipelineTests(Sandbox):
             self.assertIn("timeout", CI[name])
             self.assertFalse(CI[name].get("allow_failure", False))
         self.assertNotIn("cache", CI)
+
+    def test_battery_runs_after_the_release_path(self):
+        # Pipeline 647: the battery shared the test stage with the release path
+        # on one 8-core runner and starved audit:python into its timeout, which
+        # skipped every downstream gate and left main without a DMG. The
+        # structural guarantee against that regression is the stage order plus
+        # the absence of a needs: shortcut, so both are pinned here.
+        battery = CI["mutation-battery"]
+        for name, job in CI.items():
+            if isinstance(job, dict) and "stage" in job:
+                self.assertIn(job["stage"], CI["stages"], f"{name} declares an unknown stage")
+        stages = CI["stages"]
+        self.assertGreater(stages.index(battery["stage"]),
+                           stages.index(CI["package-dmg"]["stage"]),
+                           "the battery must not compete with the release path")
+        self.assertLess(stages.index(battery["stage"]),
+                        stages.index(CI["publish-github"]["stage"]),
+                        "a red battery must still hold the mirror back")
+        self.assertNotIn("needs", battery,
+                         "needs: would let the battery start beside the release path")
+        self.assertEqual(battery["resource_group"], "macos-battery",
+                         "two batteries must not share the runner at once")
+        self.assertIn("timeout", battery)
+        self.assertFalse(battery.get("allow_failure", False),
+                         "a skipped battery silently stops gating")
 
     def job(self, name):
         return run("bash", "-c", "\n".join(CI[name]["script"]),
