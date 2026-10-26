@@ -5,16 +5,21 @@ GitLab is the source of truth. Push development commits to the `gitlab` remote;
 
 ## Execution order
 
-`lint -> deps -> build -> test -> package -> mirror`
+`lint -> deps -> build -> test -> package -> verify -> mirror`
 
 - Pushes (branches and tags), merge requests, and web runs execute the core gates.
 - The default branch and tags also produce a DMG.
 - The default branch and tags also run `mutation-battery`: the full assertion
-  battery in the test stage. It mutates the checked-out source and needs no
-  build artifacts, so it declares `needs: []` and runs in parallel with the
-  build instead of blocking the release DMG. Measured at 71 minutes (146
-  cases) on a clean local tree; the job ceiling is 150 minutes. A failed
-  battery on a tag is a release-blocker by construction.
+  battery in its own `verify` stage. It mutates the checked-out source and needs
+  no build artifacts, but it declares no `needs:`, so the stage barrier holds it
+  until the build, both test jobs, both audits and the DMG have left the runner.
+  That is deliberate: as a `needs: []` job in the test stage it competed with the
+  release path for one 8-core runner and starved `audit:python` into a timeout
+  (pipeline 647), which skipped every downstream gate. Measured at 71 minutes
+  (146 cases) on a clean local tree; the job ceiling is 180 minutes and a
+  `resource_group` keeps two batteries off the runner at the same time. A failed
+  battery on a tag is still a release-blocker by construction, because `mirror`
+  stays after `verify`; only the DMG artifact arrives early.
 - Push and web runs mirror after every applicable earlier stage succeeds.
   Merge request pipelines never publish with the deploy key.
 - `publish-github` has no `needs` shortcut. Its stage barrier includes packaging.
@@ -76,17 +81,23 @@ The project runs on one shared macOS runner (`local-shell-1306`, shell
 executor) plus the mirror runner. The shared runner's `concurrent` setting is
 2, so at most two of its jobs run at once; every other job queues.
 
-- `audit:python` carries a 30-minute ceiling because pip/venv setup plus the
-  full audit list is the slowest fast-path job. When two pipelines are active
-  at once (for example a merge pipeline and a branch pipeline), the second
-  pipeline's audit job can approach that ceiling without any code change;
-  retrying the job after the first pipeline drains is the standard fix.
-  Pipelines #492 recorded this exact shape and turned green on retry.
+- `audit:python` is the slowest fast-path job (pip/venv setup plus the full audit
+  list) and needs about 140 seconds on an idle runner. When two pipelines are
+  active at once its ceiling can be reached with no code change, so the ceiling
+  is now 60 minutes: pipeline 647 recorded 1803 seconds before the old 30-minute
+  ceiling killed the job (trace gaps of 608s and 779s while load sat at 20-33 on
+  eight cores) because the mutation battery and the security jobs shared the
+  runner. The battery has moved out of the fast path; the extra headroom covers
+  the overlap that remains at `concurrent=2`. Retrying a single starved job after
+  the other pipeline drains is still the standard fix and pipelines #492 turned
+  green that way.
 - The mutation battery is the one job expected to exceed an hour on this
-  runner. While it runs, everything else from the same pipeline that shares
-  the runner waits; cross-pipeline work queues behind both. Schedule tag
-  pipelines knowing the release window includes roughly two hours of
-  single-runner occupancy on top of the normal build.
+  runner: 9302 seconds (155 minutes) in pipeline 647 while it fought the release
+  path for CPU, against a measured 71 minutes standalone, so its ceiling is three
+  hours. It runs in the `verify` stage after packaging with a `macos-battery`
+  resource group, so it no longer competes with any gate and two batteries never
+  overlap. Schedule tag pipelines knowing the release window still includes up to
+  about two hours of single-runner occupancy on top of the normal build.
 - `audit:python` and `audit:sources` both compile or import Objective-C
   surface. Do not "fix" a red by raising a timeout before reading which of
   the two jobs the other pipeline's job starved.
