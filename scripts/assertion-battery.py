@@ -16,7 +16,7 @@ import signal
 import subprocess
 import sys
 import time
-from apple_toolchain import NO_TOOLCHAIN_MESSAGE
+from apple_toolchain import NO_TOOLCHAIN_MESSAGE, PROBE_BUILD_FAILED_MESSAGE
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HID = os.path.join(root, "Limelight", "Input", "HIDSupport.m")
@@ -2313,6 +2313,9 @@ def gate_failed(gate):
     # 128 proofs on a runner that had made none -- a green that meant the environment
     # had answered instead of the assertion. The sentence is apple_toolchain's own, not
     # a phrase invented here, so the tool that refuses is the tool that is read.
+    # A probe that failed to compile is the same shape of non-answer: the harness could
+    # not build the thing that would have exercised the assertion, so it says so with
+    # PROBE_BUILD_FAILED_MESSAGE. Grading that as "caught" would reward a broken toolchain.
     script, extra_args = gate
     proc = subprocess.run([sys.executable, script] + list(extra_args),
                           capture_output=True, text=True, cwd=root)
@@ -2320,6 +2323,9 @@ def gate_failed(gate):
     if proc.returncode != 0 and NO_TOOLCHAIN_MESSAGE in outcome:
         return None, [line for line in outcome.splitlines()
                       if NO_TOOLCHAIN_MESSAGE in line]
+    if proc.returncode != 0 and PROBE_BUILD_FAILED_MESSAGE in outcome:
+        return None, [line for line in outcome.splitlines()
+                      if PROBE_BUILD_FAILED_MESSAGE in line]
     detail = [line for line in outcome.splitlines() if "FAIL" in line]
     return proc.returncode != 0, detail
 

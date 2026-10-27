@@ -387,8 +387,12 @@ def compile_and_run(source, label):
                             "-isysroot", sdk, "-framework", "AppKit",
                             "-o", exe, path], capture_output=True, text=True)
     if build.returncode != 0:
-        print("FAIL the %s probe does not compile:\n%s" % (label, build.stderr[-1500:]))
-        return 1
+        # An unbuilt probe graded nothing, and the battery used to read its non-zero
+        # exit plus this FAIL line as a mutation caught by a real assertion. Say the
+        # shared sentence instead and return None: neither verdict was measured.
+        print("%s: the %s probe does not compile:\n%s" % (
+            apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, label, build.stderr[-1500:]))
+        return None
     ran = subprocess.run([exe], capture_output=True, text=True)
     print(ran.stdout.rstrip())
     return ran.returncode
@@ -404,6 +408,12 @@ def main():
 
     print("\n-- the shipping state machine --")
     verdict = compile_and_run(shipping, "shipping")
+    if verdict is None:
+        # Neither side can be graded when the shipping probe never built: the
+        # known-bad "failure" below would be an untested compiler error too.
+        print("%s: the shipping probe never built, so no keyboard verdict was measured"
+              % apple_toolchain.PROBE_BUILD_FAILED_MESSAGE)
+        return 1
     if verdict != 0:
         failures += 1
 
@@ -413,7 +423,11 @@ def main():
     print("\n-- the shape that shipped before the held-key table --")
     legacy = PROLOGUE + LEGACY + "\n@end\n" + TEST_BODY
     bad = compile_and_run(legacy, "known-bad")
-    if bad == 0 or bad is None:
+    if bad is None:
+        print("%s: the known-bad probe never built, so its rejection was never measured"
+              % apple_toolchain.PROBE_BUILD_FAILED_MESSAGE)
+        return 1
+    if bad == 0:
         print("FAIL the harness passed a state machine known to tangle concurrent keys")
         failures += 1
     else:
