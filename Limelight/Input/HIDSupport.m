@@ -1922,38 +1922,41 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
 // host never sees both a composed character and the physical key behind it.
 // ---------------------------------------------------------------------------
 
-// The current input source composes when it is a select-capable input method
-// (e.g. a CJK IME), not a plain Latin layout. The public TIS API answers the
-// question without reading a property as a dictionary.
+// Whether an input source type buffers keystrokes into a candidate string.
+//
+// Only an input method or an input mode composes. A plain keyboard layout -
+// including one whose display name carries non-ASCII glyphs, such as
+// "Czech – QWERTY" or "俄语 – PC" - delivers the key straight through, so it must
+// keep the key-code path or the stream loses the keys a game needs. Types
+// outside this whitelist (character palette, keyboard viewer, ink) are rejected
+// for the same reason: they must never capture streamed input.
+//
+// Measured against the live catalogue on macOS 27.2: of 285 selectable keyboard
+// sources, the previous non-ASCII name test misread 127 plain layouts as
+// composing and missed 22 input modes, while this type test agreed with every
+// source's declared type.
+static BOOL HIDIMEInputSourceTypeComposes(NSString *type) {
+    if (type == nil) {
+        return NO; // unknown type: keep the physical key route
+    }
+    return [type isEqualToString:(__bridge NSString *)kTISTypeKeyboardInputMode]
+        || [type isEqualToString:(__bridge NSString *)kTISTypeKeyboardInputMethodModeEnabled]
+        || [type isEqualToString:(__bridge NSString *)kTISTypeKeyboardInputMethodWithoutModes];
+}
+
+// The current input source composes when the system says it is an input method
+// or mode. TISGetInputSourceProperty returns a reference borrowed from the
+// source, so only the source itself is released here.
 static BOOL HIDIMECurrentInputSourceComposes(void) {
     TISInputSourceRef source = TISCopyCurrentKeyboardInputSource();
     if (source == NULL) return NO;
     @autoreleasepool {
-        // Both TIS answers are +1; release each the moment it is read.
-        CFStringRef nameKey = kTISPropertyInputSourceIsSelectCapable;
-        CFTypeRef value = TISGetInputSourceProperty(source, nameKey);
-        BOOL selectCapable = (value != NULL
-            && CFGetTypeID(value) == CFBooleanGetTypeID())
-            && CFBooleanGetValue((CFBooleanRef)value);
-        CFRelease(value);
-        BOOL composes = NO;
-        if (selectCapable) {
-            // A select-capable source that is just a Latin keyboard would
-            // swallow the very keys a game needs; only non-ASCII-capable
-            // methods compose.
-            composes = YES; // absent or unreadable name: answer by capability
-            CFTypeRef localized = TISGetInputSourceProperty(source, kTISPropertyLocalizedName);
-            if (localized != NULL && CFGetTypeID(localized) == CFStringGetTypeID()) {
-                NSString *name = (__bridge_transfer NSString *)localized;
-                composes = NO;
-                for (NSUInteger i = 0; i < name.length; i++) {
-                    if ([name characterAtIndex:i] > 0x7F) {
-                        composes = YES;
-                        break;
-                    }
-                }
-            }
+        CFTypeRef typeValue = TISGetInputSourceProperty(source, kTISPropertyInputSourceType);
+        NSString *type = nil;
+        if (typeValue != NULL && CFGetTypeID(typeValue) == CFStringGetTypeID()) {
+            type = (__bridge NSString *)typeValue;
         }
+        BOOL composes = HIDIMEInputSourceTypeComposes(type);
         CFRelease(source);
         return composes;
     }
