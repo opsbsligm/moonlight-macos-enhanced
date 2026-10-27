@@ -207,6 +207,14 @@ test-app:
 # Build-log and binary-level coverage, wired to the exact files that gave the
 # project its first "green pipeline with a source nobody compiled" failure.
 audit:sources:
+  # Six of the gates below compile a probe against a moonlight-common-c header,
+  # so a checkout without the submodule dies on FileNotFoundError before any
+  # assertion runs. Pipeline 699 job 3729 showed it: the runner took a fresh
+  # second build slot (concurrent=2) instead of reusing a warm directory that
+  # still held an old submodule, and the job failed on Limelight/.../Limelight.h.
+  # That is a reproducible missing input, not a flake, so the input is fetched.
+  before_script:
+    - *fetch_submodules
   stage: test
   tags: [macos]
   cache: {}
