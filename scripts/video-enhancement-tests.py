@@ -614,7 +614,11 @@ def main():
                                 model, "-o", os.path.join(tmp, "verdicts")],
                                capture_output=True, text=True)
         if built.returncode != 0:
-            check(False, "the slot verdict model must compile:\n" + built.stderr.strip()[-700:])
+            # A model that never built cannot grade the classifier, so this is not a failed
+            # assertion -- it is the harness having no answer, in the shared words.
+            print("%s: the slot verdict model does not compile:\n%s"
+                  % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, built.stderr.strip()[-700:]))
+            return 1
         else:
             ran = subprocess.run([os.path.join(tmp, "verdicts")], capture_output=True, text=True)
             print(textwrap.indent(ran.stdout.strip() or "(no output)", "     "))
@@ -631,7 +635,9 @@ def main():
                                 inverted_model, "-o", os.path.join(tmp, "inverted")],
                                capture_output=True, text=True)
         if built.returncode != 0:
-            check(False, "the inverted verdict model must still compile:\n" + built.stderr.strip()[-700:])
+            print("%s: the inverted verdict model does not compile:\n%s"
+                  % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, built.stderr.strip()[-700:]))
+            return 1
         else:
             ran = subprocess.run([os.path.join(tmp, "inverted")], capture_output=True, text=True)
             check(ran.returncode != 0,
@@ -648,7 +654,8 @@ def main():
                "-framework", "MetalFX", probe_path, "-o", binary]
         built = subprocess.run(cmd, capture_output=True, text=True)
         if built.returncode != 0:
-            check(False, "the enhancement probe must compile:\n" + built.stderr.strip()[-700:])
+            print("%s: the enhancement probe does not compile:\n%s"
+                  % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, built.stderr.strip()[-700:]))
             return 1
         run = subprocess.run([binary], capture_output=True, text=True)
         out = run.stdout.strip()

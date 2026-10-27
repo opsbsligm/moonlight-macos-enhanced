@@ -170,8 +170,9 @@ def build(source, directory):
          view_path, main_path, "-o", binary],
         capture_output=True, text=True)
     if compiled.returncode != 0:
-        raise SystemExit("the real NavigatableAlertView.m does not compile against the "
-                         "spy:\n" + compiled.stderr)
+        raise SystemExit("%s: the real NavigatableAlertView.m does not compile against the "
+                         "spy:\n%s" % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE,
+                                       compiled.stderr))
     return binary
 
 

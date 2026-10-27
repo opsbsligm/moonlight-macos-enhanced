@@ -35,7 +35,7 @@ import os, re, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from apple_toolchain import clang_and_sdk
+from apple_toolchain import PROBE_BUILD_FAILED_MESSAGE, clang_and_sdk
 
 HEADER = os.path.join(ROOT, "Limelight", "Input", "HIDSupport_Internal.h")
 
@@ -160,8 +160,9 @@ def main():
                                       "-framework", "Foundation", "-o", exe, path],
                                      capture_output=True, text=True)
         if compile_run.returncode != 0:
-            raise SystemExit("the probe did not compile:\n%s"
-                             % (compile_run.stdout[-2000:] + compile_run.stderr[-2000:]))
+            raise SystemExit("%s: the probe did not compile:\n%s"
+                             % (PROBE_BUILD_FAILED_MESSAGE,
+                                compile_run.stdout[-2000:] + compile_run.stderr[-2000:]))
         run = subprocess.run([exe], capture_output=True, text=True)
         print(run.stdout.rstrip())
         rc = run.returncode
