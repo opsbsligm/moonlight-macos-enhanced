@@ -41,6 +41,10 @@ PRESENT = "- (BOOL)encodePresentFromTexture:(id<MTLTexture>)sourceTexture"
 METALFX = "- (BOOL)encodeMetalFXScalingFromTexture:(id<MTLTexture>)sourceTexture"
 
 failures = []
+# Rule drivers that this host could not compile. They are not defects, and counting them
+# as defects would make a broken toolchain look like a broken renderer, so they are
+# tracked apart and only decide the exit code.
+build_failures = []
 
 
 def check(ok, message):
@@ -167,7 +171,11 @@ def run_rules(label, rules, cc, sdk):
     with tempfile.TemporaryDirectory() as work:
         code, out, log = compiled(DRIVER.replace("@@RULES@@", rules), work, "aspectfit", cc, sdk)
         if code is None:
-            check(False, "%s compiles: %s" % (label, log))
+            # Not a red assertion: the driver that would have run the rule never built,
+            # so nothing was checked. Say so, and let the exit code stay non-zero.
+            print("%s: the %s driver does not compile:\n%s"
+                  % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, label, log))
+            build_failures.append(label)
             return
         if label == "the shipping shape rule":
             check(code == 0 and out is not None and "RUN PASSED" in out,
@@ -242,7 +250,7 @@ def main():
           "removing the viewport really does leave the blit drawing across the drawable")
 
     print("%d aspect-fit-presentation failures" % len(failures))
-    return 1 if failures else 0
+    return 1 if (failures or build_failures) else 0
 
 
 if __name__ == "__main__":

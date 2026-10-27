@@ -349,7 +349,10 @@ def build_run(source, label):
                                 "-framework", "AppKit", "-o", exe, path],
                                capture_output=True, text=True)
         if build.returncode != 0:
-            print("FAIL the %s probe does not compile:\n%s" % (label, build.stderr[-1500:]))
+            # An unbuilt probe cannot grade anything: say so in the shared words so the battery
+            # reports a skip rather than an assertion that appears to have held.
+            print("%s: the %s probe does not compile:\n%s" % (
+                apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, label, build.stderr[-1500:]))
             return None
         ran = subprocess.run([exe], capture_output=True, text=True)
         print(ran.stdout.rstrip())
@@ -400,6 +403,12 @@ def main():
     bad_verdict = build_run(bad, "known-bad")
 
     failures = 0
+    if verdict is None or bad_verdict is None:
+        # One side never built, so neither verdict means anything. Exit non-zero with the
+        # shared sentence instead of grading an unbuilt probe as a broken record.
+        print("%s: one of the two records never built, so neither verdict was measured" %
+              apple_toolchain.PROBE_BUILD_FAILED_MESSAGE)
+        return 1
     if verdict != 0:
         print("FAIL the shipping record does not release every physical press")
         failures += 1

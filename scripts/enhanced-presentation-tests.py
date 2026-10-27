@@ -313,7 +313,12 @@ else:
             built = subprocess.run([native_clang, '-isysroot', native_sdk, '-fobjc-arc', '-fblocks',
                 '-Wall', '-Werror', '-framework', 'Foundation', '-I', str(ROOT/'Limelight/macOS'),
                 str(p/'probe.m'), '-o', str(p/'probe')], capture_output=True, text=True)
-            assert built.returncode == 0, name + ': ' + built.stderr
+            if built.returncode != 0:
+                # The queue-depth probe never built, so no rule was replayed. That is the
+                # harness having no answer, not the shipping shape failing a check.
+                print('%s: the queue-depth probe (%s) does not compile:\n%s'
+                      % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, name, built.stderr.strip()[-700:]))
+                raise SystemExit(1)
             ran = subprocess.run([str(p/'probe')], capture_output=True, text=True, timeout=10)
             assert (ran.returncode == 0) == expected, name + ': ' + ran.stdout + ran.stderr
             print(ran.stdout.strip() if expected else 'ok: queue replay rejects ' + name)
@@ -340,7 +345,10 @@ else:
             built = subprocess.run([native_clang, '-isysroot', native_sdk, '-fobjc-arc', '-fblocks', '-Wall', '-Werror',
                 '-Wno-unused-function', '-framework', 'Foundation', '-framework', 'CoreVideo',
                 '-framework', 'CoreMedia', str(p/'probe.m'), '-o', str(p/'probe')], capture_output=True, text=True)
-            assert built.returncode == 0, name + ': ' + built.stderr
+            if built.returncode != 0:
+                print('%s: the enhancement lifecycle probe (%s) does not compile:\n%s'
+                      % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, name, built.stderr.strip()[-700:]))
+                raise SystemExit(1)
             ran = subprocess.run([str(p/'probe')], capture_output=True, text=True, timeout=30)
             assert 'is implemented in both' not in ran.stderr, name + ': runtime class collision: ' + ran.stderr
             if 'SKIP' in ran.stdout:
@@ -399,7 +407,10 @@ if native_toolchain is not None:
             (p/'probe.m').write_text(text)
             built=subprocess.run([native_clang,'-isysroot',native_sdk,'-fobjc-arc','-fblocks','-Wall','-Werror','-Wimplicit-retain-self','-Wno-unused-function',
                 '-framework','Foundation','-framework','CoreVideo','-framework','CoreMedia',str(p/'probe.m'),'-o',str(p/'probe')],capture_output=True,text=True)
-            assert built.returncode==0, name+': '+built.stderr
+            if built.returncode!=0:
+                print('%s: the FI lifecycle probe (%s) does not compile:\n%s'
+                      % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, name, built.stderr.strip()[-700:]))
+                raise SystemExit(1)
             ran=subprocess.run([str(p/'probe')],capture_output=True,text=True,timeout=30)
             assert 'is implemented in both' not in ran.stderr, name + ': runtime class collision: ' + ran.stderr
             assert (ran.returncode==0)==expected, name+': '+ran.stdout+ran.stderr

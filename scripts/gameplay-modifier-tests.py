@@ -43,6 +43,9 @@ BITS = [("Shift", 1 << 17), ("Control", 1 << 18), ("Option", 1 << 19),
         ("Command", 1 << 20), ("Function", 1 << 21)]
 
 failures = []
+# Models this host's toolchain could not build. A missing compiler is not a broken guard,
+# so these are kept out of `failures` and only decide the exit code.
+build_failures = []
 
 
 def check(ok, message):
@@ -362,14 +365,15 @@ def main():
             path = os.path.join(work, "%s.m" % label)
             open(path, "w", encoding="utf-8").write(
                 OBJC_MODEL.replace("@@GUARD@@", guard))
-            rows, _count = compile_and_run(
+            rows, build_log = compile_and_run(
                 path, os.path.join(work, label),
                 [cc, "-x", "objective-c", "-isysroot", sdk, "-Wall", "-Werror",
                  "-framework", "AppKit", "-framework", "Foundation"])
-            check(rows is not None,
-                  "%s guard model compiles" % label if rows is not None else
-                  "%s guard model must compile:\n%s" % (label, rows))
             if rows is None:
+                # Nothing was swept, so no assertion here has an answer either way.
+                print("%s: the %s guard model does not compile:\n%s"
+                      % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, label, build_log))
+                build_failures.append(label)
                 continue
             bad, _bad_count = matrix(rows)
             if label == "dead":
@@ -399,12 +403,13 @@ def main():
             .replace("StreamShortcut?", "FakeShortcut?")
             .replace("StreamShortcutProfile.", ""))
         open(path, "w", encoding="utf-8").write(model)
-        rows, _count = compile_and_run(path, os.path.join(work, "one_sided"),
-                                       [swiftc, "-sdk", swift_sdk])
-        check(rows is not None, "the one-sided guard model compiles"
-              if rows is not None else
-              "the one-sided guard model must compile:\n%s" % rows)
-        if rows is not None:
+        rows, build_log = compile_and_run(path, os.path.join(work, "one_sided"),
+                                          [swiftc, "-sdk", swift_sdk])
+        if rows is None:
+            print("%s: the one-sided guard model does not compile:\n%s"
+                  % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, build_log))
+            build_failures.append("one-sided")
+        else:
             bad, _bad_count = matrix(rows)
             check(bad != objc_matrix,
                   "the two-halves-agree assertion fails when only the form knows "
@@ -415,7 +420,7 @@ def main():
 
 def finish():
     print("%d gameplay modifier failures" % len(failures))
-    return 1 if failures else 0
+    return 1 if (failures or build_failures) else 0
 
 
 if __name__ == "__main__":

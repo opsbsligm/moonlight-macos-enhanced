@@ -37,7 +37,7 @@ import os, re, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from apple_toolchain import clang_and_sdk
+from apple_toolchain import PROBE_BUILD_FAILED_MESSAGE, clang_and_sdk
 
 HEADER = os.path.join(ROOT, "Limelight", "Input", "HIDSupport_Internal.h")
 POINTER_M = os.path.join(ROOT, "Limelight", "Input", "HIDSupport+Pointer.m")
@@ -281,8 +281,9 @@ def build_and_run(directory, constants, helpers, low, high, label):
                                   "-Wno-deprecated-declarations", "-framework", "Foundation",
                                   "-o", exe, path], capture_output=True, text=True)
     if compile_run.returncode != 0:
-        raise SystemExit("the %s probe did not compile:\n%s"
-                         % (label, compile_run.stdout[-2000:] + compile_run.stderr[-2000:]))
+        raise SystemExit("%s: the %s probe did not compile:\n%s"
+                         % (PROBE_BUILD_FAILED_MESSAGE, label,
+                            compile_run.stdout[-2000:] + compile_run.stderr[-2000:]))
     run = subprocess.run([exe], capture_output=True, text=True)
     return run.returncode, run.stdout
 

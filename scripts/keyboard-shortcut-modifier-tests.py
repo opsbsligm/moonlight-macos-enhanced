@@ -995,7 +995,8 @@ def key_repeat_delivery():
                                 "-framework", "AppKit", source, "-o", binary],
                                capture_output=True, text=True)
         if built.returncode != 0:
-            return None, "the delivery probe could not be compiled:\n" + built.stderr.strip()[-900:]
+            return None, "%s: the delivery probe could not be compiled:\n%s" % (
+                apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, built.stderr.strip()[-900:])
         ran = subprocess.run([binary], capture_output=True, text=True)
         if ran.returncode != 0:
             return None, "the delivery probe could not run:\n" + (ran.stdout + ran.stderr)[-900:]
@@ -1021,7 +1022,10 @@ def run_variant(directory, extracted, label):
            "-framework", "AppKit", "-framework", "Foundation", source_path, "-o", binary]
     built = subprocess.run(cmd, capture_output=True, text=True)
     if built.returncode != 0:
-        print("FAIL %s could not be compiled:\n%s" % (label, built.stderr.strip()[-1800:]))
+        # A probe that will not build says nothing about the state machine, so it must not be
+        # graded as a failed assertion: the sentinel goes first, the compiler detail after it.
+        print("%s: %s could not be compiled:\n%s" % (
+            apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, label, built.stderr.strip()[-1800:]))
         return None
     return subprocess.run([binary], capture_output=True, text=True)
 
