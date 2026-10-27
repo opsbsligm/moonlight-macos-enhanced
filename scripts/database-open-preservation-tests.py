@@ -118,6 +118,9 @@ def main():
     init = data[data.index('- (id) init {'):data.index('\n- (void) updateUniqueId:')]
     cc, sdk = apple_toolchain.clang_and_sdk('database open preservation')
     failures = 0
+    # Drivers this host could not build are a missing answer, not a wrong answer, so they
+    # are counted apart and only decide the exit code.
+    build_failures = 0
     cases = [
         ('shipping', source, init, True),
         ('shipping-release', source, init, True),
@@ -138,7 +141,9 @@ def main():
                 '-DDEBUG='+('0' if name in ('shipping-release', 'release-redirects-library') else '1'),
                 '-I'+str(ROOT/'Limelight'), str(path), '-framework', 'Foundation', '-framework', 'CoreData', '-o', str(binary)], capture_output=True, text=True)
             if built.returncode:
-                print('FAIL:', name, 'must compile', built.stderr[-1800:]); failures += 1; continue
+                print(apple_toolchain.PROBE_BUILD_FAILED_MESSAGE + ':', name,
+                      'driver does not compile', built.stderr[-1800:])
+                build_failures += 1; continue
             ran = subprocess.run([str(binary), str(folder)], capture_output=True, text=True, timeout=30)
             valid = ran.returncode == 0 and 'PASS:' in ran.stdout if positive else ran.returncode == 1 and 'FAIL:' in ran.stdout
             print('ok:' if valid else 'FAIL:', name, 'compiled; runtime:', ran.stdout.strip())
@@ -152,6 +157,6 @@ def main():
         'Local library preserved after open failure', '[NSApp terminate:nil];')) and startup.index('persistentStoreLoadError') < startup.index('[self createMainWindow]')
     print('ok:' if valid else 'FAIL:', 'startup refuses silent empty library and explains data preservation')
     failures += not valid
-    print(f'{failures} database-open-preservation failures')
-    return int(failures != 0)
+    print(f'{failures} database-open-preservation failures, {build_failures} unbuilt')
+    return int(failures != 0 or build_failures != 0)
 if __name__ == '__main__': raise SystemExit(main())

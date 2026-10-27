@@ -44,6 +44,18 @@ def _ask_xcrun(arguments):
 NO_TOOLCHAIN_MESSAGE = "no usable clang and macOS SDK pair was found"
 
 
+# The second sentence a harness must be able to say when it has no answer, and the reason this
+# constant sits beside the one above rather than in each harness: a probe that fails to compile
+# proves nothing about the behaviour it was built to exercise, yet it arrives with a non-zero
+# code and a line containing FAIL, which is exactly the shape a caught mutation has. The battery
+# once printed a hundred and twenty-eight proofs on a host whose probes had all stopped
+# compiling, and every one of them was an environment error read as an assertion holding. So a
+# harness that cannot build its probe says this in words, and the battery refuses to grade it
+# either way. Print it with the compiler's own output after it -- the detail is for the human,
+# the sentinel is for the reader that must not guess.
+PROBE_BUILD_FAILED_MESSAGE = "the probe could not be built on this host"
+
+
 def clang_and_sdk_or_none():
     """A usable (clang, sdk) pair, or None when this host has none at all.
 

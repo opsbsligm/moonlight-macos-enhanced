@@ -224,7 +224,9 @@ def build_and_run(space_branch_releases, directory):
     compiled = subprocess.run([clang, "-isysroot", sdk, "-Wall", "-Werror",
                                path, "-o", binary], capture_output=True, text=True)
     if compiled.returncode != 0:
-        raise SystemExit("the host model does not compile:\n" + compiled.stderr)
+        # The host model never built, so the timeline says nothing; report the shared sentence.
+        raise SystemExit("%s: the host model does not compile:\n%s"
+                         % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, compiled.stderr))
     ran = subprocess.run([binary], capture_output=True, text=True)
     return ran.returncode, (ran.stdout + ran.stderr).strip()
 

@@ -251,8 +251,9 @@ def main():
              "-framework", "AppKit", "-framework", "Foundation", source, "-o", binary],
             capture_output=True, text=True)
         if built.returncode != 0:
-            print("notification-observers: the probe did not compile:\n"
-                  + (built.stdout + built.stderr).strip()[-2500:])
+            print("%s: notification-observers probe did not compile:\n%s"
+                  % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE,
+                     (built.stdout + built.stderr).strip()[-2500:]))
             return 1
         ran = subprocess.run([binary], capture_output=True, text=True)
         if ran.returncode != 0:
