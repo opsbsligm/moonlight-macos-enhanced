@@ -71,7 +71,12 @@ SIGNATURES = [
     "- (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode",
     "- (void)refreshKeyboardModifiersForCapture",
 ]
-STATIC_HELPER = "static BOOL HIDIMECurrentInputSourceComposes(void) {"
+# Extracted in declaration order: the composes helper calls the type predicate,
+# so the predicate has to be in scope first.
+STATIC_HELPERS = [
+    "static BOOL HIDIMEInputSourceTypeComposes(NSString *type) {",
+    "static BOOL HIDIMECurrentInputSourceComposes(void) {",
+]
 # commandKeyPreferenceForCurrentHost stays stubbed in the probe: it only reads
 # the per-host setting, and the probe answers with the shipping default.
 
@@ -406,6 +411,20 @@ int main(void) {
     CHECK(gHostText.count == 1 && [gHostText[0] isEqualToString:@"\u6d4b\u8bd5"]);
     CHECK(gHostKeys.count == 0);
 
+    // --- 7. The predicate follows the declared source type, never the name ---
+    // A plain layout whose name carries non-ASCII glyphs must keep the key-code
+    // path; only an input method or input mode buffers keystrokes.
+    CHECK(!HIDIMEInputSourceTypeComposes(nil));
+    CHECK(!HIDIMEInputSourceTypeComposes(@"TISTypeKeyboardLayout"));
+    CHECK(!HIDIMEInputSourceTypeComposes(@"TISTypeKeyboardSyntheticRomanMode"));
+    CHECK(!HIDIMEInputSourceTypeComposes(@"TISTypeCharacterPalette"));
+    CHECK(!HIDIMEInputSourceTypeComposes(@"TISTypeKeyboardViewer"));
+    CHECK(!HIDIMEInputSourceTypeComposes(@"TISTypeInk"));
+    CHECK(!HIDIMEInputSourceTypeComposes(@""));
+    CHECK(HIDIMEInputSourceTypeComposes(@"TISTypeKeyboardInputMode"));
+    CHECK(HIDIMEInputSourceTypeComposes(@"TISTypeKeyboardInputMethodModeEnabled"));
+    CHECK(HIDIMEInputSourceTypeComposes(@"TISTypeKeyboardInputMethodWithoutModes"));
+
     puts("K1.2 IME routing replay passed");
     return 0;
 }}
@@ -430,7 +449,7 @@ def run(code):
 def main():
     shipping = SHIP.read_text()
     methods = "\n".join(_block(shipping, s) for s in SIGNATURES)
-    ime_helper = _block(shipping, STATIC_HELPER)
+    ime_helpers = "\n".join(_block(shipping, s) for s in STATIC_HELPERS)
     statics = "\n".join(_block(shipping, s) for s in STATIC_TYPEDefs + STATIC_MISC)
 
     # The real mapping table, so the probe answers for Command the same way the
@@ -450,7 +469,7 @@ def main():
     statics = statics.replace("HIDSupport *support", "id support")
     out += statics + "\n"
     out += "@implementation MLProbeIME (IMEProbe)\n"
-    out += methods + "\n" + ime_helper + "\n"
+    out += methods + "\n" + ime_helpers + "\n"
     out += "@end\n"
     out = ml_probe_fixture.apply(out)
 
@@ -510,6 +529,28 @@ def main():
     result = run(source.replace(old, new, 1))
     assert result.returncode == 1 and "FAIL line" in result.stderr, "mutation not caught"
     print("caught: flushIMECommit drops the commit")
+
+    # --- Mutation: every source treated as composing ---
+    # This is the regression the name test had: a plain layout starts capturing
+    # game input. Only the type assertions can see it.
+    old = ("    return [type isEqualToString:(__bridge NSString *)kTISTypeKeyboardInputMode]\n"
+           "        || [type isEqualToString:(__bridge NSString *)kTISTypeKeyboardInputMethodModeEnabled]\n"
+           "        || [type isEqualToString:(__bridge NSString *)kTISTypeKeyboardInputMethodWithoutModes];")
+    new = "    return YES;"
+    assert source.count(old) == 1, "composes whitelist not found"
+    result = run(source.replace(old, new, 1))
+    assert result.returncode == 1 and "FAIL line" in result.stderr, "mutation not caught"
+    print("caught: plain keyboard layout treated as composing")
+
+    # --- Mutation: the whitelist no longer covers a whole source class ---
+    # Dropping the input-mode type is the false negative that would silence a
+    # CJK IME; adding a non-composing type is the mirror mistake.
+    old = "        || [type isEqualToString:(__bridge NSString *)kTISTypeKeyboardInputMethodWithoutModes];"
+    new = ("        || [type isEqualToString:(__bridge NSString *)kTISTypeKeyboardLayout];")
+    assert source.count(old) == 1, "whitelist tail not found"
+    result = run(source.replace(old, new, 1))
+    assert result.returncode == 1 and "FAIL line" in result.stderr, "mutation not caught"
+    print("caught: whitelist swapped a non-composing type in")
 
     return 0
 
