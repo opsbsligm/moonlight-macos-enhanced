@@ -327,7 +327,11 @@ def run_variant(directory, label, variant=None):
            "-framework", "AppKit", path, "-o", binary]
     built = subprocess.run(cmd, capture_output=True, text=True)
     if built.returncode != 0:
-        print("FAIL %s could not be compiled:\n%s" % (label, built.stderr.strip()[-1800:]))
+        # The container is whatever this host's SDK says it is. A probe that will not
+        # build is the harness reporting itself, not the assertion reporting a defect.
+        print("%s: the %s variant could not be compiled:\n%s"
+              % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, label,
+                 built.stderr.strip()[-1800:]))
         return None
     return subprocess.run([binary], capture_output=True, text=True, timeout=120)
 

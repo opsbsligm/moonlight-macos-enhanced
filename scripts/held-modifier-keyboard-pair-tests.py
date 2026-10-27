@@ -493,8 +493,8 @@ def compile_and_run(path, source, label):
                             "-o", probe, path],
                            capture_output=True, text=True)
     if build.returncode != 0:
-        print("FAIL the %s probe does not compile:\n%s"
-              % (label, build.stderr[-2000:]))
+        print("%s: the %s probe does not compile:\n%s"
+              % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, label, build.stderr[-2000:]))
         return None
     run = subprocess.run([probe], capture_output=True, text=True)
     print(run.stdout, end="")

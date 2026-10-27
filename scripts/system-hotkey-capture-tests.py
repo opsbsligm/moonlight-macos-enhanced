@@ -27,6 +27,9 @@ restore onto the per-view observer refresh, which -viewDidAppear runs on its way
 """
 import os, re, shutil, subprocess, sys, tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import apple_toolchain
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VC = os.path.join(ROOT, "Limelight", "macOS", "ViewControllers")
 
@@ -42,6 +45,11 @@ ZH = os.path.join(ROOT, "Limelight", "macOS", "zh-Hans.lproj", "Localizable.stri
 EN = os.path.join(ROOT, "Limelight", "macOS", "en.lproj", "Localizable.strings")
 
 MIN_BEHAVIOUR_CHECKS = 9
+
+# Bridges this host could not compile. They are never counted as behaviour verdicts: a
+# bridge that never built says nothing about the ledger, and the self-test would otherwise
+# read its own missing evidence as a mutation being caught.
+build_failures = []
 
 SHIM = r'''
 #include <dlfcn.h>
@@ -164,12 +172,19 @@ def compile_and_run(source, tmp_dir, tag):
         handle.write(source)
     compiler = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     if not compiler:
-        print("FAIL no C compiler to drive the shipped bridge")
+        # Both of these are the harness having no answer, not the bridge behaving badly.
+        # They must not start with FAIL either: the battery lifts every FAIL line as the
+        # evidence a mutation was caught, so a missing compiler used to read as proof.
+        print("%s: no C compiler to drive the shipped bridge"
+              % apple_toolchain.PROBE_BUILD_FAILED_MESSAGE)
+        build_failures.append("no-compiler")
         return 2, ""
     built = subprocess.run([compiler, "-std=c11", "-o", program, c_file],
                            capture_output=True, text=True)
     if built.returncode != 0:
-        print("FAIL the shipped bridge does not compile: %s" % built.stderr.strip()[:400])
+        print("%s: the shipped bridge does not compile: %s"
+              % (apple_toolchain.PROBE_BUILD_FAILED_MESSAGE, built.stderr.strip()[:400]))
+        build_failures.append(tag)
         return 2, ""
     run = subprocess.run([program], capture_output=True, text=True, timeout=60)
     return run.returncode, run.stdout
@@ -326,6 +341,12 @@ def main():
     with tempfile.TemporaryDirectory() as tmp_dir:
         code, out = compile_and_run(SHIM.replace("%HELPER_SOURCE%", helper_source(objc_text)),
                                     tmp_dir, "shipping")
+        if build_failures:
+            # Without the shipping bridge there is no verdict to print, red or green. Stop
+            # here rather than let the wiring checks be the only thing anyone reads.
+            print("%s: the hotkey harness cannot report anything, the shipping bridge never built"
+                  % apple_toolchain.PROBE_BUILD_FAILED_MESSAGE)
+            return 1
         counted = re.search(r"(\d+) system hotkey checks, (\d+) failures", out)
         checks = int(counted.group(1)) if counted else 0
         print("%-4s the hotkey ledger and the run-time bridge behave (%d checks)"
@@ -354,6 +375,11 @@ def main():
             broken_out_code, broken_out = compile_and_run(
                 SHIM.replace("%HELPER_SOURCE%", helper_source(objc_text, break_ledger=True)),
                 tmp_dir, "unconditional")
+            if build_failures:
+                # A self-test whose mutated probe would not build has not caught anything.
+                print("%s: the self-test's broken bridge does not compile, so its red proof "
+                      "is unproven" % apple_toolchain.PROBE_BUILD_FAILED_MESSAGE)
+                return 1
             caught = [line for line in broken_out.splitlines() if line.startswith("FAIL")]
             print("%-4s a ledger that believes a refused call is refused (%d verdicts red)"
                   % ("ok" if broken_out_code != 0 and caught else "FAIL", len(caught)))

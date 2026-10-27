@@ -18,6 +18,53 @@ ROOT = Path(__file__).resolve().parents[2]
 CI = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
 MIRROR = ROOT / "scripts/ci/publish-github.sh"
 
+# Gate scripts that compile a probe against a header of the common submodule.
+# The runner only holds that tree when the job fetches it, because
+# GIT_SUBMODULE_STRATEGY is none and build slots are reused at random. The
+# marker is assembled so this file, which only names it, is not itself a reader.
+SUBMODULE_MARKER = "moonlight-" + "common"
+PYTHON_CALL = re.compile(r"python3?\s+(\S+\.py)")
+SELF = Path(__file__).resolve().relative_to(ROOT).as_posix()
+
+
+def submodule_reader_names():
+    """Repo-relative script paths that touch the submodule tree."""
+    names = set()
+    for path in (ROOT / "scripts").rglob("*.py"):
+        if path.resolve() == Path(__file__).resolve():
+            continue
+        if SUBMODULE_MARKER in path.read_text(encoding="utf-8", errors="ignore"):
+            names.add(path.relative_to(ROOT).as_posix())
+    return names
+
+
+def jobs_missing_submodule_fetch(ci):
+    """Jobs that run a submodule reader without fetching the submodule first.
+
+    Pipeline 699 job 3729 is why this exists: audit:sources ran in a fresh
+    second build slot, six of its gates wanted moonlight-common-c/Limelight.h,
+    and the job died on FileNotFoundError before a single assertion spoke. The
+    tree looked healthy and the pipeline was red for a missing input.
+    """
+    readers = submodule_reader_names()
+    offenders = []
+    for name, job in ci.items():
+        if not isinstance(job, dict) or "script" not in job:
+            continue
+        steps = [str(step) for step in job.get("before_script", [])]
+        steps += [str(step) for step in job["script"]]
+        wanted = set()
+        for step in steps:
+            for called in PYTHON_CALL.findall(step):
+                resolved = Path(called).as_posix()
+                if resolved in readers:
+                    wanted.add(resolved)
+        if not wanted:
+            continue
+        if not any("fetch-submodules" in step for step in steps):
+            offenders.append((name, sorted(wanted)))
+    return sorted(offenders)
+
 
 def run(*args, cwd=None, env=None, check=True):
     result = subprocess.run(args, cwd=cwd, env=env, text=True,
@@ -205,6 +252,35 @@ class PipelineTests(Sandbox):
             self.assertEqual(entry["GIT_CONFIG_VALUE_1"], "Authorization: Basic " +
                              base64.b64encode(b"oauth2:fixture-value").decode())
         self.assertFalse((self.home / ".gitconfig").exists())
+
+    def test_every_submodule_reader_fetches_the_submodule(self):
+        offenders = jobs_missing_submodule_fetch(CI)
+        self.assertEqual(
+            offenders, [],
+            "these jobs compile against the common submodule without fetching it")
+        # A checker that cannot fail checks nothing. Removing the fetch must be
+        # reported, a job that only wants the submodule after fetching it must
+        # pass, and a job that never touches it must not be flagged.
+        readers = sorted(submodule_reader_names())
+        self.assertIn("scripts/controller-event-baseline.py", readers)
+        self.assertNotIn(SELF, readers)
+        baseline = (ROOT / ".gitlab-ci.yml").read_text()
+
+        lost = yaml.safe_load(baseline)
+        lost["audit:sources"]["before_script"] = []
+        self.assertIn("audit:sources",
+                      [name for name, _ in jobs_missing_submodule_fetch(lost)])
+
+        after = yaml.safe_load(baseline)
+        after["lint:toolchain"]["before_script"] = ["bash scripts/ci/fetch-submodules.sh"]
+        after["lint:toolchain"]["script"] = ["python3 " + readers[0]]
+        self.assertNotIn("lint:toolchain",
+                         [name for name, _ in jobs_missing_submodule_fetch(after)])
+
+        before = yaml.safe_load(baseline)
+        before["lint:toolchain"]["script"] = ["python3 " + readers[0]]
+        self.assertIn("lint:toolchain",
+                      [name for name, _ in jobs_missing_submodule_fetch(before)])
 
 
 class MirrorTests(Sandbox):
