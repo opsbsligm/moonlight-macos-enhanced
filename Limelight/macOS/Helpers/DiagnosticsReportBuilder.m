@@ -33,6 +33,50 @@
 
 @end
 
+@interface DiagnosticsFeatureParam ()
+// Same readonly-outside/readwrite-inside contract as the section above: the live side
+// builds one of these per hand-feel parameter and nobody downstream may move a number
+// after the block was assembled.
+@property (nonatomic, copy, readwrite) NSString *label;
+@property (nonatomic, readwrite) double shippedDefault;
+@property (nonatomic, readwrite) double minimum;
+@property (nonatomic, readwrite) double maximum;
+@property (nonatomic, readwrite) double overrideValue;
+@end
+
+@implementation DiagnosticsFeatureParam
+
++ (instancetype)paramWithLabel:(NSString *)label
+               shippedDefault:(double)shippedDefault
+                       minimum:(double)minimum
+                       maximum:(double)maximum
+                overrideValue:(double)overrideValue {
+    DiagnosticsFeatureParam *param = [[self alloc] init];
+    param.label = [label copy] ?: @"";
+    param.shippedDefault = shippedDefault;
+    param.minimum = minimum;
+    param.maximum = maximum;
+    param.overrideValue = overrideValue;
+    return param;
+}
+
+@end
+
+@implementation DiagnosticsFeatureState
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _profileScope = @"global profile";
+        _sidebarParams = @[];
+        _switches = @{};
+        _pointerState = @{};
+    }
+    return self;
+}
+
+@end
+
 @interface DiagnosticsReportBuilder ()
 + (NSString *)assembleSections:(NSArray<DiagnosticsReportSection *> *)sections;
 + (NSString *)replaceInString:(NSString *)input
@@ -209,6 +253,50 @@ static NSString *ReportYesNo(BOOL value) {
     return value ? @"yes" : @"no";
 }
 
+/// A hand-feel number without decoration: `12`, `0.12`, `0.45`. `%g` rather than a fixed
+/// width, because `12.000000pt` for a shipped constant makes a default look like a measurement.
+static NSString *ReportNumber(double value) {
+    return [NSString stringWithFormat:@"%g", value];
+}
+
+/// The value the stream actually uses for one parameter, and how it got there.
+///
+/// This is a copy of the clamp the stream's own getters apply, kept here because the
+/// report has to be compilable -- and replayed by the gate -- without a stream view
+/// controller, a window, or a settings panel. The two copies are pinned together by
+/// `scripts/edge-sensor-e1-clamp-tests.py`, which reads the shipped constants and the
+/// published range out of the same header the stream compiles against, so a range moved
+/// in one place fails the gate in the other.
+///
+/// Three answers, and only three. Zero is not a small value, it is the absence of a
+/// preference, and it reads as the shipped constant. An override outside the published
+/// range reads as the boundary it was clamped to, with the number the player wrote next
+/// to it, because "you set 30 and the stream uses 16" is the whole reason this line
+/// exists. Anything in between is the override.
+static NSString *ReportFeatureParamLine(DiagnosticsFeatureParam *param) {
+    double effective = param.shippedDefault;
+    NSString *state = @"shipped default";
+    if (param.overrideValue > 0) {
+        if (param.overrideValue < param.minimum) {
+            effective = param.minimum;
+            state = [NSString stringWithFormat:@"clamped from %@, shipped %@",
+                                        ReportNumber(param.overrideValue),
+                                        ReportNumber(param.shippedDefault)];
+        } else if (param.overrideValue > param.maximum) {
+            effective = param.maximum;
+            state = [NSString stringWithFormat:@"clamped from %@, shipped %@",
+                                        ReportNumber(param.overrideValue),
+                                        ReportNumber(param.shippedDefault)];
+        } else {
+            effective = param.overrideValue;
+            state = [NSString stringWithFormat:@"player override, shipped %@",
+                                        ReportNumber(param.shippedDefault)];
+        }
+    }
+    return [NSString stringWithFormat:@"%@: %@ (%@)", param.label,
+                                       ReportNumber(effective), state];
+}
+
 /// A duration as `12s`, `4m 05s` or `2h 03m`. Deliberately not clock-formatted: a report
 /// that says a session ended at 21:14:07 still leaves the reader subtracting to find out
 /// whether that was before or after the update they installed.
@@ -373,6 +461,99 @@ static NSString *ReportYesNo(BOOL value) {
         }
     }
     return [DiagnosticsReportSection sectionWithTitle:kInputSection lines:lines];
+}
+
+/// The switches this build offers, in the order a report reads them. The expectation
+/// lives here rather than coming from the live side on purpose: a report that simply
+/// omits a switch leaves the reader unable to tell "this build has no such switch" from
+/// "the player turned it off", and those two lead to different fixes. A key the settings
+/// never wrote is reported as unknown, which is the honest third answer.
++ (NSArray<NSString *> *)featureSwitchKeys {
+    return @[ @"edgeSensorSummon", @"absoluteMouseMode", @"relativeMouseAsAbsolute",
+              @"imeLocalComposition", @"muteOnFocusLoss", @"backgroundGamepad" ];
+}
+
++ (NSDictionary<NSString *, NSNumber *> *)featureSwitchesFromPreferences:(NSDictionary *)preferences {
+    NSMutableDictionary<NSString *, NSNumber *> *switches = [NSMutableDictionary dictionary];
+    for (NSString *key in [self featureSwitchKeys]) {
+        id value = preferences[key];
+        // Only a real number counts. A string left by an older store, or a key the bridge
+        // never wrote, stays absent so the line reads as unknown instead of as whatever
+        // `boolValue` would have made of it.
+        if ([value isKindOfClass:[NSNumber class]]) {
+            switches[key] = value;
+        }
+    }
+    return [switches copy];
+}
+
+static NSString *ReportFeatureSwitch(NSDictionary<NSString *, NSNumber *> *switches,
+                                     NSString *key) {
+    NSNumber *value = switches[key];
+    return [NSString stringWithFormat:@"%@: %@", key,
+                                       value ? ReportYesNo(value.boolValue)
+                                             : @"unknown (no value written)"];
+}
+
+static NSString *ReportFeatureString(NSDictionary<NSString *, NSString *> *values,
+                                     NSString *label,
+                                     NSString *key) {
+    NSString *value = values[key];
+    return [NSString stringWithFormat:@"%@: %@", label,
+                                       value.length > 0 ? value : @"unknown (not recorded)"];
+}
+
++ (DiagnosticsReportSection *)featureStateSectionWithState:(DiagnosticsFeatureState *)state {
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    [lines addObject:@"values below are what the running build uses, not what the "
+                     "settings file holds"];
+    [lines addObject:[NSString stringWithFormat:@"profile in force: %@",
+                                                state.profileScope.length > 0
+                                                    ? state.profileScope
+                                                    : @"unknown"]];
+
+    if (state.sidebarParams.count == 0) {
+        [lines addObject:@"sidebar hand-feel parameters: none reported by this build"];
+    }
+    for (DiagnosticsFeatureParam *param in state.sidebarParams) {
+        [lines addObject:ReportFeatureParamLine(param)];
+    }
+
+    for (NSString *key in [self featureSwitchKeys]) {
+        [lines addObject:ReportFeatureSwitch(state.switches, key)];
+    }
+
+    [lines addObject:ReportFeatureString(state.pointerState, @"mouse mode", @"mouseMode")];
+    [lines addObject:ReportFeatureString(state.pointerState, @"pointer path", @"pointerPath")];
+
+    if (!state.hasVideoStats) {
+        // A zero here would read as "the stream received nothing", which is a diagnosis.
+        // The truth is that no stream has been running, so there is no counter to read.
+        [lines addObject:@"video counters: no active stream (nothing measured)"];
+    } else {
+        [lines addObject:[NSString stringWithFormat:
+                          @"video counters: received=%u decoded=%u rendered=%u "
+                          @"fps=%.1f jitter=%.1fms received=%.1fMiB format=%@",
+                          state.receivedFrames, state.decodedFrames, state.renderedFrames,
+                          state.renderedFps, state.jitterMs,
+                          (double)state.receivedBytes / (1024.0 * 1024.0),
+                          state.videoFormatName.length > 0 ? state.videoFormatName : @"unknown"]];
+    }
+
+    if (!state.hasReconnectState) {
+        [lines addObject:@"reconnect backoff: no stream window to read the attempt counter "
+                         "from"];
+    } else {
+        [lines addObject:[NSString stringWithFormat:
+                          @"reconnect backoff: attempt %lu of %lu, attempt pending: %@, "
+                          @"host confirmed gone: %@",
+                          (unsigned long)state.reconnectAttemptCount,
+                          (unsigned long)state.reconnectMaxAttempts,
+                          ReportYesNo(state.reconnectPending),
+                          ReportYesNo(state.reconnectHostConfirmedGone)]];
+    }
+
+    return [DiagnosticsReportSection sectionWithTitle:@"features" lines:lines];
 }
 
 + (NSString *)redactString:(NSString *)input {
