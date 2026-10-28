@@ -13,6 +13,12 @@ The contract under test:
   * a pending commit the IME produced reaches the host as one UTF-8 event,
   * the setting being off leaves the normal route untouched.
 
+The routing probe above stubs the text client, so a second probe compiles the
+real Limelight/Input/HIDLocalIME.m and drives the client as an
+NSTextInputClient: backspace and delete must edit the local draft, the caret
+the engine reports must survive, and the draft must be readable back. Those are
+the calls a candidate window makes; the stub cannot see them.
+
 Exit 0 only when every scenario passes and the known-bad shape fails.
 """
 import os
@@ -28,6 +34,8 @@ import ml_probe_fixture
 ROOT = Path(__file__).resolve().parents[1]
 SHIP = ROOT / "Limelight/Input/HIDSupport.m"
 KEYMAP_HEADER = ROOT / "Limelight/Input/KeyboardMapResolver.h"
+IME_IMPL = ROOT / "Limelight/Input/HIDLocalIME.m"
+IME_HEADER = ROOT / "Limelight/Input/HIDLocalIME.h"
 
 
 def _block(text, signature):
@@ -431,6 +439,102 @@ int main(void) {
 """
 
 
+# The real text client, compiled verbatim: the header first (the implementation
+# imports it), then the implementation with that import dropped so the whole
+# thing is one translation unit the mutations can edit.
+def client_source():
+    impl = IME_IMPL.read_text().replace('#import "HIDLocalIME.h"', "")
+    header = (IME_HEADER.read_text()
+              .replace("#pragma once", "")
+              .replace("#import <AppKit/AppKit.h>", ""))
+    return "#import <AppKit/AppKit.h>\n" + header + "\n" + impl + CLIENT_SCENARIOS
+
+
+CLIENT_SCENARIOS = r"""
+#define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL line %d\n", __LINE__); return 1; } } while (0)
+
+int main(void) {
+@autoreleasepool {
+    MLLocalIMETextClient *c = [MLLocalIMETextClient new];
+
+    // --- 1. A draft is readable back, with the caret the engine reported ---
+    CHECK(!c.hasMarkedText);
+    CHECK(c.markedRange.location == NSNotFound);
+    [c setMarkedText:@"\u4e2d\u6587" selectedRange:NSMakeRange(2, 0) replacementRange:NSMakeRange(0, 0)];
+    CHECK(c.hasMarkedText);
+    CHECK([c.markedText isEqualToString:@"\u4e2d\u6587"]);
+    CHECK(NSEqualRanges(c.markedRange, NSMakeRange(0, 2)));
+    CHECK(NSEqualRanges(c.selectedRange, NSMakeRange(2, 0)));
+    CHECK(c.compositions == 1);
+    // A refresh with the same draft must not inflate the diagnostic counter.
+    [c setMarkedText:@"\u4e2d\u6587" selectedRange:NSMakeRange(2, 0) replacementRange:NSMakeRange(0, 0)];
+    CHECK(c.compositions == 1);
+    NSAttributedString *read = [c attributedSubstringForProposedRange:NSMakeRange(0, 2) actualRange:NULL];
+    CHECK(read && [read.string isEqualToString:@"\u4e2d\u6587"]);
+    NSRange actual = NSMakeRange(0, 0);
+    read = [c attributedSubstringForProposedRange:NSMakeRange(1, 99) actualRange:&actual];
+    CHECK(read && [read.string isEqualToString:@"\u6587"]);
+    CHECK(NSEqualRanges(actual, NSMakeRange(1, 1)));
+    CHECK([c attributedSubstringForProposedRange:NSMakeRange(9, 1) actualRange:NULL] == nil);
+
+    // --- 2. Backspace edits the local draft, one grapheme at a time ---
+    // "A" + U+1F600 is two UTF-16 units; deleting it must not leave a lone
+    // surrogate behind.
+    [c setMarkedText:@"A\U0001F600" selectedRange:NSMakeRange(3, 0) replacementRange:NSMakeRange(0, 0)];
+    [c doCommandBySelector:@selector(deleteBackward:)];
+    CHECK([c.markedText isEqualToString:@"A"]);
+    CHECK(NSEqualRanges(c.selectedRange, NSMakeRange(1, 0)));
+    CHECK(NSEqualRanges(c.markedRange, NSMakeRange(0, 1)));
+    // "e" + U+0301 is one grapheme cluster with a combining mark.
+    [c setMarkedText:@"e\U00000301x" selectedRange:NSMakeRange(3, 0) replacementRange:NSMakeRange(0, 0)];
+    [c doCommandBySelector:@selector(deleteBackward:)];
+    CHECK([c.markedText isEqualToString:@"e\U00000301"]);
+    [c doCommandBySelector:@selector(deleteBackward:)];
+    CHECK(c.markedText.length == 0 && !c.hasMarkedText);
+    // An empty draft has nothing to delete; the call must stay a no-op.
+    [c doCommandBySelector:@selector(deleteBackward:)];
+    CHECK(c.markedText.length == 0 && NSEqualRanges(c.selectedRange, NSMakeRange(0, 0)));
+
+    // --- 3. A selection deletes as a selection, in both directions ---
+    [c setMarkedText:@"abc" selectedRange:NSMakeRange(1, 2) replacementRange:NSMakeRange(0, 0)];
+    [c doCommandBySelector:@selector(deleteBackward:)];
+    CHECK([c.markedText isEqualToString:@"a"]);
+    CHECK(NSEqualRanges(c.selectedRange, NSMakeRange(1, 0)));
+    [c setMarkedText:@"abc" selectedRange:NSMakeRange(0, 2) replacementRange:NSMakeRange(0, 0)];
+    [c doCommandBySelector:@selector(deleteForward:)];
+    CHECK([c.markedText isEqualToString:@"c"]);
+    CHECK(NSEqualRanges(c.selectedRange, NSMakeRange(0, 0)));
+    // Delete at the end of the draft has nothing ahead of the caret.
+    [c setMarkedText:@"ab" selectedRange:NSMakeRange(2, 0) replacementRange:NSMakeRange(0, 0)];
+    [c doCommandBySelector:@selector(deleteForward:)];
+    CHECK([c.markedText isEqualToString:@"ab"]);
+
+    // --- 4. A caret past the end is clamped into the new draft ---
+    // Engines hand back a stale location while they re-render the candidate
+    // window; unclamped, the next delete indexes outside the string.
+    [c setMarkedText:@"\u4e2d" selectedRange:NSMakeRange(9, 0) replacementRange:NSMakeRange(0, 0)];
+    CHECK(NSEqualRanges(c.selectedRange, NSMakeRange(1, 0)));
+    [c doCommandBySelector:@selector(deleteBackward:)];
+    CHECK(c.markedText.length == 0);
+
+    // --- 5. Commit accumulation and the session teardown reset ---
+    [c insertText:@"\u6d4b\u8bd5" replacementRange:NSMakeRange(0, 0)];
+    CHECK(c.commits == 1);
+    CHECK([c.pendingCommit isEqualToString:@"\u6d4b\u8bd5"]);
+    [c insertText:@"" replacementRange:NSMakeRange(0, 0)];
+    CHECK(c.commits == 1);
+    [c setMarkedText:@"\u8349" selectedRange:NSMakeRange(1, 0) replacementRange:NSMakeRange(0, 0)];
+    [c unmarkText];
+    CHECK(!c.hasMarkedText && NSEqualRanges(c.selectedRange, NSMakeRange(0, 0)));
+    [c resetState];
+    CHECK(c.pendingCommit == nil);
+
+    puts("K1.2 IME client draft replay passed");
+    return 0;
+}}
+"""
+
+
 def run(code):
     cc, sdk = apple_toolchain.clang_and_sdk("K1.2 IME routing replay")
     with tempfile.TemporaryDirectory() as tmp:
@@ -551,6 +655,50 @@ def main():
     result = run(source.replace(old, new, 1))
     assert result.returncode == 1 and "FAIL line" in result.stderr, "mutation not caught"
     print("caught: whitelist swapped a non-composing type in")
+
+    # --- The real text client: the candidate window's own contract ---
+    client = client_source()
+    result = run(client)
+    assert result.returncode == 0, result.stdout + result.stderr
+    print(result.stdout.strip())
+
+    # --- Mutation: backspace is a no-op again (the shipped shape we found) ---
+    old = ("    if (selector == @selector(deleteBackward:)) {\n"
+           "        [self deleteCharactersForSelectionBackwards:YES];\n"
+           "    } else if (selector == @selector(deleteForward:)) {\n"
+           "        [self deleteCharactersForSelectionBackwards:NO];\n"
+           "    }")
+    new = "    (void)selector;"
+    assert client.count(old) == 1, "doCommandBySelector dispatch not found"
+    result = run(client.replace(old, new, 1))
+    assert result.returncode == 1 and "FAIL line" in result.stderr, "mutation not caught"
+    print("caught: backspace leaves the local draft untouched")
+
+    # --- Mutation: the caret is dropped, so the IME cannot track the draft ---
+    old = "- (NSRange)selectedRange {\n    return _selectedRange;\n}"
+    new = "- (NSRange)selectedRange {\n    return NSMakeRange(0, 0);\n}"
+    assert client.count(old) == 1, "selectedRange getter not found"
+    result = run(client.replace(old, new, 1))
+    assert result.returncode == 1 and "FAIL line" in result.stderr, "mutation not caught"
+    print("caught: selectedRange always reports the origin")
+
+    # --- Mutation: the draft is not readable back ---
+    old = ("    NSRange actual = NSMakeRange(range.location, MIN(range.length, length - range.location));\n"
+           "    if (actualRange) *actualRange = actual;\n"
+           "    return [[NSAttributedString alloc] initWithString:[_markedText substringWithRange:actual]];")
+    new = "    if (actualRange) *actualRange = range;\n    return nil;"
+    assert client.count(old) == 1, "attributedSubstring read-back not found"
+    result = run(client.replace(old, new, 1))
+    assert result.returncode == 1 and "FAIL line" in result.stderr, "mutation not caught"
+    print("caught: attributedSubstringForProposedRange never returns the draft")
+
+    # --- Mutation: delete one UTF-16 unit instead of one grapheme cluster ---
+    old = "        target = [_markedText rangeOfComposedCharacterSequenceAtIndex:_selectedRange.location - 1];"
+    new = "        target = NSMakeRange(_selectedRange.location - 1, 1);"
+    assert client.count(old) == 1, "grapheme backspace not found"
+    result = run(client.replace(old, new, 1))
+    assert result.returncode == 1 and "FAIL line" in result.stderr, "mutation not caught"
+    print("caught: backspace cuts a surrogate pair / combining sequence")
 
     return 0
 
