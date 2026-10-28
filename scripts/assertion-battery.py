@@ -381,7 +381,14 @@ INIT = """        self.keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary d
 SPEND = UP_SPEND
 RECORD_BY_DISPATCHED_CODE = """    self.keyboardForwardedKeyDownKeyCodes[@(keyCode)] = @(keyCode);
 """
-SPEND_BY_DISPATCHED_CODE = """    [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@(keyCode)];
+# The spend has to name the dispatched code with an expression that exists where it lands.
+# -keyUp: declares its own `short keyCode` much later, from the saved wire code, so the
+# obvious `@(keyCode)` here is an undeclared identifier: clang refuses the probe, the
+# harness reports it cannot build, and the battery can only print UNPROVED -- a mutation
+# that grades as "nothing was measured" forever. Recomputing the code the release would
+# send is in scope, says the same thing, and was checked to make the identity harness fail
+# on both colliding pairs while still agreeing on the non-colliding one.
+SPEND_BY_DISPATCHED_CODE = """    [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:@((short)(0x8000 | [self translateKeyCodeWithEvent:event]))];
 """
 
 
@@ -2324,8 +2331,16 @@ def gate_failed(gate):
         return None, [line for line in outcome.splitlines()
                       if NO_TOOLCHAIN_MESSAGE in line]
     if proc.returncode != 0 and PROBE_BUILD_FAILED_MESSAGE in outcome:
-        return None, [line for line in outcome.splitlines()
-                      if PROBE_BUILD_FAILED_MESSAGE in line]
+        # Carry the compiler's own lines too. A probe that failed to build is usually
+        # the battery's fault -- a mutation that names a local which does not exist
+        # where it lands -- and without the `error:` line the report says only that
+        # nothing was measured, which is the sentence that sent somebody hunting for a
+        # broken toolchain. The harness prints the sentinel first and the compiler
+        # output after it, so the lines that follow the sentinel belong to it.
+        lines = outcome.splitlines()
+        detail = [line for line in lines
+                  if PROBE_BUILD_FAILED_MESSAGE in line or " error: " in " %s " % line]
+        return None, detail
     detail = [line for line in outcome.splitlines() if "FAIL" in line]
     return proc.returncode != 0, detail
 
@@ -2439,8 +2454,10 @@ def main():
                 # and the summary says how many proofs this host was unable to make.
                 unproved.append(name)
                 print("UNPROVED %-18s %s" % (name, note))
-                if detail:
-                    print("        %s" % detail[0].strip()[:160])
+                # Unproved proofs are rare, so every line the gate gave is worth printing,
+                # and a compiler diagnostic truncated at the path is no diagnostic at all.
+                for line in detail:
+                    print("        %s" % line.strip()[:400])
                 continue
             caught = "CAUGHT " if failed else "MISSED "
             print("%s %-18s %s" % (caught, name, note))
