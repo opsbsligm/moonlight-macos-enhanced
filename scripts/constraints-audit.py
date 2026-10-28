@@ -3702,7 +3702,13 @@ if run_battery:
                           os.path.join("scripts", "gamepad-menu-gesture-tests.py"),
                           os.path.join("scripts", "pointer-entry-takeover-tests.py"),
                           os.path.join("scripts", "sas-preset-tests.py"),
-                          os.path.join("scripts", "enhancement-report-tests.py"))
+                          os.path.join("scripts", "enhancement-report-tests.py"),
+                          # The feature block is the part of the report a player reads to find
+                          # out whether their own settings took effect, so it is driven beside
+                          # the other report gate rather than excused: this host either has
+                          # Apple's toolchain, in which case the harness compiles and runs, or
+                          # it says so in the skip line above rather than passing quietly.
+                          os.path.join("scripts", "diagnostics-report-tests.py"))
         for behaviour in behaviours:
             harness = subprocess.run([sys.executable, os.path.join(root, behaviour)],
                                      capture_output=True, text=True, cwd=root)

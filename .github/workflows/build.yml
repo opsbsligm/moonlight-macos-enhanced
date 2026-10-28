@@ -485,6 +485,14 @@ jobs:
         python3 scripts/enhancement-report-tests.py --self-test
         python3 scripts/enhancement-report-tests.py
 
+    - name: Verify the diagnostics report states what the running build actually does
+      # The features block is the one a player reads to find out whether their own settings
+      # took effect, so its three answers each get a defect that keeps the line and loses the
+      # meaning: an override reported as the shipped constant it replaced, a switch the player
+      # never touched reported as off, and video counters printed for a build that never had a
+      # stream. It compiles the shipped builder, so it belongs beside the other report gates.
+      run: python3 scripts/diagnostics-report-tests.py
+
     - name: Verify the stream's panels get real glass
       # Seven overlays drew the pre-glass HUD-window vibrancy, so the surfaces a player
       # looks at during a session were the part of the interface that never moved to the
