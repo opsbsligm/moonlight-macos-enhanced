@@ -32,6 +32,14 @@
 
 #import "Localization.h"
 
+// Forward declarations rather than an import: this header is included by most of the macOS
+// sources, and DiagnosticsReportBuilder.h opens an NS_ASSUME_NONNULL region. Pulling that
+// region into a header whose own pointers are unannotated makes every one of them a
+// nullability-completeness warning, so the two value types the diagnostics block hands out
+// are named here and the file that reads them does the import.
+@class DiagnosticsFeatureParam;
+@class DiagnosticsFeatureState;
+
 #include "Limelight.h"
 #include "Limelight-internal.h"
 
@@ -1045,6 +1053,28 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 
 @interface StreamViewController (Diagnostics) <InputPresenceDelegate>
 - (BOOL)hasReceivedAnyVideoFrames;
+// The six sidebar hand-feel parameters as the stream itself states them: the shipped
+// constant, the published range its own getters clamp to, and the override read from the
+// given settings profile. It is a class method because nothing here needs a live session,
+// and it lives beside the getters so a diagnostics report cannot quote a number the
+// sidebar would never use.
+// The overrides dict may be nil, meaning "nothing was written", which is how an unset
+// hand-feel parameter reaches a report. It is worded rather than annotated because this
+// header carries no nullability annotations at all: one annotation would put every pointer
+// in it under the completeness audit and turn the shortcut-action strings above into warnings.
++ (NSArray<DiagnosticsFeatureParam *> *)sidebarFeatureParamsWithOverrides:(NSDictionary<NSString *, NSNumber *> *)overrides;
+// The live half of the report's feature block: everything in this build that a player can
+// change or measure, read as it is in force right now. It is an instance method because the
+// three things it reports -- the profile a host resolves to, the renderer's counters, the
+// reconnect attempt counter -- only exist on a controller, and a class method would have to
+// guess at all three.
+- (DiagnosticsFeatureState *)featureStateSnapshot;
+// The controller a report should read live state from, or nil when no stream has ever
+// started in this process. Weak by construction, so a window that closed while the player
+// was composing a bug report stops being a source instead of reporting a stale stream.
+// A nil return is the "no stream has ever started in this process" case, again left
+// unannotated for the same reason as the method above.
++ (StreamViewController *)featureStateSourceController;
 - (void)startConnectWatchdog;
 - (void)scheduleConnectWatchdogCheckForToken:(NSInteger)token delay:(NSTimeInterval)delay;
 - (void)showErrorOverlayWithTitle:(NSString *)title message:(NSString *)message canWait:(BOOL)canWait;

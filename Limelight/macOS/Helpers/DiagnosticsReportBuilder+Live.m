@@ -18,6 +18,7 @@
 #import "Moonlight-Swift.h"
 #import "Logger.h"
 #import "TemporaryHost.h"
+#import "StreamViewController_Internal.h"
 
 static NSString *const kReportSection = @"report";
 static NSString *const kApplicationSection = @"application";
@@ -45,6 +46,10 @@ static NSString *stringOrNone(NSString *_Nullable value) {
     [sections addObject:[self inputSection]];
     [sections addObject:[DiagnosticsReportBuilder
         controllersSectionWithSnapshot:MLControllerInventory.sharedInventory.snapshot]];
+    // Features sits under input and controllers because it is the block that says what the
+    // two above are configured to do: which hand-feel numbers are in force, which switches
+    // are on, and which pointer path took the session.
+    [sections addObject:[self featureStateSection]];
     // Devices sits under input rather than under hosts, because the four preconditions the
     // devices panel reports are answered by the same two questions a permissions and input
     // readout raises: whether the app may watch the mouse at all, and whether this build is
@@ -190,6 +195,33 @@ static NSString *stringOrNone(NSString *_Nullable value) {
     return [self inputSectionWithSummary:InputDiagnosticsLedger.sharedLedger.summary
                    collectionEnabledNow:[SettingsClass inputDiagnosticsEnabled]
                                     now:[NSDate date]];
+}
+
+// The one place the live report reaches into a running stream. Everything else in this file
+// reads a singleton or the bundle. It is worth the exception because the questions this block
+// answers -- "is my sidebar band 12pt or did I move it", "is the IME path on", "which pointer
+// sender has the mouse", "how far into the reconnect backoff am I" -- have no answer that does
+// not involve the session. A build with no stream in it still gets a full block of absences,
+// so a report taken before connecting describes a pre-stream build rather than failing.
++ (DiagnosticsReportSection *)featureStateSection {
+    StreamViewController *source = [StreamViewController featureStateSourceController];
+    DiagnosticsFeatureState *state;
+    if (source != nil) {
+        state = [source featureStateSnapshot];
+    } else {
+        // No stream has run, so nothing session-shaped is knowable. The hand-feel numbers
+        // and the switches still are: they come from the shared profile, which is what a
+        // host without its own settings would stream with anyway. Reporting them here is
+        // what lets a report taken before connecting still show an override that a player
+        // wrote globally -- the absence lines then cover only the counters that genuinely
+        // need a stream.
+        state = [[DiagnosticsFeatureState alloc] init];
+        NSDictionary *prefs = [SettingsClass getSettingsFor:[SettingsClass globalHostKey]];
+        state.profileScope = @"global profile (no stream has started)";
+        state.switches = [self featureSwitchesFromPreferences:prefs];
+        state.sidebarParams = [StreamViewController sidebarFeatureParamsWithOverrides:prefs];
+    }
+    return [self featureStateSectionWithState:state];
 }
 
 + (DiagnosticsReportSection *)networkSection {
