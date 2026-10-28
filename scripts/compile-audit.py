@@ -130,6 +130,21 @@ def generated_stamp(directory, files):
     return stamp
 
 
+def target_key(relative):
+    """The identity of one target's generated headers, ignoring derived root and configuration.
+
+    xcodebuild writes them at `<target>.build/<Configuration>/<target>.build/DerivedSources`,
+    so the configuration is the second component and dropping it is what makes a Debug and a
+    Release build of one target collapse to one key. It is positional rather than a list of
+    configuration names, because a custom scheme may build a configuration this script has
+    never heard of and that build's headers are just as much a duplicate as Debug's.
+    """
+    parts = relative.split(os.sep)
+    identity = [part for number, part in enumerate(parts)
+                if number != 1 and part != "DerivedSources"]
+    return os.sep.join(identity) or relative
+
+
 def derived_sources():
     """Directories that hold xcodebuild's generated headers, in any derived-data root.
 
@@ -171,9 +186,15 @@ def derived_sources():
     marker = os.sep + "Intermediates.noindex" + os.sep
     newest = {}
     for path, stamp in found:
-        # The configuration and target, not the root: two roots holding one target's
-        # generated headers are two copies of one answer, not two answers.
-        target = path.split(marker, 1)[1] if marker in path else os.path.basename(path)
+        # The target, without the configuration or the root. Two roots -- or a Debug and a
+        # Release build of one target -- holding the same generated header name are two
+        # copies of one answer, not two answers, and only the newest may be on the search
+        # path. Keeping both used to be harmless until the paths sorted with the older
+        # configuration first: clang takes the first directory that has the name, so an
+        # Oct 24 Debug header answered for a source tree that had compiled the name on
+        # Oct 28, and the audit reported today's Swift API as missing.
+        target = target_key(path.split(marker, 1)[1] if marker in path
+                            else os.path.basename(path))
         if target not in newest or stamp > newest[target][0]:
             newest[target] = (stamp, path)
     return sorted(pair[1] for pair in newest.values())

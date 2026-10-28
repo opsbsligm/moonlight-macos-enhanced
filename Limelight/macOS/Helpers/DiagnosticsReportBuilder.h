@@ -15,6 +15,60 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/// One hand-feel parameter the player can move, stated the way the stream states it:
+/// the shipped constant, the published range the stream clamps to, and the override the
+/// player actually wrote (zero meaning "no preference written"). The live side fills the
+/// shipped default and the range from the same compile-time constants the stream's getter
+/// reads, so a report cannot name a number the stream would never use.
+@interface DiagnosticsFeatureParam : NSObject
+@property (nonatomic, copy, readonly) NSString *label;
+@property (nonatomic, readonly) double shippedDefault;
+@property (nonatomic, readonly) double minimum;
+@property (nonatomic, readonly) double maximum;
+@property (nonatomic, readonly) double overrideValue;
++ (instancetype)paramWithLabel:(NSString *)label
+               shippedDefault:(double)shippedDefault
+                       minimum:(double)minimum
+                       maximum:(double)maximum
+                overrideValue:(double)overrideValue;
+@end
+
+/// Everything the feature-state block reports, already read off the running app. It is a
+/// plain value object on purpose: the block's whole job is to turn settings into "what is
+/// in force right now", and that decision has to be compiled and replayed without a
+/// stream, a host, or a pair of hands on a controller.
+///
+/// Two shapes carry the honesty of the block. An override of zero is not a value, it is
+/// the absence of one, and it has to read as the shipped constant. A measurement the app
+/// does not have -- no stream, so no video counters, no reconnector -- has to read as
+/// absent, because a zero printed where a counter should be is the single most
+/// misleading thing this block can hold.
+@interface DiagnosticsFeatureState : NSObject
+/// "global profile" or "per-host profile". The host's own identifier never appears here:
+/// a report says which rules applied, not which machine they applied to.
+@property (nonatomic, copy) NSString *profileScope;
+@property (nonatomic, copy) NSArray<DiagnosticsFeatureParam *> *sidebarParams;
+/// Feature switches by preference key. A key that is absent reads as unknown rather than
+/// as off, which is the difference between "this build has no such switch" and "the
+/// player turned it off".
+@property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *switches;
+/// The pointer path the running session settled on. Empty means nothing was recorded.
+@property (nonatomic, copy) NSDictionary<NSString *, NSString *> *pointerState;
+@property (nonatomic) BOOL hasVideoStats;
+@property (nonatomic) uint32_t receivedFrames;
+@property (nonatomic) uint32_t decodedFrames;
+@property (nonatomic) uint32_t renderedFrames;
+@property (nonatomic) uint64_t receivedBytes;
+@property (nonatomic) float renderedFps;
+@property (nonatomic) float jitterMs;
+@property (nonatomic, copy, nullable) NSString *videoFormatName;
+@property (nonatomic) BOOL hasReconnectState;
+@property (nonatomic) NSUInteger reconnectAttemptCount;
+@property (nonatomic) NSUInteger reconnectMaxAttempts;
+@property (nonatomic) BOOL reconnectPending;
+@property (nonatomic) BOOL reconnectHostConfirmedGone;
+@end
+
 /// One titled block of the report. English on purpose, in both the title and the
 /// lines: the reader is whoever maintains the client or triages the report, not the
 /// player whose language the menus are translated into.
@@ -75,6 +129,29 @@ NS_ASSUME_NONNULL_BEGIN
 /// Protocol type candidates and HID node counts do not imply host advertisements or a
 /// physical device count.
 + (DiagnosticsReportSection *)controllersSectionWithSnapshot:(nullable MLControllerInventorySnapshot *)snapshot;
+
+/// The block that answers "what is this build actually doing right now", which is the
+/// question every real-device acceptance check asks and no screenshot answers. Settings
+/// are reported as the value in force, not the number in the file: a player who wrote
+/// 30pt for a band the stream caps at 16pt has to see 16pt, and a parameter nobody
+/// touched has to say it is the shipped default, so an upgrade cannot silently move it.
+///
+/// `state` is never nil. A build that could read nothing still produces a block, because
+/// an absent block reads as "there is no such feature" to whoever receives the report.
++ (DiagnosticsReportSection *)featureStateSectionWithState:(DiagnosticsFeatureState *)state;
+
+/// The feature switches this block reports, in reading order, as their settings keys.
+/// The live side reads its values through this list rather than carrying a copy: the one
+/// place that knows which switches exist is the block that prints them, so a switch added
+/// to the block is reported by every build that compiles it, and a switch the settings
+/// never wrote still arrives as a key with no value -- which prints as unknown.
++ (NSArray<NSString *> *)featureSwitchKeys;
+
+/// The switch values one settings profile carries, narrowed to `featureSwitchKeys`. A key the
+/// profile does not hold is left out rather than defaulted, because "the player turned it off"
+/// and "this build never wrote a value" are fixed differently and the block has to keep them
+/// apart. Both live paths go through here so neither can invent a third answer.
++ (NSDictionary<NSString *, NSNumber *> *)featureSwitchesFromPreferences:(nullable NSDictionary *)preferences;
 
 /// Assemble the sections in the order given, redact the whole of it once at the end
 /// -- one pass, so a value cannot survive by arriving in a line nobody thought to
