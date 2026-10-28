@@ -930,6 +930,25 @@ class SettingsClass: NSObject {
     return SettingsModel.defaultAutoFullscreen
   }
 
+  /// Whether this host has its own settings object, as opposed to reading the global
+  /// profile by inheritance. A diagnostics report needs this one bit because "the band is
+  /// 16pt" means two different things -- a per-host choice, or a global choice this host
+  /// inherited -- and only the first one disappears when the player edits another host.
+  /// The host's identifier is never returned, so a report can name the rule that applied
+  /// without naming the machine it applied to.
+  @objc static func hasHostSpecificProfile(for key: String) -> Bool {
+    guard key != SettingsModel.globalHostId else { return false }
+    return Settings.persistedSettings(for: key) != nil
+  }
+
+  /// The key that holds the shared profile every host inherits from. Objective-C needs the
+  /// name rather than a retype of it: a stream view controller that cannot resolve a host
+  /// identity still has to say which profile it read, and an empty key would only happen to
+  /// land on the right profile because the store falls back to global by accident.
+  @objc static var globalHostKey: String {
+    SettingsModel.globalHostId
+  }
+
   @objc static func displayMode(for key: String) -> Int {
     if let settings = Settings.getSettings(for: key) {
       if let mode = settings.displayMode {

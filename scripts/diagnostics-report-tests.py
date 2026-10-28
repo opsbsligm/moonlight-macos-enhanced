@@ -488,6 +488,152 @@ int main(void) {
               "starting without a driver clears the previous name and advances the session");
     }
 
+    {
+        // The feature-state block. It exists because every real-device acceptance check asks
+        // "what is this build actually doing", and a screenshot of a settings pane answers what
+        // the player wrote -- which is not the same number whenever the stream clamps.
+        DiagnosticsFeatureState *bare = DiagnosticsFeatureState.new;
+        NSString *nothing = [[DiagnosticsReportBuilder
+            featureStateSectionWithState:bare].lines componentsJoinedByString:@"\n"];
+        check([nothing rangeOfString:@"no active stream"].location != NSNotFound &&
+              [nothing rangeOfString:@"received="].location == NSNotFound,
+              "a build with no stream says nothing was measured, rather than printing zeros "
+              "that read as a stream that received nothing");
+        check([nothing rangeOfString:@"no stream window"].location != NSNotFound &&
+              [nothing rangeOfString:@"reconnect backoff: attempt"].location == NSNotFound,
+              "and the reconnect line says there was no window to read, not attempt zero of zero");
+        check([nothing rangeOfString:@"unknown (no value written)"].location != NSNotFound,
+              "a switch this build never wrote reads as unknown, not as off");
+        check([nothing rangeOfString:@"mouse mode: unknown"].location != NSNotFound &&
+              [nothing rangeOfString:@"pointer path: unknown"].location != NSNotFound,
+              "a pointer path that was never recorded says so");
+        check([nothing rangeOfString:@"none reported by this build"].location != NSNotFound,
+              "a build with no hand-feel parameters says it has none, rather than leaving an "
+              "empty block that looks like a shipped default");
+
+        DiagnosticsFeatureState *tuned = DiagnosticsFeatureState.new;
+        tuned.profileScope = @"per-host profile";
+        tuned.sidebarParams = @[
+            [DiagnosticsFeatureParam paramWithLabel:@"edge sensor band"
+                                    shippedDefault:12 minimum:8 maximum:16 overrideValue:0],
+            [DiagnosticsFeatureParam paramWithLabel:@"edge sensor dwell"
+                                    shippedDefault:0.12 minimum:0.06 maximum:0.3 overrideValue:0.2],
+            [DiagnosticsFeatureParam paramWithLabel:@"auto collapse"
+                                    shippedDefault:0.45 minimum:0.3 maximum:1.0 overrideValue:30],
+            [DiagnosticsFeatureParam paramWithLabel:@"idle tab thickness"
+                                    shippedDefault:14 minimum:10 maximum:20 overrideValue:4],
+        ];
+        tuned.switches = @{ @"edgeSensorSummon": @NO, @"imeLocalComposition": @YES };
+        tuned.pointerState = @{ @"mouseMode": @"Remote Desktop", @"pointerPath": @"relative" };
+        tuned.hasVideoStats = YES;
+        tuned.receivedFrames = 1200;
+        tuned.decodedFrames = 1198;
+        tuned.renderedFrames = 1150;
+        tuned.renderedFps = 119.4f;
+        tuned.jitterMs = 2.5f;
+        tuned.receivedBytes = 32 * 1024 * 1024;
+        tuned.videoFormatName = @"HEVC";
+        tuned.hasReconnectState = YES;
+        tuned.reconnectAttemptCount = 2;
+        tuned.reconnectMaxAttempts = 3;
+        tuned.reconnectPending = YES;
+        NSString *detail = [[DiagnosticsReportBuilder
+            featureStateSectionWithState:tuned].lines componentsJoinedByString:@"\n"];
+        check([detail rangeOfString:@"edge sensor band: 12 (shipped default)"]
+                  .location != NSNotFound,
+              "a parameter nobody touched reports the shipped constant and says it is the "
+              "shipped constant");
+        check([detail rangeOfString:@"edge sensor dwell: 0.2 (player override, shipped 0.12)"]
+                  .location != NSNotFound,
+              "a written override reports the override as the value in force and keeps the "
+              "constant it replaced visible, so an upgrade can be read against the old hand-feel");
+        check([detail rangeOfString:@"auto collapse: 1 (clamped from 30, shipped 0.45)"]
+                  .location != NSNotFound,
+              "an override past the published range reports the boundary the stream uses plus "
+              "the number the player wrote -- the whole reason this block exists");
+        check([detail rangeOfString:@"idle tab thickness: 10 (clamped from 4, shipped 14)"]
+                  .location != NSNotFound,
+              "and the same honesty at the bottom of the range");
+        check([detail rangeOfString:@"edgeSensorSummon: no"].location != NSNotFound &&
+              [detail rangeOfString:@"imeLocalComposition: yes"].location != NSNotFound &&
+              [detail rangeOfString:@"backgroundGamepad: unknown"].location != NSNotFound,
+              "each switch reports its own answer, and only the switches this build never "
+              "touched stay unknown");
+        check([detail rangeOfString:@"mouse mode: Remote Desktop"].location != NSNotFound &&
+              [detail rangeOfString:@"pointer path: relative"].location != NSNotFound,
+              "the pointer path the session settled on is carried");
+        check([detail rangeOfString:@"received=1200 decoded=1198 rendered=1150"].location != NSNotFound &&
+              [detail rangeOfString:@"fps=119.4"].location != NSNotFound &&
+              [detail rangeOfString:@"format=HEVC"].location != NSNotFound &&
+              [detail rangeOfString:@"received=32.0MiB"].location != NSNotFound,
+              "the video counters arrive with the codec name, so a stutter report says which "
+              "decoder was even in use");
+        check([detail rangeOfString:@"attempt 2 of 3"].location != NSNotFound &&
+              [detail rangeOfString:@"attempt pending: yes"].location != NSNotFound &&
+              [detail rangeOfString:@"host confirmed gone: no"].location != NSNotFound,
+              "the backoff state machine is described by its own counters");
+
+        DiagnosticsFeatureState *formatless = DiagnosticsFeatureState.new;
+        formatless.hasVideoStats = YES;
+        NSString *noFormat = [[DiagnosticsReportBuilder
+            featureStateSectionWithState:formatless].lines componentsJoinedByString:@"\n"];
+        check([noFormat rangeOfString:@"format=unknown"].location != NSNotFound,
+              "a stream whose codec was never recorded says unknown, not an empty field");
+
+        // The block is a report section like any other, so it goes through the same redaction
+        // pass. The label is the one field that can carry text from outside the code, so that
+        // is where a secret is planted.
+        DiagnosticsFeatureState *leaking = DiagnosticsFeatureState.new;
+        leaking.sidebarParams = @[
+            [DiagnosticsFeatureParam paramWithLabel:@"band /Users/Someone/secret.app"
+                                    shippedDefault:12 minimum:8 maximum:16 overrideValue:0],
+        ];
+        NSString *assembled = [DiagnosticsReportBuilder
+            reportFromSections:@[[DiagnosticsReportBuilder featureStateSectionWithState:leaking]]];
+        check([assembled rangeOfString:@"/Users/Someone"].location == NSNotFound &&
+              [assembled rangeOfString:@"features"].location != NSNotFound,
+              "the block is assembled under the redaction pass, so a path in one of its lines "
+              "still leaves");
+
+        // The switch list is the block's own contract, and the filter is the only thing
+        // between a settings dictionary and it. Both are tested here rather than assumed,
+        // because the failure mode is a report that quietly stops mentioning a switch.
+        NSArray<NSString *> *keys = [DiagnosticsReportBuilder featureSwitchKeys];
+        check(keys.count == 6 &&
+              [keys containsObject:@"absoluteMouseMode"] &&
+              [keys containsObject:@"relativeMouseAsAbsolute"] &&
+              [keys containsObject:@"imeLocalComposition"] &&
+              [keys containsObject:@"muteOnFocusLoss"] &&
+              [keys containsObject:@"backgroundGamepad"],
+              "the block names the switches a player can actually move, so a switch added to "
+              "the settings page has to be added here before a report can claim it is off");
+
+        NSDictionary *profile = @{
+            @"absoluteMouseMode": @YES,
+            @"muteOnFocusLoss": @NO,
+            // Not every value a profile holds is a switch. A leftover string, a number for a
+            // hand-feel parameter, and a key nobody reads all have to be refused: filtering by
+            // the key list is what stops a hand-feel number printing as a yes/no switch.
+            @"edgeSensorBandWidthPoints": @30,
+            @"someOtherKey": @"yes",
+            // A switch key holding something that is not a number is a stale or foreign write.
+            // Reading it with boolValue would invent a verdict, so it has to stay unknown.
+            @"imeLocalComposition": @"yes",
+        };
+        NSDictionary *carried = [DiagnosticsReportBuilder featureSwitchesFromPreferences:profile];
+        check(carried.count == 2 &&
+              [carried[@"absoluteMouseMode"] boolValue] &&
+              [carried[@"muteOnFocusLoss"] boolValue] == NO &&
+              carried[@"imeLocalComposition"] == nil,
+              "the filter keeps only the switches a profile really carries -- an untouched "
+              "switch arrives with no value and prints as unknown, and a value that is not a "
+              "number is refused rather than read into a verdict by whatever boolValue makes "
+              "of it");
+        check([DiagnosticsReportBuilder featureSwitchesFromPreferences:nil].count == 0,
+              "a build that could not read its settings reports every switch as unknown "
+              "instead of inventing a verdict");
+    }
+
     // The count is printed rather than counted from the transcript by whoever reads it: a
     // report that quotes "the harness has N checks" and is wrong is the same kind of number
     // this repository keeps refusing to write down.
@@ -558,6 +704,46 @@ MUTATIONS = (
      '@"advertised controller type/caps: sent"'),
     ("the report loses the boundary between HID groups and physical devices",
      "not a physical controller count", "physical controller count"),
+    # The features block is the one a player reads to find out what their own settings did,
+    # so each of its three answers gets a defect that keeps the line and loses the meaning.
+    ("a written override is reported as the shipped constant it replaced",
+     "        effective = param.overrideValue;\n", ""),
+    ("an out-of-range override reports the number the player wrote, not the boundary in force",
+     "        } else if (param.overrideValue > param.maximum) {\n"
+     "            effective = param.maximum;",
+     "        } else if (param.overrideValue > param.maximum) {\n"
+     "            effective = param.overrideValue;"),
+    ("an untouched parameter stops saying it is the shipped default",
+     '    NSString *state = @"shipped default";',
+     '    NSString *state = @"as configured";'),
+    ("video counters are printed for a build that never had a stream",
+     "    if (!state.hasVideoStats) {",
+     "    if (NO) {"),
+    ("a switch this build never wrote is reported as off",
+     '                                             : @"unknown (no value written)"];',
+     '                                             : ReportYesNo(NO)];'),
+    ("a pointer path that was never recorded prints as an empty field",
+     '    return [NSString stringWithFormat:@"%@: %@", label,\n'
+     '                                       value.length > 0 ? value : @"unknown (not recorded)"];',
+     '    return [NSString stringWithFormat:@"%@: %@", label, value];'),
+    ("the backoff counters are printed where no stream window exists to hold them",
+     "    if (!state.hasReconnectState) {",
+     "    if (NO) {"),
+    ("any value a profile holds counts as a switch, so a hand-feel number reads as a toggle",
+      "        if ([value isKindOfClass:[NSNumber class]]) {",
+      "        if (value != nil) {"),
+    ("a switch the player never touched is reported as on rather than unknown",
+      "    NSMutableDictionary<NSString *, NSNumber *> *switches = [NSMutableDictionary dictionary];\n"
+      "    for (NSString *key in [self featureSwitchKeys]) {\n"
+      "        id value = preferences[key];",
+      "    NSMutableDictionary<NSString *, NSNumber *> *switches = [NSMutableDictionary dictionary];\n"
+      "    for (NSString *key in [self featureSwitchKeys]) {\n"
+      "        id value = preferences[key] ?: @YES;"),
+    ("a switch disappears from the block when a build stops mentioning it",
+      "    return @[ @\"edgeSensorSummon\", @\"absoluteMouseMode\", @\"relativeMouseAsAbsolute\",\n"
+      "              @\"imeLocalComposition\", @\"muteOnFocusLoss\", @\"backgroundGamepad\" ];",
+      "    return @[ @\"edgeSensorSummon\", @\"absoluteMouseMode\", @\"relativeMouseAsAbsolute\",\n"
+      "              @\"imeLocalComposition\", @\"muteOnFocusLoss\" ];"),
 )
 
 INVENTORY_MUTATIONS = (
@@ -735,6 +921,39 @@ def main():
           "MLControllerInventory.sharedInventory.snapshot" in live_builds,
           "the report asks the shared formatter for the controllers block, handing it the "
           "recorded inventory rather than assembling a block by guessing from product strings")
+    check("[sections addObject:[self featureStateSection]];" in live_builds and
+          "featureStateSectionWithState:" in live_builds,
+          "the feature block is assembled by the report a player copies, and comes from the "
+          "shared formatter rather than a second copy of the wording")
+    check("featureStateSourceController" in live_builds and
+          "featureStateSnapshot" in live_builds,
+          "the live report reads its feature state off the running stream, so the numbers it "
+          "quotes are the ones that moved the player's sidebar")
+
+    # The host's identifier is the one value this block must never carry, and the collector
+    # has to read it to resolve which profile applies. So the rule is stated where it can be
+    # checked: the identifier goes into a settings lookup and nowhere into the state object,
+    # and the scope line is one of two fixed words.
+    snapshot = read(STREAM_DIAG)
+    scope_block = snapshot[snapshot.find("- (DiagnosticsFeatureState *)featureStateSnapshot"):]
+    scope_block = scope_block[:scope_block.find("\n}\n")] if "\n}\n" in scope_block else scope_block
+    check("state.profileScope = [SettingsClass hasHostSpecificProfileFor:hostKey]" in scope_block,
+          "the scope line comes from a yes/no question about the profile, never from the key "
+          "itself")
+    check(not re.search(r"profileScope\s*=\s*[^\n]*hostKey", scope_block.replace(
+              "hasHostSpecificProfileFor:hostKey", "")),
+          "the host's identifier is never assigned to anything the report prints")
+    check("[SettingsClass globalHostKey]" in snapshot,
+          "a stream that cannot resolve a host identity names the shared profile through the "
+          "store's own constant, rather than retyping it")
+    check("MLStreamReconnector *reconnector = self.reconnector;" in scope_block and
+          "if (reconnector != nil) {" in scope_block,
+          "the backoff counters are reported only when a reconnector exists to hold them, so "
+          "a session that never built one does not read as a finished backoff")
+    check("MLVideoFormatName(int videoFormat)" in snapshot and
+          "VIDEO_FORMAT_MASK_AV1" in snapshot,
+          "the codec name is decoded from the negotiated format with the same masks the "
+          "on-screen stats use")
     inventory_builds = read(HID_INVENTORY)
     check("[inventory noteSessionStartedWithDriverName:" in inventory_builds and
           "MLControllerDriverNameForIndex(self.controllerDriver)" in inventory_builds and
