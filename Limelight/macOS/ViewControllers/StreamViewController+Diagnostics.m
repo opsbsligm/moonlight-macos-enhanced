@@ -6,6 +6,9 @@
 #import "StreamViewController_Internal.h"
 #import "GlassOverlayContainer.h"
 #import "InputDiagnosticsLedger.h"
+// The internal header only forward-declares the report's value types. This file fills them
+// in, so it is the one that needs the real definition.
+#import "DiagnosticsReportBuilder.h"
 #import <objc/runtime.h>
 
 // Which click still owns a button's temporary title. The button carries the
@@ -13,7 +16,174 @@
 // recording the temporary title as the title to put back.
 static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKey;
 
+// The stream view controller a diagnostics report should read its live feature state from.
+// It is weak on purpose: a released controller has to stop being readable without anybody
+// remembering to unregister it, because the one thing a report must never do is quote the
+// counters of a stream that no longer exists. A disconnect leaves the window -- and this
+// reference -- standing, which is exactly when the report is wanted: the player has just
+// lost the stream and the backoff counters are the answer.
+static __weak StreamViewController *MLFeatureStateStreamController = nil;
+
 @implementation StreamViewController (Diagnostics)
+
+// The report's sidebar block gets every number from the same two places the sidebar's own
+// getters read: the shipped constant and the published range it clamps to. A parameter
+// list built anywhere else is a second source that drifts the moment one of the six is
+// retuned, and the drift would show up as a report that describes a build it does not
+// describe. The override dictionary comes from a settings profile, where zero -- or an
+// absent key -- means "no preference written", which is the same answer the getters give.
+static DiagnosticsFeatureParam *SidebarFeatureParam(NSString *label, NSString *overrideKey,
+                                                    double shipped, double minimum,
+                                                    double maximum,
+                                                    NSDictionary<NSString *, NSNumber *> *overrides) {
+    return [DiagnosticsFeatureParam paramWithLabel:label
+                                   shippedDefault:shipped
+                                           minimum:minimum
+                                           maximum:maximum
+                                     overrideValue:overrides[overrideKey].doubleValue];
+}
+
++ (NSArray<DiagnosticsFeatureParam *> *)sidebarFeatureParamsWithOverrides:(NSDictionary<NSString *, NSNumber *> *)overrides {
+    return @[
+        SidebarFeatureParam(@"edge sensor band", @"edgeSensorBandWidthPoints",
+                            MLEdgeSensorBandWidth, MLEdgeSensorBandWidthMinPoints,
+                            MLEdgeSensorBandWidthMaxPoints, overrides),
+        SidebarFeatureParam(@"edge sensor dwell", @"edgeSensorDwellSeconds",
+                            MLEdgeSensorDwellSeconds, MLEdgeSensorDwellMinSeconds,
+                            MLEdgeSensorDwellMaxSeconds, overrides),
+        SidebarFeatureParam(@"auto collapse", @"edgeMenuAutoCollapseSeconds",
+                            MLEdgeMenuAutoCollapseDelay, MLEdgeMenuAutoCollapseMinSeconds,
+                            MLEdgeMenuAutoCollapseMaxSeconds, overrides),
+        SidebarFeatureParam(@"summon grace", @"edgeMenuSummonGraceSeconds",
+                            MLEdgeMenuSummonGraceDelay, MLEdgeMenuSummonGraceMinSeconds,
+                            MLEdgeMenuSummonGraceMaxSeconds, overrides),
+        SidebarFeatureParam(@"flick stroke", @"edgeSensorFlickMinTravelPoints",
+                            MLEdgeSensorFlickMinTravel, MLEdgeSensorFlickMinTravelMinPoints,
+                            MLEdgeSensorFlickMinTravelMaxPoints, overrides),
+        SidebarFeatureParam(@"idle tab thickness", @"edgeMenuHandleIdleThicknessPoints",
+                            MLEdgeMenuHandleIdleThickness, MLEdgeMenuHandleIdleThicknessMinPoints,
+                            MLEdgeMenuHandleIdleThicknessMaxPoints, overrides),
+    ];
+}
+
++ (StreamViewController *)featureStateSourceController {
+    return MLFeatureStateStreamController;
+}
+
+// The profile key this stream's settings resolve through, using the same three-step
+// resolution the connect path uses: the host's own identifier, failing that the identifier
+// the store keys the address under, failing that the shared profile. It has to match that
+// resolution exactly, because a report that reads the global profile while the session runs
+// on a per-host one describes settings the stream never used.
+- (NSString *)featureStateHostKey {
+    NSString *uuid = self.app.host.uuid;
+    if (uuid.length > 0) {
+        return uuid;
+    }
+    NSString *address = self.app.host.activeAddress.length > 0 ? self.app.host.activeAddress
+                                                               : self.app.host.address;
+    if (address.length > 0) {
+        NSString *resolved = [SettingsClass getHostUUIDFrom:address];
+        if (resolved.length > 0) {
+            return resolved;
+        }
+    }
+    return [SettingsClass globalHostKey];
+}
+
+// The codec name for a negotiated video format, decoded the way the on-screen stats decode
+// it. Duplicated deliberately: the stats overlay and this block have to disagree never, and
+// a report that called an AV1 stream H.264 would send whoever reads it looking at the wrong
+// decoder. An unrecognised value reads as the bit depth it did declare rather than a guess
+// at the codec it did not.
+static NSString *MLVideoFormatName(int videoFormat) {
+    if (videoFormat & VIDEO_FORMAT_MASK_H264) {
+        return @"H.264";
+    }
+    if (videoFormat & VIDEO_FORMAT_MASK_H265) {
+        return (videoFormat & VIDEO_FORMAT_MASK_10BIT) ? @"HEVC 10-bit" : @"HEVC";
+    }
+    if (videoFormat & VIDEO_FORMAT_MASK_AV1) {
+        return (videoFormat & VIDEO_FORMAT_MASK_10BIT) ? @"AV1 10-bit" : @"AV1";
+    }
+    return @"unknown";
+}
+
+- (DiagnosticsFeatureState *)featureStateSnapshot {
+    DiagnosticsFeatureState *state = [[DiagnosticsFeatureState alloc] init];
+
+    NSString *hostKey = [self featureStateHostKey];
+    // The bridge hands back one profile merged the way the stream reads it: a host without
+    // its own profile gets the shared one, so these are the values in force rather than the
+    // values one file happens to hold. A profile the store could not return leaves the
+    // switches empty, which prints as unknown -- the honest reading of a build that could
+    // not read its own settings.
+    NSDictionary<NSString *, NSNumber *> *prefs = [SettingsClass getSettingsFor:hostKey];
+    state.profileScope = [SettingsClass hasHostSpecificProfileFor:hostKey] ? @"per-host profile"
+                                                                          : @"global profile";
+    state.sidebarParams = [self.class sidebarFeatureParamsWithOverrides:prefs];
+
+    // Only switches the profile actually carries reach the block. A key it does not hold is
+    // left out, which is what makes that line print as unknown rather than as off.
+    state.switches = [DiagnosticsReportBuilder featureSwitchesFromPreferences:prefs];
+
+    // The pointer path comes from the ledger rather than from settings, because the ledger
+    // records what the running session settled on: a session that lost CoreHID at runtime,
+    // or an absolute path that took over a relative configuration, is exactly the case where
+    // settings and behaviour have parted company.
+    InputDiagnosticsSummary *summary = InputDiagnosticsLedger.sharedLedger.summary;
+    NSMutableDictionary<NSString *, NSString *> *pointerState = [NSMutableDictionary dictionary];
+    if (summary.pointerMode.length > 0) {
+        pointerState[@"mouseMode"] = summary.pointerMode;
+    }
+    NSMutableString *pointerPath = [NSMutableString string];
+    if (summary.mouseStrategyName.length > 0) {
+        [pointerPath appendString:summary.mouseStrategyName];
+    }
+    if (pointerPath.length > 0) {
+        [pointerPath appendString:summary.absolutePointerPathActive ? @" (absolute)" : @" (relative)"];
+    }
+    if (pointerPath.length > 0) {
+        pointerState[@"pointerPath"] = [pointerPath copy];
+    }
+    state.pointerState = [pointerState copy];
+
+    @try {
+        VideoStats stats = self.streamMan.connection.renderer.videoStats;
+        int videoFormat = self.streamMan.connection.renderer.videoFormat;
+        state.hasVideoStats = (stats.receivedFrames > 0 || stats.decodedFrames > 0 ||
+                               stats.renderedFrames > 0 || stats.receivedBytes > 0);
+        if (state.hasVideoStats) {
+            state.receivedFrames = stats.receivedFrames;
+            state.decodedFrames = stats.decodedFrames;
+            state.renderedFrames = stats.renderedFrames;
+            state.receivedBytes = stats.receivedBytes;
+            state.renderedFps = stats.renderedFps;
+            state.jitterMs = stats.jitterMs;
+            state.videoFormatName = MLVideoFormatName(videoFormat);
+        }
+    } @catch (NSException *exception) {
+        // A renderer that cannot be reached leaves the counters absent. Zeroes here would
+        // read as "the host sent nothing", which is a diagnosis of the host rather than the
+        // honest answer: this client could not measure.
+        state.hasVideoStats = NO;
+    }
+
+    // The reconnect counter is the one number a player cannot get any other way after the
+    // stream has already dropped, which is when they copy a report out. A controller that
+    // never built a reconnector reports the absence instead of "attempt 0 of 3", because the
+    // second reading implies a backoff that finished.
+    MLStreamReconnector *reconnector = self.reconnector;
+    if (reconnector != nil) {
+        state.hasReconnectState = YES;
+        state.reconnectAttemptCount = reconnector.attemptCount;
+        state.reconnectMaxAttempts = reconnector.maxAttempts;
+        state.reconnectPending = reconnector.hasPendingAttempt;
+        state.reconnectHostConfirmedGone = reconnector.hostConfirmedGone;
+    }
+
+    return state;
+}
 
 - (BOOL)hasReceivedAnyVideoFrames {
     @try {
@@ -877,6 +1047,11 @@ static const void *const kMLTransientButtonTitleKey = &kMLTransientButtonTitleKe
 }
 
 - (void)startStreamHealthDiagnostics {
+    // The report's live source is claimed where the stream is known to have started, on the
+    // main thread, by the one method every successful connection calls. Claiming it here
+    // rather than in a connect path means a session that never reached this point cannot
+    // leave a half-initialised controller behind for a later report to read.
+    MLFeatureStateStreamController = self;
     [self stopStreamHealthDiagnostics];
     [self resetStreamHealthDiagnostics];
     Log(LOG_I, @"[diag] Stream health diagnostics started");
