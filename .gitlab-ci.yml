@@ -259,6 +259,10 @@ audit:sources:
     - python3 scripts/keyboard-unicode-routing-tests.py
     - python3 scripts/keyboard-ime-routing-tests.py
     - python3 scripts/sas-preset-tests.py
+    # Wave G-1: UTF-8 text has to pack densely on Sunshine and stay one code
+    # point per packet on GFE, and this is the only gate that can tell those two
+    # send paths apart on the wire rather than in the text of the source.
+    - python3 scripts/unicode-dense-packing-tests.py
     - python3 scripts/edge-sensor-e1-clamp-tests.py --self-test
   rules: *pipeline_rules
 
