@@ -1,16 +1,24 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-28 基点刷新：MR 1–22 全合并 + 诊断功能生效态）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-28 二次基点刷新：MR 1–23 全合并 + build2021 产物验收 + common-c 回吸面已核实）
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-28，MR 1–22 全部合并）
+## 1. 当前基点（截至 2026-10-28，MR 1–23 全部合并）
 
-- 代码基点 main = `127b4eb2`（`Merge branch 'feat/diagnostics-feature-state' into 'main'`），
+- 代码基点 main = `a8412222`（`Merge branch 'docs/goal-mode-refresh-127b4eb2' into 'main'`，
+  即本文档上一次刷新合入），其功能基点仍是 `127b4eb2`
+  （`Merge branch 'feat/diagnostics-feature-state' into 'main'`），
   merge-preview pipeline **#732 = success**（其中 `跨文件静态安全扫描`
   `allow_failure=true`，记为已豁免，不计入通过）。main 自身 pipeline
-  **#733 触发于 12:37**，收尾时以该 pipeline 的终态为准。
-- MR 1–22 全部 merged（MR 5、MR 13 因被后继 MR 取代而 closed），在途 MR = 0。
+  **#733**：`package-dmg` 已 success（产物 build2021），`mutation-battery`
+  与 `publish-github` 收尾时仍在跑，以该 pipeline 终态为准。
+- MR 1–23 全部 merged（MR 5、MR 13 因被后继 MR 取代而 closed），在途 MR = 0。
   审批与合并均由 owner（`liguangming`，user id 1）凭据完成，
   `PUT /merge` 必须带精确 `sha=`，否则 GitLab 19.5 拒绝。
+  本轮新增：MR 22（诊断功能生效态 `25a374c5` → `127b4eb2`）、
+  MR 23（本文档基点刷新 `68f1b3e8` → `a8412222`）。
+  MR 23 一度显示 `detailed_merge_status=security_policy_violations`，
+  实测是 merge-preview 尚未跑完时的瞬时状态，预览管线转绿后同一 SHA 直接合并成功；
+  遇到该状态先看 merge-preview pipeline，不要先去改安全策略。
 - 上一基点 `27b1206e`（`ci/held-key-mutant-scope-and-diagnostics` 合并）对应 pipeline
   **#719 = success**，产物 `Moonlight-1.6.0-build2019.dmg`（arm64）。
 - 自 2026-10-25 基点（`b65db5fb`）以来的合并链（原提交 → merge commit）：
@@ -51,9 +59,14 @@
   禁止借 VM root 或 Rails 代替他人审批。
 - 镜像由 `publish-github` job 单向发布；只核对本 ref 的双端 SHA，
   不凭发布成功宣称全仓一致。
-- 最新已验证 DMG：`build2019`（main `27b1206e`，pipeline #719）。本机
-  `/Applications/MoonlightEnhanced.app` 实测为 **build2015**（`plutil` 读回），
-  仍落后一个可装产物；main `127b4eb2` 的 `package-dmg` 产物以 pipeline #733 为准。
+- 最新已验证 DMG：`build2021`（main `127b4eb2`，pipeline #733 job 4047，
+  8,310,145 B，SHA-256
+  `0591500abb224fae7f6ab0e52a1bc9b7076150618a69421edf14c7dc4cae5676`，
+  `hdiutil verify` VALID、包内 `CFBundleVersion=2021`、
+  `codesign --verify --deep --strict` OK，ad hoc 签名）。验收记录见
+  `moonlight-ci-evidence/20261028-wave-f-feature-state/release-verification.json`。
+  本机 `/Applications/MoonlightEnhanced.app` 实测为 **build2015**（`plutil` 读回），
+  尚未替换到 2021。
   旧版回滚链保留在 `/Applications/MoonlightEnhanced.app.b{1933,1984,1993}`。
 - `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/K1.2/E1/P2-1/P2-2/P2-3
   全是代码层完成 + CI 绿 + 真机待取证。
@@ -142,6 +155,23 @@
 ### 3.4 工具链 / 流程增量（与上述并行）
 - 升级约束：将 M4.3/M4.4 的 `device_table` / `touch_events` / `diagnostics` 门禁**全部纳入 GitLab `audit:sources` job** 必跑项（部分已在 M4 收口时接入，复核有无遗漏）。
 - 已知 CI 教训：reconfigure 后 nginx :80 → SSL-only，runner URL/tag 必须回读；Mac runner 短暂失联+macos tag 丢失会让 job 落到 Linux（swiftlint 缺失）。
+
+### 3.5 common-c 上游回吸：Wave G 待移植清单（2026-10-28 逐 commit 源码核实）
+
+> 结论来自在 submodule（pin `ff18621`）内直接 `git show` 对比上游 commit 与 fork 侧现状，
+> 不是照抄 `docs/common-c-drift-2026-10-26.md` 的旧建议。上游 commit 对象本地已 fetch，可 cherry-pick。
+
+| 上游 commit | 内容 | fork 侧现状（已核实） | 处置 |
+| --- | --- | --- | --- |
+| `0405384` | `NV_UNICODE_PACKET` 密集打包：Sunshine 一包容多码点，且 Sunshine 分支跳过 GFE 专用 flush + 50 ms 等待 | `src/InputStream.c:876` 起仍是"逐码点一包 + 无条件 flush/50ms" | **待移植（Wave G-1）**：直接减少中文长文本包数并去掉 50 ms 阻塞，K1.1/K1.2 收益最直接 |
+| `448b2c6` / `421bd74` | 相对鼠标 delta 先 latch 到局部变量再分包，避免输入线程被高速相对鼠标独占 | `src/InputStream.c:698` 起循环条件仍直读 `ctx->currentRelativeMouseState.deltaX/deltaY` | **待移植（Wave G-2）**：fork 侧仅把全局变量换成 ctx 成员，补丁形状可平移；注意 fork 侧网络 I/O 已不在锁内，勿重复搬"释放锁"的 hunk |
+| `970b072` | 修复 queued controller packet 的 use-after-free（队列满 / 连接终止两条路径） | fork 侧**不存在** `currentQueuedControllerPacket`（input edge queue 重写已移除该全局缓存，`sendControllerEventInternal` 直接入队不复用 holder） | **不适用**：不硬套补丁，只在 drift 文档记录"上游修的风险面我们已不存在" |
+| `41cedb8` | `ignoreDisconnectIntercept` 只对发给本 peer 的 ENet DISCONNECT 生效 | `src/ControlStream.c` 已含 peerID/sessionID/地址三重校验（Wave E-B `f65f5b3` 已吸） | **已在 main**，无需动作 |
+
+移植纪律：一次一个 commit 一个分支；先让门禁脚本证明能抓到"Sunshine 路径没走密集打包"、
+"非 Sunshine 主机仍被密集打包"、"delta 未 latch 就发第一包"三类变异，再放开；
+子模块先合（子模块 CI 到终态）→ 主仓只 bump submodule SHA 一条 MR；
+`IS_SUNSHINE()` 判据不自己造，复用 `src/Limelight-internal.h:71`。
 
 ## 4. 待真机验收（独立保留，不阻塞下一波代码）
 
