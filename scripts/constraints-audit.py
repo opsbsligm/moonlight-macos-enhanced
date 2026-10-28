@@ -2539,6 +2539,12 @@ CI_ONLY = {
     # that harness needs Apple's clang and SDK; same reason as the controller
     # baselines above. The marker that has to stay true is the toolchain call.
     "edge-sensor-e1-clamp-tests.py": "clang_and_sdk",
+    # Wave G-1's UTF-8 packing harness compiles the shipping sender loop out of the
+    # moonlight-common-c submodule, so it needs Apple's clang and SDK -- and the
+    # submodule itself, which this job's runner may not have checked out. Both
+    # reasons are visible in the script: the toolchain call, and the skip line that
+    # names the missing checkout instead of passing quietly.
+    "unicode-dense-packing-tests.py": "clang_and_sdk",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})
