@@ -1,17 +1,18 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-28 基点刷新：MR 1–18 全合并 + 电池诚实性）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-28 基点刷新：MR 1–22 全合并 + 诊断功能生效态）
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-28，MR 1–19 全部合并）
+## 1. 当前基点（截至 2026-10-28，MR 1–22 全部合并）
 
-- 代码基点 main = `8f97ba8f`（`Merge branch 'k1-2-ime-client-truth' into 'main'`），
-  merge-preview pipeline **#708 = success**（其中 `跨文件静态安全扫描`
-  `allow_failure=true`，记为已豁免，不计入通过）。
-- MR 1–19 全部 merged（MR 5、MR 13 因被后继 MR 取代而 closed），在途 MR = 0。
+- 代码基点 main = `127b4eb2`（`Merge branch 'feat/diagnostics-feature-state' into 'main'`），
+  merge-preview pipeline **#732 = success**（其中 `跨文件静态安全扫描`
+  `allow_failure=true`，记为已豁免，不计入通过）。main 自身 pipeline
+  **#733 触发于 12:37**，收尾时以该 pipeline 的终态为准。
+- MR 1–22 全部 merged（MR 5、MR 13 因被后继 MR 取代而 closed），在途 MR = 0。
   审批与合并均由 owner（`liguangming`，user id 1）凭据完成，
   `PUT /merge` 必须带精确 `sha=`，否则 GitLab 19.5 拒绝。
-- 上一基点 `8fd474db`（`ci/battery-honesty` 合并）对应 pipeline
-  **#706 = 14/14 success**，产物 `Moonlight-1.6.0-build2013.dmg`（arm64）。
+- 上一基点 `27b1206e`（`ci/held-key-mutant-scope-and-diagnostics` 合并）对应 pipeline
+  **#719 = success**，产物 `Moonlight-1.6.0-build2019.dmg`（arm64）。
 - 自 2026-10-25 基点（`b65db5fb`）以来的合并链（原提交 → merge commit）：
   - K1.2 本地输入法组合：`5c0dbfa3` → `fa1c645c`（MR 6）。
   - SAS 门禁补进 GitLab 事实源：`58453614` → `c8e004d7`（MR 7）。
@@ -38,15 +39,22 @@
   - K1.2 客户端诚实性（退格按 grapheme cluster 删除、`setMarkedText:` 光标 clamp、
     `selectedRange`/`attributedSubstringForProposedRange:` 真实回读）：
     `f29cacb8` → `8f97ba8f`（MR 19）。
+  - 目标模式提示词基点刷新（至 `8f97ba8f`）：`1bb6ae42` → `2fa306f6`（MR 20）。
+  - 变异电池 held-key 变异体改为可编译 + 未证明可读（`unproved` 而非静默通过）：
+    `5884c6db` → `27b1206e`（MR 21）。
+  - 诊断报告「功能生效态」区块（六手感参数生效值 + 六开关 yes/unknown + 指针路径 +
+    视频 codec/帧计数 + 重连退避实时状态；顺带修 `compile-audit.py` 生成头按
+    configuration 折叠、`constraints-audit.py` 报告门禁 CI-only 豁免两处可信度问题）：
+    `25a374c5` → `127b4eb2`（MR 22）。
 - 审批边界（不变）：开发分支 → MR → 准确 SHA 的 CI → 实际审核者审批；
   开发用 codex 凭据，审批/合并只用 owner（liguangming）凭据，禁止为 403 提权、
   禁止借 VM root 或 Rails 代替他人审批。
 - 镜像由 `publish-github` job 单向发布；只核对本 ref 的双端 SHA，
   不凭发布成功宣称全仓一致。
-- 最新已验证 DMG：`build2013`（main `8fd474db`，pipeline #706）。本机
-  `/Applications/MoonlightEnhanced.app` 仍是 **build1993**，真机验收前需装新 DMG。
-  main `8f97ba8f` 的合并 pipeline 产物按构建号递增（≥2014），以 `package-dmg`
-  产物名为准。
+- 最新已验证 DMG：`build2019`（main `27b1206e`，pipeline #719）。本机
+  `/Applications/MoonlightEnhanced.app` 实测为 **build2015**（`plutil` 读回），
+  仍落后一个可装产物；main `127b4eb2` 的 `package-dmg` 产物以 pipeline #733 为准。
+  旧版回滚链保留在 `/Applications/MoonlightEnhanced.app.b{1933,1984,1993}`。
 - `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/K1.2/E1/P2-1/P2-2/P2-3
   全是代码层完成 + CI 绿 + 真机待取证。
 
@@ -76,6 +84,8 @@
 | 变异电池移出发布路径 | `4a692db1` → merge `b63f8d35`（MR 15） | CI 绿 / 已合并 | verify stage + `macos-battery` resource_group，不再阻塞 DMG |
 | 电池诚实性（编不出探针不算捕获） | `c078d6ee`/`7137d0ad`/`5a08b1e4` → merge `8fd474db`（MR 18） | CI 绿（#706 14/14）/ 已合并 | `PROBE_BUILD_FAILED_MESSAGE` 哨兵 + `gate_failed()` 返回 unproved；审计前显式取子模块 |
 | Wave E 上游回吸 | `e2ffee0c` → merge `98d68c5e`（MR 14）；`da21d787` → merge `b10a4065`（MR 17） | CI 绿 / 已合并 | E-A 四项协议修复；E-B 子模块 bump `ff18621`（自适应扳机哨兵消越界读 + 丢包统计 + 断连拦截对等校验） |
+| 诊断报告「功能生效态」区块 | `25a374c5` → merge `127b4eb2`（MR 22） | 本地门禁 103/0/15、全量 Release 构建成功 / merge-preview #732 success（跨文件扫描 af=True 已豁免）/ 真机待 | 六个手感参数报生效值并标 shipped-constant 或 overridden/clamped；六个开关仅 profile 真有值才给 yes/no，否则 unknown；指针路径取 input ledger 实况；视频 codec/帧计数/是否曾有流；重连退避实时状态。profile 只报 global/per-host 名称不含 UUID，全部值走既有 redaction |
+| 变异电池 held-key 变异体可编译化 | `5884c6db` → merge `27b1206e`（MR 21） | CI 绿（#716/#717/#719）/ 已合并 | 变异体编不出探针时如实报 `unproved`，不再伪装成已捕获行为变异 |
 
 ## 3. 待开工（按优先级，不依赖真机排期）
 
@@ -137,7 +147,7 @@
 
 > 真机验收不阻塞代码侧下一波；但每波必须保留 `hardware_validated=false` 标签。
 
-1. 装 `build1959` 接入两块手柄（建议 PS5 + Xbox Series / 单只 Joy-Con + Pro Controller），开流并核诊断分类、会话驱动、通告状态、玩家编号。
+1. 装最新可装 build（见本节末）接入两块手柄（建议 PS5 + Xbox Series / 单只 Joy-Con + Pro Controller），开流并核诊断分类、会话驱动、通告状态、玩家编号。
 2. `Sunshine` 与 `GFE` 双主机侧：虚拟手柄类型、按键图标、拔出时序、IMU/电量/触摸板事件。
 3. 键盘 K1.1：主机端微信/浏览器输入法实测中文 + emoji + 全角字符 + 长按重复。
 4. 全屏侧边栏参数化（E1 + Wave C 共六项）：单屏 + 双屏 + 全屏菜单栏遮挡场景，
@@ -147,8 +157,13 @@
 6. K2/SAS：用预置规则或直发三键，看主机 SAS 是否拉起。
 7. P2-1 绝对鼠标（桌面档 + 开关开启）、P2-2 断网/主机关闭退避、P2-3a 三后端失焦静音、P2-3b 后台手柄抑制。
 
-- 当前可装产物：`Moonlight-1.6.0-build2013.dmg`（main `8fd474db`，pipeline #706）。
-  本机 `/Applications/MoonlightEnhanced.app` 仍是 build1993，尚未替换。
+- 当前可装产物：`Moonlight-1.6.0-build2019.dmg`（main `27b1206e`，pipeline #719）；
+  main `127b4eb2` 的产物以 pipeline #733 的 `package-dmg` 为准。
+  本机 `/Applications/MoonlightEnhanced.app` 实测 build2015，尚未替换到 2019。
+- 验收取证方式（MR 22 之后）：每一盒验收都从 app 内导出一份诊断报告，
+  报告的功能生效态区块给出六个手感参数生效值、六个开关 yes/unknown、指针路径、
+  视频 codec/帧计数与退避状态；报告读不到该项就写 unknown/no stream window，
+  不得用目测结果替代报告值，也不得把"报告里是默认值"当成"真机行为已验证"。
 
 ## 5. 冻结项（不动）
 
