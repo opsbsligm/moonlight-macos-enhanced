@@ -153,8 +153,18 @@
   keyboard-unicode-routing / held-modifier-keyboard-pair）任一无法转绿，**只保留 K1.1**，K1.2 关闭。
 
 ### 3.4 工具链 / 流程增量（与上述并行）
-- 升级约束：将 M4.3/M4.4 的 `device_table` / `touch_events` / `diagnostics` 门禁**全部纳入 GitLab `audit:sources` job** 必跑项（部分已在 M4 收口时接入，复核有无遗漏）。
+- **门禁纳入 GitLab 必跑项：已闭合（Wave H）**。原"复核有无遗漏"现在有可复跑的判据：
+  `python3 scripts/gate-coverage-audit.py --verify` 解析两份定义并要求镜像调用的每个门禁在
+  事实源可达。基点实测镜像调 `87` 个门禁、事实源只可达 `33` 个（54 条 `HC001`），当前
+  `88` 全部可达、`violations=0`（`88` 含审计自身在两份定义里的调用）。M4.3/M4.4 的 `controller-device-table-tests.py` / `diagnostics-report-tests.py`
+  等已在事实源显式调用，故不重复出现在 `--class=fast`（47 条） emission 中；未显式写出的门禁
+  由 `audit:gates` 在运行时按类别取回并逐条执行（另 5 条 self-test 形态、2 条编译型走 tag/main 的
+  `audit:deep`）。规则、豁免语义与两条已记录盲区见 `docs/gitlab-ci.md`「Gate parity across both
+  definitions」。
 - 已知 CI 教训：reconfigure 后 nginx :80 → SSL-only，runner URL/tag 必须回读；Mac runner 短暂失联+macos tag 丢失会让 job 落到 Linux（swiftlint 缺失）。
+- 本波新增教训：`.gitlab-ci.yml` 的 plain scalar 里不能出现 `: `（`echo "fast gates: $(...)"`
+  会让整份定义 YAML 解析失败）。判据本地就有——`scripts/ci/test_pipeline.py` 用与 GitLab 相同的
+  解析器加载该文件，且已被 `local-gates.sh` 纳入，改 CI 定义后跑它就等于预检。
 
 ### 3.5 common-c 上游回吸：Wave G 待移植清单（2026-10-28 逐 commit 源码核实）
 
