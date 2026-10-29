@@ -51,6 +51,14 @@ variables:
 
 workflow:
   rules: &pipeline_rules
+    # A branch with an open merge request is judged by that merge request, not by
+    # its own push pipeline. Pipeline 791 and 792 are the evidence: one push made
+    # both, each carrying the five instance security jobs on the single-concurrency
+    # 安全扫描 runner plus the full Mac gate set, so fifteen security jobs queued
+    # for one verdict and every Mac job behind them waited idle. The merge-request
+    # pipeline is the one that decides the merge, so it is the one kept.
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS'
+      when: never
     - if: '$CI_PIPELINE_SOURCE == "push"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "web"'

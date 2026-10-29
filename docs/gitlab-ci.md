@@ -22,6 +22,26 @@ GitLab is the source of truth. Push development commits to the `gitlab` remote;
   stays after `verify`; only the DMG artifact arrives early.
 - Push and web runs mirror after every applicable earlier stage succeeds.
   Merge request pipelines never publish with the deploy key.
+- A push to a branch that already has an open merge request builds no branch
+  pipeline at all: the merge request is judged by its own pipeline, which carries
+  the same gates and is the one whose result permits the merge. Before this rule,
+  one push produced both (pipelines 791 and 792), and each brought the instance's
+  five security jobs with it. Those jobs can only run on the `安全扫描` runner,
+  whose concurrency is one, and its cross-file scan measured 858s in pipeline 786
+  and 1524s in 775 -- so the duplicate queued ten more jobs on that runner ahead
+  of every other pipeline's Mac gates. Consequence to keep in mind: a branch SHA
+  with an open merge request reaches the GitHub mirror when it lands on `main`
+  (or on the next push with no open merge request), not on every push. The mirror
+  is read-only, so this delays visibility of an unmerged branch and nothing else.
+  `scripts/ci/test_pipeline.py::test_an_open_merge_request_is_judged_once` pins
+  both halves -- push with an open merge request suppressed, push without one
+  still built and mirrored.
+  Boundary of that rule, measured rather than assumed: it decides by the state at
+  the moment the push arrives, so the push that *creates* the review is still
+  judged twice. MR 31 is the case -- push pipeline 798 was built because nothing
+  was reviewing the branch yet, and only merge-preview 799 exists for the next
+  push. Suppression therefore removes the steady-state duplicate (every
+  follow-up push under review), not the one push that opens the merge request.
 - `publish-github` has no `needs` shortcut. Its stage barrier includes packaging.
   Each job has a timeout and no gate is allowed to fail.
 - Build logs come from `clean build`; incremental logs cannot demonstrate full
