@@ -92,13 +92,19 @@ def selected(rules, context):
         raise AssertionError("Unsupported CI expression: " + term)
 
     for rule in rules:
-        condition = rule["if"].split(" == ")
-        if len(condition) == 1:
-            matches = bool(value(condition[0]))
-        elif len(condition) == 2:
-            matches = value(condition[0]) == value(condition[1])
-        else:
-            raise AssertionError("Unsupported CI rule: " + rule["if"])
+        terms = [term.strip() for term in rule["if"].split(" && ")]
+        matches = True
+        for term in terms:
+            condition = term.split(" == ")
+            if len(condition) == 1:
+                # A bare `$VAR` is GitLab's truthiness test: an unset or empty
+                # variable -- including the empty CI_OPEN_MERGE_REQUESTS that
+                # every push without an open merge request carries -- is false.
+                matches = matches and bool(value(condition[0]))
+            elif len(condition) == 2:
+                matches = matches and value(condition[0]) == value(condition[1])
+            else:
+                raise AssertionError("Unsupported CI rule: " + rule["if"])
         if matches:
             return rule.get("when") != "never"
     return False
@@ -197,6 +203,47 @@ class PipelineTests(Sandbox):
         self.assertIn("timeout", battery)
         self.assertFalse(battery.get("allow_failure", False),
                          "a skipped battery silently stops gating")
+
+    def test_an_open_merge_request_is_judged_once(self):
+        # One push to a branch that has an open merge request used to produce two
+        # identical pipelines: 791 for the branch, 792 for the merge request. Each
+        # carried the instance's five security jobs, and those land on a runner
+        # whose concurrency is one -- the cross-file scan alone measured 858s and
+        # 1524s in pipelines 786 and 775 -- so the second copy queued ten security
+        # jobs ahead of the Mac gates of every other pipeline for a verdict the
+        # merge-request pipeline already renders. The push pipeline is only kept
+        # when nothing is reviewing that branch.
+        rules = CI["workflow"]["rules"]
+        judged = [
+            # source, branch, open merge requests, pipeline expected
+            ("push", "feature/example", "", True),
+            ("push", "feature/example", "moonlight/moonlight-macos-enhanced!30", False),
+            ("push", "main", "", True),
+            ("push", "main", "moonlight/moonlight-macos-enhanced!30", False),
+            ("merge_request_event", "", "moonlight/moonlight-macos-enhanced!30", True),
+            ("web", "feature/example", "moonlight/moonlight-macos-enhanced!30", True),
+        ]
+        for source, branch, merge_requests, expected in judged:
+            with self.subTest(source=source, branch=branch, merge_requests=merge_requests):
+                context = {"CI_PIPELINE_SOURCE": source, "CI_COMMIT_BRANCH": branch,
+                           "CI_COMMIT_TAG": "", "CI_DEFAULT_BRANCH": "main",
+                           "CI_OPEN_MERGE_REQUESTS": merge_requests}
+                self.assertEqual(selected(rules, context), expected)
+        # A rule that never fires would satisfy the matrix above by accident, so
+        # the suppression has to be the first matching rule rather than the absence
+        # of a later one.
+        self.assertEqual(rules[0].get("when"), "never")
+        self.assertIn("CI_OPEN_MERGE_REQUESTS", rules[0]["if"])
+        self.assertIn("CI_PIPELINE_SOURCE", rules[0]["if"])
+
+    def test_selected_refuses_an_expression_it_cannot_evaluate(self):
+        # The truthiness branch is the only new thing `selected` learned; an
+        # expression with two operators in one term still has to be refused, or a
+        # future rule reads as false and the gate quietly stops gating.
+        for unsupported in ('$A == "x" == "y"', '$A || $B'):
+            with self.subTest(rule=unsupported):
+                with self.assertRaises(AssertionError):
+                    selected([{"if": unsupported}], {"A": "x", "B": "y"})
 
     def job(self, name):
         return run("bash", "-c", "\n".join(CI[name]["script"]),
