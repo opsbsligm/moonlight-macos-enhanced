@@ -44,12 +44,23 @@ static NSString *stringOrNone(NSString *_Nullable value) {
     // read for are answered next to each other: whether the system lets the app listen to
     // the mouse at all, and which sender was holding it when it stopped.
     [sections addObject:[self inputSection]];
+    // The inventory and the feature state are each read once, into a local, and handed to both
+    // the prose block and its machine-readable mirror. Read twice, the two could disagree --
+    // a pad pairing between the two reads would make the report say one thing in prose and
+    // another in keys, which is worse than either being wrong on its own.
+    MLControllerInventorySnapshot *inventorySnapshot = MLControllerInventory.sharedInventory.snapshot;
+    DiagnosticsFeatureState *featureState = [self liveFeatureState];
     [sections addObject:[DiagnosticsReportBuilder
-        controllersSectionWithSnapshot:MLControllerInventory.sharedInventory.snapshot]];
+        controllersSectionWithSnapshot:inventorySnapshot]];
     // Features sits under input and controllers because it is the block that says what the
     // two above are configured to do: which hand-feel numbers are in force, which switches
     // are on, and which pointer path took the session.
-    [sections addObject:[self featureStateSection]];
+    [sections addObject:[DiagnosticsReportBuilder featureStateSectionWithState:featureState]];
+    // The machine block mirrors the three above, so it sits under all of them: a human reads
+    // the prose, and a checker grades the keys, and the two have to be the same reading.
+    [sections addObject:[DiagnosticsReportBuilder
+        machineStateSectionWithState:featureState
+                            snapshot:inventorySnapshot]];
     // Devices sits under input rather than under hosts, because the four preconditions the
     // devices panel reports are answered by the same two questions a permissions and input
     // readout raises: whether the app may watch the mouse at all, and whether this build is
@@ -203,7 +214,7 @@ static NSString *stringOrNone(NSString *_Nullable value) {
 // sender has the mouse", "how far into the reconnect backoff am I" -- have no answer that does
 // not involve the session. A build with no stream in it still gets a full block of absences,
 // so a report taken before connecting describes a pre-stream build rather than failing.
-+ (DiagnosticsReportSection *)featureStateSection {
++ (DiagnosticsFeatureState *)liveFeatureState {
     StreamViewController *source = [StreamViewController featureStateSourceController];
     DiagnosticsFeatureState *state;
     if (source != nil) {
@@ -221,7 +232,7 @@ static NSString *stringOrNone(NSString *_Nullable value) {
         state.switches = [self featureSwitchesFromPreferences:prefs];
         state.sidebarParams = [StreamViewController sidebarFeatureParamsWithOverrides:prefs];
     }
-    return [self featureStateSectionWithState:state];
+    return state;
 }
 
 + (DiagnosticsReportSection *)networkSection {

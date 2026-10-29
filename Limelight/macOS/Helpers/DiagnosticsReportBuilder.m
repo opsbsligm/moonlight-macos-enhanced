@@ -556,6 +556,192 @@ static NSString *ReportFeatureString(NSDictionary<NSString *, NSString *> *value
     return [DiagnosticsReportSection sectionWithTitle:@"features" lines:lines];
 }
 
+// A hand-feel parameter name in the form a checker indexes by. The label is the same
+// string the prose block prints and the same one `sidebarFeatureParamsWithOverrides:`
+// builds, so there is still one name per parameter in the tree; this only makes it
+// addressable without spaces.
+static NSString *MachineParamKey(NSString *label) {
+    NSString *lowered = label.lowercaseString ?: @"";
+    NSMutableString *key = [NSMutableString string];
+    for (NSUInteger index = 0; index < lowered.length; index++) {
+        unichar character = [lowered characterAtIndex:index];
+        BOOL isLetter = character >= 'a' && character <= 'z';
+        BOOL isDigit = character >= '0' && character <= '9';
+        [key appendString:(isLetter || isDigit) ? [NSString stringWithFormat:@"%C", character]
+                                                : @"_"];
+    }
+    while ([key hasSuffix:@"_"]) {
+        [key deleteCharactersInRange:NSMakeRange(key.length - 1, 1)];
+    }
+    return key.length > 0 ? key : @"unnamed";
+}
+
+// How a parameter reached its effective value, in one word. Three answers, the same three
+// the prose block gives, because the checker has to be able to tell "the player never
+// touched this" from "the player's number was out of range" without re-deriving the clamp.
+static NSString *MachineParamState(DiagnosticsFeatureParam *param, double effective) {
+    if (param.overrideValue <= 0) {
+        return @"shipped";
+    }
+    if (param.overrideValue < param.minimum) {
+        return [NSString stringWithFormat:@"clamped_below_%@", ReportNumber(param.minimum)];
+    }
+    if (param.overrideValue > param.maximum) {
+        return [NSString stringWithFormat:@"clamped_above_%@", ReportNumber(param.maximum)];
+    }
+    return [NSString stringWithFormat:@"override_of_%@", ReportNumber(effective)];
+}
+
++ (DiagnosticsReportSection *)machineStateSectionWithState:(DiagnosticsFeatureState *)state
+                                                  snapshot:(MLControllerInventorySnapshot *_Nullable)snapshot {
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    [lines addObject:@"ml.schema=1"];
+    // A comment rather than a bare sentence: everything that is not a comment or a key is data,
+    // so a checker can take this block literally instead of learning which lines to skip.
+    [lines addObject:@"# one key=value per line; unknown means the app could not read it, "
+                      "never zero"];
+
+    NSString *scope = state.profileScope ?: @"";
+    NSString *machineScope = @"unknown";
+    if ([scope hasPrefix:@"per-host"]) {
+        machineScope = @"per-host";
+    } else if ([scope hasPrefix:@"global"]) {
+        machineScope = @"global";
+    }
+    [lines addObject:[NSString stringWithFormat:@"ml.profile=%@", machineScope]];
+
+    for (DiagnosticsFeatureParam *param in state.sidebarParams) {
+        double effective = param.shippedDefault;
+        if (param.overrideValue > 0) {
+            effective = MIN(MAX(param.overrideValue, param.minimum), param.maximum);
+        }
+        NSString *base = [NSString stringWithFormat:@"ml.param.%@", MachineParamKey(param.label)];
+        [lines addObject:[NSString stringWithFormat:@"%@.effective=%@", base, ReportNumber(effective)]];
+        [lines addObject:[NSString stringWithFormat:@"%@.shipped=%@", base,
+                                                  ReportNumber(param.shippedDefault)]];
+        [lines addObject:[NSString stringWithFormat:@"%@.range=%.6g..%.6g", base,
+                                                  param.minimum, param.maximum]];
+        [lines addObject:[NSString stringWithFormat:@"%@.written=%@", base,
+                          param.overrideValue > 0 ? ReportNumber(param.overrideValue) : @"none"]];
+        [lines addObject:[NSString stringWithFormat:@"%@.state=%@", base,
+                                                  MachineParamState(param, effective)]];
+    }
+
+    for (NSString *key in [self featureSwitchKeys]) {
+        NSNumber *value = state.switches[key];
+        [lines addObject:[NSString stringWithFormat:@"ml.switch.%@=%@", key,
+                          value ? (value.boolValue ? @"on" : @"off") : @"unknown"]];
+    }
+
+    NSString *mouseMode = state.pointerState[@"mouseMode"];
+    NSString *pointerPath = state.pointerState[@"pointerPath"];
+    [lines addObject:[NSString stringWithFormat:@"ml.pointer.mouse_mode=%@",
+                      mouseMode.length > 0 ? mouseMode : @"unknown"]];
+    [lines addObject:[NSString stringWithFormat:@"ml.pointer.path=%@",
+                      pointerPath.length > 0 ? pointerPath : @"unknown"]];
+    [lines addObject:[NSString stringWithFormat:@"ml.pointer.absolute=%@",
+                      pointerPath.length > 0
+                          ? ([pointerPath hasSuffix:@"(absolute)"] ? @"yes" : @"no")
+                          : @"unknown"]];
+
+    if (!state.hasVideoStats) {
+        [lines addObject:@"ml.video.present=no"];
+    } else {
+        [lines addObject:@"ml.video.present=yes"];
+        [lines addObject:[NSString stringWithFormat:@"ml.video.frames.received=%u",
+                          state.receivedFrames]];
+        [lines addObject:[NSString stringWithFormat:@"ml.video.frames.decoded=%u",
+                          state.decodedFrames]];
+        [lines addObject:[NSString stringWithFormat:@"ml.video.frames.rendered=%u",
+                          state.renderedFrames]];
+        [lines addObject:[NSString stringWithFormat:@"ml.video.fps=%.1f", state.renderedFps]];
+        [lines addObject:[NSString stringWithFormat:@"ml.video.jitter_ms=%.1f", state.jitterMs]];
+        // Raw bytes rather than the MiB the prose block prints: a checker grading a bandwidth
+        // claim must not have to reproduce a division that was only ever meant to be readable.
+        [lines addObject:[NSString stringWithFormat:@"ml.video.bytes=%llu", state.receivedBytes]];
+        [lines addObject:[NSString stringWithFormat:@"ml.video.format=%@",
+                          state.videoFormatName.length > 0 ? state.videoFormatName : @"unknown"]];
+    }
+
+    if (!state.hasReconnectState) {
+        [lines addObject:@"ml.reconnect.present=no"];
+    } else {
+        [lines addObject:@"ml.reconnect.present=yes"];
+        [lines addObject:[NSString stringWithFormat:@"ml.reconnect.attempt=%lu",
+                          (unsigned long)state.reconnectAttemptCount]];
+        [lines addObject:[NSString stringWithFormat:@"ml.reconnect.max=%lu",
+                          (unsigned long)state.reconnectMaxAttempts]];
+        [lines addObject:[NSString stringWithFormat:@"ml.reconnect.pending=%@",
+                          ReportYesNo(state.reconnectPending)]];
+        [lines addObject:[NSString stringWithFormat:@"ml.reconnect.host_confirmed_gone=%@",
+                          ReportYesNo(state.reconnectHostConfirmedGone)]];
+    }
+
+    if (snapshot == nil) {
+        [lines addObject:@"ml.controllers.present=no"];
+        return [DiagnosticsReportSection sectionWithTitle:@"machine" lines:lines];
+    }
+
+    [lines addObject:@"ml.controllers.present=yes"];
+    [lines addObject:[NSString stringWithFormat:@"ml.controllers.sessions=%lu",
+                      (unsigned long)snapshot.generations]];
+    [lines addObject:[NSString stringWithFormat:@"ml.controllers.recording=%@",
+                      ReportYesNo(snapshot.recordingNow)]];
+    [lines addObject:[NSString stringWithFormat:@"ml.controllers.driver=%@",
+                      snapshot.driverName.length > 0 ? snapshot.driverName : @"none"]];
+    [lines addObject:[NSString stringWithFormat:@"ml.controllers.arrivals=%@",
+                      ReportYesNo(snapshot.advertisedControllerArrivals)]];
+    if (snapshot.advertisedControllerArrivals) {
+        NSArray<NSNumber *> *slots = [snapshot.advertisedControllerTypes.allKeys
+                                      sortedArrayUsingSelector:@selector(compare:)];
+        for (NSNumber *slot in slots) {
+            [lines addObject:[NSString stringWithFormat:@"ml.controllers.slot.%ld=%@",
+                              (long)[slot integerValue],
+                              [self controllerTypeNameForProtocolType:
+                                   [snapshot.advertisedControllerTypes[slot] unsignedCharValue]]]];
+        }
+        // One key per capability. A checker grading "did we advertise something we do not
+        // implement" asks per capability, and a `+`-joined bundle makes it split a string to
+        // find out what was even claimed.
+        [lines addObject:@"ml.controllers.caps.analog_triggers=yes"];
+        [lines addObject:@"ml.controllers.caps.rumble=yes"];
+    }
+    // The one number here that a checker must not read as a device count. Two pads of the same
+    // model are one row, so an acceptance run that wants "two controllers" grades the slots the
+    // host was told about, not this line. The warning used to be prose inside the value, which a
+    // parser reads as part of the number and a machine skips; as its own key it has to be
+    // actively ignored to be misread.
+    [lines addObject:[NSString stringWithFormat:@"ml.controllers.group_count=%lu",
+                      (unsigned long)snapshot.entries.count]];
+    [lines addObject:@"ml.controllers.group_count_is_physical_devices=no"];
+    NSUInteger index = 0;
+    for (MLControllerEntry *entry in snapshot.entries) {
+        NSString *base = [NSString stringWithFormat:@"ml.controllers.group.%lu",
+                          (unsigned long)index];
+        [lines addObject:[NSString stringWithFormat:@"%@.vid=%04lx", base,
+                          (unsigned long)entry.vendorId]];
+        [lines addObject:[NSString stringWithFormat:@"%@.pid=%04lx", base,
+                          (unsigned long)entry.productId]];
+        [lines addObject:[NSString stringWithFormat:@"%@.family=%@", base,
+                          MLControllerFamilyName(entry.family)]];
+        [lines addObject:[NSString stringWithFormat:@"%@.type_map=%d", base,
+                          MLControllerProtocolTypeForFamily(entry.family)]];
+        [lines addObject:[NSString stringWithFormat:@"%@.transport=%@", base,
+                          entry.transport.length > 0 ? entry.transport : @"none"]];
+        // A bare number, not `87%`: the unit belongs to the key name. A pad that never reported
+        // a charge reads as `unknown`, because zero would grade as "the battery is empty".
+        [lines addObject:[NSString stringWithFormat:@"%@.battery_percent=%@", base,
+                          entry.hasBatteryPercent
+                              ? [NSString stringWithFormat:@"%ld", (long)entry.batteryPercent]
+                              : @"unknown"]];
+        [lines addObject:[NSString stringWithFormat:@"%@.nodes=%lu", base,
+                          (unsigned long)entry.nodeCount]];
+        index++;
+    }
+
+    return [DiagnosticsReportSection sectionWithTitle:@"machine" lines:lines];
+}
+
 + (NSString *)redactString:(NSString *)input {
     return [self redactString:input homeDirectory:NSHomeDirectory()];
 }

@@ -508,6 +508,15 @@ jobs:
       # stream. It compiles the shipped builder, so it belongs beside the other report gates.
       run: python3 scripts/diagnostics-report-tests.py
 
+    - name: Verify the hardware-acceptance grader refuses to grade without evidence
+      # Seven acceptance rows stay `hardware_validated=false` until a report and an observer
+      # statement agree about the same session. This self-test grades a fixture pair, then
+      # weakens the grader twice -- a key that is absent reading as satisfied, and any value
+      # matching the key a verdict needs -- and requires both weakenings to be refused. It
+      # shares its fixture with the report gate above, so a formatter that stops writing a
+      # key the verdict depends on fails here as well.
+      run: python3 scripts/hardware-acceptance-check.py --self-test
+
     - name: Verify the stream's panels get real glass
       # Seven overlays drew the pre-glass HUD-window vibrancy, so the surfaces a player
       # looks at during a session were the part of the interface that never moved to the
