@@ -100,6 +100,7 @@
 | 诊断报告「功能生效态」区块 | `25a374c5` → merge `127b4eb2`（MR 22） | 本地门禁 103/0/15、全量 Release 构建成功 / merge-preview #732 success（跨文件扫描 af=True 已豁免）/ 真机待 | 六个手感参数报生效值并标 shipped-constant 或 overridden/clamped；六个开关仅 profile 真有值才给 yes/no，否则 unknown；指针路径取 input ledger 实况；视频 codec/帧计数/是否曾有流；重连退避实时状态。profile 只报 global/per-host 名称不含 UUID，全部值走既有 redaction |
 | 变异电池 held-key 变异体可编译化 | `5884c6db` → merge `27b1206e`（MR 21） | CI 绿（#716/#717/#719）/ 已合并 | 变异体编不出探针时如实报 `unproved`，不再伪装成已捕获行为变异 |
 | 诊断报告机器可读镜像（Wave I） | 本分支 | 本地门禁 105 checks / 0 failures（含 6 个新行为变异）/ CI 待 / 真机待 | `machineStateSectionWithState:snapshot:` 之前是死代码，无人组装；现接入 `currentReport`，与散文块共用同一次读取的 `DiagnosticsFeatureState` + inventory 快照。键名契约见 §4.1 |
+| 真机验收判读器 + 操作单（Wave I） | 本分支 | 自测 7 项契约 + 2 个弱化判读器被拒 / 双管线已接线 / 真机待 | `scripts/hardware-acceptance-check.py` 把 §4 七行判据变成可执行判读：报告证明设置生效 + 观测者声明绑定该报告 SHA，两半缺一即 `UNKNOWN`；动作→键→期望值见 `docs/hardware-acceptance-checklist.md` |
 
 ## 3. 待开工（按优先级，不依赖真机排期）
 
@@ -209,8 +210,12 @@
   不得用目测结果替代报告值，也不得把"报告里是默认值"当成"真机行为已验证"。
 
 - 验收取证方式（Wave I 之后）：同一份报告末尾的 `machine` 区块可直接判读，
-  不再靠人眼读散文。判读规则见 §4.1；未测到的项一律 `unknown` 或
+  不再靠人眼读散文。判读器 `scripts/hardware-acceptance-check.py`（自测已入双管线门禁），
+  操作单 `docs/hardware-acceptance-checklist.md`（动作 → 导出 → 判据键 → 期望值）。
+  判读规则见 §4.1；未测到的项一律 `unknown` 或
   `present=no`，**缺失键与值为 0 是两件事**，判读脚本不得把缺项当 0。
+  一行判 PASS 需要两半：报告证明该设置本局生效，且观测者声明的 `report_sha256`
+  绑定这份报告；只有其中一半只能是 `UNKNOWN`。
 
 ### 4.1 `machine` 区块键名契约（Wave I）
 
