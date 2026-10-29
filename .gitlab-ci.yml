@@ -266,6 +266,110 @@ audit:sources:
     - python3 scripts/edge-sensor-e1-clamp-tests.py --self-test
   rules: *pipeline_rules
 
+# Gate parity between the two pipeline definitions.
+#
+# The repository carries two definitions and gates have historically landed on the
+# mirror first, so the source of truth reached 33 of the 87 gates the image called while
+# `local-gates.sh` reported a green local sweep over all of them. This job is the
+# authority catching up: it asserts the reconciliation holds, then runs every gate
+# that the audit classifies as fast, plus the self-test form of the artefact-shaped
+# ones. The commands come from the audit at run time, so a gate added to either file
+# reaches here without a second edit -- and the audit refuses a gate that reaches
+# neither.
+#
+# `--class=fast` is spelled out three times on purpose. The audit decides coverage by
+# looking for a literal `--class=<name>` on a line that also names an interpreter, so
+# a loop variable here would make every class look unclaimed and the job that closes
+# the gap would itself be the gap.
+#
+# It takes no build artefacts (`dependencies: []`) because every fast gate was
+# measured runnable on a bare checkout: `compile-audit.py` type-checks 87 of 87
+# sources with no flags, and the four that read a moonlight-common-c header are
+# covered by the submodule fetch.
+audit:gates:
+  before_script:
+    - *fetch_submodules
+  stage: test
+  tags: [macos]
+  cache: {}
+  # Measured 80s for all 47 on an M2 laptop. The headroom is for two pipelines
+  # sharing one eight-core runner, which is the known condition here.
+  timeout: 25 minutes
+  dependencies: []
+  rules: *pipeline_rules
+  script:
+    - set -euo pipefail
+    - python3 scripts/gate-coverage-audit.py --self-test
+    - python3 scripts/gate-coverage-audit.py
+    # The list goes through a file rather than a command substitution. `local-gates.sh`
+    # reads this definition too, and its discovery pattern cuts from the interpreter to
+    # the end of the line, so `list="$(python3 ... --class=fast)"` would hand it a gate
+    # command ending in `)"` -- the sweep would then fail in bash's voice instead of a
+    # gate's. Written this way the line it finds is the emission it should expand.
+    #
+    # `--class=fast` stays literal beside the interpreter for the same reason one layer
+    # down: the audit decides a class is claimed by finding that spelling on a line that
+    # also names python3, so a loop variable would make every class look unclaimed to the
+    # very job that claims it.
+    - python3 scripts/gate-coverage-audit.py --emit-commands --class=fast > gates-fast.txt
+    - python3 scripts/gate-coverage-audit.py --emit-commands --class=selftest > gates-selftest.txt
+    # bash reading empty stdin exits 0. An empty emission would therefore report a green
+    # sweep over zero gates, which is the silence every rule in this file exists to end,
+    # so the lists are required to be non-empty and their sizes are printed.
+    - test -s gates-fast.txt
+    - test -s gates-selftest.txt
+    # The line is single-quoted because a plain YAML scalar may not hold `: `, and
+    # this one says "fast gates:" twice. An unquoted version parses as a mapping and
+    # the whole definition stops loading -- scripts/ci/test_pipeline.py loads it with
+    # the same parser GitLab does, so the local sweep says so before a runner does.
+    - 'echo "fast gates: $(wc -l < gates-fast.txt), self-test gates: $(wc -l < gates-selftest.txt)"'
+    # `-x` puts each gate in the log as it runs, so the log says which gates ran.
+    - bash -eo pipefail -x < gates-fast.txt
+    - bash -eo pipefail -x < gates-selftest.txt
+
+# The deep pass: the two gates that compile something before they can judge anything.
+#
+# `render-probe.py` builds a whole Debug configuration of the app into its own
+# derivedData directory (measured ~20 minutes cold, ~67s warm), and
+# `scaling-output-evidence-tests.py` compiles a renderer harness. Neither belongs in
+# front of every merge request: a gate that costs a developer a build gets switched
+# off, and a gate that is switched off is not a gate. They run where the mutation
+# battery already runs -- releases and main -- so every change still meets them before
+# it reaches a tag.
+#
+# Two things here are deliberate and are the reason this job is not folded into the
+# battery. `needs:` is absent, so the stage barrier holds it until the release path is
+# off the runner; giving it `needs: []` would start a second 20-minute xcodebuild
+# beside the build that produces the DMG, which is the pipeline-647 failure again. The
+# `resource_group` is the battery's, so a battery and a deep pass never share the one
+# eight-core Mac either.
+audit:deep:
+  before_script:
+    - *fetch_submodules
+  stage: verify
+  tags: [macos]
+  cache: {}
+  # 20 minutes for the cold Debug build, plus the harness compiles, plus headroom for
+  # cross-pipeline overlap on the shared runner.
+  timeout: 60 minutes
+  resource_group: macos-battery
+  # The frameworks the Debug build links against; not the Release .app, which tells
+  # this job nothing.
+  dependencies: [download-deps]
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - set -euo pipefail
+    # Literal class, file rather than substitution, non-empty list: same three reasons as
+    # audit:gates above.
+    - python3 scripts/gate-coverage-audit.py --emit-commands --class=deep > gates-deep.txt
+    - test -s gates-deep.txt
+    # Single-quoted for the same reason audit:gates is: a plain scalar holding `: ` reads
+    # as a mapping, and the step arrives at the runner as a hash instead of a command.
+    - 'echo "deep gates: $(wc -l < gates-deep.txt)"'
+    - bash -eo pipefail -x < gates-deep.txt
+
 # The full assertion battery: every guard we rely on is broken on purpose and
 # shown to be caught. Measured at 71 minutes (146 cases) on a clean local tree,
 # so it stays out of the fast path and runs on release branches only. It does
