@@ -99,6 +99,7 @@
 | Wave E 上游回吸 | `e2ffee0c` → merge `98d68c5e`（MR 14）；`da21d787` → merge `b10a4065`（MR 17） | CI 绿 / 已合并 | E-A 四项协议修复；E-B 子模块 bump `ff18621`（自适应扳机哨兵消越界读 + 丢包统计 + 断连拦截对等校验） |
 | 诊断报告「功能生效态」区块 | `25a374c5` → merge `127b4eb2`（MR 22） | 本地门禁 103/0/15、全量 Release 构建成功 / merge-preview #732 success（跨文件扫描 af=True 已豁免）/ 真机待 | 六个手感参数报生效值并标 shipped-constant 或 overridden/clamped；六个开关仅 profile 真有值才给 yes/no，否则 unknown；指针路径取 input ledger 实况；视频 codec/帧计数/是否曾有流；重连退避实时状态。profile 只报 global/per-host 名称不含 UUID，全部值走既有 redaction |
 | 变异电池 held-key 变异体可编译化 | `5884c6db` → merge `27b1206e`（MR 21） | CI 绿（#716/#717/#719）/ 已合并 | 变异体编不出探针时如实报 `unproved`，不再伪装成已捕获行为变异 |
+| 诊断报告机器可读镜像（Wave I） | 本分支 | 本地门禁 105 checks / 0 failures（含 6 个新行为变异）/ CI 待 / 真机待 | `machineStateSectionWithState:snapshot:` 之前是死代码，无人组装；现接入 `currentReport`，与散文块共用同一次读取的 `DiagnosticsFeatureState` + inventory 快照。键名契约见 §4.1 |
 
 ## 3. 待开工（按优先级，不依赖真机排期）
 
@@ -166,21 +167,23 @@
   会让整份定义 YAML 解析失败）。判据本地就有——`scripts/ci/test_pipeline.py` 用与 GitLab 相同的
   解析器加载该文件，且已被 `local-gates.sh` 纳入，改 CI 定义后跑它就等于预检。
 
-### 3.5 common-c 上游回吸：Wave G 待移植清单（2026-10-28 逐 commit 源码核实）
+### 3.5 common-c 上游回吸：Wave G 移植结果（2026-10-29 逐 commit 源码复核）
 
-> 结论来自在 submodule（pin `ff18621`）内直接 `git show` 对比上游 commit 与 fork 侧现状，
-> 不是照抄 `docs/common-c-drift-2026-10-26.md` 的旧建议。上游 commit 对象本地已 fetch，可 cherry-pick。
+> 本节 2026-10-28 首次核实时把 G-1/G-2 记为"待移植"，那是 submodule 仍在 `ff18621` 时的快照。
+> 之后两项均已移植并合入，main 的 submodule pin 已推进到 `abe83b8`。以下 fork 侧行号
+> 全部在 `moonlight-common/moonlight-common-c`（pin `abe83b8`）内 `grep -n` 复核，
+> 不是照抄 `docs/common-c-drift-2026-10-26.md` 的旧建议，也不是沿用上一版本节的旧结论。
 
 | 上游 commit | 内容 | fork 侧现状（已核实） | 处置 |
 | --- | --- | --- | --- |
-| `0405384` | `NV_UNICODE_PACKET` 密集打包：Sunshine 一包容多码点，且 Sunshine 分支跳过 GFE 专用 flush + 50 ms 等待 | `src/InputStream.c:876` 起仍是"逐码点一包 + 无条件 flush/50ms" | **待移植（Wave G-1）**：直接减少中文长文本包数并去掉 50 ms 阻塞，K1.1/K1.2 收益最直接 |
-| `448b2c6` / `421bd74` | 相对鼠标 delta 先 latch 到局部变量再分包，避免输入线程被高速相对鼠标独占 | `src/InputStream.c:698` 起循环条件仍直读 `ctx->currentRelativeMouseState.deltaX/deltaY` | **待移植（Wave G-2）**：fork 侧仅把全局变量换成 ctx 成员，补丁形状可平移；注意 fork 侧网络 I/O 已不在锁内，勿重复搬"释放锁"的 hunk |
+| `0405384` | `NV_UNICODE_PACKET` 密集打包：Sunshine 一包容多码点，且 Sunshine 分支跳过 GFE 专用 flush + 50 ms 等待 | **已在 main**：子模块 fork `5f777b4`（merge `d11100a`）→ 主仓 `aca93699` → merge `a539c604`（MR 25）。取证：`src/InputStream.c:613` `unicodeNeedsControlStreamFlush()`、`:621` `unicodeChunkLength()`、调用点 `:967`/`:982` | 无需动作。真机收益（中文长文本包数与 50 ms 阻塞消失）仍待 §4 取证 |
+| `448b2c6` / `421bd74` | 相对鼠标 delta 先 latch 到局部变量再分包，避免输入线程被高速相对鼠标独占 | **已在 main**：子模块 `f740e75`（merge `abe83b8`）→ 主仓 bump `43c6e835` → merge `32421c28`（MR 26）。取证：holder 字段 `src/InputStream.c:74` 起、latch `:794`、button 事件结束批次 `:1367` | 无需动作。fork 侧网络 I/O 本就不在锁内，未重复搬"释放锁"的 hunk |
 | `970b072` | 修复 queued controller packet 的 use-after-free（队列满 / 连接终止两条路径） | fork 侧**不存在** `currentQueuedControllerPacket`（input edge queue 重写已移除该全局缓存，`sendControllerEventInternal` 直接入队不复用 holder） | **不适用**：不硬套补丁，只在 drift 文档记录"上游修的风险面我们已不存在" |
 | `41cedb8` | `ignoreDisconnectIntercept` 只对发给本 peer 的 ENet DISCONNECT 生效 | `src/ControlStream.c` 已含 peerID/sessionID/地址三重校验（Wave E-B `f65f5b3` 已吸） | **已在 main**，无需动作 |
 
-移植纪律：一次一个 commit 一个分支；先让门禁脚本证明能抓到"Sunshine 路径没走密集打包"、
-"非 Sunshine 主机仍被密集打包"、"delta 未 latch 就发第一包"三类变异，再放开；
-子模块先合（子模块 CI 到终态）→ 主仓只 bump submodule SHA 一条 MR；
+移植纪律（G-1/G-2 已按此执行完）：一次一个 commit 一个分支；先让门禁脚本证明能抓到
+"Sunshine 路径没走密集打包"、"非 Sunshine 主机仍被密集打包"、"delta 未 latch 就发第一包"
+三类变异，再放开；子模块先合（子模块 CI 到终态）→ 主仓只 bump submodule SHA 一条 MR；
 `IS_SUNSHINE()` 判据不自己造，复用 `src/Limelight-internal.h:71`。
 
 ## 4. 待真机验收（独立保留，不阻塞下一波代码）
@@ -204,6 +207,35 @@
   报告的功能生效态区块给出六个手感参数生效值、六个开关 yes/unknown、指针路径、
   视频 codec/帧计数与退避状态；报告读不到该项就写 unknown/no stream window，
   不得用目测结果替代报告值，也不得把"报告里是默认值"当成"真机行为已验证"。
+
+- 验收取证方式（Wave I 之后）：同一份报告末尾的 `machine` 区块可直接判读，
+  不再靠人眼读散文。判读规则见 §4.1；未测到的项一律 `unknown` 或
+  `present=no`，**缺失键与值为 0 是两件事**，判读脚本不得把缺项当 0。
+
+### 4.1 `machine` 区块键名契约（Wave I）
+
+一行一键，`key=value`，key 内无空格；以 `#` 开头的行是注释（只有区块头那一行）。
+`ml.schema=1` 是该契约的版本号，增删键语义时递增。
+
+| 键 | 含义 |
+| --- | --- |
+| `ml.profile` | `per-host` / `global` / `unknown`，固定三词，可跨报告比对 |
+| `ml.param.<snake_key>.{effective,shipped,range,written,state}` | 六个手感参数；`state` ∈ `shipped` / `override_of_<v>` / `clamped_below_<min>` / `clamped_above_<max>`，界值保留小数位 |
+| `ml.switch.<key>` | `on` / `off` / `unknown`；`unknown` = 该 profile 从未写过这个开关 |
+| `ml.pointer.{mouse_mode,path,absolute}` | 指针路径实况；未记录 = `unknown`，不推断为相对 |
+| `ml.video.present=no` | 无视频计数；此时 `ml.video.*` 其余键**不出现** |
+| `ml.video.frames.{received,decoded,rendered}` / `.fps` / `.jitter_ms` / `.bytes` / `.format` | `bytes` 是裸字节，不预除 MiB |
+| `ml.reconnect.present=no` | 没有 reconnector 持有计数器；此时 `ml.reconnect.*` 其余键不出现 |
+| `ml.reconnect.{attempt,max,pending,host_confirmed_gone}` | 退避实时状态 |
+| `ml.controllers.present=no` | 无手柄会话快照 |
+| `ml.controllers.{sessions,recording,driver,arrivals}` | 会话代数、是否在录、会话启动时记录的 HID 驱动、arrival 是否已发主机 |
+| `ml.controllers.slot.<N>` | 主机被告知的玩家槽类型（`xbox`/`ps`/`nintendo`/`unknown`）——**验收按槽位数判断手柄数** |
+| `ml.controllers.caps.{analog_triggers,rumble}` | 已通告能力逐项一键，未实现能力不得出现 |
+| `ml.controllers.group_count` | VID/PID/family 身份分组数 |
+| `ml.controllers.group_count_is_physical_devices=no` | 上一行的限制写成独立键：同型号两只会合成一组，**不得当物理手柄数** |
+| `ml.controllers.group.<N>.{vid,pid,family,type_map,transport,battery_percent,nodes}` | 逐组身份；`battery_percent` 为裸数字或 `unknown`（`0` 表示真的空电） |
+
+`type_map` 只是本地协议类型候选，不等于已向主机通告；通告与否看 `arrivals` 与 `slot.<N>`。
 
 ## 5. 冻结项（不动）
 
