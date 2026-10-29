@@ -36,6 +36,12 @@ GitLab is the source of truth. Push development commits to the `gitlab` remote;
   `scripts/ci/test_pipeline.py::test_an_open_merge_request_is_judged_once` pins
   both halves -- push with an open merge request suppressed, push without one
   still built and mirrored.
+  Boundary of that rule, measured rather than assumed: it decides by the state at
+  the moment the push arrives, so the push that *creates* the review is still
+  judged twice. MR 31 is the case -- push pipeline 798 was built because nothing
+  was reviewing the branch yet, and only merge-preview 799 exists for the next
+  push. Suppression therefore removes the steady-state duplicate (every
+  follow-up push under review), not the one push that opens the merge request.
 - `publish-github` has no `needs` shortcut. Its stage barrier includes packaging.
   Each job has a timeout and no gate is allowed to fail.
 - Build logs come from `clean build`; incremental logs cannot demonstrate full
