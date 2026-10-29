@@ -2,6 +2,11 @@
 
 目的：给 M3/M4/K 线后续是否回吸上游定依据。只记事实，不把"建议"当已实施。
 
+> 2026-10-30 状态更新（不重写下面的原始审计，只标注处置结果）：本文"锚点"表里的
+> fork 侧 HEAD `386e79c` 是 2026-10-26 当时的 submodule pin，**已过时**。
+> main 的 pin 现为 `abe83b8`（Wave G-2 后），Wave G-3 合入后为 `093098f5`。
+> "未取待定"表中 RFI 修复族已处置完，见下。
+
 ## 锚点（均可复核）
 
 | 项 | 值 |
@@ -54,7 +59,7 @@
 
 | commit | 备注 |
 | --- | --- |
-| `d85371c`/`be43885`/`62e0663` | RFI 修复族（multi-block 帧损、partial IDR、speculative loss）——影响弱网体验，但 fork 侧 VideoDepacketizer/RtpVideoQueue 已改 |
+| `d85371c`/`be43885`/`62e0663` | **已处置（Wave G-3，2026-10-30）**：fork 侧 `5340b26`/`c759034`/`49cfe3a` 已逐 hunk 等价移植，子模块 merge `093098f5`，主仓 bump `6e1aa0b1`（MR 32）。等价性取证与 fork 侧行号见 `docs/goal-mode-prompt.md` §3.5；真机弱网收益待取证 |
 | `342b106` | control stream 加密 in-place 化 |
 | `41cedb8` | ENet disconnect 只拦发给自己的——小而安全，但需真机验证 |
 | `f1cca2d` | pen event batching |
