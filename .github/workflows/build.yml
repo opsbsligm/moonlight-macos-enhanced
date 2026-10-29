@@ -192,6 +192,17 @@ jobs:
           echo "shell syntax ok: $script"
         done
 
+    - name: Verify both pipeline definitions reach every gate
+      # This file and `.gitlab-ci.yml` describe the same pipeline, and gates have
+      # historically landed here first: the source of truth ended up calling 33 of the
+      # 87 gates this file called, while `local-gates.sh` reported a green local sweep
+      # over all of them. The rule is symmetric, so it is enforced from both sides --
+      # a gate added to either definition has to reach the other, by name or through a
+      # class the other side asks for.
+      run: |
+        python3 scripts/gate-coverage-audit.py --self-test
+        python3 scripts/gate-coverage-audit.py
+
   # The mutation battery: 146 planted regressions, each judged by a real gate.
   # It lives here, and not inside the audit job above, because it is a different
   # shape of work: the fast audits answer in under three minutes and must gate

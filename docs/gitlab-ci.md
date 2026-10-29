@@ -120,6 +120,43 @@ observed so far.
 - Do not clear a red mirror job by deleting and re-creating the resource
   group: that reorders publishers that are already serialized.
 
+## Gate parity across both definitions
+
+Two definitions drift. Gates have historically landed in the mirror workflow
+first, so the source of truth reached a subset while `local-gates.sh` -- which
+used to build its list from the mirror -- reported a green local sweep over all
+of them. Measured when this section was written: 88 gate calls on the mirror, 33
+written out on the source of truth, and a local sweep that claimed all of them.
+
+`python3 scripts/gate-coverage-audit.py --verify` is the reconciliation. Every
+gate the mirror calls must be reachable on the source of truth, either spelled
+out in `.gitlab-ci.yml` or emitted at run time by `audit:gates` through
+`--emit-commands --class=fast|selftest|deep`. A gate leaves the fast set only
+through `NON_FAST`, with a reason, and the self-test refuses an entry there that
+no longer names a real gate -- a stale excuse is how a gate stops being looked
+at. The audit reads the two files as text on purpose: PyYAML is not on a bare
+checkout, and an audit that needs a venv is an audit that does not run.
+
+- `audit:gates` (test stage, `macos`, no artefacts) runs `--self-test`, then
+  `--verify`, then every emitted fast and self-test command. 47 fast plus 5
+  self-test commands, measured around 80 seconds for all 47 on an M2 laptop.
+- `audit:deep` (verify stage, tag and main only) takes the two compile-first
+  gates: `render-probe.py` and `scaling-output-evidence-tests.py`. No `needs:`,
+  so the stage barrier keeps its xcodebuild off the release path -- the pipeline
+  647 starvation again otherwise -- and it shares the battery's `resource_group`.
+- The mirror's form of a command wins inside `local-gates.sh`, because that file
+  rewrites artefact paths for a laptop while the source of truth spells them in
+  CI variables (`$app`, `$DERIVED_DATA_PATH`) that resolve to nothing locally. A
+  gate only the source of truth calls is still run, as written. `scripts/ci/
+  publish-github.py` is excluded by name, not by path shape: it pushes refs, and
+  its prefix (`MIRROR_DRY_RUN=1`) is the only thing that makes the call harmless.
+
+Two limits worth knowing. A job that asks for a class and throws the answer away
+still counts as reachable -- the audit reads text, so it knows a class is asked
+for, not that the commands reach a shell. And a gate both files call is judged by
+the mirror's form locally, so a source-of-truth-only spelling change to an
+already-covered gate is not re-proven on a laptop.
+
 ## Verification and limits
 
 Run `python3 scripts/ci/test_pipeline.py` (requires PyYAML). It uses disposable
