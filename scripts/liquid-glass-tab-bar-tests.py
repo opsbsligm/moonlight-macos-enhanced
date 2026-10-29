@@ -107,7 +107,17 @@ NSApp.activate(ignoringOtherApps: true)
 // and reports. One line, machine-read by the python driver.
 let markerDirectory = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 let deadline = Date().addingTimeInterval(25)
+// Say out loud, through the marker directory, when the window is genuinely on screen. The
+// inspector cannot settle this on its own: a headless session leaves the window server's list
+// empty for a process that has no screen-recording permission, which looks the same as a
+// harness that never opened a window. This process is the only one that knows.
+var announcedWindow = false
 Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+    if !announcedWindow, window.isVisible, window.screen != nil {
+        announcedWindow = true
+        FileManager.default.createFile(atPath: (markerDirectory as NSString).appendingPathComponent("window-shown"),
+                                       contents: Data())
+    }
     if FileManager.default.fileExists(atPath: (markerDirectory as NSString).appendingPathComponent("clicked")) {
         timer.invalidate()
         let writesAtClick = counter.writes
@@ -156,6 +166,13 @@ func error(_ el: AXUIElement, _ attr: String) -> AXError {
 func kids(_ el: AXUIElement) -> [AXUIElement] {
     (copyAttr(el, kAXChildrenAttribute as String) as? [AXUIElement]) ?? []
 }
+// The window server's own list, as a source that does not depend on the accessibility layer.
+func onScreenWindows(of target: pid_t) -> Int {
+    let option = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
+    guard let list = CGWindowListCopyWindowInfo(option, kCGNullWindowID) as? [[String: Any]]
+    else { return 0 }
+    return list.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == target }.count
+}
 func role(_ el: AXUIElement) -> String {
     (copyAttr(el, kAXRoleAttribute as String) as? String) ?? ""
 }
@@ -186,20 +203,80 @@ func cgSize(_ el: AXUIElement) -> CGSize {
     }
     return size
 }
-func buttons(_ el: AXUIElement) -> [AXUIElement] {
+// Every tree walk in this inspector is iterative, and it has to be. AppKit vends the app
+// element among its own children (measured here, and recorded in
+// scripts/edge_acceptance_helper.swift: a plain recursive dump expanded the menu bar
+// 2^depth times), and an AX-manual client sees AXApplication > AXMenuBar > AXMenuBarItem >
+// AXMenu > ... > AXApplication. Recursion over that graph overruns the thread stack, so the
+// inspector died with SIGSEGV on the guard page and the gate reported an exit code instead
+// of a verdict. An explicit stack cannot overrun, the ancestor chain below skips the
+// back-edges, and the two caps turn any surprise into a loud diagnostic rather than a hang.
+let walkDepthCap = 128
+let walkNodeBudget = 400_000
+var walkNodes = 0
+var walkDepthReached = 0
+var walkBudgetHit = false
+var walkDepthHit = false
+
+// Collect every element under `roots` that `match` accepts, in document order, without
+// following an edge back into one of its own ancestors.
+func collect(roots: [AXUIElement], match: (AXUIElement) -> Bool) -> [AXUIElement] {
+    struct Frame {
+        let el: AXUIElement
+        let depth: Int
+        let ancestors: [ObjectIdentifier]
+    }
+    var out: [AXUIElement] = []
+    var stack = roots.reversed().map { Frame(el: $0, depth: 0, ancestors: []) }
+    while let frame = stack.popLast() {
+        walkNodes += 1
+        if walkNodes > walkNodeBudget { walkBudgetHit = true; break }
+        walkDepthReached = max(walkDepthReached, frame.depth)
+        if frame.depth > walkDepthCap { walkDepthHit = true; continue }
+        if match(frame.el) { out.append(frame.el) }
+        for child in kids(frame.el).reversed() {
+            // The app element reports itself among its own children, so a walk that starts
+            // at a window reaches AXApplication and would re-expand the whole menu bar from
+            // there. Dropping that edge is the same guard scripts/edge_acceptance_helper.swift
+            // uses, and it is the cheap one; the ancestor check below still catches cycles
+            // that do not run through the app element.
+            if role(child) == "AXApplication" { continue }
+            // A child that is already one of our ancestors is a back-edge in a cycle, not
+            // a new subtree; following it is exactly what made the walk exponential.
+            if frame.ancestors.contains(ObjectIdentifier(child as AnyObject)) { continue }
+            stack.append(Frame(el: child, depth: frame.depth + 1,
+                               ancestors: frame.ancestors + [ObjectIdentifier(frame.el as AnyObject)]))
+        }
+    }
+    return out
+}
+
+func isBarRoot(_ el: AXUIElement) -> Bool {
+    ((copyAttr(el, "AXIdentifier") as? String) ?? "") == "settings-navigation"
+}
+func isSegment(_ el: AXUIElement) -> Bool {
     // A segment is an AXRadioButton on the native control (the tab-group shape every
     // screen reader expects) and was an AXButton on the hand-drawn bar; collect either
     // so "one element per segment" keeps its meaning across the swap.
-    var out: [AXUIElement] = []
-    if role(el) == "AXButton" || role(el) == "AXRadioButton" { out.append(el) }
-    for k in kids(el) { out += buttons(k) }
-    return out
+    role(el) == "AXButton" || role(el) == "AXRadioButton"
 }
 
 // The window appears asynchronously after activation; give it a moment, then answer the
 // three questions the driver cannot ask without a GUI session, and say "no session" in
 // words rather than failing if there is not one.
+// AXWindows answers with the application element itself when the session vends no windows
+// (measured on this host: for Safari and Terminal, whose on-screen windows the window server
+// does list, AXWindows still returns n entries all CFEqual to the app element, and System
+// Events -- Apple's own trusted client -- reports `count of windows` as 0 for the same
+// processes). Such an entry is a sentinel, not a window: it has the app's attributes, its
+// children are the menu bar, and walking it is what turns the app element into one of its own
+// descendants. Filter it out before the guard below, otherwise "a window appeared" is satisfied
+// by an element that is the app, and the walk then reports the bar as missing.
+func windowElements(_ raw: [AXUIElement]) -> [AXUIElement] {
+    raw.filter { role($0) != "AXApplication" && !CFEqual($0, app) }
+}
 var windows: [AXUIElement] = []
+var sawSelfSentinel = false
 for _ in 0..<40 {
     Thread.sleep(forTimeInterval: 0.1)
     let err = error(app, kAXWindowsAttribute as String)
@@ -207,29 +284,42 @@ for _ in 0..<40 {
         print("SKIP no accessibility trust for this inspector (\(err.rawValue))")
         exit(3)
     }
-    windows = (copyAttr(app, kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
+    let raw = (copyAttr(app, kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
+    sawSelfSentinel = sawSelfSentinel || raw.contains { CFEqual($0, app) }
+    windows = windowElements(raw)
     if !windows.isEmpty { break }
 }
 guard !windows.isEmpty else {
-    print("SKIP no window in the app's AX tree -- this host has no windowed GUI session")
+    // Nothing below can be judged without a window in the tree, and the two outside readings
+    // are reported rather than acted on, because neither can tell a broken harness from a host
+    // with no GUI session: a headless runner leaves the window server's list empty for a
+    // process with no screen-recording permission, which is the same reading a harness that
+    // never opened a window gives. What is *not* possible to conclude from here is anything
+    // about the bar, so the honest answer is SKIP with the evidence attached -- and whenever
+    // the tree is readable, the checks below do run and fail loudly.
+    let shown = FileManager.default.fileExists(atPath: (markerDirectory as NSString)
+        .appendingPathComponent("window-shown"))
+    let axRead = sawSelfSentinel
+        ? "AXWindows vends only the application element itself (its no-window sentinel)"
+        : "AXWindows vends no elements"
+    print("SKIP no window in the app's AX tree -- \(axRead); the app reports a window on "
+          + "screen: \(shown), the window server lists \(onScreenWindows(of: pid)) for it; "
+          + "this host cannot answer an out-of-process accessibility query")
     exit(3)
 }
 // Scope to the bar's own container: the window's traffic lights are AXButtons too, and
 // counting them as segments would make every verdict below about the window chrome.
 // The bar marks its subtree with .accessibilityIdentifier("settings-navigation"), which
 // vends as AXIdentifier -- a handle that does not depend on the names being tested.
-func barRoots(_ el: AXUIElement) -> [AXUIElement] {
-    if ((copyAttr(el, "AXIdentifier") as? String) ?? "") == "settings-navigation" { return [el] }
-    var out: [AXUIElement] = []
-    for k in kids(el) { out += barRoots(k) }
-    return out
-}
-let bars = windows.flatMap { barRoots($0) }
+let bars = collect(roots: windows, match: isBarRoot)
 guard !bars.isEmpty else {
-    print("FAIL the bar's settings-navigation subtree is not in the window's AX tree")
+    // Name the walk's shape in the failure itself: "not in the tree" means something
+    // different when the walk hit its node budget than when it truly saw no such element.
+    print("FAIL the bar's settings-navigation subtree is not in the window's AX tree "
+          + "(nodes=\(walkNodes) maxdepth=\(walkDepthReached) budget_hit=\(walkBudgetHit) depth_hit=\(walkDepthHit))")
     exit(2)
 }
-let found = bars.flatMap { buttons($0) }
+let found = bars.flatMap { collect(roots: [$0], match: isSegment) }
 print("BUTTONS \(found.count)")
 for b in found {
     let p = cgPoint(b)
@@ -294,16 +384,19 @@ var picked: [String] = []
 for _ in 0..<10 {
     Thread.sleep(forTimeInterval: 0.1)
     let fresh = ((copyAttr(app, kAXWindowsAttribute as String) as? [AXUIElement]) ?? [])
-        .flatMap { barRoots($0) }
-        .flatMap { buttons($0) }
+        .flatMap { collect(roots: [$0], match: isBarRoot) }
+        .flatMap { collect(roots: [$0], match: isSegment) }
     picked = fresh.filter { selected($0) }.map { name($0) }
     if picked == [wanted] { break }
 }
-let afterBtns = bars.flatMap { buttons($0) }
+let afterBtns = bars.flatMap { collect(roots: [$0], match: isSegment) }
 for b in afterBtns {
     print("AFTERBTN name=\(name(b)) selected=\(selected(b))")
 }
 print("SELECTION_AFTER \(picked == [wanted] ? "ok" : "fail \(picked)")")
+// Say what the walk cost, so a tree that starts expanding again shows up as a number in
+// the log instead of an inspector that died before it could answer.
+print("WALK nodes=\(walkNodes) maxdepth=\(walkDepthReached) budget_hit=\(walkBudgetHit) depth_hit=\(walkDepthHit)")
 FileManager.default.createFile(atPath: (markerDirectory as NSString).appendingPathComponent("clicked"),
                               contents: Data())
 exit(0)
