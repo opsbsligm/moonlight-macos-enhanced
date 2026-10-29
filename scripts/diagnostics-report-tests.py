@@ -72,8 +72,10 @@ HOSTS = "Limelight/macOS/ViewControllers/HostsViewController.m"
 APP_PANE = "Limelight/macOS/ViewControllers/SettingsAppPane.swift"
 
 # The floor, not a claim about the exact number: the shipped binary prints how many checks it
-# actually ran, and this refuses a run that quietly lost cases.
-MIN_DRIVER_CHECKS = 68
+# actually ran, and this refuses a run that quietly lost cases. Raised from 68 when the
+# machine-readable block became part of the report rather than dead code -- a floor that stays
+# behind the real count is how a case list disappears without anyone noticing.
+MIN_DRIVER_CHECKS = 105
 
 failures = []
 
@@ -634,6 +636,132 @@ int main(void) {
               "instead of inventing a verdict");
     }
 
+    {
+        // The machine-readable mirror. It exists so a real-device acceptance run is graded from
+        // the report instead of from a screenshot, which makes its contract a parser's contract:
+        // one addressable key per fact, an explicit absence for everything unmeasured, and a
+        // name that cannot be misread. Each of those is a shape the block can get wrong while
+        // still reading fine to a person, so each is checked as text rather than admired.
+        NSString *machineText = [[DiagnosticsReportBuilder
+            machineStateSectionWithState:DiagnosticsFeatureState.new
+                                snapshot:nil].lines componentsJoinedByString:@"\n"];
+        check([machineText rangeOfString:@"ml.controllers.present=no"].location != NSNotFound &&
+              [machineText rangeOfString:@"ml.video.present=no"].location != NSNotFound &&
+              [machineText rangeOfString:@"ml.reconnect.present=no"].location != NSNotFound,
+              "a report taken before anything ran says which blocks have nothing to read");
+        check([machineText rangeOfString:@"ml.video.frames"].location == NSNotFound &&
+              [machineText rangeOfString:@"ml.reconnect.attempt="].location == NSNotFound,
+              "an unmeasured counter is absent rather than zero -- a checker that read "
+              "rendered=0 would report a host that sent nothing");
+        check([machineText rangeOfString:@"ml.switch.imeLocalComposition=unknown"]
+                  .location != NSNotFound,
+              "a switch this build never wrote stays unknown in the machine block too");
+        check([machineText rangeOfString:@"ml.pointer.mouse_mode=unknown"].location != NSNotFound &&
+              [machineText rangeOfString:@"ml.pointer.absolute=unknown"].location != NSNotFound,
+              "a pointer path never recorded is unknown, not inferred to be relative");
+
+        DiagnosticsFeatureState *shape = DiagnosticsFeatureState.new;
+        shape.profileScope = @"per-host profile for one host";
+        shape.sidebarParams = @[
+            [DiagnosticsFeatureParam paramWithLabel:@"edge sensor band"
+                                    shippedDefault:12 minimum:8 maximum:16 overrideValue:0],
+            [DiagnosticsFeatureParam paramWithLabel:@"edge sensor dwell"
+                                    shippedDefault:0.12 minimum:0.06 maximum:0.3 overrideValue:0.02],
+        ];
+        shape.hasVideoStats = YES;
+        shape.receivedFrames = 1200;
+        shape.renderedFrames = 1150;
+        shape.renderedFps = 119.4f;
+        shape.receivedBytes = 32 * 1024 * 1024;
+        MLControllerInventorySnapshot *pad = MLControllerInventorySnapshot.new;
+        pad.entries = @[ MLControllerEntry.new ];
+        NSString *shaped = [[DiagnosticsReportBuilder
+            machineStateSectionWithState:shape snapshot:pad].lines componentsJoinedByString:@"\n"];
+        // Every non-comment line has to be exactly one assignment, with no spaces anywhere in
+        // the key. This is what makes the second line of the block a comment instead of data,
+        // and what lets a checker index `ml.param.edge_sensor_band.effective` directly.
+        BOOL strict = YES;
+        NSMutableArray<NSString *> *stray = [NSMutableArray array];
+        for (NSString *line in [shaped componentsSeparatedByString:@"\n"]) {
+            if ([line hasPrefix:@"#"]) {
+                continue;
+            }
+            NSRange firstSeparator = [line rangeOfString:@"="];
+            if (firstSeparator.location == NSNotFound ||
+                [line rangeOfString:@"=" options:0 range:NSMakeRange(firstSeparator.location + 1,
+                    line.length - firstSeparator.location - 1)].location != NSNotFound ||
+                [[line substringToIndex:firstSeparator.location] rangeOfString:@" "].location != NSNotFound) {
+                strict = NO;
+                [stray addObject:line];
+            }
+        }
+        if (!strict) {
+            printf("    offending lines: %s\n",
+                   [[stray componentsJoinedByString:@" | "] UTF8String]);
+        }
+        check(strict, "every line of the machine block is one key=value with a space-free key"
+              " -- the block is data for a checker, not prose");
+        check([shaped rangeOfString:@"ml.video.frames.received=1200"].location != NSNotFound &&
+              [shaped rangeOfString:@"ml.video.frames.rendered=1150"].location != NSNotFound,
+              "the frame counters are separately addressable, so a checker does not split a "
+              "sentence to get a number");
+        check([shaped rangeOfString:@"ml.video.format=unknown"].location != NSNotFound,
+              "a codec that was never recorded reads unknown, not blank and not a guess");
+        check([shaped rangeOfString:@"ml.video.bytes=33554432"].location != NSNotFound,
+              "the byte counter arrives raw, so a bandwidth check does not redo a division "
+              "meant only for a human eye");
+        check([shaped rangeOfString:@"ml.param.edge_sensor_band.effective=12"]
+                  .location != NSNotFound &&
+              [shaped rangeOfString:@"ml.param.edge_sensor_band.shipped=12"]
+                  .location != NSNotFound &&
+              [shaped rangeOfString:@"ml.param.edge_sensor_band.range=8..16"]
+                  .location != NSNotFound &&
+              [shaped rangeOfString:@"ml.param.edge_sensor_band.written=none"]
+                  .location != NSNotFound &&
+              [shaped rangeOfString:@"ml.param.edge_sensor_band.state=shipped"]
+                  .location != NSNotFound,
+              "a hand-feel parameter reports its value, its constant, its published range and "
+              "how it got there, each under its own key");
+        // The defect this line exists to catch: a range bound rounded to an integer makes
+        // `minimum=0.06` announce itself as `clamped_below_0`, which grades as "below zero".
+        check([shaped rangeOfString:@"ml.param.edge_sensor_dwell.state=clamped_below_0.06"]
+                  .location != NSNotFound,
+              "a clamp keeps the decimal places of the bound it hit, so a fractional dwell "
+              "range does not report a bound of zero");
+        check([shaped rangeOfString:@"ml.controllers.group_count=1"].location != NSNotFound &&
+              [shaped rangeOfString:@"ml.controllers.group_count_is_physical_devices=no"]
+                  .location != NSNotFound,
+              "the identity-group count states in its own key that it is not a controller "
+              "count, so a two-pad acceptance run has to grade host-advertised slots");
+        check([shaped rangeOfString:@"ml.controllers.group.0.battery_percent=unknown"]
+                  .location != NSNotFound,
+              "a pad that never reported a charge is unknown, because zero would grade as an "
+              "empty battery");
+        check([shaped rangeOfString:@"ml.profile=per-host"].location != NSNotFound,
+              "the profile scope is one of two fixed words, so the scope a run was graded "
+              "under is machine-comparable");
+
+        MLControllerInventorySnapshot *advertised = MLControllerInventorySnapshot.new;
+        advertised.advertisedControllerArrivals = YES;
+        advertised.advertisedControllerTypes = @{ @1: @(MLControllerProtocolTypeForFamily(
+                                            MLControllerFamilyPS5)) };
+        advertised.driverName = @"MFi";
+        NSString *advertisedText = [[DiagnosticsReportBuilder
+            machineStateSectionWithState:DiagnosticsFeatureState.new
+                                snapshot:advertised].lines componentsJoinedByString:@"\n"];
+        check([advertisedText rangeOfString:@"ml.controllers.slot.1=ps"].location != NSNotFound,
+              "the type the host was told about is addressable per player slot, which is the "
+              "number an acceptance run counts pads by");
+        check([advertisedText rangeOfString:@"ml.controllers.caps.analog_triggers=yes"]
+                  .location != NSNotFound &&
+              [advertisedText rangeOfString:@"ml.controllers.caps.rumble=yes"]
+                  .location != NSNotFound,
+              "each advertised capability is its own key, so a check for an unimplemented "
+              "capability does not have to split a joined bundle");
+        check([advertisedText rangeOfString:@"ml.controllers.driver=MFi"].location != NSNotFound,
+              "the driver recorded at session start is carried, because the three HID drivers "
+              "disagree about the same pad");
+    }
     // The count is printed rather than counted from the transcript by whoever reads it: a
     // report that quotes "the harness has N checks" and is wrong is the same kind of number
     // this repository keeps refusing to write down.
@@ -744,6 +872,28 @@ MUTATIONS = (
       "              @\"imeLocalComposition\", @\"muteOnFocusLoss\", @\"backgroundGamepad\" ];",
       "    return @[ @\"edgeSensorSummon\", @\"absoluteMouseMode\", @\"relativeMouseAsAbsolute\",\n"
       "              @\"imeLocalComposition\", @\"muteOnFocusLoss\" ];"),
+    # The machine block is graded by a checker, so its defects are shape defects: the text still
+    # reads correctly to a person, and only a parser notices.
+    ("a switch the app could not read degrades to a verdict in the machine block",
+     "value ? (value.boolValue ? @\"on\" : @\"off\") : @\"unknown\"]];",
+     "value ? (value.boolValue ? @\"on\" : @\"off\") : @\"off\"]];"),
+    ("a machine key grows a space, so the fact is no longer addressable",
+     '@"ml.video.frames.received=%u"',
+     '@"ml.video.frames received=%u"'),
+    ("the identity-group count stops saying it is not a device count",
+     "    [lines addObject:@\"ml.controllers.group_count_is_physical_devices=no\"];\n",
+     ""),
+    ("a pad that never reported a charge reads as an empty battery",
+     "                              ? [NSString stringWithFormat:@\"%ld\", (long)entry.batteryPercent]\n"
+     "                              : @\"unknown\"]];",
+     "                              ? [NSString stringWithFormat:@\"%ld\", (long)entry.batteryPercent]\n"
+     "                              : @\"0\"]];"),
+    ("a clamp reports its bound rounded, so a fractional dwell range announces zero",
+     "[NSString stringWithFormat:@\"clamped_below_%@\", ReportNumber(param.minimum)]",
+     "[NSString stringWithFormat:@\"clamped_below_%.0f\", param.minimum]"),
+    ("the block's own legend becomes data, so every checker reads it as a malformed fact",
+     "    [lines addObject:@\"# one key=value per line; ",
+     "    [lines addObject:@\"one key=value per line; "),
 )
 
 INVENTORY_MUTATIONS = (
@@ -921,10 +1071,29 @@ def main():
           "MLControllerInventory.sharedInventory.snapshot" in live_builds,
           "the report asks the shared formatter for the controllers block, handing it the "
           "recorded inventory rather than assembling a block by guessing from product strings")
-    check("[sections addObject:[self featureStateSection]];" in live_builds and
-          "featureStateSectionWithState:" in live_builds,
-          "the feature block is assembled by the report a player copies, and comes from the "
-          "shared formatter rather than a second copy of the wording")
+    check("featureStateSectionWithState:featureState]" in live_builds and
+          "machineStateSectionWithState:featureState" in live_builds,
+          "the report a player copies carries both the prose feature block and its "
+          "machine-readable mirror, and both come from the shared formatter rather than a "
+          "second copy of the wording")
+    # The two blocks are only a mirror while they describe one reading. Read the inventory or
+    # the feature state twice and a pad pairing between the reads makes the report say one
+    # thing in prose and another in keys, which is worse than either being wrong alone. So the
+    # invariant is one local per source, handed to both blocks.
+    check(re.search(r"DiagnosticsFeatureState \*featureState = \[self liveFeatureState\];",
+                    live_builds) and
+          live_builds.count("liveFeatureState]") == 1,
+          "the feature state is read once and shared, so the prose and the keys cannot "
+          "describe two different moments")
+    check(re.search(r"MLControllerInventorySnapshot \*inventorySnapshot = "
+                    r"MLControllerInventory\.sharedInventory\.snapshot;", live_builds) and
+          "controllersSectionWithSnapshot:inventorySnapshot]" in live_builds and
+          "snapshot:inventorySnapshot]" in live_builds,
+          "the controller inventory is read once and handed to both the prose controllers "
+          "block and the machine mirror")
+    check("machineStateSectionWithState:featureState" in live_builds,
+          "the machine block reaches the report a player copies -- a block nothing assembles "
+          "is a block no acceptance run can grade")
     check("featureStateSourceController" in live_builds and
           "featureStateSnapshot" in live_builds,
           "the live report reads its feature state off the running stream, so the numbers it "

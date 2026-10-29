@@ -153,6 +153,25 @@ NS_ASSUME_NONNULL_BEGIN
 /// apart. Both live paths go through here so neither can invent a third answer.
 + (NSDictionary<NSString *, NSNumber *> *)featureSwitchesFromPreferences:(nullable NSDictionary *)preferences;
 
+/// The machine-readable mirror of the feature and controller blocks: one `ml.x.y=value`
+/// line per fact, so a real-device acceptance run can be graded from the report instead of
+/// from a screenshot.
+///
+/// It is a mirror and not a second opinion. Every value comes from the same two objects the
+/// human blocks above already render, so the prose and the keys cannot disagree, and the
+/// same three absences -- a switch the profile never wrote, a session with no video
+/// counters, a stream window with no reconnector -- are written as `unknown` or
+/// `present=no` rather than as zero. A checker that reads `rendered=0` would report a host
+/// that sent nothing; the truth may be that nothing was ever measured.
+///
+/// The controller group count is the one number here that must not be read as a physical
+/// device count: two controllers of the same model are one VID/PID/family group. It is
+/// emitted as `ml.controllers.group_count`, and the key next to it --
+/// `ml.controllers.group_count_is_physical_devices=no` -- states the limit, so misreading it
+/// takes a parser choosing to ignore a key rather than failing to notice a sentence.
++ (DiagnosticsReportSection *)machineStateSectionWithState:(DiagnosticsFeatureState *)state
+                                                  snapshot:(nullable MLControllerInventorySnapshot *)snapshot;
+
 /// Assemble the sections in the order given, redact the whole of it once at the end
 /// -- one pass, so a value cannot survive by arriving in a line nobody thought to
 /// scrub -- and bring it under the cap, shortening the log block first.
