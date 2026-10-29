@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - 新增 "Allow"/"允许" 本地化键，覆盖 USB 设备页允许按钮翻译
+- **门禁覆盖对账（Wave H）**：新增 `scripts/gate-coverage-audit.py` 解析两份 CI 定义并强制
+  "镜像调用的每个门禁都必须在事实源可达"；`audit:gates` job 用 `--emit-commands` 驱动 47 个快速
+  门禁 + 5 个自测形态，`audit:deep`（tag/main only）承担两个编译型门禁；`local-gates.sh` 改读
+  两份定义的并集（镜像形态优先，因其带本机 artefact 改写），`constraints-audit.py` 把该审计纳入
+  本地聚合。基点实测镜像调 87 个门禁而事实源只可达 33 个（54 条 HC001），本地全绿却覆盖事实源从未跑的门禁。
 - **K1.2 本地输入法组合（Local IME Composition）**（per-host，默认关）：串流捕获期间用
   `NSTextInputClient` 承接本地 marked text，候选确认按整串 UTF-8 提交到主机，回退/退格只
   编辑本地草稿不打到主机；`imeLocalComposition` 贯穿 SettingsStore/SettingsModel/ObjC 桥与

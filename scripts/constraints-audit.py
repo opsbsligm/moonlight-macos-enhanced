@@ -3482,6 +3482,26 @@ l10n = subprocess.run([sys.executable, os.path.join(root, "scripts", "l10n-audit
 check(l10n.returncode == 0, "the localization audit passes with its scan proven running"
       if l10n.returncode == 0 else "the localization audit failed:\n" + l10n.stdout[-700:])
 
+# The gate-coverage reconciliation is the one gate whose whole subject is the two pipeline
+# definitions, so it is the one whose absence from this file would be self-referential: the
+# parity rule further down asks whether every CI gate reaches the local aggregate, and a
+# gate that answers "does the source of truth run what the mirror runs" from CI only means a
+# laptop never learns that the authority skipped 33 of 88 gates. Both forms are cheap
+# (measured under a tenth of a second on a bare checkout, no toolchain, no artefacts), so
+# neither has an excuse. The verify form judges the tree; the self-test form proves the
+# reconciliation can still fail, which is the claim this file makes about every other gate.
+for coverage_shape, coverage_arguments in (("the two definitions reconcile", []),
+                                           ("its red proofs", ["--self-test"])):
+    coverage_run = subprocess.run([sys.executable,
+                                   os.path.join(root, "scripts", "gate-coverage-audit.py")]
+                                  + coverage_arguments,
+                                  capture_output=True, text=True, cwd=root)
+    check(coverage_run.returncode == 0,
+          "the gate coverage audit passes %s" % coverage_shape
+          if coverage_run.returncode == 0 else
+          "the gate coverage audit failed %s:\n%s"
+          % (coverage_shape, (coverage_run.stdout + coverage_run.stderr)[-900:]))
+
 # The three greps below are the audits job's other steps, and they run here for
 # the same reason the parity rule above exists. Membership is the cheap one that
 # answers "will this file ever be compiled", the glass rules are a source rule
