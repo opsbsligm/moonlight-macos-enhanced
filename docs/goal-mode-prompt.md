@@ -1,20 +1,34 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-28 二次基点刷新：MR 1–23 全合并 + build2021 产物验收 + common-c 回吸面已核实）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-30 三次基点刷新：MR 1–31 全合并 + Wave G-1/G-2/G-3 上游回吸落地 + 门禁覆盖对等已建）
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-28，MR 1–23 全部合并）
+## 1. 当前基点（截至 2026-10-30，MR 1–31 全部合并，MR 32 在途）
 
-- 代码基点 main = `a8412222`（`Merge branch 'docs/goal-mode-refresh-127b4eb2' into 'main'`，
-  即本文档上一次刷新合入），其功能基点仍是 `127b4eb2`
-  （`Merge branch 'feat/diagnostics-feature-state' into 'main'`），
-  merge-preview pipeline **#732 = success**（其中 `跨文件静态安全扫描`
-  `allow_failure=true`，记为已豁免，不计入通过）。main 自身 pipeline
-  **#733**：`package-dmg` 已 success（产物 build2021），`mutation-battery`
-  与 `publish-github` 收尾时仍在跑，以该 pipeline 终态为准。
-- MR 1–23 全部 merged（MR 5、MR 13 因被后继 MR 取代而 closed），在途 MR = 0。
+- 代码基点 main = `18ee83cd`（`Merge branch 'ci/wave-k2-merge-request-pipelines' into 'main'`）。
+  该基点自身的 pipeline **#813** 到本文档刷新时仍为 `running`：
+  `lint`/`deps`/`build`/`test`/`package`/`audit:deep` 已 success，
+  `package-dmg` 产物为 `Moonlight-1.6.0-build2041.dmg`，
+  `mutation-battery` 与 `publish-github` 未收尾。**该产物尚未做过包内
+  `hdiutil verify` / `codesign --verify --deep --strict` / `CFBundleVersion` 读回，
+  因此不计入"已验证 DMG"**，以 #813 终态 + 产物验收记录为准。
+- MR 1–31 全部 merged（MR 5、MR 13 因被后继 MR 取代而 closed），在途 MR = MR 32
+  （Wave L-1 common-c submodule bump，见下）。
+  自基点 `a8412222` 以来的合并链（原提交 → merge commit）：
+  - 本文档基点刷新（至 `a8412222` + Wave G 计划）：`f83cb534`（MR 24）。
+  - Wave G-1 上游 `0405384` UTF-8 密集打包：`aca93699` → `a539c604`（MR 25）。
+  - Wave G-2 子模块 bump 至 `abe83b8`（相对鼠标 delta latch）：`43c6e835` → `32421c28`（MR 26）。
+  - Wave H 两套流水线定义的门禁覆盖对等（`scripts/gate-coverage-audit.py`）：→ `1d43c908`（MR 27）。
+  - 标签栏 inspector 在 AX 环上不再崩死：→ `2b1a893a`（MR 28）。
+  - Wave I 机器可读验收区块 + 可执行真机验收判分器
+    （`scripts/hardware-acceptance-check.py`、`docs/hardware-acceptance-checklist.md`）：→ `639d38b2`（MR 29）。
+  - 诊断 harness 编译改并行：→ `80f8632e`（MR 30）。
+  - Wave K2 有 open MR 的分支只判一次（merge-request pipeline 去重）：→ `18ee83cd`（MR 31）。
+  - 在途：MR 32 `6e1aa0b1`（submodule pin `abe83b8` → `093098f5`，Wave G-3 RFI
+    丢帧诚实性）。`detailed_merge_status=security_policy_violations` 是 merge-preview
+    未跑完的瞬时状态（MR 23 已实证过一次），等 #820 预览管线到终态再判，不要先改安全策略。
   审批与合并均由 owner（`liguangming`，user id 1）凭据完成，
   `PUT /merge` 必须带精确 `sha=`，否则 GitLab 19.5 拒绝。
-  本轮新增：MR 22（诊断功能生效态 `25a374c5` → `127b4eb2`）、
+  上一轮新增：MR 22（诊断功能生效态 `25a374c5` → `127b4eb2`）、
   MR 23（本文档基点刷新 `68f1b3e8` → `a8412222`）。
   MR 23 一度显示 `detailed_merge_status=security_policy_violations`，
   实测是 merge-preview 尚未跑完时的瞬时状态，预览管线转绿后同一 SHA 直接合并成功；
@@ -59,15 +73,18 @@
   禁止借 VM root 或 Rails 代替他人审批。
 - 镜像由 `publish-github` job 单向发布；只核对本 ref 的双端 SHA，
   不凭发布成功宣称全仓一致。
-- 最新已验证 DMG：`build2021`（main `127b4eb2`，pipeline #733 job 4047，
+- 最新**已验证** DMG 仍是 `build2021`（main `127b4eb2`，pipeline #733 job 4047，
   8,310,145 B，SHA-256
   `0591500abb224fae7f6ab0e52a1bc9b7076150618a69421edf14c7dc4cae5676`，
   `hdiutil verify` VALID、包内 `CFBundleVersion=2021`、
   `codesign --verify --deep --strict` OK，ad hoc 签名）。验收记录见
   `moonlight-ci-evidence/20261028-wave-f-feature-state/release-verification.json`。
-  本机 `/Applications/MoonlightEnhanced.app` 实测为 **build2015**（`plutil` 读回），
-  尚未替换到 2021。
-  旧版回滚链保留在 `/Applications/MoonlightEnhanced.app.b{1933,1984,1993}`。
+  之后 main 各基点的 `package-dmg` 已产出到 `build2036`（#789 job 4572）与
+  `build2041`（#813 job 4788），但**这两个包都没做过包内三件套验收**，
+  不得当作"已验证产物"引用。
+  本机 `/Applications/MoonlightEnhanced.app` 实测为 **build2029**（`plutil` 读回），
+  既不是 2021 也不是最新的 2041。
+  旧版回滚链保留在 `/Applications/MoonlightEnhanced.app.b{1933,1984,1993,2015}`。
 - `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/K1.2/E1/P2-1/P2-2/P2-3
   全是代码层完成 + CI 绿 + 真机待取证。
 
@@ -181,6 +198,18 @@
 | `448b2c6` / `421bd74` | 相对鼠标 delta 先 latch 到局部变量再分包，避免输入线程被高速相对鼠标独占 | **已在 main**：子模块 `f740e75`（merge `abe83b8`）→ 主仓 bump `43c6e835` → merge `32421c28`（MR 26）。取证：holder 字段 `src/InputStream.c:74` 起、latch `:794`、button 事件结束批次 `:1367` | 无需动作。fork 侧网络 I/O 本就不在锁内，未重复搬"释放锁"的 hunk |
 | `970b072` | 修复 queued controller packet 的 use-after-free（队列满 / 连接终止两条路径） | fork 侧**不存在** `currentQueuedControllerPacket`（input edge queue 重写已移除该全局缓存，`sendControllerEventInternal` 直接入队不复用 holder） | **不适用**：不硬套补丁，只在 drift 文档记录"上游修的风险面我们已不存在" |
 | `41cedb8` | `ignoreDisconnectIntercept` 只对发给本 peer 的 ENet DISCONNECT 生效 | `src/ControlStream.c` 已含 peerID/sessionID/地址三重校验（Wave E-B `f65f5b3` 已吸） | **已在 main**，无需动作 |
+| `62e0663` | 只在 RFI 真正启用时才上报 speculative 丢帧（否则等于对主机撒谎） | **已在子模块 master**（main 尚未取用，pin 仍 `abe83b8`）：子模块 fork `5340b26`（merge `093098f5`）→ 主仓 bump `6e1aa0b1`（MR 32 在途）。取证（子模块 `093098f5` 内）：`src/RtpVideoQueue.c:230` 预判分支已被 `isReferenceFrameInvalidationEnabled() &&` 收口 | 待 MR 32 合并。真机收益（弱网下不再向主机发无效 RFI）待 §4 取证 |
+| `d85371c` | multi-block 帧损后必须复位 `reportedLostFrame`，且用实际包 `frameIndex` 而不是 `currentFrameNumber` 上报 | **已在子模块 master**：fork `c759034`（同一 merge `093098f5`）。取证（同上）：`src/RtpVideoQueue.c:672` 已用 `nvPacket->frameIndex`、`:677-681` 起带 NB 注释复位为 `false` | 待 MR 32 合并。弱网连续丢帧的 RFI 范围正确性待真机取证 |
+| `be43885` | 丢掉「部分已处理的 IDR 帧」时必须重新要求 IDR，不能降级成 RFI | **已在子模块 master**：fork `49cfe3a`（同一 merge `093098f5`）。取证（同上）：`src/VideoDepacketizer.c:156` `dropFrameState()` 条件已含 `(nalChainHead && ctx->frameType == FRAME_TYPE_IDR)` | 待 MR 32 合并。IDR 半包丢弃后的花屏恢复路径待真机取证 |
+
+等价性取证方式（G-3 按此执行，记为可复核事实）：`git cherry-pick` 法因冲突污染结构不可用；
+改用提取上游与 fork 两侧 diff 的 `-/+` 文本流、归一化 fork 适配点
+（`notifyFrameLostCtx(...)`/`ctx->frameType` 一类上下文形参）后逐一比对，
+三组 `5340b26↔62e0663`、`c759034↔d85371c`、`49cfe3a↔be43885` 均
+`removed_equal=True added_equal=True`，且 `git diff --name-only abe83b8 49cfe3a`
+只有 `src/RtpVideoQueue.c`、`src/VideoDepacketizer.c` 两个文件，无夹带改动。
+fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全局上下文的薄封装，
+不构成语义差异。
 
 移植纪律（G-1/G-2 已按此执行完）：一次一个 commit 一个分支；先让门禁脚本证明能抓到
 "Sunshine 路径没走密集打包"、"非 Sunshine 主机仍被密集打包"、"delta 未 latch 就发第一包"
@@ -303,9 +332,12 @@
 
 ## 11. 下一步执行
 
-（2026-10-28 二次刷新）**代码层里程碑 0.1→P2 + K1.2 + Wave B/C/D/E 已全部在 main**；
-MR 1–19 全合并（MR 19 = K1.2 客户端诚实性 `f29cacb8`，由 `liguangming` 审批合并，main 基点
-`8f97ba8f`），在途 MR = 0。
+（2026-10-30 三次刷新）**代码层里程碑 0.1→P2 + K1.2 + Wave B/C/D/E/H/I/K 已全部在 main**；
+MR 1–31 全合并，main 基点 `18ee83cd`；唯一在途是 MR 32（Wave G-3 RFI 丢帧诚实性
+submodule bump `6e1aa0b1`）。`docs/common-c-drift-2026-10-26.md` 的"未取待定"四类中，
+RFI 修复族已随 G-3 处置完，剩下的 `342b106`（control stream 就地加密）、
+`f1cca2d`（pen event 批处理）、`7022b33`/`1fddbcb`（BSD socket 错误重构 / rswrapper 头泄漏）
+仍未评估，不是遗漏就是待定，不得当作已完成。
 
 1. **本文档自身的收口**：本 docs 分支 → 准确 SHA CI 到终态 → `liguangming` 审批合并 →
    回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
