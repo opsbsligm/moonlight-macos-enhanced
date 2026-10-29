@@ -2623,6 +2623,22 @@ for reader_shape, reader_arguments in (("its readings", []),
           "the keyCode reader audit failed %s: %s"
           % (reader_shape, (reader_run.stdout + reader_run.stderr).strip().splitlines()[-1:]))
 
+# The acceptance grader is a laptop's question too, so it is run here rather than excused: it
+# needs nothing but this checkout, and the failure it forecloses is the one a status report
+# cannot see -- a row reading PASS because a key is missing, or because the grader stopped
+# asking which key a verdict needs. Both weakenings are planted and must come back refused.
+# The other shape stays where it belongs: a real verdict needs an exported report and an
+# observer statement bound to that report's hash, so there is no fixture here to pass, and a
+# grader handed no report says so and exits 2 instead of grading nothing into a green sweep.
+grader_run = subprocess.run(
+    [sys.executable, os.path.join(scripts_dir, "hardware-acceptance-check.py"), "--self-test"],
+    capture_output=True, text=True, cwd=root)
+check(grader_run.returncode == 0,
+      "the hardware acceptance grader passes its red proofs"
+      if grader_run.returncode == 0 else
+      "the hardware acceptance grader failed its red proofs: "
+      + (grader_run.stdout + grader_run.stderr).strip().splitlines()[-1:])
+
 # The audit above proves no reader can invent a key from a field that means nothing on a mouse
 # event. It cannot say which side a player's next phantom-key report came from, and every
 # instrument that could was unavailable where the symptom lived: the answer sat in a debug build,
