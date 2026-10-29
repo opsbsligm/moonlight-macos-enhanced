@@ -50,7 +50,8 @@ pasted, which is why that one is a refusal rather than a preference.
 Usage: diagnostics-report-tests.py [root]
 Exit 0 when the shipping builder passes, every planted defect is caught, and the wiring holds.
 """
-import os, re, subprocess, sys, tempfile
+import os, re, subprocess, sys, tempfile, time
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import apple_toolchain
@@ -84,6 +85,110 @@ def check(ok, message):
     print("%s %s" % ("ok  " if ok else "FAIL", message))
     if not ok:
         failures.append(message)
+
+
+def _worker_count(job_count, ceiling=4):
+    """How many harness compiles may run at once.
+
+    The job that drives this script has a ten-minute ceiling on a single shared Mac runner, and
+    pipeline 779 job 4496 spent 465 of its 601 seconds inside this file. The same file locally
+    measures 60.0s wall for 38.0s user and 8.2s sys on eight cores -- 0.77 cores busy, because
+    each of its 36 clang compiles and 2 analyzer runs starts only after the one before it ended.
+    The runs are independent and each owns a
+    `tempfile.TemporaryDirectory`, so the serial ordering was never doing work the wide form
+    cannot do. Measured twice on the same commit, the serial control run second on a warmer
+    cache: 24.6s wide against 60.0s serial, with identical verdicts -- which is what
+    `scheduler_self_test` exists to keep true.
+
+    Four rather than eight: the runner takes two concurrent pipelines, and a gate that starves
+    the build beside it is a gate that breaks the pipeline it protects.
+    """
+    try:
+        cpus = os.cpu_count() or 1
+    except Exception:
+        cpus = 1
+    return max(1, min(ceiling, cpus, job_count))
+
+
+def _call_job(job):
+    """Call one harness job, turning a crash into a refusal so no job can vanish.
+
+    A job that raises has proved nothing, which is a refusal and not a pass -- and it is a line
+    rather than a silence, because a gate whose failing case disappeared prints a clean tree.
+    """
+    try:
+        return job()
+    except Exception as error:
+        return (False, "a harness job died and proved nothing: %s: %s"
+                % (type(error).__name__, error))
+
+
+def run_jobs(jobs, report=check, workers=None):
+    """Run toolchain-heavy jobs concurrently and report them in the planned order.
+
+    Each job is a callable returning `(ok, message)`, with the message composed inside the job,
+    so a wide run prints the same words in the same order a one-core run does: `pool.map` hands
+    back results in the order the jobs were planned, not the order they finished. `report` is
+    injectable so the scheduler's own self-test can grade it without writing into the run's real
+    failure list.
+    """
+    if workers is None:
+        workers = _worker_count(len(jobs))
+    if workers <= 1:
+        for job in jobs:
+            report(*_call_job(job))
+        return
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        verdicts = list(pool.map(_call_job, jobs))
+    for ok, message in verdicts:
+        report(ok, message)
+
+
+def scheduler_self_test():
+    """Prove that running the jobs concurrently cannot change what the gate says.
+
+    Parallelism is the kind of change that buys speed with honesty, so the scheduler is graded
+    rather than trusted. The same planned jobs run one core deep and four deep, and the two
+    transcripts have to match exactly -- same verdicts, same order, same count -- over a job
+    list whose jobs finish in the opposite order to the one they were planned in, plus a job
+    that fails and a job that raises. A scheduler that reported jobs as they completed, or lost
+    a failing one, is caught here rather than in a CI log where a missing line just looks like
+    nobody wrote it.
+    """
+    def transcript(workers):
+        seen = []
+        # Staggered sleeps, descending: the last job finishes first, so a scheduler that reported
+        # on completion order would produce a different transcript than the planned order. The
+        # spacing is in milliseconds because this self-test runs on every pass of the gate, and a
+        # scheduler check that costs the gate more than the compiles it protects is not a check.
+        jobs = [lambda index=index: (time.sleep((24 - index) * 0.004),
+                                     (index % 3 != 0, "job %d" % index))[1]
+                for index in range(24)]
+        jobs.append(lambda: (_ for _ in ()).throw(RuntimeError("the probe would not build")))
+        run_jobs(jobs, report=lambda ok, message: seen.append((ok, message)), workers=workers)
+        return seen
+
+    serial = transcript(1)
+    parallel = transcript(_worker_count(25, ceiling=4))
+    check(len(parallel) > 1 or len(serial) == len(parallel),
+          "the wide path is really wide on this host (%d workers for 25 jobs)"
+          % _worker_count(25, ceiling=4))
+    check(serial == parallel,
+          "the concurrent scheduler returns the same verdicts in the same order as a serial run"
+          if serial == parallel else
+          "the concurrent scheduler disagrees with the serial one: %s"
+          % next((("job %d: %r vs %r" % (index, a, b))
+                  for index, (a, b) in enumerate(zip(serial, parallel)) if a != b),
+                 "%d reports vs %d" % (len(serial), len(parallel))))
+    check(len(serial) == 25 and serial[-1][0] is False,
+          "a job that dies is reported as a refusal rather than vanishing"
+          if len(serial) == 25 and serial[-1][0] is False else
+          "a job that died was not reported as a refusal (%d reports)" % len(serial))
+    check(sum(1 for ok, _ in serial if not ok) == 9,
+          "the scheduler's own case list still contains the failures it must carry"
+          if sum(1 for ok, _ in serial if not ok) == 9 else
+          "the scheduler's case list carries %d refusals, expected 9"
+          % sum(1 for ok, _ in serial if not ok))
 
 
 def read(rel):
@@ -1008,45 +1113,70 @@ def main():
               "silence reports success on less than it used to test"
               % (checks, MIN_DRIVER_CHECKS))
 
-    with tempfile.TemporaryDirectory() as work:
-        found, log = analyze(shipping, work, cc, sdk)
-        check(not found,
-              "the static analyzer finds nothing in the shipping builder"
-              if not found else
-              "the static analyzer found %d thing(s) in the shipping builder:\n    %s"
-              % (len(found), "\n    ".join(found)))
+    # Everything below this line is an independent clang run, so it is planned as a list of
+    # jobs and run wide. The source-shape guards stay in the planning loop rather than inside a
+    # job: a mutation whose anchor no longer matches the source was never tested, and that has
+    # to be said whether or not a compiler is available to be busy.
+    jobs = []
+
+    def baseline_analyzer_job(source=shipping):
+        with tempfile.TemporaryDirectory() as work:
+            found, log = analyze(source, work, cc, sdk)
+        return (not found,
+                "the static analyzer finds nothing in the shipping builder"
+                if not found else
+                "the static analyzer found %d thing(s) in the shipping builder:\n    %s"
+                % (len(found), "\n    ".join(found)))
+    jobs.append(baseline_analyzer_job)
 
     for label, old, new in ANALYZER_DEFECTS:
         if old not in shipping:
             check(False, "the analyzer defect '%s' no longer matches the source" % label)
             continue
-        with tempfile.TemporaryDirectory() as work:
-            found, log = analyze(shipping.replace(old, new, 1), work, cc, sdk)
-            check(bool(found),
-                  "the analyzer reports it when %s" % label
-                  if found else "NOT CAUGHT (%s): %s" % (label, log))
+
+        def defect_job(source=shipping.replace(old, new, 1), label=label):
+            with tempfile.TemporaryDirectory() as work:
+                found, log = analyze(source, work, cc, sdk)
+            return (bool(found),
+                    "the analyzer reports it when %s" % label
+                    if found else "NOT CAUGHT (%s): %s" % (label, log))
+        jobs.append(defect_job)
 
     for label, old, new in MUTATIONS:
         if old not in shipping:
             check(False, "the mutation '%s' no longer matches the source" % label)
             continue
-        with tempfile.TemporaryDirectory() as work:
-            code, log = compile_and_run(shipping.replace(old, new, 1), work, cc, sdk)
+
+        def mutation_job(source=shipping.replace(old, new, 1), label=label):
+            with tempfile.TemporaryDirectory() as work:
+                code, log = compile_and_run(source, work, cc, sdk)
             caught = code == 1 and "FAIL " in log
-            check(caught, "the run fails when %s" % label
-                  if caught else "NOT CAUGHT (%s): %s" % (label, log))
+            return (caught, "the run fails when %s" % label
+                    if caught else "NOT CAUGHT (%s): %s" % (label, log))
+        jobs.append(mutation_job)
 
     inventory_source = read(INVENTORY_SOURCE)
     for label, old, new in INVENTORY_MUTATIONS:
         if inventory_source.count(old) != 1:
             check(False, "the inventory mutation '%s' must match exactly once" % label)
             continue
-        with tempfile.TemporaryDirectory() as work:
-            code, log = compile_and_run(
-                shipping, work, cc, sdk, inventory_source.replace(old, new, 1))
+
+        def inventory_job(mutated=inventory_source.replace(old, new, 1), label=label):
+            with tempfile.TemporaryDirectory() as work:
+                code, log = compile_and_run(shipping, work, cc, sdk, mutated)
             caught = code == 1 and "FAIL " in log
-            check(caught, "the run fails when %s" % label
-                  if caught else "NOT CAUGHT (%s): %s" % (label, log))
+            return (caught, "the run fails when %s" % label
+                    if caught else "NOT CAUGHT (%s): %s" % (label, log))
+        jobs.append(inventory_job)
+
+    wanted = 1 + len(ANALYZER_DEFECTS) + len(MUTATIONS) + len(INVENTORY_MUTATIONS)
+    check(len(jobs) == wanted,
+          "every compile-heavy case reached the scheduler (%d jobs)" % len(jobs)
+          if len(jobs) == wanted else
+          "only %d of %d compile-heavy cases reached the scheduler; a case that stops being "
+          "planned stops being tested" % (len(jobs), wanted))
+    scheduler_self_test()
+    run_jobs(jobs)
 
     live = read(LIVE)
     for needed, why in (
