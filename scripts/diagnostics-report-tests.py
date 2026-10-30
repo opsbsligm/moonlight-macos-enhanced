@@ -51,6 +51,8 @@ Usage: diagnostics-report-tests.py [root]
 Exit 0 when the shipping builder passes, every planted defect is caught, and the wiring holds.
 """
 import os, re, subprocess, sys, tempfile, time
+import hashlib
+import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -71,13 +73,16 @@ PBX = "Moonlight.xcodeproj/project.pbxproj"
 BRIDGE = "Limelight/Moonlight-Bridging-Header.h"
 HOSTS = "Limelight/macOS/ViewControllers/HostsViewController.m"
 APP_PANE = "Limelight/macOS/ViewControllers/SettingsAppPane.swift"
+CHECKER = "scripts/hardware-acceptance-check.py"
 
 # The floor, not a claim about the exact number: the shipped binary prints how many checks it
 # actually ran, and this refuses a run that quietly lost cases. Raised from 68 when the
-# machine-readable block became part of the report rather than dead code, and from 105 when
-# Wave O-1 named the protocol id that has no layout family -- a floor that stays behind the
-# real count is how a case list disappears without anyone noticing.
-MIN_DRIVER_CHECKS = 109
+# machine-readable block became part of the report rather than dead code, from 105 when
+# Wave O-1 named the protocol id that has no layout family, and from 109 when Wave S added the
+# export shape -- a build identity that survives its own secret scrub, the canonical byte form an
+# exported file has to hold, and the write that produces it. A floor that stays behind the real
+# count is how a case list disappears without anyone noticing.
+MIN_DRIVER_CHECKS = 134
 
 failures = []
 
@@ -145,6 +150,57 @@ def run_jobs(jobs, report=check, workers=None):
         report(ok, message)
 
 
+def acceptance_checker():
+    """The shipping acceptance checker, loaded from the tree rather than reimplemented here.
+
+    The producer and the consumer of a diagnostics report each had a green light and the seam
+    between them had none: the builder asserted that a commit-shaped string appeared somewhere in
+    its text, the checker graded only the fixture it carries in its own file, and a real export
+    still graded every row of an acceptance matrix UNKNOWN while CI stayed green. A gate that
+    copied the checker's parsing rules into this file would have the same hole as a gate that
+    copied its wording -- it would pass while the real consumer rejected. So the real module is
+    imported, and the real file on disk is what gets handed to it.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "ml_hardware_acceptance_check", os.path.join(ROOT, CHECKER))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def grade_text(module, text):
+    """Hand the exported bytes to the checker's own parser. Returns `(accepted, detail)`.
+
+    Text mode is not a convenience: it is how the checker reads a report off disk, so a separator
+    the builder failed to fold would break lines here that the hashed bytes still count as one.
+    """
+    try:
+        machine = module.parse_machine(text)
+    except module.ReportError as error:
+        return False, "the checker refused the export: %s" % error
+    return module.build_identity(machine)
+
+
+def export_with(source, cc, sdk, inventory_source=None):
+    """Build and run the harness, and return the export the shipping writer put on disk.
+
+    `(code, log, export_text)`; `export_text` is None when the run wrote no file. The driver
+    keeps going after a failed check, so a mutated build that fails its own assertions still
+    writes a report -- which is what lets the consumer, rather than the producer, decide whether
+    a defect is visible from its side. The bytes come back as text rather than a path because the
+    working directory is gone by the time the caller reads them.
+    """
+    with tempfile.TemporaryDirectory() as work:
+        dump = os.path.join(work, "export.txt")
+        code, log = compile_and_run(source, work, cc, sdk, inventory_source, dump_path=dump)
+        if code is None:
+            return None, log, None
+        if not os.path.exists(dump):
+            return code, log, None
+        with open(dump, encoding="utf-8") as handle:
+            return code, log, handle.read()
+
+
 def scheduler_self_test():
     """Prove that running the jobs concurrently cannot change what the gate says.
 
@@ -199,6 +255,7 @@ def read(rel):
 
 DRIVER = r'''
 #import <Foundation/Foundation.h>
+#import <CommonCrypto/CommonDigest.h>
 #import "DiagnosticsReportBuilder.h"
 #import "InputDiagnosticsLedger.h"
 #import "MLControllerInventory.h"
@@ -212,6 +269,21 @@ static void check(BOOL ok, const char *what) {
     if (!ok) {
         gFailures++;
     }
+}
+
+// The hex digest of the bytes the builder says a file must hold. The checker hashes a report
+// with Python's hashlib over the file's bytes, so a byte the builder adds or drops moves every
+// declaration bound to that report. Printing the digest lets the Python side re-hash the same
+// text on its own and compare: two readers agreeing is the only proof that the shape written and
+// the shape graded are one shape.
+static NSString *sha256Hex(NSData *data) {
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (int index = 0; index < CC_SHA256_DIGEST_LENGTH; index++) {
+        [hex appendFormat:@"%02x", digest[index]];
+    }
+    return hex;
 }
 
 int main(void) {
@@ -260,6 +332,48 @@ int main(void) {
             redactString:@"cert MIICabc123DEF456ghiJ789KLMnop0== end"];
         check([blob rangeOfString:@"[redacted-blob]"].location != NSNotFound,
               "a base64 certificate leaves");
+        // The build identity is spared, so the rule that spares it has to be shown to spare
+        // nothing else. Each case below is a 40-hex run that is NOT the builder's own
+        // `ml.build.git_commit=<40 lowercase hex>` line, and every one still has to leave.
+        check([[DiagnosticsReportBuilder redactString:
+                    @"log 0123456789abcdef0123456789abcdef01234567 tail"]
+                   rangeOfString:@"[redacted-blob]"].location != NSNotFound,
+              "a 40-hex run in ordinary prose is still scrubbed -- the exemption is one whole "
+              "assignment line, not every long hex string");
+        check([[DiagnosticsReportBuilder redactString:
+                    @"ml.build.git_checksum=0123456789abcdef0123456789abcdef01234567"]
+                   rangeOfString:@"[redacted-blob]"].location != NSNotFound,
+              "a similar key name does not buy an exemption");
+        check([[DiagnosticsReportBuilder redactString:
+                    @"ml.build.git_commit=0123456789ABCDEF0123456789ABCDEF01234567"]
+                   rangeOfString:@"[redacted-blob]"].location != NSNotFound,
+              "an uppercase run is not a commit this builder writes, so it is still scrubbed");
+        check([[DiagnosticsReportBuilder redactString:
+                    @"ml.build.git_commit=0123456789abcdef0123456789abcdef0123456"]
+                   rangeOfString:@"[redacted-blob]"].location != NSNotFound,
+              "a truncated run is not a commit either");
+        check([[DiagnosticsReportBuilder redactString:
+                    @"ml.build.git_commit=0123456789abcdef0123456789abcdef0123456789"]
+                   rangeOfString:@"[redacted-blob]"].location != NSNotFound,
+              "a longer run is not a commit either, so the exemption cannot be widened by "
+              "padding a secret out to forty characters");
+        // The builder writes the commit as a line of its own, so a line that carries this key
+        // and more beside it is not the builder's line -- it came from a log, and forfeits the
+        // exemption. Every long run on it then leaves, the commit-shaped one included. That is
+        // the safe direction to fail in: the checker grades such a report as unknown rather than
+        // a report full of logs grading a secret as a build identity.
+        check([[DiagnosticsReportBuilder redactString:
+                    @"ml.build.git_commit=0123456789abcdef0123456789abcdef01234567 spare MVJubm5uNTY3ODlmZGVmYQ=="]
+                   rangeOfString:@"[redacted-blob]"].location != NSNotFound &&
+               [[DiagnosticsReportBuilder redactString:
+                     @"ml.build.git_commit=0123456789abcdef0123456789abcdef01234567 spare MVJubm5uNTY3ODlmZGVmYQ=="]
+                    rangeOfString:@"0123456789abcdef0123456789abcdef01234567 spare"].location == NSNotFound,
+              "a line that only looks like the build identity keeps the full scrub, so the "
+              "exemption cannot be talked into spareing a secret sharing its line");
+        check([[DiagnosticsReportBuilder redactString:@"nothing here"]
+                   rangeOfString:@"\001"].location == NSNotFound,
+              "the internal stand-in for a spared commit never survives into a report, so no "
+              "reader ever sees a byte they cannot type");
 
         NSString *other = [DiagnosticsReportBuilder redactString:@"at /Users/other/code/x.app"];
         check([other rangeOfString:@"~"].location != NSNotFound &&
@@ -887,6 +1001,23 @@ int main(void) {
               [shaped rangeOfString:@"ml.build.number=2050"].location != NSNotFound,
               "the version the binary announced itself with is addressable, so a DMG and a "
               "report can be matched without reading the About pane");
+        // The same keys, read out of a shipped report rather than out of the section that made
+        // them. The block above proves the builder writes a commit; only this one proves the
+        // report a player copies still holds it, because every line passes through the redaction
+        // scrub on the way out -- and a 40-hex commit is a long run of letters and digits, which
+        // is exactly what the blob rule exists to remove. The acceptance checker refuses any
+        // report whose commit is not a full 40 hex, so a scrubbed identity does not mark one row
+        // unknown, it marks the whole matrix unknown, and the run that produced it is lost.
+        NSString *shippedReport = [DiagnosticsReportBuilder
+            reportFromSections:@[ [DiagnosticsReportBuilder
+                machineStateSectionWithState:shape snapshot:pad] ]];
+        check([shippedReport rangeOfString:@"ml.build.git_commit=0123456789abcdef0123456789abcdef01234567"]
+                  .location != NSNotFound,
+              "the commit survives the redaction scrub, because a report whose identity was "
+              "scrubbed grades every row of an acceptance run as unknown");
+        check([shippedReport rangeOfString:@"[redacted-blob]"].location == NSNotFound,
+              "no blob marker replaces anything in the machine block, so a checker reads the "
+              "bytes the build actually named rather than a marker that looks like a value");
 
         MLControllerInventorySnapshot *advertised = MLControllerInventorySnapshot.new;
         advertised.advertisedControllerArrivals = YES;
@@ -908,6 +1039,103 @@ int main(void) {
         check([advertisedText rangeOfString:@"ml.controllers.driver=MFi"].location != NSNotFound,
               "the driver recorded at session start is carried, because the three HID drivers "
               "disagree about the same pad");
+
+        // --- the bytes an exported report file holds -------------------------------
+        // An acceptance run grades the file, not the app: the checker hashes the file's bytes and
+        // binds every observation to that hash. An editor that appends a blank line, or a CR that
+        // survives a paste, changes every byte a declaration was bound to and the whole matrix
+        // grades as unknown. So the app writes the file itself, from one canonical shape.
+        NSData *clean = [DiagnosticsReportBuilder canonicalReportBytesFromString:
+            @"alpha\nbeta\ngamma"];
+        check([[[NSString alloc] initWithData:clean encoding:NSUTF8StringEncoding]
+                  isEqualToString:@"alpha\nbeta\ngamma\n"],
+              "a report gains the one newline that ends a file, and a player's editor cannot "
+              "add a second one later");
+        check([DiagnosticsReportBuilder canonicalReportBytesFromString:
+                   @"alpha\nbeta\ngamma\n"].length == clean.length &&
+              [[DiagnosticsReportBuilder canonicalReportBytesFromString:
+                    @"alpha\nbeta\ngamma\n\n\n"] isEqualToData:clean],
+              "exporting an already-exported report hashes the same, so a round trip through a "
+              "file cannot drift from the report the checker was handed");
+        check([[DiagnosticsReportBuilder canonicalReportBytesFromString:
+                    @"a\r\nb\rc\r\n\r\nd"]
+                   isEqualToData:[DiagnosticsReportBuilder
+                       canonicalReportBytesFromString:@"a\nb\nc\n\nd"]],
+              "CRLF and lone CR fold to one LF each, because a paste through an editor is allowed "
+              "to change a line ending but not the report's hash");
+        // The checker reads the file in universal-newline text mode and splits its machine block
+        // with str.splitlines(), which also breaks on VT, FF, FS, GS, RS, NEL and U+2028/2029.
+        // A separator only one of the two folds would make the hashed text and the parsed lines
+        // describe different files.
+        NSData *exotic = [DiagnosticsReportBuilder canonicalReportBytesFromString:
+            [NSString stringWithCharacters:(const unichar[]){'a', 0x0B, 'b', 0x0C, 'c', 0x1C,
+                                                           'd', 0x85, 'e', 0x2028, 'f'}
+                                    length:11]];
+        NSString *exoticText = [[NSString alloc] initWithData:exotic encoding:NSUTF8StringEncoding];
+        check([exoticText isEqualToString:@"a\nb\nc\nd\ne\nf\n"],
+              "every separator Python splits a line on becomes an LF, so the bytes a hash covers "
+              "and the line a key came from stay one file");
+        // Trailing blank lines go, because an editor adds one without anyone choosing it. A line
+        // that holds a space is kept: folding it would mean deciding the player did not mean what
+        // the file says, which is not this method's call to make.
+        check([DiagnosticsReportBuilder canonicalReportBytesFromString:@"\n\n\n"].length == 0,
+              "a report that says nothing exports as an empty file rather than a newline nobody "
+              "can see");
+        check([[DiagnosticsReportBuilder canonicalReportBytesFromString:@"   \n\t\n"]
+                   isEqualToData:[DiagnosticsReportBuilder
+                       canonicalReportBytesFromString:@"   \n\t"]],
+              "only the end-of-file newline is normalised, so no whitespace the report actually "
+              "carries disappears between the bytes hashed and the bytes read");
+        check([DiagnosticsReportBuilder canonicalReportBytesFromString:@""].length == 0,
+              "no report exports no bytes");
+
+        NSData *shapedBytes = [DiagnosticsReportBuilder canonicalReportBytesFromString:shaped];
+        NSString *shapedText = [[NSString alloc] initWithData:shapedBytes encoding:NSUTF8StringEncoding];
+        check(shapedBytes.length > 0 &&
+              [shapedText hasSuffix:@"\n"] &&
+              [shapedText rangeOfString:@"\n\n"].location == NSNotFound,
+              "the machine block a run would actually be graded on exports as one LF-terminated "
+              "text with no blank line for a parser to trip over");
+
+        // The whole report, as the settings pane hands it to a file. A single block on its own
+        // would be a shape no checker ever sees: `parse_machine` indexes on the `[machine]`
+        // header, and only the assembled text carries it. Everything below therefore travels
+        // through the same two methods the Export button calls, over the assembled report.
+        NSData *exportBytes = [DiagnosticsReportBuilder canonicalReportBytesFromString:shippedReport];
+        NSString *exportText = [[NSString alloc] initWithData:exportBytes encoding:NSUTF8StringEncoding];
+        check(exportBytes.length > 0 &&
+              [exportText hasPrefix:@"moonlight-macos-enhanced diagnostics report\n"] &&
+              [exportText rangeOfString:@"[machine]\n"].location != NSNotFound,
+              "the exported file is a whole report with the header the checker indexes on, so "
+              "the bytes under test are the bytes a player saves rather than a block in isolation");
+        check([exportText hasSuffix:@"\n"] && ![exportText hasSuffix:@"\n\n"],
+              "exactly one newline ends the exported file, because a second one is a byte the "
+              "checker hashes and no reader can see");
+        check([[DiagnosticsReportBuilder canonicalReportBytesFromString:exportText]
+                   isEqualToData:exportBytes],
+              "exporting an exported report hashes the same, so a file round trip cannot drift "
+              "from the report a declaration was bound to");
+        // The write goes through the production entry point, not a hand-rolled `writeToFile:`,
+        // so the atomic option and the error path are the ones a player can actually reach.
+        // The default destination keeps the case count independent of the environment: a check
+        // that only runs when someone remembered to set a variable is a check the floor number
+        // cannot see.
+        NSString *dumpPath = NSProcessInfo.processInfo.environment[@"ML_CANONICAL_DUMP"];
+        if (dumpPath.length == 0) {
+            dumpPath = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                @"ml-diagnostics-canonical-probe.txt"];
+        }
+        NSError *writeError = nil;
+        BOOL wrote = [DiagnosticsReportBuilder writeReport:shippedReport
+                                                     toURL:[NSURL fileURLWithPath:dumpPath]
+                                                     error:&writeError];
+        check(wrote && writeError == nil,
+              "the report writes without saying why it did not happen");
+        check([[NSData dataWithContentsOfFile:dumpPath] isEqualToData:exportBytes],
+              "the file on disk holds exactly the canonical bytes, so nothing an editor adds "
+              "stands between the report and the hash bound to it");
+        printf("CANONICAL-SHA256 %s (%lu bytes)\n",
+               sha256Hex(exportBytes).UTF8String, (unsigned long)exportBytes.length);
     }
     // The count is printed rather than counted from the transcript by whoever reads it: a
     // report that quotes "the harness has N checks" and is wrong is the same kind of number
@@ -1078,6 +1306,21 @@ ANALYZER_DEFECTS = (
     return section;"""),
 )
 
+# Three defects whose only witness is the consumer. Each leaves the producer's own assertions
+# green or nearly green -- the schema case leaves them entirely green -- while the acceptance
+# checker stops being able to grade an exported report at all. That is the seam this file exists
+# to close: the builder's text and the checker's parser have to be graded against one file, and a
+# planted defect has to be caught by the reader that would actually be broken by it.
+ACCEPTANCE_MUTATIONS = (
+    ("the build identity is no longer held aside before the secret scrub",
+     "    text = [self maskBuildIdentityInString:text heldOut:&identity];\n", ""),
+    ("the machine block writes a header the checker does not index on",
+     '    return [DiagnosticsReportSection sectionWithTitle:@"machine" lines:lines];\n}',
+     '    return [DiagnosticsReportSection sectionWithTitle:@"machine_state" lines:lines];\n}'),
+    ("the builder raises its schema without the checker agreeing",
+     '[lines addObject:@"ml.schema=1"]', '[lines addObject:@"ml.schema=2"]'),
+)
+
 
 def analyze(source, work, cc, sdk):
     """Run clang's static analyzer over the builder on its own, and return its findings.
@@ -1103,7 +1346,7 @@ def analyze(source, work, cc, sdk):
     return [line for line in log.splitlines() if "warning:" in line or "error:" in line], log
 
 
-def compile_and_run(source, work, cc, sdk, inventory_source=None):
+def compile_and_run(source, work, cc, sdk, inventory_source=None, dump_path=None):
     for name, text in ((os.path.basename(HEADER), read(HEADER)),
                        (os.path.basename(SOURCE), source),
                        (os.path.basename(LEDGER_HEADER), read(LEDGER_HEADER)),
@@ -1124,16 +1367,24 @@ def compile_and_run(source, work, cc, sdk, inventory_source=None):
         capture_output=True, text=True)
     if built.returncode != 0:
         return None, (built.stdout + built.stderr).strip()[-2000:]
-    ran = subprocess.run([binary], capture_output=True, text=True)
+    # Each run owns its dump file. The jobs go wide, and two of them writing one shared path
+    # would have a checker read whichever report finished last rather than the one its own
+    # build wrote -- a green gate describing a file that no longer exists.
+    env = dict(os.environ)
+    if dump_path is not None:
+        env["ML_CANONICAL_DUMP"] = dump_path
+    ran = subprocess.run([binary], capture_output=True, text=True, env=env)
     return ran.returncode, (ran.stdout + ran.stderr).strip()
 
 
 def main():
     cc, sdk = apple_toolchain.clang_and_sdk("the diagnostics report harness")
     shipping = read(SOURCE)
+    checker = acceptance_checker()
 
     with tempfile.TemporaryDirectory() as work:
-        code, log = compile_and_run(shipping, work, cc, sdk)
+        export_path = os.path.join(work, "export.txt")
+        code, log = compile_and_run(shipping, work, cc, sdk, dump_path=export_path)
         if code is None:
             check(False, "the shipping builder does not compile:" + log)
             return report_result()
@@ -1154,6 +1405,36 @@ def main():
               "the harness runs only %d of at least %d checks; a case list that shrinks in "
               "silence reports success on less than it used to test"
               % (checks, MIN_DRIVER_CHECKS))
+
+        # The seam between the two halves of an acceptance run, graded here once rather than in a
+        # mutated copy. The producer printed a digest of the bytes it wrote; the consumer's own
+        # hash of the file it was handed has to be the same number, and its parser has to reach a
+        # build identity. Two independent readers agreeing on the digest is the only form of proof
+        # available here -- a single reader recomputing its own hash proves nothing about the file.
+        with open(export_path, "rb") as handle:
+            exported_bytes = handle.read()
+        exported_text = exported_bytes.decode("utf-8")
+        printed = next((line for line in log.splitlines() if line.startswith("CANONICAL-SHA256")), "")
+        producer_digest = printed.split()[1] if len(printed.split()) > 1 else ""
+        consumer_digest = checker.report_sha256(exported_text)
+        check(producer_digest == consumer_digest ==
+              hashlib.sha256(exported_bytes).hexdigest(),
+              "the digest the builder printed and the digest the checker computes over the "
+              "exported file are one number, so the declaration an acceptance run writes is "
+              "bound to the bytes a player can actually save"
+              if producer_digest == consumer_digest else
+              "the builder printed %s and the checker computes %s for the same file -- a report "
+              "whose readers disagree on its hash loses every declaration bound to it"
+              % (producer_digest, consumer_digest))
+        export_ok, export_detail = grade_text(checker, exported_text)
+        check(export_ok,
+              "the shipping export is readable by the acceptance checker: %s" % export_detail
+              if export_ok else
+              "the acceptance checker cannot grade the shipping export: %s" % export_detail)
+        check(b"\r" not in exported_bytes and exported_bytes.endswith(b"\n") and
+              not exported_bytes.endswith(b"\n\n"),
+              "the exported file carries no byte a line reader folds differently than the hash "
+              "does, and ends in exactly one newline")
 
     # Everything below this line is an independent clang run, so it is planned as a list of
     # jobs and run wide. The source-shape guards stay in the planning loop rather than inside a
@@ -1211,7 +1492,35 @@ def main():
                     if caught else "NOT CAUGHT (%s): %s" % (label, log))
         jobs.append(inventory_job)
 
-    wanted = 1 + len(ANALYZER_DEFECTS) + len(MUTATIONS) + len(INVENTORY_MUTATIONS)
+    # --- the producer and the consumer graded against one file -------------------------------
+    # Everything above asks the builder whether it wrote what it meant. Nothing above asks the
+    # acceptance checker whether it can still read it, which is the failure that actually costs a
+    # real-device run: an exported report whose build identity was scrubbed, whose block header
+    # moved, or whose schema moved ahead of the reader grades every row UNKNOWN, and the whole
+    # acceptance session is lost with no CI job to say so.
+    for label, old, new_text in ACCEPTANCE_MUTATIONS:
+        if shipping.count(old) != 1:
+            check(False, "the acceptance mutation '%s' must match the source exactly once" % label)
+            continue
+
+        def acceptance_job(mutated=shipping.replace(old, new_text, 1), label=label):
+            code, log, exported = export_with(mutated, cc, sdk)
+            if code is None:
+                return False, "the mutated builder did not compile (%s): %s" % (label, log[-400:])
+            if exported is None:
+                # A writer that produces no file is the loudest possible refusal, but it has to be
+                # said: without this the job would report "the checker accepted it" for a build
+                # that never wrote anything to check.
+                return True, "the checker stops accepting the export when %s (no file written)" % label
+            accepted, detail = grade_text(checker, exported)
+            return (not accepted,
+                    "the checker stops accepting the export when %s (%s)" % (label, detail)
+                    if not accepted else
+                    "NOT CAUGHT (%s): the checker still graded the export: %s" % (label, detail))
+        jobs.append(acceptance_job)
+
+    wanted = (1 + len(ANALYZER_DEFECTS) + len(MUTATIONS) + len(INVENTORY_MUTATIONS) +
+            len(ACCEPTANCE_MUTATIONS))
     check(len(jobs) == wanted,
           "every compile-heavy case reached the scheduler (%d jobs)" % len(jobs)
           if len(jobs) == wanted else
@@ -1333,6 +1642,21 @@ def main():
           "Diagnostics Report Copied" in pane and
           "Diagnostics Report Unavailable" in pane,
           "the settings pane carries the button and says whether it worked")
+    # The export button is the only path that produces a file an acceptance run can be graded
+    # from, so the wiring is asserted where the canonical bytes are: a control that copies to the
+    # clipboard instead of writing the file would leave this whole gate proving a shape nobody can
+    # reach, and the failure a player would hit -- a save that silently writes nothing -- is the
+    # one an alert has to name.
+    check("Export Diagnostics Report…" in pane and
+          "DiagnosticsReportBuilder.writeReport" in pane and
+          "Diagnostics Report Exported" in pane and
+          "Diagnostics Report Unsaved" in pane,
+          "the settings pane offers a file export that goes through the canonical writer and "
+          "says either way whether the file was written")
+    builder_source = read(SOURCE)
+    check("options:NSDataWritingAtomic" in builder_source,
+          "the report is written atomically, because a cancelled save that leaves half a file "
+          "behind still opens, still has a machine block, and grades as a whole report")
     check("DiagnosticsReportBuilder+Live.h" in read(BRIDGE),
           "the class reaches Swift, so the settings button compiles")
 
