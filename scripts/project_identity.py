@@ -29,6 +29,32 @@ PROJECT = os.path.join(ROOT, "Moonlight.xcodeproj", "project.pbxproj")
 QT_BUNDLE_NAME = "Moonlight"
 
 
+def marketing_version(project=PROJECT):
+    """The single MARKETING_VERSION the project builds, or a refusal naming the ambiguity.
+
+    A shell script that wants the short version string has the same problem as one that
+    wants the bundle name: copying it out of the project file by hand means the copy is
+    authoritative the day the project moves. This is the reader for that case -- the
+    packaging step asks for it and hands it to the image audit, so the audit compares the
+    version the *source* declares against the version the *downloaded image* carries.
+    Reading it back out of the built bundle instead would certify a bundle against itself.
+
+    `release-gate.py` also reads this setting, to refuse a tag that disagrees with it; the
+    two readers are pinned together in `self_test`, because two readers agreeing by
+    accident are the same bug as two readers disagreeing on purpose.
+    """
+    versions = set(re.findall(r"MARKETING_VERSION\s*=\s*([^;]+);",
+                              open(project, encoding="utf-8").read()))
+    if len(versions) != 1:
+        raise SystemExit("project identity: the project declares %d MARKETING_VERSION values "
+                         "(%s); exactly one is expected"
+                         % (len(versions), ", ".join(sorted(versions)) or "none"))
+    declared = versions.pop().strip()
+    if not declared:
+        raise SystemExit("project identity: MARKETING_VERSION is empty")
+    return declared
+
+
 def bundle_executable(app_bundle):
     """The binary name the bundle itself declares.
 
@@ -118,6 +144,50 @@ def self_test():
                     print("ok   %s -> %s" % (label, got))
         finally:
             os.unlink(path)
+
+    # The version reader, and the second reader of the same setting. The two are asked the
+    # same question of the shipped project file: an ambiguity check that only one of them
+    # applies is how a project declaring two versions ships a DMG named after one of them.
+    for label, text, expected, raises in (
+            ("one declared version", "MARKETING_VERSION = 1.3.9;\n", "1.3.9", None),
+            ("two versions disagreeing",
+             "MARKETING_VERSION = 1.3.9;\nMARKETING_VERSION = 1.4.0;\n", None, SystemExit),
+            ("no declared version", "PRODUCT_NAME = MoonlightEnhanced;\n", None, SystemExit),
+    ):
+        path = write(text)
+        try:
+            if raises:
+                try:
+                    marketing_version(path)
+                    failures.append("NOT REFUSED (version: %s)" % label)
+                except SystemExit:
+                    print("ok   refused: version %s" % label)
+            else:
+                got = marketing_version(path)
+                if got != expected:
+                    failures.append("version %s: read %r, expected %r" % (label, got, expected))
+                else:
+                    print("ok   version %s -> %s" % (label, got))
+        finally:
+            os.unlink(path)
+
+    release_gate = os.path.join(ROOT, "scripts", "release-gate.py")
+    both = subprocess.run(
+        [sys.executable, "-c",
+         "import importlib.util,sys,os;"
+         "spec=importlib.util.spec_from_file_location('rg',%r);"
+         "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);"
+         "print(' '.join(sorted(m.marketing_versions(open(%r,encoding='utf-8').read()))))"
+         % (release_gate, PROJECT)],
+        capture_output=True, text=True)
+    readers = both.stdout.strip().split()
+    if len(readers) == 1 and readers[0] == marketing_version():
+        print("ok   scripts/release-gate.py and the identity reader agree on version %s"
+              % marketing_version())
+    else:
+        failures.append("scripts/release-gate.py read %r, the identity reader read %r"
+                        % (both.stdout.strip() or both.stderr.strip()[:80], marketing_version()))
+
     if failures:
         print("\n%d project-identity failure(s)" % len(failures))
         return 1
@@ -129,6 +199,9 @@ def main():
     args = sys.argv[1:]
     if "--self-test" in args:
         return self_test()
+    if "--print-version" in args:
+        print(marketing_version())
+        return 0
     print(product_name())
     return 0
 
