@@ -37,6 +37,17 @@ trap 'rm -rf "$STAGING_DIR"' EXIT
 cp -R "$APP_PATH" "$STAGING_DIR/"
 ln -s /Applications "$STAGING_DIR/Applications"
 
+# Sign the copy that ships, after installing the Info.plist language tables into it.
+# Xcode never writes those tables for this project, so an image built straight out of
+# derived data carries `en.lproj`/`zh-Hans.lproj` directories holding nothing, and every
+# language reads the one sentence written into Info.plist. The GitLab path used to stop
+# here: the mirror ran `codesign-bundle.sh` and the local `build.sh` ran it too, so a
+# green pipeline and a green local build both existed while the image a user downloads
+# had no translatable permission prompt at all. Doing it to the staged copy rather than
+# the argument means the input bundle is not rewritten, and installing before sealing is
+# what makes the signature cover the sentences -- so the signing step has to come after.
+bash "${SCRIPT_DIR}/codesign-bundle.sh" "$STAGING_DIR/$APP_NAME.app"
+
 # Copy post-install fix script
 cp "${SCRIPT_DIR}/fix-moonlight-permissions.sh" "$STAGING_DIR/"
 chmod +x "$STAGING_DIR/fix-moonlight-permissions.sh"
