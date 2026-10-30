@@ -1595,6 +1595,32 @@ def aggregate_stops_running_an_audit(text):
 PAT_RULE = 'r"github_[p]at_[0-9A-Za-z]{6,}_[0-9A-Za-z]{20,}"'
 PRESCREEN_GITHUB = 'rb"(?i)github_pat_|gh[pousr]_|AKIA[0-9A-Z]|xox[baprs]-|AIza|"'
 REDACT_TAIL = '    return "%s%s%s" % (value[:6]'
+# The two anchors of the rule that this repository's own history needed. The
+# identifier that carried the shipped temporary-keychain password was
+# kTempKeychainPassword -- the credential noun is a *suffix* there -- so a matcher that
+# only anchors a name that starts with the noun is a rule that reports itself
+# armed while missing the one shape this gate was written for.
+CRED_RULE_NOUN_PREFIX = 'r"(?i)\\b[A-Za-z0-9_]*(?:password|'
+CRED_MODE_GUARD = '    if mode != "history":\n        return False'
+
+
+def password_rule_narrows_away_the_shipped_name(text):
+    # Plausible tidy-up: drop the leading wildcard because "a password variable
+    # starts with the word password". It does not -- the shipped one ended with it --
+    # so the rule stops matching the literal that started this gate, while the
+    # self-test's summary line still counts nine rules. Only the planted samples
+    # can tell a working matcher from a narrowed one.
+    return once(text, CRED_RULE_NOUN_PREFIX, "the hardcoded-password rule").replace(
+        CRED_RULE_NOUN_PREFIX, 'r"(?i)\\b(?:password|', 1)
+
+
+def history_exemption_leaks_into_the_tree(text):
+    # The one property that keeps an exemption from rotting into a mute button is
+    # that it is historical: the live tree never consults the table. Dropping the
+    # mode test is two characters of tidy-up that put every exempted value back
+    # into circulation, in current code, with the gate reporting clean.
+    return once(text, CRED_MODE_GUARD, "the exemption mode guard").replace(
+        CRED_MODE_GUARD, "", 1)
 
 
 # The read this file made before the shift-pair fix: the family bit alone, which
@@ -2192,6 +2218,12 @@ MUTATIONS = [
     ("credential-report-quotes-the-secret", CRED_SCAN,
      report_prints_the_whole_value,
      "the scan copies a whole credential into its own report", CRED_GATE),
+    ("password-rule-narrows-away-the-shipped-name", CRED_SCAN,
+     password_rule_narrows_away_the_shipped_name,
+     "the hardcoded-credential rule no longer matches the identifier shape that shipped", CRED_GATE),
+    ("history-exemption-leaks-into-the-tree", CRED_SCAN,
+     history_exemption_leaks_into_the_tree,
+     "a historical exemption excuses the same value in the live tree", CRED_GATE),
     ("credential-scan-dropped-from-ci", WORKFLOW, credential_step_dropped_from_ci,
      "CI stops running the credential scan while the aggregate still does",
      AUDIT_GATE),

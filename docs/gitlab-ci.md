@@ -16,7 +16,7 @@ GitLab is the source of truth. Push development commits to the `gitlab` remote;
   That is deliberate: as a `needs: []` job in the test stage it competed with the
   release path for one 8-core runner and starved `audit:python` into a timeout
   (pipeline 647), which skipped every downstream gate. Measured at 71 minutes
-  (146 cases) on a clean local tree; the job ceiling is 180 minutes and a
+  (148 cases) on a clean local tree; the job ceiling is 180 minutes and a
   `resource_group` keeps two batteries off the runner at the same time. A failed
   battery on a tag is still a release-blocker by construction, because `mirror`
   stays after `verify`; only the DMG artifact arrives early.
