@@ -74,9 +74,10 @@ APP_PANE = "Limelight/macOS/ViewControllers/SettingsAppPane.swift"
 
 # The floor, not a claim about the exact number: the shipped binary prints how many checks it
 # actually ran, and this refuses a run that quietly lost cases. Raised from 68 when the
-# machine-readable block became part of the report rather than dead code -- a floor that stays
-# behind the real count is how a case list disappears without anyone noticing.
-MIN_DRIVER_CHECKS = 105
+# machine-readable block became part of the report rather than dead code, and from 105 when
+# Wave O-1 named the protocol id that has no layout family -- a floor that stays behind the
+# real count is how a case list disappears without anyone noticing.
+MIN_DRIVER_CHECKS = 109
 
 failures = []
 
@@ -451,6 +452,31 @@ int main(void) {
         check(MLControllerFamilyForIds(0x1234, 0x5678) == MLControllerFamilyUnknown &&
               MLControllerProtocolTypeForFamily(MLControllerFamilyUnknown) == 0x00,
               "an unknown pad stays unknown and maps to LI_CTYPE_UNKNOWN");
+        // Wave O-1: the Steam Controller is the one protocol id with no layout family behind
+        // it, so the sender and the report would need two answers unless one table names it.
+        check(MLControllerFamilyForIds(0x28DE, 0x1142) == MLControllerFamilyUnknown,
+              "a Steam Controller has no HID layout family: it reads through the standard layout");
+        check(MLControllerProtocolTypeName(0x04) != nil &&
+              [MLControllerProtocolTypeName(0x04) isEqualToString:@"steam"],
+              "LI_CTYPE_STEAM has a report name even though no family produced it");
+        check(MLControllerProtocolTypeName(0x01) != nil &&
+              [MLControllerProtocolTypeName(0x01) isEqualToString:@"xbox"] &&
+              [MLControllerProtocolTypeName(0x02) isEqualToString:@"ps"] &&
+              [MLControllerProtocolTypeName(0x03) isEqualToString:@"nintendo"] &&
+              MLControllerProtocolTypeName(0x00) == nil &&
+              MLControllerProtocolTypeName(0x05) == nil,
+              "the names the family table owns are unchanged and an id nobody sends has no name");
+        // The report path, not just the name table: a Steam arrival is the one announced
+        // type with no family behind it, so this is where an `unknown` would leak in.
+        MLControllerInventory *steamInventory = MLControllerInventory.new;
+        [steamInventory noteSessionStartedWithDriverName:@"AppleUserHIDDrivers"];
+        [steamInventory noteControllerArrival:0 protocolType:0x04];
+        NSString *steamText = [[DiagnosticsReportBuilder
+            controllersSectionWithSnapshot:steamInventory.snapshot].lines
+            componentsJoinedByString:@"\n"];
+        check([steamText rangeOfString:@"player 0=steam"].location != NSNotFound &&
+              [steamText rangeOfString:@"unknown"].location == NSNotFound,
+              "the report names an announced Steam type rather than calling it unknown");
         check([MLControllerDriverNameForIndex(0) isEqualToString:@"HID"] &&
               [MLControllerDriverNameForIndex(1) isEqualToString:@"MFi"],
               "the probe names the HID and MFi settings indices");
