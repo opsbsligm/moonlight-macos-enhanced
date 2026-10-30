@@ -1,4 +1,53 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-30 三次基点刷新：MR 1–31 全合并 + Wave G-1/G-2/G-3 上游回吸落地 + 门禁覆盖对等已建）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-30 四次基点刷新：Wave P 硬编码口令门禁）
+
+## 0. Wave P 目标模式（当前执行窗口，2026-10-30）
+
+> 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
+
+**目标**：让凭据门禁能看见"硬编码口令字面量"这一类形状，并诚实处理它在本仓库
+历史里的既成事实。当前 `RULES` 八条全部面向厂商 token（GitHub/AWS/Slack/Google/
+Stripe/PEM/`api_key =`），对 Objective-C 里
+`static const char *password = "...";` 这种形状完全盲视——`HttpManager.m`
+的临时钥匙串口令正是以明文常量 shipped 了若干个 release，没有任何门禁报过。
+
+**已量化事实（2026-10-30 实测，非估计）**：
+- 当前 tracked 树命中 **0**（旧常量已在本次改动中移除，`git grep` 复核）。
+- 全历史（`git rev-list --objects --all`，7682 个 blob）命中 **56 行 / 56 个 blob**，
+  distinct 值 **只有 1 个**，`sha256:732dfa98275bb3b007c639b1f7a3cb2051b638faaf075cd7c370e1589f664b2e`
+  （9 字符），首次可见路径 `Limelight/Network/HttpManager.m`。
+- 该口令保护的临时钥匙串是 throwaway：每次导入前 `SecKeychainDelete` + 删除文件，
+  明文常量只让每个 shipped binary 共享同一个秘密。
+
+**完成边界（三条全绿才算完成，缺一不算）**：
+1. **检测**：新规则 `hardcoded-credential-assignment` 进入 `RULES`，覆盖
+   `*password*/*passwd*/*passphrase*/*p12key*` 标识符赋引号字面量；
+   `PRESCREEN` 与 `ANCHORS` 同步扩为该规则的超集，`--self-test` 逐规则证明超集性质。
+2. **历史诚实**：历史豁免只按**值指纹**生效，且仅当该值在当前树 0 命中时生效——
+   同值回到当前代码必须立刻 FAIL，豁免不得成为后门。树扫描模式完全不查豁免表。
+   豁免表须带可读理由（值已从 tip 移除 + 保护对象是 throwaway 钥匙串）。
+3. **行为变异**：`scripts/assertion-battery.py` 至少新增两条可被拦截的变异——
+   （a）豁免表在树模式也生效（后门化）；（b）规则改写后不再匹配旧常量形状。
+   本地门禁 + 本次 SHA 的 GitLab 流水线到 success，`publish-github` 核对双端 SHA。
+
+**验收判据**：`python3 scripts/credential-scan-audit.py --history --timeout 900`
+在移除旧常量后仍为 `ok ... (9 rule(s) armed)`；把历史里那行原样贴回工作区副本必须
+被拒绝；`--self-test` 报 9 rules armed。
+
+**实测收口（2026-10-30，本机，非估计）**：
+- `--self-test` → `9 rules armed, 6 clean samples, report stays redacted`，rc=0。
+- `--history --timeout 900` → `ok 635 tracked file(s) carry no credential shape`，rc=0，
+  约 24 秒（字节预筛生效，远未接近预算）。
+- 豁免不是后门：把历史 `HttpRequest.m:109` 那行按原样插回工作区，树扫单独 rc=1、
+  树+历史 rc=1 双双 FAIL；恢复原文件后树扫回到 rc=0。
+- `MUTATIONS` 146 → 148，两条新变异（`history-exemption-leaks-into-the-tree`、
+  `password-rule-narrows-away-the-shipped-name`）在 `--self-test` 下均 rc=1 被拦。
+- 运行时一致性：临时钥匙串路径每次导入都是新 UUID 且先删旧文件，口令 `dispatch_once`
+  进程内固定，所以 create 与 unlock 必然同值；`randomBytes` 走 `arc4random_buf`，
+  `bytesToHex` 只产十六进制数字，UTF-8 字节数等于 `strlen`，注释里的长度前提成立。
+- 编译审计 87/87；`bash scripts/local-gates.sh` 110 passed / 0 failed / 13 skipped。
+
+**边界**：不改历史（不 filter-branch、不 force push）；不碰 §5 冻结项；
+不顺手改设置页控件与已验收默认值；真机验收仍按 §4 独立保留。
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
