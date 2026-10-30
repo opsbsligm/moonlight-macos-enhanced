@@ -326,6 +326,11 @@ jobs:
       run: |
         echo "BUILD_NUMBER_RESOLVED=$(sh Limelight/build-number.sh --print)" >> "$GITHUB_ENV"
         echo "resolved BUILD_NUMBER=$(sh Limelight/build-number.sh --print)"
+        # The commit identity needs the same injection for the same reason. Without it the
+        # shipped bundle keeps the `unknown` baseline in Version.xcconfig, and a report
+        # exported from a mirror build cannot say which commit it was taken from.
+        echo "GIT_SHA_RESOLVED=$(sh Limelight/build-number.sh --print-sha)" >> "$GITHUB_ENV"
+        echo "resolved ML_GIT_SHA=$(sh Limelight/build-number.sh --print-sha)"
 
     - name: Verify input concurrency invariants
       # The pointer delta handoff between the GameController callback queue and
@@ -1039,6 +1044,7 @@ jobs:
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO \
           BUILD_NUMBER="$BUILD_NUMBER_RESOLVED" \
+          ML_GIT_SHA="${GIT_SHA_RESOLVED:-unknown}" \
           build 2>&1 | tee "build-${{ matrix.variant }}.log"
 
     - name: Fail on warnings in project sources

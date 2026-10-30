@@ -18,6 +18,12 @@ python3 scripts/hardware-acceptance-check.py report.txt --declare decl.json
 不能拿上一轮的声明给这一轮盖章。七行全 PASS 时输出尾部打印 `hardware_validated=true`，
 否则 `false` 且退出码为 1。
 
+七行之上还有一道**前提**，它不是一行、也没有地方打勾：报告必须说得出这些字节是哪个
+commit 编出来的。`ml.build.git_commit` 不是完整 40 位十六进制（`unknown`、截断、大写、
+混入非十六进制字符都算），或者 `ml.build.version` / `ml.build.number` 是 `unknown`，
+那么整张矩阵一律 `UNKNOWN`，观测者声明绑得再准也没用——因为"build 2050"只是某条分支上
+第 2050 个提交的计数，两条分支会数到同一个数字，它带不动一句关于源码树的结论。
+
 报告里读不到的键一律是 `unknown` 或 `present=no`。**缺失键和值为 0 是两件事**，判读脚本
 不会替任何一项编造默认值；把键删掉也不会让那一行变成通过（自测里有一条专门盯这个）。
 

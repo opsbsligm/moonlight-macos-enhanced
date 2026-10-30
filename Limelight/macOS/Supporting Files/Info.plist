@@ -22,6 +22,11 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(BUILD_NUMBER)</string>
+	<!-- Which commit produced these bytes. CFBundleVersion is a monotonic count that
+	     says nothing about the source, so an acceptance declaration could not be pinned
+	     to a build. Resolves to `unknown` when the tree has no readable HEAD. -->
+	<key>MLGitCommit</key>
+	<string>$(ML_GIT_SHA)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.games</string>
 	<key>LSMinimumSystemVersion</key>

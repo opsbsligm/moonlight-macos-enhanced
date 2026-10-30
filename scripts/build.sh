@@ -60,12 +60,29 @@ else
   echo "warning: BUILD_NUMBER unresolved (no complete git history); using the Version.xcconfig baseline" >&2
 fi
 
+# The commit that produced the binary rides the same injection, because the number
+# alone cannot pin an acceptance claim to a build: 2050 says "the 2050th commit of
+# whatever branch this checkout happened to be", not which source. --print-sha works
+# even in a shallow clone (it reads HEAD, not a history count), so the fallback below
+# only covers a tree with no readable HEAD at all -- a source tarball -- where the
+# honest value is the word the plist baseline already carries.
+SHA_ARGS=()
+RESOLVED_GIT_SHA="$(sh "${PROJECT_DIR}/Limelight/build-number.sh" --print-sha 2>/dev/null || true)"
+if [[ "$RESOLVED_GIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "resolved ML_GIT_SHA=${RESOLVED_GIT_SHA}"
+  SHA_ARGS=("ML_GIT_SHA=${RESOLVED_GIT_SHA}")
+else
+  echo "warning: ML_GIT_SHA unresolved (no readable HEAD); the bundle will report unknown" >&2
+  SHA_ARGS=("ML_GIT_SHA=unknown")
+fi
+
 xcodebuild \
   -project "${PROJECT_DIR}/Moonlight.xcodeproj" \
   -scheme "Moonlight for macOS" \
   -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED_DATA_DIR" \
   ${BUILD_NUMBER_ARGS[@]+"${BUILD_NUMBER_ARGS[@]}"} \
+  ${SHA_ARGS[@]+"${SHA_ARGS[@]}"} \
   build
 
 if [[ ! -d "$APP_PATH" ]]; then
