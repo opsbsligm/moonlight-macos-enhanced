@@ -23,6 +23,7 @@ Exit 0 only when no credential-shaped text is present.
 """
 import os
 import re
+import hashlib
 import signal
 import subprocess
 import sys
@@ -66,6 +67,16 @@ RULES = [
      re.compile(r"(?i)\b(?:api[\-_]?key|access[\-_]?token|secret[\-_]?key|"
                 r"client[\-_]?secret|auth[\-_]?token|personal[\-_]?access[\-_]?token)"
                 r"\b\s*[=:]\s*[\"'][0-9A-Za-z_\-/+=.]{24,}[\"']")),
+    # A vendor token is a credential because of who issued it. A literal password is a
+    # credential because of what it unlocks, and nothing in the shape above
+    # describes it: this repository shipped a temporary-keychain password as a
+    # `static const char *` in a shipped binary for as long as that file existed,
+    # and the eight rules above watched it go through every release. The name has
+    # to say password, so the value never has to.
+    ("hardcoded-credential-assignment",
+     re.compile(r"(?i)\b[A-Za-z0-9_]*(?:password|passphrase|passwd|p12key)"
+                r"[A-Za-z0-9_]*\s*(?:\[[^\]]*\])?\s*=\s*(?:CFSTR\()?(?:@?\")"
+                r"([0-9A-Za-z_\-/.+]{8,})\"")),
 ]
 
 
@@ -78,7 +89,8 @@ RULES = [
 PRESCREEN = re.compile(
     rb"(?i)github_pat_|gh[pousr]_|AKIA[0-9A-Z]|xox[baprs]-|AIza|"
     rb"sk_(?:live|test)_|-----BEGIN|"
-    rb"api.?key|access.?token|secret.?key|client.?secret|auth.?token")
+    rb"api.?key|access.?token|secret.?key|client.?secret|auth.?token|"
+    rb"password|passwd|passphrase|p12key")
 
 
 # The prescreen is a regular expression over every byte of every blob, and on a
@@ -101,7 +113,97 @@ PRESCREEN = re.compile(
 # the surviving set unchanged at 411 blobs.
 ANCHORS = (b"key", b"token", b"secret", b"github_pat_", b"ghp_", b"gho_",
            b"ghu_", b"ghs_", b"ghr_", b"akia", b"xoxb-", b"xoxa-", b"xoxp-",
-           b"xoxr-", b"xoxs-", b"aiza", b"sk_live_", b"sk_test_", b"-----begin")
+           b"xoxr-", b"xoxs-", b"aiza", b"sk_live_", b"sk_test_", b"-----begin",
+           # password, passwd and passphrase each need their own anchor --
+           # neither is a substring of the other, and only p12key is covered by
+           # "key". An anchor set that misses one silences its rule before any
+           # rule runs, which self_test() proves against a planted value.
+           b"password", b"passwd", b"passphrase")
+
+
+# Values that are knowingly still reachable in the object database, by the
+# sha256 of the value rather than by path or commit: a path exemption hides the
+# next file that copies the same literal, and a commit exemption hides whatever
+# else that commit touched.
+#
+# An entry silences a HISTORY hit only, and only while the same value is absent
+# from the tracked tree. Put the value back into a tracked file and both scans
+# fail again, so an exemption can never become a back door that the next
+# developer walks through without noticing.
+HISTORY_EXEMPTIONS = {
+    "732dfa98275bb3b007c639b1f7a3cb2051b638faaf075cd7c370e1589f664b2e": {
+        "rule": "hardcoded-credential-assignment",
+        "removed_from_tip": "the literal is gone from HttpManager.m; the "
+                            "throwaway keychain password is now drawn at run time",
+        "reason": "password of a keychain that is deleted before every import, so the "
+                  "literal only taught every shipped binary the same secret; 56 blobs, "
+                  "one distinct value, no live key material behind it",
+    },
+}
+
+
+def fingerprint(value):
+    """Stable identity for a matched value, never the value itself."""
+    return hashlib.sha256(value.encode("utf-8", "replace")).hexdigest()
+
+
+def matched_value(pattern, match):
+    """The secret part of a match: a capture group when the rule has one."""
+    if pattern.groups and match.group(1):
+        return match.group(1)
+    return match.group(0)
+
+
+def history_exempt(value, tree_fingerprints):
+    """True when a history-only exemption covers this value.
+
+    The tree check is the load-bearing part: without it an exemption stays valid
+    after the value returns to live code, which is exactly the state a security
+    gate has to refuse.
+    """
+    fp = fingerprint(value)
+    entry = HISTORY_EXEMPTIONS.get(fp)
+    if entry is None:
+        return False
+    if fp in tree_fingerprints:
+        return False
+    return True
+
+
+def is_exempt(value, mode, tree_fingerprints):
+    """Whether one finding may be excused. Every scan asks this and nothing else.
+
+    `mode` is the load-bearing argument, not `rule`: only the history walk may
+    excuse anything, and it excuses one value at a time. Both scans route
+    through here so the mode test is the single place a finding can be talked
+    out of, which is what makes it something self_test() can hold open -- an
+    exemption that also applied to the tree would otherwise be a back door with
+    no switch to test.
+    """
+    if mode != "history":
+        return False
+    return history_exempt(value, tree_fingerprints)
+
+
+def tree_value_fingerprints():
+    """Fingerprints of every credential-shaped value in the tracked tree."""
+    fps = set()
+    for name in tracked_files():
+        try:
+            with open(os.path.join(root, name), "rb") as handle:
+                raw = handle.read()
+        except OSError:
+            continue
+        if b"\x00" in raw:
+            continue
+        for line in raw.decode("utf-8", "replace").splitlines():
+            if ALLOW in line:
+                continue
+            for rule, pattern in RULES:
+                match = pattern.search(line)
+                if match:
+                    fps.add(fingerprint(matched_value(pattern, match)))
+    return fps
 
 
 def carries_credential_shape(body):
@@ -165,11 +267,16 @@ def history_blobs():
         list_file.seek(0)
         proc = subprocess.Popen(["git", "cat-file", "--batch"], cwd=root,
                                 stdin=list_file, stdout=subprocess.PIPE)
-    for finding in _drain_batch(proc, paths):
+    # Computed once, before the walk, from the tree as it is now. An exemption is
+    # a statement about the past, and the present is what decides whether it
+    # still holds; re-deriving it per blob would let a value reappear mid-walk
+    # and still be excused by the entry it was excused by.
+    tree_fps = tree_value_fingerprints()
+    for finding in _drain_batch(proc, paths, tree_fps):
         yield finding
 
 
-def _drain_batch(proc, paths):
+def _drain_batch(proc, paths, tree_fps=()):
     """Read git's framed objects without losing the framing."""
     out = proc.stdout
     try:
@@ -195,17 +302,15 @@ def _drain_batch(proc, paths):
                 continue
             label = "history:" + paths.get(
                 parts[0].decode("utf-8", "replace"), "(unreachable blob)")
-            for line_number, line in enumerate(text.splitlines(), start=1):
-                if ALLOW in line:
-                    continue
-                for rule, pattern in RULES:
-                    match = pattern.search(line)
-                    if match:
-                        # Four fields, exactly like scan_file(). The two scan
-                        # modes are concatenated before they are printed, so a
-                        # finding that carries fewer fields is a crash that only
-                        # happens on the day the gate has found something.
-                        yield label, line_number, rule, redact(match.group(0))
+            # "history" is the only mode that may consult the exemption table,
+            # and it excuses one value at a time. The tree scan reaches the same
+            # helper as "tree", so the same literal in a tracked file stays a
+            # finding even while its history twin is excused. Four fields,
+            # exactly like scan_file(), because the two modes are concatenated
+            # before they are printed.
+            for finding in scan_lines(label, text.splitlines(), "history",
+                                      tree_fps):
+                yield finding
     finally:
         proc.stdout.close()
         proc.wait()
@@ -221,14 +326,30 @@ def scan_file(name):
     if b"\x00" in raw:
         return []
     text = raw.decode("utf-8", "replace")
+    return scan_lines(name, text.splitlines(), "tree")
+
+
+def scan_lines(name, lines, mode, tree_fps=()):
+    """Apply every rule to the already-decoded lines of one blob or file.
+
+    Both scan modes go through here, so a rule that works in one mode works in
+    the other and a finding has one shape wherever it was found. `mode` is what
+    separates them, and the exemption table is the only thing that reads it:
+    "tree" never excuses anything, so a value that a historical exemption names
+    is still a finding the moment it is back in live code.
+    """
     findings = []
-    for number, line in enumerate(text.splitlines(), start=1):
+    for number, line in enumerate(lines, start=1):
         if ALLOW in line:
             continue
         for rule, pattern in RULES:
             match = pattern.search(line)
-            if match:
-                findings.append((name, number, rule, redact(match.group(0))))
+            if not match:
+                continue
+            value = matched_value(pattern, match)
+            if is_exempt(value, mode, tree_fps):
+                continue
+            findings.append((name, number, rule, redact(match.group(0))))
     return findings
 
 
@@ -275,6 +396,19 @@ def fake_credentials():
                                       "PRIVATE KEY-----")),
         ("quoted-credential-assignment",
          _joined("api_key = \"", tail, "\"")),
+        # Assembled from parts for the same reason as the others: a whole literal
+        # in this file would satisfy the rule this sample exists to prove works.
+        ("hardcoded-credential-assignment",
+         _joined("password", " = \"", "CorrectHorse", "7", "\"")),
+        # The shape this repository actually shipped: the credential noun is a
+        # suffix of the identifier, not its start, and the value is nine
+        # characters -- too short for the vendor-token rules, unnamed enough for
+        # the assignment rule. A matcher that only anchors on a name that
+        # *begins* with the noun passes the sample above and misses this one,
+        # which is the exact hole that shipped.
+        ("hardcoded-credential-assignment",
+         _joined("static const char *kTempKeychain", "password",
+                 " = \"", "SaltedNot", "42", "\"")),
     ]
 
 
@@ -283,10 +417,16 @@ def self_test():
     failures = []
     caught = set()
     for rule, sample in fake_credentials():
-        for name, pattern in RULES:
-            if pattern.search(sample):
-                caught.add(name)
-        if rule not in caught:
+        # Each sample is judged on its own. A rule may now carry more than one
+        # sample because one shape is not enough to describe a family: the
+        # credential that shipped here had the noun as the *end* of its
+        # identifier, and a matcher narrowed to names that start with the noun
+        # still matches the sample whose identifier starts with it. Accumulating
+        # `caught` across samples let that narrowed rule pass, so the verdict is
+        # taken per sample and the running set only records what nothing matched.
+        matched = [name for name, pattern in RULES if pattern.search(sample)]
+        caught.update(matched)
+        if rule not in matched:
             failures.append("rule %s does not match its own sample" % rule)
 
     clean = [
@@ -294,6 +434,8 @@ def self_test():
         "The token is read from a file at run time and never stored.",
         "uses: actions/checkout@v6",
         "let apiKeyPlaceholder = \"your-key-here\"",
+        "NSString *password = readClientCertificatepassword();",
+        "settings.lockOnSleep = FALSE;",
     ]
     for line in clean:
         for name, pattern in RULES:
@@ -321,6 +463,58 @@ def self_test():
     if carries_credential_shape(b"uses: actions/checkout@v6"):
         failures.append("the anchor test admits a line with no credential "
                         "anchor, so it short-circuits nothing")
+
+    # An exemption is the one place this gate can be talked out of a finding, so
+    # its two limits run as checks. The historical value cannot be re-derived --
+    # that is the point of keying by digest -- so the mechanism is proved on a
+    # probe entry built here, and the real rows are held to their metadata.
+    for fp, entry in HISTORY_EXEMPTIONS.items():
+        if entry.get("rule") not in {name for name, _pattern in RULES}:
+            failures.append("exemption %s.. names a rule that does not exist: %s"
+                            % (fp[:8], entry.get("rule")))
+        if not entry.get("reason"):
+            failures.append("exemption %s.. carries no reason" % fp[:8])
+        if len(fp) != 64:
+            failures.append("exemption %s.. is not keyed by a sha256 digest"
+                            % fp[:8])
+
+    probe = _joined("password", " = \"Correct", "Horse7\"")
+    probe_match = dict(RULES)["hardcoded-credential-assignment"].search(probe)
+    if probe_match is None:
+        failures.append("the exemption probe no longer has the shape the rule "
+                        "detects, so its two checks below prove nothing")
+    else:
+        probe_value = probe_match.group(1)
+        probe_fp = fingerprint(probe_value)
+        HISTORY_EXEMPTIONS[probe_fp] = {
+            "rule": "hardcoded-credential-assignment", "reason": "self-test"}
+        try:
+            if not is_exempt(probe_value, "history", frozenset()):
+                failures.append("an exemption does not excuse the value it "
+                                "names in history mode")
+            if is_exempt(probe_value, "history", frozenset({probe_fp})):
+                failures.append("an exemption still excuses its value once that "
+                                "value is back in the tracked tree")
+            # The mode is what keeps an exemption historical, so it is asserted
+            # rather than assumed. Same value, same table entry, same empty tree
+            # set -- the only difference is which scan is asking, and a tree scan
+            # has to be told no whatever the table says.
+            if is_exempt(probe_value, "tree", frozenset()):
+                failures.append("an exemption excuses a value in tree mode, so "
+                                "the same literal back in live code would go "
+                                "unreported")
+            if is_exempt(probe_value, "tree", frozenset({probe_fp})):
+                failures.append("tree mode consults the exemption table at all")
+        finally:
+            del HISTORY_EXEMPTIONS[probe_fp]
+
+    # The tree scan never consults the table, so an exempt value that reappears in
+    # live code has to be visible here. It is a statement about this checkout, and
+    # it is the check that keeps the table from quietly rotting into a back door.
+    shared = set(HISTORY_EXEMPTIONS) & tree_value_fingerprints()
+    if shared:
+        failures.append("an exempt value is present in the tracked tree (%s..), "
+                        "so the history exemption must go" % next(iter(shared))[:8])
 
     # A gate that prints the secret is a second leak of the secret.
     for rule, sample in fake_credentials():
