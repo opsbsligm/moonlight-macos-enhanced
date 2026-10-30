@@ -1,4 +1,4 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-31 七次基点刷新：Wave U 对标矩阵自证）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-31 八次基点刷新：Wave U 对标矩阵自证）
 
 ## 0. Wave U 目标模式（当前执行窗口，2026-10-31）
 
@@ -52,7 +52,54 @@ Wave S 把"报告生产者"和"判读消费者"连上了；同一类缺陷在对
 `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；本次 SHA 流水线到终态；
 `liguangming` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
 
-## 0.1 Wave S 目标模式（已完成并合并：MR → `71a62394`；保留供追溯）
+## 0.1 Wave T 目标模式（已完成并合并：MR 40 → `bf055b23`；保留供追溯）
+
+> 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
+
+**目标**：让事实源流水线证明"真机验收那七行判据，确实建立在导出的字节上"。
+Wave S 把生产者与消费者连上了，但那条缝只验到"能解析 + 构建身份可定位"为止。
+判读器真正依赖的是**另外的键名**：六参数、六个开关、指针、重连、两手柄槽位、能力位。
+这些名字今天没有一处被报告字节钉住。
+
+**已量化事实（2026-10-31 探针实测，非估计）**：
+- 把 builder 里的 `ml.param.` 改成 `ml.params.`，`python3 scripts/diagnostics-report-tests.py`
+  依旧 0 failures —— 端到端门禁只看 `parse_machine` + `build_identity`，两者都不读这些键。
+  同一份报告交给 `grade()`，七行里 `edge-sidebar-params` 直接 UNKNOWN，理由是
+  `machine block lacks 30 key(s)`。**CI 绿、验收静默失效**，与 Wave S 修掉的 P1 同一形状。
+- 判读器 `SIDEBAR_PARAMS` 六个键名是**手抄**的（`scripts/hardware-acceptance-check.py:73`），
+  来源是 `StreamViewController+Diagnostics.m` 的六个 label 折叠下划线；两处之间没有门禁。
+- 七行里报告侧条件依赖的键共 41 个，harness 目前只断言了 `ml.param.edge_sensor_band.*`
+  一族（1/6 参数、0/6 开关、0/6 其余）。
+
+**完成边界（五条全绿才算完成，缺一不算）**：
+1. **验收态报告进 harness**：driver 额外产出一份"七行的报告侧条件全部成立"的报告
+   （六个参数含至少一个 off-default、六个开关全 on、`ml.pointer.absolute=yes`、
+   `ml.reconnect.present=yes` 且 attempt≥1、两个已通告槽位、能力位齐），
+   经 `canonicalReportBytesFromString:` + `writeReport:toURL:error:` 落到 `ML_ACCEPTANCE_DUMP`。
+   走生产写入口，不手搓 `writeToFile:`。
+2. **七行全 PASS**：Python 侧把**那份文件**交给判读器 `grade()`，配一份绑定其 `report_sha256`
+   且每行 `observed`+非空 `note` 的声明，断言 `pass 7, unknown 0, fail 0`。
+   行 id 与 `(row, id)` 配对从两处独立推导后对拍：判读器 `ITEMS`，以及人真机时照着做的
+   `docs/hardware-acceptance-checklist.md` 表格首列。判读器加一行而清单没加、或清单少一步
+   而判读器还在打分，都算这盏灯该灭（已实测：任一边改 id 立即变红）。
+3. **键名漂移变异**（逐条要求"七行不再全 PASS"）：`ml.param.`→`ml.params.`、
+   `ml.switch.`→`ml.switches.`、`ml.controllers.slot.`→`ml.controllers.slots.`、
+   `ml.pointer.absolute`→`ml.pointer.is_absolute`、`ml.reconnect.attempt`→`ml.reconnect.attempts`
+   五条，各自打中不同行；只要求"链路在把关"，不要求措辞。最后一条是**证明件**：driver 自己的
+   断言不读这个键，改完之后生产侧自检全过，只有判读侧能发现行掉了。
+4. **两处手抄对拍**：门禁从**导出报告的字节**里取出 `ml.param.*.effective` 的键名集合
+   （报告由 builder 用六个 label 经同一折叠规则产出，因此这等价于从生产侧独立推导，
+   而不是把两份手抄再抄一遍），与判读器 `SIDEBAR_PARAMS` 按集合比对；
+   改名在**生产侧或判读侧任一边**发生都被抓住（已实测：两边各改一次，都立即变红）。
+5. **地板与流水线**：`MIN_DRIVER_CHECKS` 随真实用例上移；`bash scripts/local-gates.sh` 通过；
+   本次 SHA 的 pipeline 到终态 success。
+
+**边界**：不改变任何用户可见行为、设置默认值、判定语义（`MISSING_READS_AS_SATISFIED`、
+`ANNOUNCED_TYPES`、`build_identity` 规则都不动）；不把"七行全 PASS"当 `hardware_validated=true`
+—— 那七行 PASS 需要**人**在真机上写观察记录，门禁证明的是"报告载得起那七行"，不是"有人观察过"；
+不解冻 §5 冻结项；不动设置页原生控件。
+
+## 0.2 Wave S 目标模式（已完成并合并：MR 39 → `71a62394`，pipeline 883 全绿；保留供追溯）
 
 > 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
 
@@ -113,7 +160,7 @@ MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
 真机验收矩阵（§4）仍独立保留；不动设置页原生控件与已验收默认值；
 不签 Developer ID、不公证、不做自动更新（§5 冻结项）。
 
-## 0.1 Wave R 目标模式（已完成并合并：MR 38 → `c8e959d0`；保留供追溯）
+## 0.3 Wave R 目标模式（已完成并合并：MR 38 → `c8e959d0`；保留供追溯）
 
 **目标**：让事实源流水线在发出 DMG 的那一刻审计这个镜像本身。今天 `package-dmg`
 只负责"造出镜像"，没有任何一步读过造出来的东西；`dmg-audit.py` 存在、且在 GitHub
@@ -170,7 +217,7 @@ job trace 里能看到 `ok bundle MoonlightEnhanced.app version 1.6.0 build <本
 **边界**：不签 Developer ID、不公证、不做自动更新（§5 冻结项）；不顺手改设置页控件与
 已验收默认值；不把 `spctl rejected` 说成已解决；真机验收仍按 §4 独立保留。
 
-## 0.2 Wave P 目标模式（已完成并合并：MR 36 → `dcad899d`；保留供追溯）
+## 0.4 Wave P 目标模式（已完成并合并：MR 36 → `dcad899d`；保留供追溯）
 
 > 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
 
