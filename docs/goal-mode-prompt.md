@@ -1,8 +1,67 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-30 五次基点刷新：Wave R 发布镜像自证）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-30 六次基点刷新：Wave S 导出报告可判读）
 
-## 0. Wave R 目标模式（当前执行窗口，2026-10-30）
+## 0. Wave S 目标模式（当前执行窗口，2026-10-30）
 
 > 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
+
+**目标**：让事实源流水线自己证明"app 导出的那份文件，判读工具读得懂"。
+今天报告的**生产者**（`DiagnosticsReportBuilder`）和**消费者**
+（`scripts/hardware-acceptance-check.py`）各有一盏绿灯，中间那条缝从没连过：
+builder 测试只断言"提交号这个字符串在报告里"，判读器 `--self-test` 只判读
+**它自己维护的 fixture**。两端都绿，真实导出的报告依旧可以整张矩阵判 UNKNOWN。
+
+**已量化事实（2026-10-30 实测，非估计）**：
+- **P1 缺陷真实存在过**：`redactOpaqueTokensInString` 的
+  `[A-Za-z0-9+/]{24,}={0,2}` 把 40 位十六进制 `ml.build.git_commit` 当不透明块删掉；
+  判读器把该键当**整张矩阵的前提**（§4.1），于是一次真机验收的 7 行全部 `UNKNOWN`，
+  而 CI 全绿。它只在手工把报告喂给判读器时暴露。
+- **两端从未相连**：`grep -n hardware-acceptance-check` 在
+  `scripts/diagnostics-report-tests.py` 里零命中；`.gitlab-ci.yml:251` 只有
+  `--self-test`。`scripts/diagnostics-report-tests.py` 已经能把导出的字节落到
+  `ML_CANONICAL_DUMP` 指定文件，Python 侧从没读过它。
+- **判读器对字节形状敏感**：`parse_machine` 用 `str.splitlines()` 断行，
+  `report_sha256` 覆盖文本模式读入再编码的字节；`MLIsLineBreak` 折叠 CR/VT/FF/FS/GS/RS/
+  NEL/U+2028/2029 就是为了让"被 hash 的字节"和"被断行的行"描述同一个文件。
+- 修复前的基线：`python3 scripts/diagnostics-report-tests.py` = **0 failures**
+  （含 P1 修复的 7 个反向安全用例），但那条缝仍未相连；Wave S 改动（导出按钮 +
+  canonical 落盘 + P1 修复 + 端到端门禁）在 `feat/wave-s-diagnostics-file-export`，
+  **推送之前 main 上没有**。
+
+**完成边界（四条全绿才算完成，缺一不算）**：
+1. **两端在门禁里相连**：driver 把导出的字节落到文件，Python 侧把**那份文件**交给
+   判读器的 `parse_machine`/`build_identity` 判读，断言可解析、身份可定位、
+   且二进制打印的 SHA 与 Python 独立重算一致（两个读者偶然一致和故意不一致是同一个 bug）。
+2. **行为变异**（进 `scripts/diagnostics-report-tests.py`，逐条 rc=1）：
+   （a）摘掉 `maskBuildIdentityInString` 那次调用 → 判读器必须立刻定位不到构建身份；
+   （b）把区块标题写出 `[machine]` 契约 → 判读器必须拒绝解析；
+   （c）builder 单方面升 `ml.schema` → 判读器必须拒绝解析。
+   三条都要求"链路真的在把关"，不是被路过。
+3. **导出功能进入事实源**：`canonicalReportBytesFromString:` / `writeReport:toURL:error:`
+   与设置页导出按钮合并进 main，导出走 `NSDataWritingAtomic`，
+   空报告与不可写目标必须返回错误而不是静默留下半个文件。
+4. **门禁计数随真实用例上移**：`MIN_DRIVER_CHECKS` 跟住二进制自己打印的检查数，
+   留出余量但不允许长期落后 —— 用例清单悄悄缩水只能靠这个数字发现。
+
+**已落地（2026-10-30 实测）**：四条边界都已实现 —— driver 经**生产写入路径**落整个报告，
+Python 侧用 `importlib` 载入真实判读器判读**那份文件**，SHA 做"builder 打印 / 判读器
+重算 / Python 独立重算"三方比对；三条端到端变异全部由消费侧拦住（去 mask →
+`ml.build.git_commit is [redacted-blob]`；改标题 → `no [machine] block`；升 schema →
+`schema '2' is not understood`），其中"升 schema"这条在修复前**生产者侧完全无感**，
+只有判读器看得见；`MIN_DRIVER_CHECKS` 109 → **134**（driver 自报 134）；
+`bash scripts/local-gates.sh` = **110 passed / 0 failed / 13 skipped**（13 项全是需要 CI
+产物、`--all` 或真机的项，逐项理由见门禁输出）。
+
+**验收判据**：`python3 scripts/diagnostics-report-tests.py` 0 failures 且日志里能看到
+三条端到端变异各自 `the checker stops accepting the export when …`；
+`bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；本次 SHA 流水线到 success，
+`publish-github` 核对本 ref 双端 SHA；MR 由 `liguangming` 审批合并后回读
+MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
+
+**边界**：不把 `hardware_validated` 改成 true —— 本波只把"报告能不能被判读"变成机器可证，
+真机验收矩阵（§4）仍独立保留；不动设置页原生控件与已验收默认值；
+不签 Developer ID、不公证、不做自动更新（§5 冻结项）。
+
+## 0.1 Wave R 目标模式（已完成并合并：MR 38 → `c8e959d0`；保留供追溯）
 
 **目标**：让事实源流水线在发出 DMG 的那一刻审计这个镜像本身。今天 `package-dmg`
 只负责"造出镜像"，没有任何一步读过造出来的东西；`dmg-audit.py` 存在、且在 GitHub
@@ -59,7 +118,7 @@ job trace 里能看到 `ok bundle MoonlightEnhanced.app version 1.6.0 build <本
 **边界**：不签 Developer ID、不公证、不做自动更新（§5 冻结项）；不顺手改设置页控件与
 已验收默认值；不把 `spctl rejected` 说成已解决；真机验收仍按 §4 独立保留。
 
-## 0.1 Wave P 目标模式（已完成并合并：MR 36 → `dcad899d`；保留供追溯）
+## 0.2 Wave P 目标模式（已完成并合并：MR 36 → `dcad899d`；保留供追溯）
 
 > 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
 
