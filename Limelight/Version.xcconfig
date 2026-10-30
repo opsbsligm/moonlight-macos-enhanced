@@ -12,4 +12,10 @@
 // Both generators derive the number identically: git rev-list --count HEAD,
 // so a GUI build and a CI build of the same commit produce the same version.
 BUILD_NUMBER = 1720
+// Which commit produced the binary, carried into Info.plist's MLGitCommit. The
+// baseline is the word `unknown` rather than an empty string: an unresolved
+// $(VAR) can survive into the plist as the literal text, and a checker reading
+// the report should see one honest word instead of having to recognise two
+// shapes of "we do not know".
+ML_GIT_SHA = unknown
 #include? "$(DERIVED_FILE_DIR)/GeneratedBuildNumber.xcconfig"

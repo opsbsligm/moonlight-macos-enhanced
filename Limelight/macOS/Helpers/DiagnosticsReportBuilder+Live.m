@@ -232,6 +232,16 @@ static NSString *stringOrNone(NSString *_Nullable value) {
         state.switches = [self featureSwitchesFromPreferences:prefs];
         state.sidebarParams = [StreamViewController sidebarFeatureParamsWithOverrides:prefs];
     }
+    // The bundle is the only authority on which bytes are running, and it is readable
+    // whether or not a stream ever started. A build made before this key existed, or from a
+    // tarball with no git history, keeps the plist's `unknown` and prints as unknown.
+    NSDictionary *bundleInfo = NSBundle.mainBundle.infoDictionary ?: @{};
+    id commitValue = bundleInfo[@"MLGitCommit"];
+    id versionValue = bundleInfo[@"CFBundleShortVersionString"];
+    id buildValue = bundleInfo[@"CFBundleVersion"];
+    state.gitCommit = [commitValue isKindOfClass:[NSString class]] ? commitValue : nil;
+    state.appVersion = [versionValue isKindOfClass:[NSString class]] ? versionValue : nil;
+    state.buildNumber = [buildValue isKindOfClass:[NSString class]] ? buildValue : nil;
     return state;
 }
 

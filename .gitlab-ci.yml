@@ -171,6 +171,13 @@ build-app:
     - BUILD_NUMBER_RESOLVED="$(sh Limelight/build-number.sh --print)"
     - export BUILD_NUMBER_RESOLVED
     - echo "resolved BUILD_NUMBER=$BUILD_NUMBER_RESOLVED"
+    # The commit identity rides the same channel as the number, for the same reason:
+    # a build that announces "build 2050" cannot say which source produced it, so an
+    # acceptance claim could not be pinned to a binary. --print-sha prints nothing when
+    # HEAD is unreadable, and the plist baseline is then the word `unknown`.
+    - GIT_SHA_RESOLVED="$(sh Limelight/build-number.sh --print-sha)"
+    - export GIT_SHA_RESOLVED
+    - echo "resolved ML_GIT_SHA=${GIT_SHA_RESOLVED:-unknown}"
     - xcodebuild
         -project "$XCODE_PROJECT"
         -scheme "$XCODE_SCHEME"
@@ -180,6 +187,7 @@ build-app:
         CODE_SIGN_IDENTITY="-"
         CODE_SIGNING_REQUIRED=NO
         BUILD_NUMBER="$BUILD_NUMBER_RESOLVED"
+        ML_GIT_SHA="${GIT_SHA_RESOLVED:-unknown}"
         clean build 2>&1 | tee build.log | xcpretty --report junit
   artifacts:
     when: always
