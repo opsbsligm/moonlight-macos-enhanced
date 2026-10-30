@@ -7,14 +7,24 @@
 | 上游客户端 | moonlight-stream/moonlight-qt | 钉 tag `v6.2.0`（commit `de2467e433821664cdd2224aad8c89a625be1ad9`），快照已入库 `docs/evidence/qt-snapshot/`（含 blob SHA 与行号索引） |
 | 协议层 | moonlight-stream/moonlight-common-c | 我们的 fork `moonlight/moonlight-common-c`，pin 在 `386e79c`，含自有增强（剪贴板同步、7.1.4、HDR dynamic-range、输入边缘完整性） |
 | 下游主机 | Sunshine | 经 `Limelight/Network/HttpManager.m` 的显示/虚拟显示器/screenMode/HDR 亮度覆盖扩展 |
+| 下游主机（手柄侧） | Sunshine Windows 输入路径 | 钉 commit `a679b059` 的 `src/platform/windows/input.cpp` 快照 `docs/evidence/sunshine-snapshot/`（含 blob SHA 与行号索引） |
 | 基地版 | skyhua0224/moonlight-macos-enhanced | 本仓库的起点，2026-10 起完全独立（README） |
-| 竞品 | Citrix Horizon、Parsec、网易 UU 远程 | 仅采用 `docs/input-mapping-benchmark.md` 已归档的证据面 |
+| 竞品 | Citrix Horizon、Parsec、网易 UU 远程 | 采用 `docs/input-mapping-benchmark.md` 已归档的证据面；Parsec 另有本机客户端二进制的机制级快照 |
 
 证据分四级，沿用 `docs/input-mapping-benchmark.md` §1：**本仓库可复核 / 上游已验证 / 仅宣传 / 无证据**。
-Parsec 文档在取证时 403，UU 只有宣传页：两者只列"对方宣称有"，一律不作为设计依据。
+UU 只有宣传页，只列"对方宣称有"，不作为设计依据。Parsec 文档在取证时 403，
+但 2026-10-30 起多了一层**机制级证据**：本机 Parsec 客户端二进制的字符串表，
+钉 SHA-256 于 `docs/evidence/parsec-snapshot/README.md`；它只证明"该机制存在且可配"，
+仍不足以支撑任何强弱对比（见 §2.5）。
 文中所有代码位置均以本文提交时的 main 为准；凡未真机验证的推断，标注 `hardware_validated=false`。
 
 ## 2. 能力矩阵（只列有证据的结论）
+
+> **2026-10-30 状态复核（Wave O-2）**：下表"我们"列写于 P0/P1 开工前，其中多行已被后续
+> 合并的里程碑推翻。逐格复核以 `main` 当前源码为准：每处改写都在括号里给了可 `grep -n`
+> 复核的落点（行号会随重构漂移，落点名不会）。原结论保留在"（原：…）"里，
+> 是为了能看出错在哪一步，不是保留其结论效力。**矩阵的对照价值在 qt 列与证据列，
+> 我们列的真值永远以源码与准确 SHA 的流水线为准。**
 
 图例：✅ 已具备且可复核 · ◐ 部分具备 · ✗ 未具备 · ➕ 我们领先
 
@@ -23,14 +33,14 @@ Parsec 文档在取证时 403，UU 只有宣传页：两者只列"对方宣称�
 | 能力 | 我们 | moonlight-qt | 证据 |
 | --- | --- | --- | --- |
 | 基础摇杆/按键/扳机 | ✅ `LiSendMultiControllerEventCtx`（HIDSupport.m:1261、ControllerSupport.m:376） | ✅ | 本仓库可复核 |
-| **控制器类型与能力通告** | ✗ 从不调用 `LiSendControllerArrivalEvent` | ✅ gamepad.cpp:763 | 本仓库 grep 全量为 0；上游已验证 |
-| 扳机震动 rumbleTriggers | ✗ 回调未接（Connection.m:2670 只挂 `rumble`） | ✅ | 本仓库可复核 |
-| 陀螺仪/加速度计 setMotionEventState | ✗ 回调未接，HID 层无 IMU 解析 | ✅ | 同上 |
-| 触摸板 LiSendControllerTouchEvent(2) | ✗ | ✅ TouchEvent2 | 同上 |
-| 电池上报 LiSendControllerBatteryEvent | ✗ | ✅ | 同上 |
-| LED setControllerLED | ✗ 回调未接 | ✅ | 同上 |
-| Joy-Con 左/右 (057E:2006/2007) 识别 | ✗ isNintendo 仅 2009（HIDSupport_Internal.h:393-397） | ✅（SDL 类型表） | 本仓库可复核 |
-| Steam Controller / LI_CTYPE_STEAM | ✗ 协议层缺常量（fork Limelight.h 止于 LI_CTYPE_NINTENDO） | ✅ | 与 `/tmp/qt_limelight_upstream.h:781` 对比 |
+| **控制器类型与能力通告** | ✅（原：✗ 从不调用）M1 起发 arrival：`LiSendControllerArrivalEventCtx`（HIDSupport.m:1335），能力按型号裁剪而非固定 mask（`HIDSupport.m:3477-3497` 逐个置 `LI_CCAP_RGB_LED`/`ACCEL`/`GYRO`/`BATTERY_STATE`/`TOUCHPAD`/`TRIGGER_RUMBLE`） | ✅ gamepad.cpp:763 | 两边源码可复核 |
+| 扳机震动 rumbleTriggers | ✅（原：✗ 回调未接）`_clCallbacks.rumbleTriggers = ClRumbleTriggers`（Connection.m:2790） | ✅ | 本仓库可复核 |
+| 陀螺仪/加速度计 setMotionEventState | ✅（原：✗ 回调未接）回调已接（Connection.m:2791 → StreamViewController.m:2032 → `setMotionEventStateForControllerNumber:` HIDSupport.m:3556），采样按主机要求的 Hz 节流后走 `LiSendControllerMotionEventCtx`（HIDSupport.m:3702） | ✅ | 本仓库可复核；**真机 IMU 手感未取证** |
+| 触摸板 LiSendControllerTouchEvent(2) | ◐（原：✗）单触摸板已发 `LiSendControllerTouchEventCtx`（HIDSupport.m:3782，且先发 `LI_FF_CONTROLLER_TOUCH_EVENTS` 特性位再发）；**双触摸板 `LiSendControllerTouchEvent2`/`LI_CCAP_DUAL_TOUCHPAD` 仍未接**（上层 0 调用，协议层常量已在 fork `Limelight.h:962`/`:985`） | ✅ TouchEvent2 | 本仓库 grep 复核：上层 0 命中 |
+| 电池上报 LiSendControllerBatteryEvent | ✅（原：✗）`LiSendControllerBatteryEventCtx`（HIDSupport.m:3750） | ✅ | 本仓库可复核 |
+| LED setControllerLED | ✅（原：✗ 回调未接）`_clCallbacks.setControllerLED = ClSetControllerLED`（Connection.m:2789 → StreamViewController.m:2005）。**qt 侧同样只是把 SDL 的本地回显当能力来源**（`gamepad.cpp:702` 用 `SDL_GameControllerHasLED` 决定通告位），所以这一格原本不构成"我们缺、qt 有"的差距 | ✅（本地回显） | 两边源码可复核 |
+| Joy-Con 左/右 (057E:2006/2007) 识别 | ✅（原：✗ 仅 2009）`isNintendo` 现含 `0x2009 || 0x2006 || 0x2007`（HIDSupport_Internal.h:499-503），并有门禁回放三对 id | ✅（SDL 类型表） | 本仓库可复核 |
+| Steam Controller / LI_CTYPE_STEAM | ✅（原：✗ 协议层缺常量）两层都补齐：常量 `LI_CTYPE_STEAM` 早在 fork `Limelight.h:944` 就存在（原结论把主仓 grep 当成了协议层事实）；arrival 类型自 Wave O-1 起对 VID `0x28de` 的 12 个 PID 发 STEAM（`isSteamController`，HIDSupport_Internal.h），表外 Valve pid 仍回落 XBOX | ✅ `gamepad.cpp:728-749` | 见 `docs/evidence/sunshine-snapshot/README.md`：Sunshine Windows 侧的类型分支只认 `LI_CTYPE_PS`→DS4 与 `LI_CTYPE_XBOX`→X360（钉 `a679b059` 快照 `windows_input.cpp:690-695`），STEAM 会按 capabilities 或默认落 Xbox 360，所以这一格是**上报身份的诚实性**，不是主机侧新能力；GFE 侧未取证 |
 | PS4/PS5/Switch 专用震动编码 | ✅ HIDSupport+Rumble.m（qt 依赖 SDL 黑盒） | ✅ | **➕ 我们可读可控** |
 | Xbox Elite2/Betop Zeus 轴序修正 | ✅（qt 无此处理） | ✗ | **➕** |
 
@@ -44,8 +54,8 @@ Parsec 文档在取证时 403，UU 只有宣传页：两者只列"对方宣称�
 | 修饰键映射 Command→Win | ✅ 固定表 + 每主机 Command→Ctrl 开关 | ✅ 固定 | 本仓库可复核 |
 | 用户自定义规则（97 键×修饰键 + 10 个月亮动作） | ✅ **➕ qt 只有 10 个硬编码 Ctrl+Alt+X** | ◐ | `KeyboardTranslationRule` |
 | 接管系统快捷键三态 | ✅ | ✅ captureSysKeysMode | 对等 |
-| IME/中文文本注入 LiSendUtf8TextEvent | ✗ 全仓库 0 调用 | ◐（qt 走 SDL textinput，`hardware_validated=false`） | 我们发中文只能逐键，实际不可用 |
-| Ctrl+Alt+Del 入口 | ✗ 无任何 CAD 代码 | ◐（qt 有 Ctrl+Alt+Shift+Del 类组合，未在本次取证中复核到具体键） | Sunshine 支持扩展 scancode（0x8000 标志，HIDSupport.m 已在用），可行路径存在 |
+| IME/中文文本注入 LiSendUtf8TextEvent | ✅（原：✗ 全仓库 0 调用）K1.1 走 `LiSendUtf8TextEventCtx`（HIDSupport.m:1733/2003，密集打包已回吸），K1.2 加本地输入法组合客户端（`HIDLocalIME`，`MLLocalIMETextClient` + `MLLocalIMESession`，per-host 开关默认关） | ◐（qt 走 SDL textinput） | 代码层在 main；**真机整串提交/候选窗锚点未取证** |
+| Ctrl+Alt+Del 入口 | ✅（原：✗ 无任何 CAD 代码）以预置翻译规则提供：设置 > 快捷键 > Add Preset Rule 的 SAS 规则（`KeyboardTranslationProfile.secureAttentionSequencePresetRule()`），并有 `scripts/sas-preset-tests.py` 在 GitLab 事实源必跑 | ◐（qt 侧未取证到显式入口） | macOS 不像 Windows 吞 SAS，普通转发即可送三键；**主机侧 SAS 能否拉起未取证**，不成立则降级为主机端工具提示 |
 
 ### 2.3 鼠标 / 全屏边缘控制栏
 
@@ -54,9 +64,9 @@ Parsec 文档在取证时 403，UU 只有宣传页：两者只列"对方宣称�
 | 绝对/相对/自由三模式 + CoreHID 1000Hz | ✅ | ◐ 仅 absoluteMouseMode | **➕** |
 | 亚像素灵敏度、报告率可调、滚轮三通道独立调速 | ✅ | ✗ | **➕** |
 | 边缘把手：四边停靠+拖拽+比例记忆 | ✅ `edgeMenuDockEdge`/`edgeMenuButtonEdgeRatio`（MenuUI.m:945-990） | ✗ | **➕** |
-| 把手触发参数可调 | ✗ 感应带 12pt、驻留 120ms、甩动 700pt/250ms 全是编译期常量（StreamViewController_Internal.h:100-162） | — | 设置页目前只有总开关+抵达即展开 |
-| `LiSendMouseMoveAsMousePositionEvent` | ✗（仅 LiSendMousePositionEvent，HIDSupport+Pointer.m:359/940/997） | ✅ | 相对增量走绝对坐标，桌面向兼容更好 |
-| 触屏/手写笔 LiSendTouchEvent/PenEvent | ✗ | ✅ | macOS 场景价值低，暂缓 |
+| 把手触发参数可调 | ✅（原：✗ 全是编译期常量）E1 + Wave C 把六个手感常量全部参数化（`SettingsModel.swift` 的 `edgeSensorBandWidthPoints`/`edgeSensorDwellSeconds`/`edgeMenuAutoCollapseSeconds`/`edgeMenuSummonGraceSeconds`/`edgeSensorFlickMinTravelPoints`/`edgeMenuHandleIdleThicknessPoints`），契约是"0 = 沿用出厂常量"，**默认值仍等于原编译期常量** | — | 设置页可调；单/双屏与全屏菜单栏遮挡未取证 |
+| `LiSendMouseMoveAsMousePositionEvent` | ✅（原：✗ 仅 LiSendMousePositionEvent）桌面档可选把相对增量走 `LiSendMouseMoveAsMousePositionEventCtx`（HIDSupport.m:2459-2470，由 `HIDShouldRouteRelativeAsAbsolute` 选择，未发过绝对事件的会话仍走相对包以免主机光标跳 0,0），开关默认关 | **未知**（本次入库的 qt 快照只有 `gamepad.cpp`/`streamingpreferences.h`，鼠标路径不在证据内，原"qt ✅"无来源支撑） | 真机桌面档鼠标一致性未取证 |
+| 触屏/手写笔 LiSendTouchEvent/PenEvent | ✗（上层 0 调用，已复核） | **未知**（同上，快照不含该路径） | macOS 场景价值低，暂缓 |
 
 ### 2.4 视频/音频/串流（我们领先的区域，如实记录）
 
@@ -81,7 +91,12 @@ Parsec 文档在取证时 403，UU 只有宣传页：两者只列"对方宣称�
 
 - **Citrix Horizon**：ADMX 证据显示其输入模型是"热键表可配 + 三级键盘捕获"，与我们的规则系统同向；
   我们没有它的任何运行时证据，不比较手感。
-- **Parsec**：无证据，不做任何断言（含"我们超过 Parsec"这类表述同样禁止）。
+- **Parsec**：机制级证据（钉 SHA-256 的客户端二进制字符串表，见
+  `docs/evidence/parsec-snapshot/README.md`）显示它把主机侧虚拟鼠标、虚拟平板（绝对坐标通道）、
+  手柄注入模式与手柄类型、独占输入都做成配置键，Windows 侧虚拟手柄同样落在 ViGEmBus 一类驱动上，
+  macOS 侧键盘注入考虑了 Karabiner 虚拟 HID。这三点与我们的设计方向一致，
+  但**只到"机制存在"这一层**：取值域、默认值、支持的手柄类型集合均未取证，
+  不做任何断言（含"我们超过 Parsec"这类表述同样禁止）。
 - **网易 UU 远程**：仅宣传页证据（300+ 触屏按键映射方案），是手机→PC 场景，与 macOS 桌面客户端不同赛道。
 
 ## 3. 打磨路线图
