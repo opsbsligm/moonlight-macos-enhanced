@@ -1,6 +1,65 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-30 四次基点刷新：Wave P 硬编码口令门禁）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-30 五次基点刷新：Wave R 发布镜像自证）
 
-## 0. Wave P 目标模式（当前执行窗口，2026-10-30）
+## 0. Wave R 目标模式（当前执行窗口，2026-10-30）
+
+> 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
+
+**目标**：让事实源流水线在发出 DMG 的那一刻审计这个镜像本身。今天 `package-dmg`
+只负责"造出镜像"，没有任何一步读过造出来的东西；`dmg-audit.py` 存在、且在 GitHub
+镜像侧的 release job 里真跑，事实源却只跑它的 `--self-test-checksums`。结果是
+一条完整链路可以全绿发布一个用户装到手里才发现不对的包。
+
+**已量化事实（2026-10-30 实测，非估计）**：
+- **CI 发布出去的镜像确实缺翻译表**：从 GitLab job **5036**（pipeline 836，main
+  `dd68e529`）的 artifacts 取回 `Moonlight-1.6.0-build2050.dmg`，只读挂载后
+  `Contents/Resources` 下 `InfoPlist.strings` 数量 = **0**，`en.lproj`/`zh-Hans.lproj`
+  里只有 `Localizable.strings`。Xcode 不为本工程写出该文件，于是包内 app 的权限提示
+  对任何语言都只剩 Info.plist 里那一句 —— 仓库里那两份翻译表只在 git 里成立。
+- **修复后的同一个 app 打包能带上表**：经 `codesign-bundle.sh` 处理的副本再打包，
+  镜像内 `InfoPlist.strings` 数量 = **2**，中文读出"用于捕获高回报率鼠标输入…"，
+  包内 `codesign --verify --deep --strict` 通过；打包前后输入 app 的
+  `InfoPlist.strings` 数量都是 0，证明改动落在 staging 副本而不是用户的构建产物。
+- **期望值在同一个 job 内就能拿到**：`sh Limelight/build-number.sh --print` = 2054，
+  `python3 scripts/project_identity.py --print-version` = 1.6.0；而本地那份 app 的
+  `CFBundleVersion` 是 **1720**（xcconfig 陈旧基线）。同一次构建里源说 2054、包自报
+  1720 —— 这正是"审计必须拿源当期望值、不能拿 bundle 自证"的证据。
+- **门禁登记的理由已经站不住**：`gate-coverage-audit.py` 把 `dmg-audit.py` 记成
+  `selftest` 类，`full_form` 写"uncovered on the source of truth: package-dmg produces
+  the image but the audit also wants the release body and sidecar layout the mirror's
+  release job assembles"。而 `--version`/`--build` 都是可选参数、
+  `--localizations-from` 默认就指本仓库的语言表 —— 该审计并不真的需要 release 正文。
+- `spctl -a -t exec` 对本地 Release 包 **rejected**，`codesign --verify --deep --strict`
+  rc=0。ad hoc 签名不满足 Gatekeeper 是既有事实，属 §5 冻结项，本波不动、也不声称修好。
+
+**完成边界（四条全绿才算完成，缺一不算）**：
+1. **修复进入事实源**：`scripts/package-dmg.sh` 在 `hdiutil create` 之前对 staging 副本
+   装语言表并 seal，且**签名在表之后**（表装进 bundle 之前 seal，句子就不在签名覆盖内）。
+   输入 app 不被改写 —— 这条要用打包前后的读回证明，不能只靠"看起来没写"。
+2. **期望值来自源**：短版本号在仓库里只能有一个读者，新增 `marketing_version()` 与
+   `release-gate.py` 的既有读取路径在 `--self-test` 里互相钉死（两个读者偶然一致，
+   和两个读者故意不一致是同一个 bug）。CI 审计显式传 `--version`（源声明）与
+   `--build`（本次 SHA 的 `rev-list --count`），二者都不从镜像里的 plist 读。
+3. **事实源真跑全形式**：`package-dmg` 造完镜像在同一 job 内跑
+   `python3 scripts/dmg-audit.py "$dmg" --version … --build …`，失败即 job 失败；
+   `gate-coverage-audit.py` 里 `dmg-audit.py` 的登记随之改为 `fast`，那句
+   "uncovered on the source of truth" 必须删掉 —— 留着它，这条覆盖缺口就还能匿名存在。
+4. **行为变异**（进入 `scripts/assertion-battery.py`，`--self-test` 下逐条 rc=1）：
+   （a）去掉本地化安装步骤 → 镜像审计必须拒绝，证明表真的被检查而不是被路过；
+   （b）审计期望值改读 bundle 自报值 → 必须被拒绝，禁止 bundle 自证；
+   （c）从 `.gitlab-ci.yml` 删掉审计步骤 → `gate-coverage-audit.py` 必须报错或指出
+   登记过期，证明接线不能悄悄松掉。
+
+**验收判据**：本波 SHA 的流水线产物下载后只读挂载，`InfoPlist.strings` 数量 = 2；
+job trace 里能看到 `ok bundle MoonlightEnhanced.app version 1.6.0 build <本次计数>`；
+`dmg-audit.py --self-test` 与 `--self-test-checksums` 均 rc=0；
+`gate-coverage-audit.py` rc=0 且 `dmg-audit.py` 不再出现在 note 列表；
+`bash scripts/local-gates.sh` 0 failed；本次 SHA 流水线到 success，`publish-github`
+核对本 ref 双端 SHA。
+
+**边界**：不签 Developer ID、不公证、不做自动更新（§5 冻结项）；不顺手改设置页控件与
+已验收默认值；不把 `spctl rejected` 说成已解决；真机验收仍按 §4 独立保留。
+
+## 0.1 Wave P 目标模式（已完成并合并：MR 36 → `dcad899d`；保留供追溯）
 
 > 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
 

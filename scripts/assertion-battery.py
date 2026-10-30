@@ -43,6 +43,8 @@ APP_CELL = os.path.join(root, "Limelight", "macOS", "ViewControllers", "AppCell.
 PREPARER = os.path.join(root, "scripts", "prepare-release.py")
 BUILD_SH = os.path.join(root, "Limelight", "build-number.sh")
 WORKFLOW = os.path.join(root, ".github", "workflows", "build.yml")
+TRUTH_CI = os.path.join(root, ".gitlab-ci.yml")
+PACKAGER = os.path.join(root, "scripts", "package-dmg.sh")
 CHANGELOG = os.path.join(root, "CHANGELOG.md")
 FETCHER = os.path.join(root, "scripts", "download-frameworks.sh")
 AUDIT = os.path.join(root, "scripts", "constraints-audit.py")
@@ -1939,6 +1941,73 @@ def stop_frees_the_cache_under_a_draw(text):
     return text.replace(CACHE_STOP_HANDOFF, "    if (_textureCache) {", 1)
 
 
+SEAL_OF_STAGED_COPY = ('bash "${SCRIPT_DIR}/codesign-bundle.sh" '
+                       '"$STAGING_DIR/$APP_NAME.app"')
+VERSION_FROM_SOURCE = ('expected_version="$(python3 scripts/project_identity.py '
+                       '--print-version)"')
+
+
+def seal_the_bundle_it_was_handed(text):
+    """Seal the derived-data bundle instead of the copy that goes into the image.
+
+    This is the regression that actually shipped: the seal ran, reported success, and
+    sealed the wrong directory, so the image a user downloaded carried whatever Xcode
+    left behind -- including no `InfoPlist.strings` at all.
+    """
+    once(text, SEAL_OF_STAGED_COPY, "the seal of the staged copy")
+    return text.replace('"$STAGING_DIR/$APP_NAME.app"', '"$APP_PATH"', 1)
+
+
+def keep_only_the_explanation(text):
+    """Delete the sealing command and leave the paragraph that justifies it.
+
+    The packaging script explains its sealing at length, in prose naming the very
+    script it runs. A guard that searches raw text is satisfied by that paragraph, so
+    the check itself can go quiet while the file still reads as documented.
+    """
+    once(text, SEAL_OF_STAGED_COPY, "the seal of the staged copy")
+    return text.replace(SEAL_OF_STAGED_COPY, "# " + SEAL_OF_STAGED_COPY, 1)
+
+
+def seal_after_the_image_is_built(text):
+    """Move the sealing to after `hdiutil create`.
+
+    The command is still there and still seals a staged copy, but the image is already
+    written by then, so it is made of bytes that were never signed.
+    """
+    once(text, SEAL_OF_STAGED_COPY, "the seal of the staged copy")
+    text = text.replace(SEAL_OF_STAGED_COPY + "\n", "", 1)
+    anchor = 'echo "DMG created: $OUTPUT_DMG"\n'
+    once(text, anchor, "the line that reports the finished image")
+    return text.replace(anchor, SEAL_OF_STAGED_COPY + "\n" + anchor, 1)
+
+
+def drop_the_image_audit(text):
+    """Stop opening the image the packaging job just made.
+
+    The job keeps its checksum self-test, so the pipeline still reports a packaging
+    step that ran something and passed.
+    """
+    once(text, "scripts/dmg-audit.py", "the image audit step")
+    return text.replace("scripts/dmg-audit.py", "scripts/none.py", 1)
+
+
+def audit_the_image_against_itself(text):
+    """Ask the built bundle what version it is, and require the image to agree.
+
+    This is the shape that let a build stamped 1720 by a stale xcconfig ship from a
+    commit that counted 2054: the name, the bundle and the expectation all came from
+    the same wrong artifact, so the audit could only ever agree with itself.
+    """
+    once(text, VERSION_FROM_SOURCE, "the version read from the project")
+    return text.replace(
+        VERSION_FROM_SOURCE,
+        'expected_version="$(/usr/libexec/PlistBuddy -c '
+        '\'Print :CFBundleShortVersionString\' '
+        '"$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/MoonlightEnhanced.app/'
+        'Contents/Info.plist")"', 1)
+
+
 MUTATIONS = [
     ("neuter-if", HID, neuter_if, "keyUp release guard is disabled but still worded"),
     ("no-key-cancel", CAPTURE, drop_pending_cancel,
@@ -2284,6 +2353,23 @@ MUTATIONS = [
     ("helper-plist-traps-instead-of-reporting", MICROPHONE,
      the_helper_plist_traps_again,
      "a try! comes back to the path that installs the privileged helper"),
+    ("dmg-sealed-the-bundle-it-was-handed", PACKAGER,
+     seal_the_bundle_it_was_handed,
+     "the image is made of bytes sealed somewhere else, so the download carries no signature "
+     "over its own resources"),
+    ("dmg-kept-only-the-comment-about-sealing", PACKAGER,
+     keep_only_the_explanation,
+     "the seal is gone but the paragraph naming it stays, so a text search still reads as "
+     "compliance"),
+    ("dmg-sealed-after-the-image-was-written", PACKAGER,
+     seal_after_the_image_is_built,
+     "the seal runs, reports success, and lands on bytes the image never contained"),
+    ("packaging-job-stopped-opening-its-image", TRUTH_CI,
+     drop_the_image_audit,
+     "the source of truth ships a disk image nothing ever read"),
+    ("image-audit-asked-the-image-its-own-version", TRUTH_CI,
+     audit_the_image_against_itself,
+     "the expected version comes out of the artifact being graded, so any artifact passes"),
 
 ]
 

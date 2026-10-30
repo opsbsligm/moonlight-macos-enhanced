@@ -70,14 +70,6 @@ NON_FAST = {
                      "exists there, and the release path's warnings are covered by "
                      "build-warning-audit.py, which is wired to build.log",
     },
-    "dmg-audit.py": {
-        "class": "selftest",
-        "self_test": "--self-test-checksums",
-        "reason": "its full form audits a built .dmg and its checksum sidecars",
-        "full_form": "uncovered on the source of truth: package-dmg produces the image "
-                     "but the audit also wants the release body and sidecar layout the "
-                     "mirror's release job assembles",
-    },
     "launch-code-audit.py": {
         "class": "selftest",
         "self_test": "--self-test",
@@ -119,9 +111,24 @@ def referenced(relative):
     path = os.path.join(ROOT, relative)
     try:
         with open(path, encoding="utf-8") as handle:
-            return set(GATE_REF.findall(handle.read()))
+            text = handle.read()
     except OSError:
         raise SystemExit("gate-coverage-audit: cannot read %s" % relative)
+    return referenced_text(text)
+
+
+def referenced_text(text):
+    """Every `scripts/*.py` a pipeline definition actually runs, comments excluded.
+
+    `asked_classes` already refuses to read a class out of a remark, for the reason
+    spelled out there: an explanation of a rule is not a consumer of it. The gate names
+    themselves were read from raw text all the same, so a job that deleted its audit step
+    and kept the paragraph naming that step stayed "covered on the source of truth" -- the
+    silence rewritten as prose, which is the exact shape this audit exists to refuse. A
+    package step that describes a check is now worth the same as one that runs it: nothing.
+    """
+    return set(GATE_REF.findall("\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("#"))))
 
 
 def asked_classes(source_text):
@@ -160,8 +167,8 @@ def reconcile(source_text=None, mirror_text=None):
     """Compare the two definitions. Returns (violations, notes, covered)."""
     source_text = source_text if source_text is not None else read(SOURCE_OF_TRUTH)
     mirror_text = mirror_text if mirror_text is not None else read(MIRROR)
-    truth = set(GATE_REF.findall(source_text))
-    mirror = set(GATE_REF.findall(mirror_text))
+    truth = referenced_text(source_text)
+    mirror = referenced_text(mirror_text)
     violations, notes, covered = [], [], set()
 
     for name in sorted(mirror):
@@ -336,8 +343,26 @@ def self_test():
               file=sys.stderr)
         return 1
 
+    # 5. A call that survives only as a remark. `release-gate.py` sits in NON_FAST, so a
+    #    definition that no longer runs it has to be told it keeps an excuse for a gate it
+    #    dropped (HC004) -- but only if a comment is not read as a call. Delete the
+    #    filtering and the dropped gate stays "referenced", the excuse stays unchallenged,
+    #    and the coverage gap reads as prose.
+    dropped_mirror = "\n".join(line for line in mirror.splitlines()
+                               if "release-gate.py" not in line)
+    commented_truth = truth + "\n#  - python3 scripts/release-gate.py --tag \"$CI_COMMIT_TAG\"\n"
+    if any(c == "HC004" for c, _, _ in reconcile(truth, mirror)[0]):
+        print("self-test failed: the shipped sample already reports a stale excuse, so "
+              "the mutation below proves nothing", file=sys.stderr)
+        return 1
+    if not any(c == "HC004" and n == "release-gate.py"
+               for c, n, _ in reconcile(commented_truth, dropped_mirror)[0]):
+        print("self-test failed: a definition whose only mention of a gate is a comment "
+              "still counted as running it", file=sys.stderr)
+        return 1
+
     print("self-test ok: one-sided gates, unemitted classes, stale excuses and "
-          "misfiled artefact gates are all refused")
+          "misfiled artefact gates are all refused, and a remark is not a call")
     return 0
 
 
