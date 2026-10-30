@@ -52,6 +52,8 @@ struct AppView: View {
   @SwiftUI.State private var resetDoneMessageKey = ""
   @SwiftUI.State private var showDiagnosticsCopied = false
   @SwiftUI.State private var showDiagnosticsCopyFailed = false
+  @SwiftUI.State private var showDiagnosticsExported = false
+  @SwiftUI.State private var showDiagnosticsExportFailed = false
 
   private var appAppearanceBinding: Binding<AppAppearanceOption> {
     Binding(
@@ -118,6 +120,39 @@ struct AppView: View {
     let copied = DiagnosticsReportBuilder.writeCurrentReportToPasteboard()
     showDiagnosticsCopied = copied
     showDiagnosticsCopyFailed = !copied
+  }
+
+  /// The whole report to a file the player picks, in the exact bytes the checker hashes.
+  ///
+  /// Pasting a report into an editor is how an acceptance run loses its hash: an editor that
+  /// normalises line endings or adds a trailing blank line changes every byte the declaration
+  /// was bound to, and the whole matrix then grades as unknown. Writing the file here means
+  /// the bytes under test are the bytes the app produced.
+  @MainActor
+  private func exportDiagnosticsReport() {
+    let panel = NSSavePanel()
+    panel.canCreateDirectories = true
+    panel.nameFieldStringValue = "moonlight-diagnostics-\(Self.exportStamp()).txt"
+    panel.allowedContentTypes = [.plainText]
+
+    guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
+    do {
+      try DiagnosticsReportBuilder.writeReport(
+        DiagnosticsReportBuilder.currentReport(), to: destinationURL)
+      showDiagnosticsExported = true
+    } catch {
+      // The panel closed either way; the only signal left is the failure being said out loud.
+      NSApp.presentError(error)
+      showDiagnosticsExportFailed = true
+    }
+  }
+
+  /// A local timestamp, so a saved report sorts beside the run it describes.
+  private static func exportStamp() -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyyMMdd-HHmmss"
+    return formatter.string(from: Date())
   }
 
   @MainActor
@@ -329,6 +364,11 @@ struct AppView: View {
               Button(languageManager.localize("Copy Diagnostics Report…")) {
                 copyDiagnosticsReport()
               }
+              Button(languageManager.localize("Export Diagnostics Report…")) {
+                Task { @MainActor in
+                  exportDiagnosticsReport()
+                }
+              }
             }
           }
 
@@ -406,6 +446,16 @@ struct AppView: View {
       Button(languageManager.localize("OK"), role: .cancel) {}
     } message: {
       Text(languageManager.localize("Diagnostics Report Unavailable Message"))
+    }
+    .alert(languageManager.localize("Diagnostics Report Exported"), isPresented: $showDiagnosticsExported) {
+      Button(languageManager.localize("OK"), role: .cancel) {}
+    } message: {
+      Text(languageManager.localize("Diagnostics Report Exported Message"))
+    }
+    .alert(languageManager.localize("Diagnostics Report Unsaved"), isPresented: $showDiagnosticsExportFailed) {
+      Button(languageManager.localize("OK"), role: .cancel) {}
+    } message: {
+      Text(languageManager.localize("Diagnostics Report Unsaved Message"))
     }
     .alert(languageManager.localize("Reset Completed"), isPresented: $showResetDone) {
       Button(languageManager.localize("Restart App")) {
