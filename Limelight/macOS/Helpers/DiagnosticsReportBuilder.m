@@ -98,6 +98,10 @@ static NSString *const kRedactedBlob = @"[redacted-blob]";
 static NSString *const kRedactedPath = @"[redacted-path]";
 static NSString *const kRuleUnavailable = @"\n[redaction rule unavailable]\n";
 
+// The stand-in for a build identity while the rest of the report is scrubbed. A control byte
+// outside the base64 alphabet, so no rule below can match it or leave it in the finished text.
+static NSString *const kBuildIdentityGuard = @"\001ml-build-git-commit\001";
+
 // The name a protocol type reads as in a report. The comparison goes through the
 // same table that produced the recorded number, so the builder and the sender
 // cannot start calling the same id by different names -- including the id with no
@@ -763,11 +767,46 @@ static NSString *MachineParamState(DiagnosticsFeatureParam *param, double effect
     return [self redactString:input homeDirectory:NSHomeDirectory()];
 }
 
+// Pull the build identity out of the text before the scrub, and hand back where it was held.
+//
+// The commit is the one value a report has to keep verbatim. The acceptance checker grades every
+// row against a full 40-hex commit and marks the whole matrix unknown without it, and a 40-hex
+// run of letters and digits is precisely what the blob rule below exists to remove. Redacting a
+// commit buys nothing either: it is the repository's own public coordinate, and a report that
+// cannot say which bytes it describes answers no question at all.
+//
+// The match is the builder's whole line -- key, equals sign, forty lowercase hex, line end -- and
+// nothing narrower than that is spared. A 40-hex run inside a log line, a filename, or the value
+// of some other key is still scrubbed, so this costs the secret rules nothing they had before.
++ (NSString *)maskBuildIdentityInString:(NSString *)input heldOut:(NSString *__autoreleasing *)heldOut {
+    NSRegularExpression *regex =
+        [NSRegularExpression regularExpressionWithPattern:@"(?:\\A|\\n)(ml\\.build\\.git_commit=)([0-9a-f]{40})(?=\\n|\\z)"
+                                               options:0
+                                                 error:nil];
+    if (regex == nil) {
+        return input;
+    }
+    NSTextCheckingResult *match =
+        [regex firstMatchInString:input options:0 range:NSMakeRange(0, input.length)];
+    if (match == nil || match.numberOfRanges < 3) {
+        return input;
+    }
+    if (heldOut != NULL) {
+        *heldOut = [input substringWithRange:[match rangeAtIndex:2]];
+    }
+    return [input stringByReplacingCharactersInRange:[match rangeAtIndex:2]
+                                          withString:kBuildIdentityGuard];
+}
+
 + (NSString *)redactString:(NSString *)input homeDirectory:(NSString *)home {
     if (input.length == 0) {
         return @"";
     }
     NSString *text = input;
+
+    // Held aside first, so the rules below never see the bytes they would otherwise destroy.
+    NSString *identity = nil;
+    text = [self maskBuildIdentityInString:text heldOut:&identity];
 
     // Any user's home path first: the log was written by this machine, but it also
     // carries paths copied out of another build's report.
@@ -795,6 +834,9 @@ static NSString *MachineParamState(DiagnosticsFeatureParam *param, double effect
     // /Users, which is what a developer's machine and a CI runner look like.
     if (home.length > 1 && [text rangeOfString:home].location != NSNotFound) {
         text = [text stringByReplacingOccurrencesOfString:home withString:@"~"];
+    }
+    if (identity.length > 0) {
+        text = [text stringByReplacingOccurrencesOfString:kBuildIdentityGuard withString:identity];
     }
     return text;
 }
@@ -913,6 +955,85 @@ static NSString *MachineParamState(DiagnosticsFeatureParam *param, double effect
                 @"\n[report truncated: %lu characters omitted]", (unsigned long)dropped]];
     }
     return body;
+}
+
+// Every separator Python's `str.splitlines()` breaks a line on, except LF itself -- LF is the
+// run boundary rather than a match. The acceptance checker reads a report in universal-newline
+// text mode and splits its machine block with `str.splitlines()`, and those two disagree: text
+// mode folds only CR and CRLF, while `splitlines()` also breaks on VT, FF, FS, GS, RS, NEL and
+// the two Unicode separators. A report carrying any of them would hash as one text and parse as
+// more lines than that text holds, so the byte the hash covers and the line a key came from
+// would stop describing the same file. Folding all of them to LF leaves one canonical shape.
+static BOOL MLIsLineBreak(unichar character) {
+    return character == '\r' || character == '\v' || character == '\f' ||
+           character == 0x1C || character == 0x1D || character == 0x1E ||
+           character == 0x85 || character == 0x2028 || character == 0x2029;
+}
+
++ (NSData *)canonicalReportBytesFromString:(NSString *)report {
+    if (report.length == 0) {
+        return [NSData data];
+    }
+
+    NSMutableString *body = [NSMutableString stringWithCapacity:report.length];
+    NSUInteger index = 0;
+    NSUInteger runStart = 0;
+    NSUInteger length = report.length;
+    while (index < length) {
+        unichar character = [report characterAtIndex:index];
+        if (!MLIsLineBreak(character)) {
+            index += 1;
+            continue;
+        }
+        if (runStart < index) {
+            [body appendString:[report substringWithRange:NSMakeRange(runStart, index - runStart)]];
+        }
+        [body appendString:@"\n"];
+        // CRLF is one break, not two.
+        index += (character == '\r' && index + 1 < length &&
+                  [report characterAtIndex:index + 1] == '\n') ? 2 : 1;
+        runStart = index;
+    }
+    if (runStart < length) {
+        [body appendString:[report substringWithRange:NSMakeRange(runStart, length - runStart)]];
+    }
+
+    // One LF to end the file, and nothing after it. An editor that adds a blank line is the
+    // exact defect this method exists to make impossible.
+    NSUInteger end = body.length;
+    while (end > 0 && [body characterAtIndex:end - 1] == '\n') {
+        end -= 1;
+    }
+    if (end == 0) {
+        return [NSData data];
+    }
+    NSString *trimmed = [body substringToIndex:end];
+    return [[trimmed stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
+}
+
++ (BOOL)writeReport:(NSString *)report toURL:(NSURL *)url error:(NSError *__autoreleasing *)error {
+    if (url.filePathURL == nil) {
+        if (error != NULL) {
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain
+                                         code:NSFileWriteUnknownError
+                                     userInfo:@{NSLocalizedDescriptionKey:
+                                         @"The chosen destination is not a file path this app can write."}];
+        }
+        return NO;
+    }
+    NSData *bytes = [self canonicalReportBytesFromString:report];
+    if (bytes.length == 0) {
+        if (error != NULL) {
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain
+                                         code:NSFileWriteNoPermissionError
+                                     userInfo:@{NSLocalizedDescriptionKey:
+                                         @"There was no report to write."}];
+        }
+        return NO;
+    }
+    // Without `atomically` a save interrupted halfway leaves a truncated file that still
+    // opens, still has a machine block, and grades as a real report.
+    return [bytes writeToFile:url.path options:NSDataWritingAtomic error:error];
 }
 
 + (NSString *)assembleSections:(NSArray<DiagnosticsReportSection *> *)sections {

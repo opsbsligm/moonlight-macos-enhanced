@@ -185,6 +185,32 @@ NS_ASSUME_NONNULL_BEGIN
 /// -- one pass, so a value cannot survive by arriving in a line nobody thought to
 /// scrub -- and bring it under the cap, shortening the log block first.
 + (NSString *)reportFromSections:(NSArray<DiagnosticsReportSection *> *)sections;
+
+/// The exact bytes an exported report file must hold.
+///
+/// A checker grades an exported report by hashing the file it was given, and a hash covers
+/// every byte: one trailing newline from an editor, one CR that an editor normalised, and
+/// the declaration the player wrote stops matching the report it described. That failure is
+/// invisible until a whole acceptance run grades as unknown, so the app writes the file
+/// itself, from these bytes, and nobody pastes a report into a file again.
+///
+/// The shape is one UTF-8 line per line, LF separated, no trailing blanks, and the file
+/// ending in exactly one LF. Lines are found with `enumerateLinesUsingBlock:`, which
+/// treats CR, CRLF, U+2028 and U+2029 as terminators too, because the point is that a
+/// report reaching a checker from this app always reads the same way -- a separator the
+/// checker's own line reader treats as a line break has to be folded here rather than
+/// survive to make two files out of one report.
+///
+/// Idempotent on purpose: an export of a report that was itself exported hashes the same.
++ (NSData *)canonicalReportBytesFromString:(NSString *)report;
+
+/// Write a report to a file as exactly those bytes, or say why it did not happen.
+///
+/// The write is atomic, so a cancelled save cannot leave a half report that a checker then
+/// grades: a file that exists is a file that holds a whole report. The error is handed back
+/// rather than swallowed, because an export button that returns to normal and wrote nothing
+/// is the failure a player cannot see.
++ (BOOL)writeReport:(NSString *)report toURL:(NSURL *)url error:(NSError *_Nullable *_Nullable)error;
 @end
 
 NS_ASSUME_NONNULL_END
