@@ -1258,6 +1258,11 @@
 "Diagnostics Report Copied Message" = "报告已在剪贴板中，可直接粘贴到你要提交的 issue。报告会主动去掉 PIN、密码、证书以及本机用户目录路径。";
 "Diagnostics Report Unavailable" = "无法拷贝诊断报告";
 "Diagnostics Report Unavailable Message" = "剪贴板未能写入，请使用“导出原始日志”获取日志文件。";
+"Export Diagnostics Report…" = "导出诊断报告…";
+"Diagnostics Report Exported" = "诊断报告已导出";
+"Diagnostics Report Exported Message" = "报告已按判读工具实际哈希的字节写入你选择的文件。若再粘贴进编辑器另存，哈希就会与报告内容脱钩。";
+"Diagnostics Report Unsaved" = "诊断报告未保存";
+"Diagnostics Report Unsaved Message" = "文件没有写入成功，请确认目标目录允许本应用写入后重试。";
 "No" = "否";
 "Devices" = "设备";
 "What has to be true first" = "先要满足的前提";
