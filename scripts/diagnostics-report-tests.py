@@ -790,6 +790,11 @@ int main(void) {
         check([machineText rangeOfString:@"ml.pointer.mouse_mode=unknown"].location != NSNotFound &&
               [machineText rangeOfString:@"ml.pointer.absolute=unknown"].location != NSNotFound,
               "a pointer path never recorded is unknown, not inferred to be relative");
+        check([machineText rangeOfString:@"ml.build.git_commit=unknown"].location != NSNotFound &&
+              [machineText rangeOfString:@"ml.build.version=unknown"].location != NSNotFound &&
+              [machineText rangeOfString:@"ml.build.number=unknown"].location != NSNotFound,
+              "a state carrying no build identity says so three times, rather than leaving a "
+              "checker to tell \"no identity\" apart from \"no identity key\"");
 
         DiagnosticsFeatureState *shape = DiagnosticsFeatureState.new;
         shape.profileScope = @"per-host profile for one host";
@@ -804,6 +809,9 @@ int main(void) {
         shape.renderedFrames = 1150;
         shape.renderedFps = 119.4f;
         shape.receivedBytes = 32 * 1024 * 1024;
+        shape.gitCommit = @"0123456789abcdef0123456789abcdef01234567";
+        shape.appVersion = @"1.6.0";
+        shape.buildNumber = @"2050";
         MLControllerInventorySnapshot *pad = MLControllerInventorySnapshot.new;
         pad.entries = @[ MLControllerEntry.new ];
         NSString *shaped = [[DiagnosticsReportBuilder
@@ -871,6 +879,14 @@ int main(void) {
         check([shaped rangeOfString:@"ml.profile=per-host"].location != NSNotFound,
               "the profile scope is one of two fixed words, so the scope a run was graded "
               "under is machine-comparable");
+        check([shaped rangeOfString:@"ml.build.git_commit=0123456789abcdef0123456789abcdef01234567"]
+                  .location != NSNotFound,
+              "the commit that produced the binary is carried verbatim, so an acceptance "
+              "statement is pinned to source rather than to a build count");
+        check([shaped rangeOfString:@"ml.build.version=1.6.0"].location != NSNotFound &&
+              [shaped rangeOfString:@"ml.build.number=2050"].location != NSNotFound,
+              "the version the binary announced itself with is addressable, so a DMG and a "
+              "report can be matched without reading the About pane");
 
         MLControllerInventorySnapshot *advertised = MLControllerInventorySnapshot.new;
         advertised.advertisedControllerArrivals = YES;

@@ -597,6 +597,27 @@ static NSString *MachineParamState(DiagnosticsFeatureParam *param, double effect
     [lines addObject:@"# one key=value per line; unknown means the app could not read it, "
                       "never zero"];
 
+    // Which bytes this report came from, before anything about their contents. A build number
+    // is a monotonic count of whatever branch the checkout sat on, so it identifies a build
+    // only inside one lineage; the commit is what makes an acceptance statement portable.
+    // Every three of these is `unknown` when the bundle did not carry it, never a guess.
+    NSString *commit = state.gitCommit;
+    BOOL commitIsFull = commit.length == 40;
+    for (NSUInteger index = 0; commitIsFull && index < commit.length; index++) {
+        unichar symbol = [commit characterAtIndex:index];
+        BOOL hex = (symbol >= '0' && symbol <= '9') ||
+                   (symbol >= 'a' && symbol <= 'f');
+        if (!hex) {
+            commitIsFull = NO;
+        }
+    }
+    [lines addObject:[NSString stringWithFormat:@"ml.build.git_commit=%@",
+                      commitIsFull ? commit : @"unknown"]];
+    [lines addObject:[NSString stringWithFormat:@"ml.build.version=%@",
+                      state.appVersion.length > 0 ? state.appVersion : @"unknown"]];
+    [lines addObject:[NSString stringWithFormat:@"ml.build.number=%@",
+                      state.buildNumber.length > 0 ? state.buildNumber : @"unknown"]];
+
     NSString *scope = state.profileScope ?: @"";
     NSString *machineScope = @"unknown";
     if ([scope hasPrefix:@"per-host"]) {
