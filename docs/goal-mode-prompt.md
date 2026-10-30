@@ -1,6 +1,58 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-30 六次基点刷新：Wave S 导出报告可判读）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-31 七次基点刷新：Wave U 对标矩阵自证）
 
-## 0. Wave S 目标模式（当前执行窗口，2026-10-30）
+## 0. Wave U 目标模式（当前执行窗口，2026-10-31）
+
+> 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
+
+**目标**：让对标矩阵的每一格"证据层级"由仓库自己复算，而不是由写下它的人自证。
+Wave S 把"报告生产者"和"判读消费者"连上了；同一类缺陷在对标侧还有一个：
+矩阵是散文，证据是 `docs/evidence/*/README.md` 加快照文件，两者**可以互相矛盾而无人查证**。
+
+**已量化事实（2026-10-31 实测，非估计）**：
+- 写这个门禁时逐格核对，**四格与仓库不符**：Sunshine 格钉的 release
+  `v2026.1018.5342` 根本不存在（tag 直探针 404，当时最新 stable 是 `v2026.914.233613`）；
+  qt 格自述"快照未钉 commit"，而 `docs/evidence/qt-snapshot/README.md` 早已钉住
+  commit `de2467e4` 与两个可被 `git hash-object` 复现的 blob SHA；common-c 格钉的
+  子模块 SHA 当前检出已无；Parsec 的 SHA-256 被缩写成无法复核的形式。CI 全绿。
+- **门禁本身也带同一个病**（本轮自查发现，三条都真实存在）：
+  （a）`SM004` 写在规则清单里，代码里**没有任何 `add(findings, ...)` 会发出它** —— 幽灵规则；
+  （b）`SM001`/`SM011` 有实现，但没有任何变异证明它们会触发；
+  （c）**`SM001` 在实践中永远报不出来**：`SM011` 的实现会去 `read()` 那个刚被
+  `SM001` 判定"不存在"的 README，`FileNotFoundError` 直接掀掉整个审计 ——
+  失效的证据链接让工具**崩掉**而不是**报红**，而"崩掉没有结论"在流水线里读起来像"没跑"。
+  这条只有在真的补上 SM001 变异之后才暴露，靠读代码读了两遍都没看见。
+
+**完成边界（五条全绿才算完成，缺一不算）**：
+1. **规则三集合相等**（`source-matrix-audit.py --self-test` 内置）：文档声明的 code 集合、
+   代码真正 `add()` 出来的集合、被某个变异证明会触发的集合，三者必须完全相同。
+   任一方向都能反证有效：塞一条只写在文档里的规则 → `rc=1 documented as a rule but never
+   emitted`；塞一条有实现有文档但没变异的规则 → `rc=1 emitted but never proved to fire`。
+2. **SM011 不再越界读文件**：只为确实存在的邻居 README 取 SHA-256，
+   断链时必须报 SM001 而不是抛异常。
+3. **矩阵逐格与仓库重算一致**：`source-matrix-audit.py`（verify 形态）0 violation，
+   且四格旧值的失效方式（**过期** / **记错**）在格内留字不静默替换 ——
+   门禁看得见"SHA 与 build 号不自洽"（SM012）和"钉的 commit 不在本历史线"（SM013），
+   **看不见"自洽但已落后 main"**，那一格只能靠验证日期这个人工凭据。
+4. **接缝接在事实源上**：新门禁经 `gate-coverage-audit.py --emit-commands --class=fast`
+   下发，由 `.gitlab-ci.yml:344` 的 `bash -eo pipefail -x < gates-fast.txt` 真实执行；
+   GitHub 镜像侧同时补 `fetch-depth: 0` —— 浅树（实测 712/18963 对象）会让 SM012/SM013
+   只能按 fetch depth 记分，`SM014` 是它拒绝撒谎的方式，不是可选提示。
+5. **完整本地门禁 0 failed**：上一轮 `111 passed / 1 failed / 13 skipped`，
+   那一项 `scaling-output-evidence-tests.py` 单跑 0 failures，
+   须在**无并发**的完整复跑里判定是编译抖动还是真实缺陷；判不出来就不许提交。
+
+**边界**：不改设置面板任何默认值与标签栏外观；不解冻 USB 真重定向 / Developer ID
+公证 / 自动更新；`hardware_validated` 保持 `false` —— 本波只把"对标结论可不可复核"
+变成机器可证，真机验收仍按 §4 独立保留。
+
+**验收判据**：`python3 scripts/source-matrix-audit.py --self-test` 打印
+`rule inventory: 13 codes documented, emitted and proved` 加 14 条变异逐条 caught；
+`python3 scripts/source-matrix-audit.py` = 0 violation；
+`python3 scripts/constraints-audit.py --no-battery` = 0 constraint failures；
+`bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；本次 SHA 流水线到终态；
+`liguangming` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
+
+## 0.1 Wave S 目标模式（已完成并合并：MR → `71a62394`；保留供追溯）
 
 > 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
 
