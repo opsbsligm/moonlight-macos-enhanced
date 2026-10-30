@@ -253,6 +253,8 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 | 键 | 含义 |
 | --- | --- |
+| `ml.build.git_commit` | 产出这份报告的二进制来自哪个 commit；解析不到就是 `unknown`（源码包、或该键之前的构建）。判读器把它当**整张矩阵的前提**：非完整 40 位小写十六进制 ⇒ 全部行 `UNKNOWN` |
+| `ml.build.version` / `ml.build.number` | bundle 自报的营销版本与构建号，用于把报告和已发布 DMG 对上；构建号是分支内单调计数，**不能**代替 commit 定位源码 |
 | `ml.profile` | `per-host` / `global` / `unknown`，固定三词，可跨报告比对 |
 | `ml.param.<snake_key>.{effective,shipped,range,written,state}` | 六个手感参数；`state` ∈ `shipped` / `override_of_<v>` / `clamped_below_<min>` / `clamped_above_<max>`，界值保留小数位 |
 | `ml.switch.<key>` | `on` / `off` / `unknown`；`unknown` = 该 profile 从未写过这个开关 |
