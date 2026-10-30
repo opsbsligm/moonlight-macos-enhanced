@@ -4061,6 +4061,130 @@ check(bool(local_build_version_problems(
         local_builder.replace("RESOLVED_BUILD_NUMBER", "RESOLVED_UNUSED"))),
       "the local build-number guard notices a build script that stops asking the script")
 
+# --- the shipped image has to prove its own contents -------------------------
+# Two separate silences lived here. `package-dmg.sh` sealed whatever Xcode handed it, so
+# the permission-prompt translations that exist as source tables never reached a download;
+# and the source of truth never opened an image at all, only its checksums, so nothing
+# noticed. The released build 2050 carried zero `InfoPlist.strings` -- every language read
+# the single sentence in Info.plist -- while the nightly pipeline was green.
+def executable_text(text):
+    """A definition without its comment lines.
+
+    Both files under this heading explain themselves at length: the packaging script has
+    a paragraph naming `codesign-bundle.sh`, the pipeline job has one naming
+    `CFBundleVersion`. A rule that searches raw text is satisfied by that prose, so
+    deleting the command and leaving the explanation reads as compliance -- which is the
+    same silence that shipped the unsigned image, rewritten as a check. Only whole-line
+    comments go, because `#` inside a shell string is data rather than a remark.
+    """
+    return "\n".join(line for line in text.splitlines()
+                     if not line.strip().startswith("#"))
+
+
+def packaging_problems(script):
+    body = executable_text(script)
+    bad = []
+    seal = body.find("codesign-bundle.sh")
+    create = body.find("hdiutil create")
+    if seal < 0:
+        bad.append("seals nothing, so the shipped bundle carries no signature over its "
+                   "own resources")
+    elif create >= 0 and seal > create:
+        bad.append("signs after `hdiutil create`, so the image is built from bytes that "
+                   "were never sealed")
+    if create < 0:
+        bad.append("never creates an image")
+    if '"$STAGING_DIR/$APP_NAME.app"' not in body:
+        bad.append("signs the bundle it was handed rather than the staged copy, so a "
+                   "packaging run rewrites the caller's build product")
+    return bad
+
+packager = open(os.path.join(root, "scripts", "package-dmg.sh"), encoding="utf-8").read()
+packager_problems = packaging_problems(packager)
+check(not packager_problems,
+      "the DMG seals the staged copy, language tables included"
+      if not packager_problems
+      else "scripts/package-dmg.sh " + "; ".join(packager_problems))
+
+seal_command = ('bash "${SCRIPT_DIR}/codesign-bundle.sh" '
+                '"$STAGING_DIR/$APP_NAME.app"')
+check(seal_command in executable_text(packager),
+      "scripts/package-dmg.sh no longer seals a copy named as the staged bundle in the "
+      "shape the mutations below expect, so this guard checks nothing")
+for label, mutated in (
+        ("stops sealing anything", packager.replace(seal_command, "true")),
+        ("seals the bundle it was handed",
+         packager.replace('"$STAGING_DIR/$APP_NAME.app"', '"$APP_PATH"')),
+        ("keeps only the comment that explains the sealing",
+         packager.replace(seal_command, "# " + seal_command)),
+        ("stopped creating an image", packager.replace("hdiutil create", "printf ok")),
+):
+    check(bool(packaging_problems(mutated)),
+          "the packaging guard does not notice a script that %s" % label)
+
+# The audit's expected values come from the source. Reading them out of the image would
+# certify a bundle against itself, which is exactly how a build stamped 1720 by a stale
+# xcconfig -- while its own commit counted 2054 -- keeps shipping under a name that names
+# a build nobody built.
+truth_ci = open(os.path.join(root, ".gitlab-ci.yml"), encoding="utf-8").read()
+pack_job = truth_ci.split("\npackage-dmg:")[-1].split("\npublish-github:")[0]
+
+def image_audit_problems(job):
+    job = executable_text(job)
+    bad = []
+    if "scripts/dmg-audit.py" not in job:
+        bad.append("never audits the image it produces")
+    if "--version" not in job:
+        bad.append("audits without an expected short version, so any version passes")
+    if "--build" not in job:
+        bad.append("audits without an expected build number, so any build passes")
+    if "project_identity.py --print-version" not in job:
+        bad.append("does not ask the project file for the version it expects")
+    if "build-number.sh --print" not in job:
+        bad.append("does not ask git for the build number it expects")
+    if "CFBundleShortVersionString" in job or "CFBundleVersion" in job:
+        bad.append("reads an expected version out of a built Info.plist, so the image "
+                   "certifies itself")
+    # `build/` is git-ignored, so the runner's checkout still holds last night's image
+    # when this job starts. Auditing `build/*.dmg` then grades -- and uploads -- a package
+    # this job never made, and against a build number that cannot match it.
+    cleared = re.search(r"rm -f build/\*\.dmg", job)
+    built = job.find("scripts/package-dmg.sh")
+    if not cleared:
+        bad.append("audits `build/*.dmg` without clearing it first, so an image left by an "
+                   "earlier run on this runner is graded and published as this job's output")
+    elif built >= 0 and cleared.start() > built:
+        bad.append("clears `build/*.dmg` after packaging, which deletes the image it is "
+                   "about to audit")
+    return bad
+
+audit_problems = image_audit_problems(pack_job)
+check(not audit_problems,
+      "the packaging job audits its own image against versions read from the source"
+      if not audit_problems
+      else ".gitlab-ci.yml package-dmg " + "; ".join(audit_problems))
+for label, mutated in (
+        ("drops the audit step", pack_job.replace("scripts/dmg-audit.py", "scripts/none.py")),
+        ("drops the expected version", pack_job.replace('--version "$expected_version"', "")),
+        ("reads the version off the image",
+         pack_job.replace("python3 scripts/project_identity.py --print-version",
+                          '/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" '
+                          '"$image"')),
+        ("audits a stale image left on the runner",
+         pack_job.replace("    - rm -f build/*.dmg build/*.dmg.sha256\n", "")),
+        ("clears the output directory after packaging",
+         # The clear moves below the packaging step, where it still reads as hygiene and
+         # still matches the search for `rm -f build/*.dmg` -- it only deletes the image
+         # this job is about to audit. An earlier draft of this mutation inserted the line
+         # before packaging, so it described the compliant job and could never be caught.
+         pack_job.replace("    - rm -f build/*.dmg build/*.dmg.sha256\n", "")
+         .replace("    - expected_version=",
+                  "    - rm -f build/*.dmg build/*.dmg.sha256\n"
+                  "    - expected_version=")),
+):
+    check(bool(image_audit_problems(mutated)),
+          "the image-audit guard notices a job that %s" % label)
+
 if run_battery:
     # An assertion that stops failing on a regression is worse than no assertion,
     # because it reads as coverage. The battery plants regressions in the real
