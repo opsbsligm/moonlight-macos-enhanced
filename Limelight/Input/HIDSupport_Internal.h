@@ -551,6 +551,25 @@ static inline BOOL isPlayStation(IOHIDDeviceRef device) {
     return vendorId == 0x054C && (productId == 0x09CC || productId == 0x05C4 || productId == 0x0CE6);
 }
 
+// Valve Steam Controller (vendor 0x28de): the twelve product ids moonlight-qt
+// claims for the arrival type, taken from its v6.2.0 snapshot
+// (docs/evidence/qt-snapshot/gamepad.cpp:728-749, which inherits them from SDL's
+// controller_list.h). This is a protocol identity only -- the device reports
+// through the standard HID layout, so there is no family for it and no axis map
+// here. A Valve pair outside this list keeps the Xbox fallback, because inventing
+// an id SDL has never claimed would announce a type we cannot back up.
+static inline BOOL isSteamController(IOHIDDeviceRef device) {
+    UInt16 vendorId = usbIdFromDevice(device, @kIOHIDVendorIDKey);
+    UInt16 productId = usbIdFromDevice(device, @kIOHIDProductIDKey);
+    if (vendorId != 0x28de) {
+        return NO;
+    }
+    return productId == 0x1101 || productId == 0x1102 || productId == 0x1105 ||
+           productId == 0x1106 || productId == 0x1142 || productId == 0x1201 ||
+           productId == 0x1202 || productId == 0x1205 || productId == 0x1302 ||
+           productId == 0x1303 || productId == 0x1304 || productId == 0x1305;
+}
+
 static inline BOOL isPS4(IOHIDDeviceRef device) {
     UInt16 vendorId = usbIdFromDevice(device, @kIOHIDVendorIDKey);
     UInt16 productId = usbIdFromDevice(device, @kIOHIDProductIDKey);

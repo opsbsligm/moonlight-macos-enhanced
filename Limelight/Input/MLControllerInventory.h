@@ -89,6 +89,14 @@ FOUNDATION_EXPORT NSString *MLControllerFamilyName(MLControllerFamily family);
 /// an arrival event or prove the host received it. Unrecognized families return 0.
 FOUNDATION_EXPORT uint8_t MLControllerProtocolTypeForFamily(MLControllerFamily family);
 
+/// The name a protocol type reads as in a report, for ids that have no layout family.
+/// `MLControllerProtocolTypeForFamily` cannot answer this one: a Valve Steam Controller
+/// reports through the standard HID layout, so it has no family, yet the arrival we send
+/// for it does carry `LI_CTYPE_STEAM`. The name table lives here rather than in the report
+/// builder so the sender and the report cannot call the same id by different names.
+/// Unknown ids return nil, and the caller prints `unknown` instead of guessing.
+FOUNDATION_EXPORT NSString *_Nullable MLControllerProtocolTypeName(uint8_t protocolType);
+
 /// The settings index used by the input path, without assuming an invalid value is HID.
 FOUNDATION_EXPORT NSString *MLControllerDriverNameForIndex(NSInteger index);
 
