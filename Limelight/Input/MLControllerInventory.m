@@ -86,6 +86,27 @@ uint8_t MLControllerProtocolTypeForFamily(MLControllerFamily family) {
     return 0x00; // LI_CTYPE_UNKNOWN
 }
 
+NSString *_Nullable MLControllerProtocolTypeName(uint8_t protocolType) {
+    // The ids a layout family can answer, read back through the family table so the
+    // sender and the report cannot drift apart on those three.
+    if (protocolType == MLControllerProtocolTypeForFamily(MLControllerFamilyXbox)) {
+        return @"xbox";
+    }
+    if (protocolType == MLControllerProtocolTypeForFamily(MLControllerFamilyPS4)) {
+        return @"ps";
+    }
+    if (protocolType == MLControllerProtocolTypeForFamily(MLControllerFamilyNintendo)) {
+        return @"nintendo";
+    }
+    // LI_CTYPE_STEAM. No family owns it: a Steam Controller reads through the standard HID
+    // layout, so the family table has nothing to say about it while the arrival packet still
+    // carries the id. Printing `unknown` for a number we sent would be the report lying.
+    if (protocolType == 0x04) {
+        return @"steam";
+    }
+    return nil;
+}
+
 NSString *MLControllerDriverNameForIndex(NSInteger index) {
     switch (index) {
         case 0: return @"HID";
