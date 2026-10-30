@@ -5,8 +5,8 @@ Also compiles the real isNintendo/isPlayStation predicates from
 HIDSupport_Internal.h with a fake IOHID property bus, so the protocol type an
 arrival would send is checked against the device ids: the Pro Controller and a
 lone left or right Joy-Con (0x2006/0x2007) all answer LI_CTYPE_NINTENDO, a
-DualShock 4 answers LI_CTYPE_PS, and an Xbox or unknown pad falls to
-LI_CTYPE_XBOX.
+DualShock 4 answers LI_CTYPE_PS, a Valve Steam Controller answers
+LI_CTYPE_STEAM, and an Xbox or unknown pad falls to LI_CTYPE_XBOX.
 """
 from pathlib import Path
 import subprocess
@@ -35,7 +35,8 @@ methods = '\n'.join(method(source, name) for name in (
 predicates = '\n'.join(method(internal, name) for name in (
     'static inline UInt16 usbIdFromDevice',
     'static inline BOOL isNintendo',
-    'static inline BOOL isPlayStation'))
+    'static inline BOOL isPlayStation',
+    'static inline BOOL isSteamController'))
 harness = r'''
 #import <Foundation/Foundation.h>
 typedef const void *IOHIDDeviceRef;
@@ -57,6 +58,10 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
 static const uint8_t LI_CTYPE_XBOX = 0x01;
 static const uint8_t LI_CTYPE_PS = 0x02;
 static const uint8_t LI_CTYPE_NINTENDO = 0x03;
+// Marked unused for the same reason isXbox/isKingKong below are: one mutation
+// replaces the only read of this id, and -Werror would fail the compile instead
+// of letting the replay report the announcement it really sent.
+static const uint8_t LI_CTYPE_STEAM __attribute__((unused)) = 0x04;
 // Fake IOHID property bus: the predicates under test only ever ask for the two
 // usb id keys, so a two-slot table answers the whole question.
 typedef struct { const void *device; unsigned short vid, pid; } FakePair;
@@ -172,6 +177,9 @@ int main(void) { @autoreleasepool {
     // uses, so the pair list is replayed through the real ones. The Pro
     // Controller and a lone left or right Joy-Con must all answer NINTENDO;
     // a DualShock 4 answers PS; an Xbox and an unknown pair fall to XBOX.
+    // A Valve Steam Controller answers STEAM for the ids moonlight-qt claims,
+    // and a Valve pair outside that list keeps the XBOX fallback -- Wave O-1
+    // narrows the announcement, it does not invent a second fallback.
     // The exhaustion table above is cleared first: six more pads would
     // overflow the sixteen slots.
     [s.deviceControllerTable removeAllObjects];
@@ -181,16 +189,25 @@ int main(void) { @autoreleasepool {
     busSet((const void *)0x7004, 0x054C, 0x09CC);
     busSet((const void *)0x7005, 0x045E, 0x0B13);
     busSet((const void *)0x7006, 0x1234, 0x5678);
+    busSet((const void *)0x7007, 0x28DE, 0x1142);
+    busSet((const void *)0x7008, 0x28DE, 0x1101);
+    busSet((const void *)0x7009, 0x28DE, 0x1122);
     HIDDeviceControllerEntry *n1 = [s entryForDevice:(const void *)0x7001];
     HIDDeviceControllerEntry *jl = [s entryForDevice:(const void *)0x7002];
     HIDDeviceControllerEntry *jr = [s entryForDevice:(const void *)0x7003];
     HIDDeviceControllerEntry *ps = [s entryForDevice:(const void *)0x7004];
     HIDDeviceControllerEntry *xb = [s entryForDevice:(const void *)0x7005];
     HIDDeviceControllerEntry *uk = [s entryForDevice:(const void *)0x7006];
+    HIDDeviceControllerEntry *st1 = [s entryForDevice:(const void *)0x7007];
+    HIDDeviceControllerEntry *st2 = [s entryForDevice:(const void *)0x7008];
+    HIDDeviceControllerEntry *stv = [s entryForDevice:(const void *)0x7009];
     CHECK(n1 != nil && jl != nil && jr != nil && ps != nil && xb != nil && uk != nil);
+    CHECK(st1 != nil && st2 != nil && stv != nil);
     CHECK(n1.protocolType == 0x03 && jl.protocolType == 0x03 && jr.protocolType == 0x03);
     CHECK(ps.protocolType == 0x02);
     CHECK(xb.protocolType == 0x01 && uk.protocolType == 0x01);
+    CHECK(st1.protocolType == 0x04 && st2.protocolType == 0x04);
+    CHECK(stv.protocolType == 0x01);
     puts("device table replay passed");
     return 0;
 }}
@@ -218,6 +235,15 @@ mutations = (
     ('a lone Joy-Con no longer recognized as Nintendo',
      '(productId == 0x2009 || productId == 0x2006 || productId == 0x2007);',
      '(productId == 0x2009);'),
+    ('the Steam Controller id is forgotten, so the pad is announced as Xbox',
+     '    if (vendorId != 0x28de) {',
+     '    if (vendorId != 0x0000) {'),
+    ('a Valve pair outside the claimed list is announced as Steam',
+     'productId == 0x1305;',
+     'productId != 0x9999;'),
+    ('the arrival keeps STEAM but sends it as the Xbox id',
+     '        return LI_CTYPE_STEAM;',
+     '        return LI_CTYPE_XBOX;'),
 )
 for label, old, new in mutations:
     assert harness.count(old) == 1, label

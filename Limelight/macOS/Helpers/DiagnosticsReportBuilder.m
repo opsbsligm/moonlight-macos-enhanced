@@ -100,17 +100,13 @@ static NSString *const kRuleUnavailable = @"\n[redaction rule unavailable]\n";
 
 // The name a protocol type reads as in a report. The comparison goes through the
 // same table that produced the recorded number, so the builder and the sender
-// cannot start calling the same id by different names. An id the table does not
-// know prints as unknown rather than being guessed.
+// cannot start calling the same id by different names -- including the id with no
+// layout family behind it, which the sender can still put on the wire. An id the
+// table does not know prints as unknown rather than being guessed.
 + (NSString *)controllerTypeNameForProtocolType:(uint8_t)protocolType {
-    if (protocolType == MLControllerProtocolTypeForFamily(MLControllerFamilyXbox)) {
-        return @"xbox";
-    }
-    if (protocolType == MLControllerProtocolTypeForFamily(MLControllerFamilyPS4)) {
-        return @"ps";
-    }
-    if (protocolType == MLControllerProtocolTypeForFamily(MLControllerFamilyNintendo)) {
-        return @"nintendo";
+    NSString *name = MLControllerProtocolTypeName(protocolType);
+    if (name != nil) {
+        return name;
     }
     return @"unknown";
 }
