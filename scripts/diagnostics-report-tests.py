@@ -74,6 +74,9 @@ BRIDGE = "Limelight/Moonlight-Bridging-Header.h"
 HOSTS = "Limelight/macOS/ViewControllers/HostsViewController.m"
 APP_PANE = "Limelight/macOS/ViewControllers/SettingsAppPane.swift"
 CHECKER = "scripts/hardware-acceptance-check.py"
+# The steps a person is handed during a real acceptance session. The checker grades by its own
+# `ITEMS`; this is the list that says what to actually go and look at.
+CHECKLIST = "docs/hardware-acceptance-checklist.md"
 
 # The floor, not a claim about the exact number: the shipped binary prints how many checks it
 # actually ran, and this refuses a run that quietly lost cases. Raised from 68 when the
@@ -82,7 +85,7 @@ CHECKER = "scripts/hardware-acceptance-check.py"
 # export shape -- a build identity that survives its own secret scrub, the canonical byte form an
 # exported file has to hold, and the write that produces it. A floor that stays behind the real
 # count is how a case list disappears without anyone noticing.
-MIN_DRIVER_CHECKS = 134
+MIN_DRIVER_CHECKS = 136
 
 failures = []
 
@@ -182,23 +185,28 @@ def grade_text(module, text):
 
 
 def export_with(source, cc, sdk, inventory_source=None):
-    """Build and run the harness, and return the export the shipping writer put on disk.
+    """Build and run the harness, and return both files the shipping writer put on disk.
 
-    `(code, log, export_text)`; `export_text` is None when the run wrote no file. The driver
-    keeps going after a failed check, so a mutated build that fails its own assertions still
-    writes a report -- which is what lets the consumer, rather than the producer, decide whether
-    a defect is visible from its side. The bytes come back as text rather than a path because the
-    working directory is gone by the time the caller reads them.
+    `(code, log, export_text, acceptance_text)`; either text is None when the run wrote no file.
+    The driver keeps going after a failed check, so a mutated build that fails its own assertions
+    still writes both reports -- which is what lets the consumer, rather than the producer, decide
+    whether a defect is visible from its side. The bytes come back as text rather than paths
+    because the working directory is gone by the time the caller reads them.
     """
     with tempfile.TemporaryDirectory() as work:
         dump = os.path.join(work, "export.txt")
-        code, log = compile_and_run(source, work, cc, sdk, inventory_source, dump_path=dump)
+        acceptance = os.path.join(work, "acceptance.txt")
+        code, log = compile_and_run(source, work, cc, sdk, inventory_source, dump_path=dump,
+                                    acceptance_path=acceptance)
         if code is None:
-            return None, log, None
-        if not os.path.exists(dump):
-            return code, log, None
-        with open(dump, encoding="utf-8") as handle:
-            return code, log, handle.read()
+            return None, log, None, None
+
+        def saved(path):
+            if not os.path.exists(path):
+                return None
+            with open(path, encoding="utf-8") as handle:
+                return handle.read()
+        return code, log, saved(dump), saved(acceptance)
 
 
 def scheduler_self_test():
@@ -1137,6 +1145,109 @@ int main(void) {
         printf("CANONICAL-SHA256 %s (%lu bytes)\n",
                sha256Hex(exportBytes).UTF8String, (unsigned long)exportBytes.length);
     }
+
+    {
+        // The report a real-device acceptance run is graded on. Everything above asks whether
+        // the builder writes an honest block; this asks whether that block still carries the
+        // seven checklist rows, which depend on keys none of the cases above read: the six
+        // hand-feel parameters, the six switches, the pointer path, the reconnect counters and
+        // the advertised player slots. A report that parses and names its commit can still grade
+        // every row unknown, and that is the failure this state exists to be graded on. The
+        // values are chosen so each row's report-side condition holds: a parameter off its
+        // shipped constant, every switch on, an absolute pointer path, a reconnect that counted
+        // an attempt, a stream that received frames, and two announced player slots.
+        DiagnosticsFeatureState *acceptance = DiagnosticsFeatureState.new;
+        acceptance.profileScope = @"per-host profile for one host";
+        // The six labels as `sidebarFeatureParamsWithOverrides:` spells them. The Python side
+        // re-derives the key each label becomes from this report's own bytes and compares that
+        // set with the list the checker grades by, so a rename on either side is caught here.
+        acceptance.sidebarParams = @[
+            [DiagnosticsFeatureParam paramWithLabel:@"edge sensor band"
+                                    shippedDefault:12 minimum:8 maximum:16 overrideValue:0],
+            [DiagnosticsFeatureParam paramWithLabel:@"edge sensor dwell"
+                                    shippedDefault:0.12 minimum:0.06 maximum:0.3 overrideValue:0],
+            [DiagnosticsFeatureParam paramWithLabel:@"auto collapse"
+                                    shippedDefault:0.45 minimum:0.3 maximum:1 overrideValue:0],
+            [DiagnosticsFeatureParam paramWithLabel:@"summon grace"
+                                    shippedDefault:2.5 minimum:1 maximum:6 overrideValue:4],
+            [DiagnosticsFeatureParam paramWithLabel:@"flick stroke"
+                                    shippedDefault:700 minimum:400 maximum:1200 overrideValue:0],
+            [DiagnosticsFeatureParam paramWithLabel:@"idle tab thickness"
+                                    shippedDefault:14 minimum:10 maximum:20 overrideValue:0],
+        ];
+        acceptance.switches = @{ @"edgeSensorSummon": @YES, @"absoluteMouseMode": @YES,
+                                 @"relativeMouseAsAbsolute": @YES,
+                                 @"imeLocalComposition": @YES, @"muteOnFocusLoss": @YES,
+                                 @"backgroundGamepad": @YES };
+        acceptance.pointerState = @{ @"mouseMode": @"remote",
+                                     @"pointerPath": @"coreHID (absolute)" };
+        acceptance.hasVideoStats = YES;
+        acceptance.receivedFrames = 12000;
+        acceptance.decodedFrames = 11980;
+        acceptance.renderedFrames = 11900;
+        acceptance.receivedBytes = 1073741824;
+        acceptance.renderedFps = 119.4f;
+        acceptance.jitterMs = 2.1f;
+        acceptance.videoFormatName = @"HEVC";
+        acceptance.hasReconnectState = YES;
+        acceptance.reconnectAttemptCount = 2;
+        acceptance.reconnectMaxAttempts = 10;
+        acceptance.gitCommit = @"a08fd2d3857f587709253271284cf874d61d1a51";
+        acceptance.appVersion = @"1.6.0";
+        acceptance.buildNumber = @"2051";
+
+        // Two pads of two models. `group_count` reads as two either way, so the rows that count
+        // controllers have to grade the slots the host was told about.
+        MLControllerEntry *xboxPad = MLControllerEntry.new;
+        xboxPad.vendorId = 0x045e;
+        xboxPad.productId = 0x0b12;
+        xboxPad.family = MLControllerFamilyXbox;
+        xboxPad.transport = @"USB";
+        xboxPad.nodeCount = 1;
+        MLControllerEntry *psPad = MLControllerEntry.new;
+        psPad.vendorId = 0x054c;
+        psPad.productId = 0x0ce6;
+        psPad.family = MLControllerFamilyPS5;
+        psPad.transport = @"Bluetooth";
+        psPad.hasBatteryPercent = YES;
+        psPad.batteryPercent = 87;
+        psPad.nodeCount = 2;
+        MLControllerInventorySnapshot *twoPads = MLControllerInventorySnapshot.new;
+        twoPads.entries = @[ xboxPad, psPad ];
+        twoPads.generations = 1;
+        twoPads.recordingNow = YES;
+        twoPads.driverName = @"AppleUserHIDDrivers";
+        twoPads.advertisedControllerArrivals = YES;
+        twoPads.advertisedControllerTypes = @{
+            @0: @(MLControllerProtocolTypeForFamily(MLControllerFamilyXbox)),
+            @1: @(MLControllerProtocolTypeForFamily(MLControllerFamilyPS5)),
+        };
+
+        NSString *acceptanceReport = [DiagnosticsReportBuilder reportFromSections:@[
+            [DiagnosticsReportBuilder machineStateSectionWithState:acceptance snapshot:twoPads],
+        ]];
+        // Written through the entry point the Export button uses, because what an acceptance run
+        // grades is the file a person saves rather than a string inside a process.
+        NSString *acceptanceDump =
+            NSProcessInfo.processInfo.environment[@"ML_ACCEPTANCE_DUMP"];
+        if (acceptanceDump.length == 0) {
+            acceptanceDump = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                @"ml-diagnostics-acceptance-probe.txt"];
+        }
+        NSError *acceptanceError = nil;
+        NSData *acceptanceBytes =
+            [DiagnosticsReportBuilder canonicalReportBytesFromString:acceptanceReport];
+        BOOL acceptanceWrote = [DiagnosticsReportBuilder
+            writeReport:acceptanceReport
+                  toURL:[NSURL fileURLWithPath:acceptanceDump]
+                  error:&acceptanceError];
+        check(acceptanceWrote && acceptanceError == nil,
+              "the acceptance-shaped report writes without saying why it did not happen");
+        check([NSData dataWithContentsOfFile:acceptanceDump].length == acceptanceBytes.length,
+              "the graded file holds the canonical bytes of the acceptance-shaped report");
+        printf("ACCEPTANCE-SHA256 %s (%lu bytes)\n",
+               sha256Hex(acceptanceBytes).UTF8String, (unsigned long)acceptanceBytes.length);
+    }
     // The count is printed rather than counted from the transcript by whoever reads it: a
     // report that quotes "the harness has N checks" and is wrong is the same kind of number
     // this repository keeps refusing to write down.
@@ -1321,6 +1432,34 @@ ACCEPTANCE_MUTATIONS = (
      '[lines addObject:@"ml.schema=1"]', '[lines addObject:@"ml.schema=2"]'),
 )
 
+# Key-name drift, one row at a time. The three mutations above break the export as a whole -- no
+# header, no identity, a schema the reader refuses -- and the checker notices all three because it
+# cannot parse the block at all. The realistic failure is quieter: one key renamed, the block still
+# parses, the identity still resolves, and a single checklist row drops to UNKNOWN. That is exactly
+# the kind of change that survives a code review, because the prose block still reads correctly and
+# the producer's own assertions only name two of the key families below.
+#
+# Each entry has to be caught by the *consumer*. `ml.reconnect.attempt` is the proof case: no
+# assertion in the driver reads that key, so the mutated build passes its own run and only the
+# grader notices the row it can no longer score.
+DRIFT_MUTATIONS = (
+    ("a hand-feel parameter writes its keys under a different prefix",
+     'NSString *base = [NSString stringWithFormat:@"ml.param.%@", MachineParamKey(param.label)];',
+     'NSString *base = [NSString stringWithFormat:@"ml.params.%@", MachineParamKey(param.label)];'),
+    ("a feature switch writes under a prefix the checker does not read",
+     '[NSString stringWithFormat:@"ml.switch.%@=%@", key,',
+     '[NSString stringWithFormat:@"ml.switches.%@=%@", key,'),
+    ("the advertised player slot key is renamed",
+     '[NSString stringWithFormat:@"ml.controllers.slot.%ld=%@",',
+     '[NSString stringWithFormat:@"ml.controllers.slots.%ld=%@",'),
+    ("the absolute-pointer verdict moves to another key",
+     '[NSString stringWithFormat:@"ml.pointer.absolute=%@",',
+     '[NSString stringWithFormat:@"ml.pointer.is_absolute=%@",'),
+    ("the reconnect attempt counter is renamed",
+     '[NSString stringWithFormat:@"ml.reconnect.attempt=%lu",',
+     '[NSString stringWithFormat:@"ml.reconnect.attempts=%lu",'),
+)
+
 
 def analyze(source, work, cc, sdk):
     """Run clang's static analyzer over the builder on its own, and return its findings.
@@ -1346,7 +1485,15 @@ def analyze(source, work, cc, sdk):
     return [line for line in log.splitlines() if "warning:" in line or "error:" in line], log
 
 
-def compile_and_run(source, work, cc, sdk, inventory_source=None, dump_path=None):
+def compile_and_run(source, work, cc, sdk, inventory_source=None, dump_path=None,
+                    acceptance_path=None):
+    """Build the harness and run it, returning `(rc, log)`.
+
+    `dump_path`/`acceptance_path` name the two files the driver writes: the canonical export of
+    an ordinary report, and the report shaped so every acceptance row's report-side condition
+    holds. Both go through the production writer, so what the Python side grades is a file rather
+    than a string that never left the process.
+    """
     for name, text in ((os.path.basename(HEADER), read(HEADER)),
                        (os.path.basename(SOURCE), source),
                        (os.path.basename(LEDGER_HEADER), read(LEDGER_HEADER)),
@@ -1373,8 +1520,73 @@ def compile_and_run(source, work, cc, sdk, inventory_source=None, dump_path=None
     env = dict(os.environ)
     if dump_path is not None:
         env["ML_CANONICAL_DUMP"] = dump_path
+    if acceptance_path is not None:
+        env["ML_ACCEPTANCE_DUMP"] = acceptance_path
     ran = subprocess.run([binary], capture_output=True, text=True, env=env)
     return ran.returncode, (ran.stdout + ran.stderr).strip()
+
+
+def acceptance_matrix(module, text):
+    """Grade the acceptance-shaped report with the checker's own `grade()`.
+
+    Returns `(all_pass, detail)`. A declaration is written for this exact text because a verdict
+    needs both halves: the report proves the setting was live, an observer statement says a person
+    looked at the host. This function supplies the report half and a note that says plainly it is
+    a harness note -- a gate that faked `observed: true` would be a checkbox with a button on it,
+    and the point of this seam is that the *report* side cannot silently disappear.
+    """
+    declaration = module.emit_declaration(text)
+    declaration["observer"] = "diagnostics-report-tests harness"
+    for entry in declaration["items"]:
+        entry["observed"] = True
+        entry["note"] = ("harness statement: the report side of this row is what is under test, "
+                         "not an observation of a host")
+    try:
+        matrix = module.grade(text, declaration)
+    except module.ReportError as error:
+        return False, "the checker refused the acceptance-shaped report: %s" % error
+    unexpected = [item for item in matrix["items"] if item["verdict"] != module.PASS]
+    if unexpected:
+        return False, "; ".join("%s %s -> %s (%s)" % (item["verdict"], item["row"], item["id"],
+                                                      item["reason"])
+                                for item in unexpected)
+    return True, "%d row(s) gradable from the exported bytes" % len(matrix["items"])
+
+
+def machine_keys(text):
+    """The `key=value` names of the machine block, as the bytes wrote them.
+
+    Derived from a report rather than restated here, so a rename on the producer's side moves
+    what this gate compares instead of moving two lists that happen to still match.
+    """
+    keys = []
+    inside = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line == "[machine]":
+            inside = True
+            continue
+        if inside and line.startswith("["):
+            break
+        if inside and line and not line.startswith("#") and "=" in line:
+            keys.append(line.partition("=")[0])
+    return keys
+
+
+def checklist_rows():
+    """The rows a person is handed, read out of the acceptance checklist itself.
+
+    The checker grades by `ITEMS`; the checklist is what tells someone which step produces which
+    verdict. Nothing tied them until now: a row added to the checker leaves the checklist short
+    one step, and a row dropped from the checklist leaves a verdict nobody was ever asked to
+    observe. Both read as a green pipeline.
+    """
+    rows = []
+    for line in read(CHECKLIST).splitlines():
+        match = re.match(r"^\|\s*(\d+\.\d+)\s+`([a-z0-9-]+)`\s*\|", line)
+        if match:
+            rows.append((match.group(1), match.group(2)))
+    return tuple(rows)
 
 
 def main():
@@ -1384,7 +1596,9 @@ def main():
 
     with tempfile.TemporaryDirectory() as work:
         export_path = os.path.join(work, "export.txt")
-        code, log = compile_and_run(shipping, work, cc, sdk, dump_path=export_path)
+        acceptance_path = os.path.join(work, "acceptance.txt")
+        code, log = compile_and_run(shipping, work, cc, sdk, dump_path=export_path,
+                                    acceptance_path=acceptance_path)
         if code is None:
             check(False, "the shipping builder does not compile:" + log)
             return report_result()
@@ -1435,6 +1649,65 @@ def main():
               not exported_bytes.endswith(b"\n\n"),
               "the exported file carries no byte a line reader folds differently than the hash "
               "does, and ends in exactly one newline")
+
+        # --- the seven checklist rows graded off the file, not off a fixture -----------------
+        # Wave S proved the checker can read an export. It did not prove the export still carries
+        # what the seven rows are graded on: those depend on `ml.param.*`, `ml.switch.*`,
+        # `ml.controllers.slot.*`, `ml.pointer.absolute` and `ml.reconnect.*`, and none of them
+        # is read by `parse_machine` or `build_identity`. A rename of any one of them leaves this
+        # file green and a real acceptance session reporting seven UNKNOWNs.
+        with open(acceptance_path, encoding="utf-8") as handle:
+            acceptance_text = handle.read()
+        rows_ok, rows_detail = acceptance_matrix(checker, acceptance_text)
+        check(rows_ok,
+              "every acceptance row is gradable from the bytes the app writes: %s" % rows_detail
+              if rows_ok else
+              "the acceptance checker cannot grade its own row list from a shaped export: %s "
+              "-- a row that silently reads unknown is an acceptance session lost without a CI "
+              "job saying so" % rows_detail)
+        reported_params = sorted(k[len("ml.param."):-len(".effective")]
+                                 for k in machine_keys(acceptance_text)
+                                 if k.startswith("ml.param.") and k.endswith(".effective"))
+        # Compared as sets: the checker looks each name up on its own, so the order the two lists
+        # happen to be written in carries no meaning. What has to match is membership -- a rename
+        # on either side, or a seventh parameter added on one side only, is the defect here.
+        graded_params = set(checker.SIDEBAR_PARAMS)
+        check(set(reported_params) == graded_params,
+              "the six hand-feel keys the report writes are the six the checker grades by: %s"
+              % ", ".join(reported_params)
+              if set(reported_params) == graded_params else
+              "the report writes %s and the checker grades by %s -- %s only in the report, %s "
+              "only in the checker" % (", ".join(reported_params) or "none",
+                                       ", ".join(sorted(graded_params)) or "none",
+                                       ", ".join(sorted(set(reported_params) - graded_params)) or "nothing",
+                                       ", ".join(sorted(graded_params - set(reported_params))) or "nothing"))
+        reported_switches = sorted(k[len("ml.switch."):] for k in machine_keys(acceptance_text)
+                                   if k.startswith("ml.switch."))
+        needed = sorted({"imeLocalComposition", "muteOnFocusLoss", "backgroundGamepad"})
+        check(all(name in reported_switches for name in needed),
+              "the switches the rows depend on are carried by the export: %s"
+              % ", ".join(reported_switches)
+              if all(name in reported_switches for name in needed) else
+              "the export is missing %s of the switches a row is graded on"
+              % ", ".join(name for name in needed if name not in reported_switches))
+        # The row list itself, from the two places that name it. The assertion above grades
+        # whatever rows the checker happens to carry, which is honest but not enough on its own:
+        # if the checker silently gained a row, grading it unknown would be reported as a real
+        # failure of that row rather than as the checklist having grown. Reading the ids out of
+        # the checklist a person follows, and comparing, makes the growth visible as its own defect.
+        graded_rows = tuple((item["row"], item["id"]) for item in checker.ITEMS)
+        handed_rows = checklist_rows()
+        check(handed_rows == graded_rows,
+              "the rows the checklist hands a person are the rows the checker grades: %s"
+              % ", ".join("%s %s" % pair for pair in graded_rows)
+              if handed_rows == graded_rows else
+              "checklist says %s, checker grades %s -- %s only in the checklist, %s only in the "
+              "checker" % (", ".join("%s %s" % pair for pair in handed_rows) or "nothing",
+                           ", ".join("%s %s" % pair for pair in graded_rows) or "nothing",
+                           ", ".join("%s %s" % pair for pair in
+                                     sorted(set(handed_rows) - set(graded_rows))) or "nothing",
+                           ", ".join("%s %s" % pair for pair in
+                                     sorted(set(graded_rows) - set(handed_rows))) or "nothing"))
 
     # Everything below this line is an independent clang run, so it is planned as a list of
     # jobs and run wide. The source-shape guards stay in the planning loop rather than inside a
@@ -1504,7 +1777,7 @@ def main():
             continue
 
         def acceptance_job(mutated=shipping.replace(old, new_text, 1), label=label):
-            code, log, exported = export_with(mutated, cc, sdk)
+            code, log, exported, _ = export_with(mutated, cc, sdk)
             if code is None:
                 return False, "the mutated builder did not compile (%s): %s" % (label, log[-400:])
             if exported is None:
@@ -1519,8 +1792,28 @@ def main():
                     "NOT CAUGHT (%s): the checker still graded the export: %s" % (label, detail))
         jobs.append(acceptance_job)
 
+    # Key renames graded the same way: the mutated builder is asked to produce a report, and the
+    # checker -- not the builder -- decides whether the seven rows are still gradable from it.
+    for label, old, new_text in DRIFT_MUTATIONS:
+        if shipping.count(old) != 1:
+            check(False, "the drift mutation '%s' must match the source exactly once" % label)
+            continue
+
+        def drift_job(mutated=shipping.replace(old, new_text, 1), label=label):
+            code, log, _, shaped = export_with(mutated, cc, sdk)
+            if code is None:
+                return False, "the mutated builder did not compile (%s): %s" % (label, log[-400:])
+            if shaped is None:
+                return True, "the checker loses the row when %s (no report written)" % label
+            rows_ok, detail = acceptance_matrix(checker, shaped)
+            return (not rows_ok,
+                    "the checker loses a row when %s (%s)" % (label, detail)
+                    if not rows_ok else
+                    "NOT CAUGHT (%s): every row still grades from the renamed report" % label)
+        jobs.append(drift_job)
+
     wanted = (1 + len(ANALYZER_DEFECTS) + len(MUTATIONS) + len(INVENTORY_MUTATIONS) +
-            len(ACCEPTANCE_MUTATIONS))
+            len(ACCEPTANCE_MUTATIONS) + len(DRIFT_MUTATIONS))
     check(len(jobs) == wanted,
           "every compile-heavy case reached the scheduler (%d jobs)" % len(jobs)
           if len(jobs) == wanted else
