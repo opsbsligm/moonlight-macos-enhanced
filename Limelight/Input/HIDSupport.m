@@ -1287,6 +1287,17 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
     if (isNintendo(device)) {
         return LI_CTYPE_NINTENDO;
     }
+    // Wave O-1: a Valve Steam Controller says STEAM instead of the Xbox
+    // fallback, which is what moonlight-qt announces for the same ids. This is
+    // identity alignment, not a feature: Sunshine's Windows side (checked at
+    // master a679b059, src/platform/windows/input.cpp:684-705) only branches on
+    // LI_CTYPE_PS and LI_CTYPE_XBOX and falls every other type back to a wired
+    // Xbox 360, so a Steam pad still arrives as an Xbox pad on the host. What
+    // changes is that the arrival packet and our own report stop claiming a
+    // vendor the device is not, which is the fact a player cross-checks.
+    if (isSteamController(device)) {
+        return LI_CTYPE_STEAM;
+    }
     return LI_CTYPE_XBOX;
 }
 
