@@ -10,6 +10,7 @@
 #import "HttpRequest.h"
 #import "CryptoManager.h"
 #import "TemporaryApp.h"
+#import "Utils.h"
 #import "Moonlight-Swift.h"
 
 #include <libxml2/libxml/xmlreader.h>
@@ -106,12 +107,25 @@
 
 static uint64_t gLastServerInfoErrorLogMs = 0;
 static int gSuppressedServerInfoErrorLogs = 0;
-static const char *kTempKeychainPassword = "limelight";
 static NSString * const kSharedStreamSessionUniqueId = @"0123456789ABCDEF";
 // Not always exposed as a named constant in older SDKs.
 static const OSStatus kErrSecPkcs12VerifyFailure = -25264;
 static SecKeychainRef gTempClientKeychain = NULL;
 static NSString *gTempClientKeychainPath = nil;
+
+// Password of the throwaway keychain we create when PKCS12 import needs one. It guards
+// key material that cannot outlive this run -- the file is deleted on the next import --
+// so a literal here would only teach every shipped binary the same secret. Drawn once at
+// runtime because the imported identity's private key keeps living in that keychain, and
+// an unlock later has to present the same value that SecKeychainCreate was given.
+static NSString *TempClientKeychainPassword(void) {
+    static NSString *password = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        password = [[Utils bytesToHex:[Utils randomBytes:16]] copy];
+    });
+    return password;
+}
 
 static CFStringRef GetImportToMemoryOnlyKey(void) {
     static CFStringRef key = NULL;
@@ -656,9 +670,11 @@ static const NSString* HTTPS_PORT = @"47984";
         return;
     }
 
+    // Hex digits only, so the UTF-8 byte count is the length the API expects.
+    const char *cpassword = TempClientKeychainPassword().UTF8String;
     OSStatus unlockStatus = SecKeychainUnlock(keychain,
-                                              (UInt32)strlen(kTempKeychainPassword),
-                                              kTempKeychainPassword,
+                                              (UInt32)strlen(cpassword),
+                                              cpassword,
                                               TRUE);
     if (unlockStatus != errSecSuccess) {
         Log(LOG_W, @"Failed to unlock keychain (%@): %d", context ?: @"", (int)unlockStatus);
@@ -851,7 +867,8 @@ static const NSString* HTTPS_PORT = @"47984";
     // to prompt "wants to use moonlight's keychain" when the keychain is locked.
     [self removeLegacyMoonlightKeychainFromSearchList];
 
-    OSStatus status = SecKeychainCreate(cPath, (UInt32)strlen(kTempKeychainPassword), kTempKeychainPassword, FALSE, NULL, &gTempClientKeychain);
+    const char *cpassword = TempClientKeychainPassword().UTF8String;
+    OSStatus status = SecKeychainCreate(cPath, (UInt32)strlen(cpassword), cpassword, FALSE, NULL, &gTempClientKeychain);
     if (status != errSecSuccess) {
         Log(LOG_E, @"Temp keychain fallback: creation failed (%d)", (int)status);
         gTempClientKeychain = NULL;
