@@ -453,11 +453,33 @@ package-dmg:
     - audit:sources
     - audit:python
   script:
+    - set -euo pipefail
+    # `build/` is git-ignored and the runner keeps it between jobs, so an image from an
+    # earlier run is still sitting there when packaging starts. Left alone it is audited
+    # and uploaded as though this job made it, and the first image graded against a
+    # source-read build number would be last night's. Clearing happens before packaging
+    # for that reason: after packaging would delete the image this job is about to audit.
+    - rm -f build/*.dmg build/*.dmg.sha256
     # package-dmg.sh reads CFBundleShortVersionString + CFBundleVersion from
     # Info.plist and names the DMG "Moonlight-<ver>-build<num>.dmg" — this
     # guarantees DMG name == app version, regardless of CI context.
     - zsh scripts/package-dmg.sh
         "$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/MoonlightEnhanced.app"
+    # Audit the image this job just made, in the job that made it. The image is what a
+    # user downloads, and until now nothing on the source of truth ever opened one:
+    # `dmg-audit.py` ran only `--self-test-checksums` here, so a nightly that shipped
+    # without the Info.plist language tables -- every permission prompt in one language
+    # -- went out with every job green. The expected version is read from the source, not
+    # from the bundle: the same build carried `CFBundleVersion` 1720 while its own commit
+    # counted 2054, so a bundle asked to certify itself passes by definition.
+    - expected_version="$(python3 scripts/project_identity.py --print-version)"
+    - expected_build="$(sh Limelight/build-number.sh --print)"
+    - echo "expecting version $expected_version build $expected_build"
+    - |
+      for image in build/*.dmg; do
+        python3 scripts/dmg-audit.py "$image" \
+          --version "$expected_version" --build "$expected_build"
+      done
   artifacts:
     paths:
       - build/*.dmg
