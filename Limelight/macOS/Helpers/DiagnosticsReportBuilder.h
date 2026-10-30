@@ -67,6 +67,15 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) NSUInteger reconnectMaxAttempts;
 @property (nonatomic) BOOL reconnectPending;
 @property (nonatomic) BOOL reconnectHostConfirmedGone;
+/// Which commit produced the running binary, read off the bundle by the live layer.
+/// Empty or the word `unknown` means the build had no readable HEAD -- a source tarball,
+/// or a build that predated this key -- and that has to print as `unknown` rather than
+/// being inferred from the build number, because two branches share build numbers.
+@property (nonatomic, copy, nullable) NSString *gitCommit;
+/// The marketing version and bundle version the binary announced itself with, so a
+/// report can be tied to a shipped DMG without asking the player to read the About pane.
+@property (nonatomic, copy, nullable) NSString *appVersion;
+@property (nonatomic, copy, nullable) NSString *buildNumber;
 @end
 
 /// One titled block of the report. English on purpose, in both the title and the

@@ -22,6 +22,13 @@ was in force, and a declaration bound to that exact report says the behaviour wa
 A report alone never yields PASS, and a declaration alone is a claim about a build that
 may not have had the switch on.
 
+There is a third thing an item depends on, and it is not a row: which source produced the
+bytes under test. `CFBundleVersion` is a monotonic count of whatever branch the checkout
+sat on, so "build 2050" identifies a binary only inside one lineage. A report whose
+`ml.build.git_commit` is `unknown` (a source tarball, or a build predating that key) is
+graded as every row UNKNOWN, because a PASS would be an observation about a source tree
+nobody can name. That is a precondition on the whole matrix, not a row someone can tick.
+
 The rule the whole tool exists for: a key the app never wrote is `unknown`, never a
 zero and never a pass. `--self-test` re-runs the same contract against two mutated
 copies of this file -- one that reads a missing key as satisfied, one that accepts any
@@ -77,6 +84,10 @@ SIDEBAR_PARAMS = (
 # Types that mean "the host was told which pad this is". `unknown` is a real answer the
 # formatter can emit, and it is not a verified type announcement.
 ANNOUNCED_TYPES = ("xbox", "ps", "nintendo")
+
+# The three keys that name the bytes under test. A build number alone is a count of
+# whatever branch the checkout sat on, so the commit is the only one that travels.
+BUILD_IDENTITY_KEYS = ("ml.build.git_commit", "ml.build.version", "ml.build.number")
 
 
 class ReportError(Exception):
@@ -143,6 +154,32 @@ def stream_was_running(machine):
                       "evidence a host-side behaviour" % machine.get("ml.video.frames.received", "absent")
     return True, "stream delivered %s received frames (%s)" % (
         received, machine.get("ml.video.format", "codec unknown"))
+
+
+def build_identity(machine):
+    """Which source produced these bytes. A precondition on the matrix, not a row.
+
+    `ml.build.number` is a monotonic commit count of whichever branch the checkout sat on, so
+    two lineages reach the same number and a build count cannot carry an acceptance statement
+    to a source tree. The 40-hex commit is the only key that does, so it is the one this gate
+    insists on; version and number are checked too because a report is also meant to name the
+    DMG it came from, and `unknown` in either of those means the bundle said it could not read
+    its own Info.plist.
+    """
+    commit = machine.get("ml.build.git_commit")
+    if commit is None:
+        return False, ("ml.build.git_commit is absent -- this report comes from a build older "
+                       "than the build-identity key, so no source tree can be named")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        return False, "ml.build.git_commit is %s -- not a full commit, so the bytes under test " \
+                      "cannot be pinned to a source tree" % commit
+    missing = [key for key in ("ml.build.version", "ml.build.number")
+               if machine.get(key) in (None, "", "unknown")]
+    if missing:
+        return False, "%s is unknown or absent -- the bundle could not name itself, so the " \
+                      "report cannot be matched to a shipped DMG" % ", ".join(missing)
+    return True, "build identity %s (%s build %s)" % (
+        commit[:12], machine["ml.build.version"], machine["ml.build.number"])
 
 
 def all_true(reasons):
@@ -288,10 +325,16 @@ def grade(report_text, declaration):
         for entry in declaration.get("items", []):
             observed[entry.get("id")] = entry
     verdicts = []
+    # The identity gate is evaluated once for the whole matrix. It is deliberately outside the
+    # per-item loops below: an observer statement is a claim about a source tree, and the hash
+    # that binds it to a report says nothing about which commit built the bytes in that report.
+    identified, identity_reason = build_identity(machine)
     for item in ITEMS:
         satisfied, reason = item["report"](machine)
         entry = observed.get(item["id"])
-        if not satisfied:
+        if not identified:
+            verdict, why = UNKNOWN, "build identity unresolved: " + identity_reason
+        elif not satisfied:
             verdict, why = UNKNOWN, "report does not show the setting live: " + reason
         elif bound != report_sha256(report_text):
             verdict, why = UNKNOWN, ("no declaration bound to this report (report_sha256 is %s)"
@@ -369,6 +412,12 @@ GOLDEN_PARAMS = {
 def golden_report():
     lines = [MACHINE_HEADER, "ml.schema=1",
              "# one key=value per line; unknown means the app could not read it, never zero",
+             # The shipped formatter writes the identity three immediately after the comment
+             # line, and the grader treats them as a precondition on every row, so the fixture
+             # carries a resolvable identity or each contract below would fail for the wrong
+             # reason.
+             "ml.build.git_commit=0123456789abcdef0123456789abcdef01234567",
+             "ml.build.version=1.6.0", "ml.build.number=2050",
              "ml.profile=per-host"]
     for param, values in GOLDEN_PARAMS.items():
         for suffix, value in zip(("effective", "shipped", "range", "written", "state"), values):
@@ -546,12 +595,52 @@ def contract(tool, workdir, failures, label):
         else:
             fail("%s: %s graded PASS with %s absent: %s" % (label, row, drop, graded), failures)
 
+    # C8 -- the build-identity precondition. Every shape of "these bytes came from somewhere
+    # we cannot name" has to hold the whole matrix back, with a statement bound to the report
+    # in hand: an observer who watched the right thing happen on an unnamed source tree made a
+    # claim nobody can re-check, and a build number cannot name it either because two branches
+    # reach the same count.
+    identity_shapes = (
+        ("the honest unknown", "ml.build.git_commit=unknown"),
+        ("a truncated commit", "ml.build.git_commit=0123456789abcdef"),
+        ("a commit with a non-hex character",
+         "ml.build.git_commit=zzz3456789abcdef0123456789abcdef01234567"),
+        ("an uppercase commit", "ml.build.git_commit=0123456789ABCDEF0123456789ABCDEF01234567"),
+        ("no version the bundle announced", "ml.build.version=unknown"),
+        ("no build number", "ml.build.number=unknown"),
+    )
+    for shape, replacement in identity_shapes:
+        key, _, _ = replacement.partition("=")
+        weakened = "\n".join(line for line in golden.splitlines()
+                             if not line.startswith("%s=" % key))
+        weakened = "%s\n%s" % (weakened, replacement)
+        graded = grade_text("identity-%s" % key.replace(".", "-"), weakened)
+        if graded and not any(v == PASS for v in graded.values()):
+            ok("%s: %s yields no PASS" % (label, shape))
+        else:
+            fail("%s: %s still graded PASS: %s" % (label, shape, graded), failures)
+
+    # C9 -- and the absent key, which is a build predating the identity channel rather than a
+    # build that could not resolve HEAD. Same verdict, because the reader's problem is identical.
+    stripped = "\n".join(line for line in golden.splitlines()
+                         if not line.startswith("ml.build.git_commit="))
+    graded = grade_text("identity-absent", stripped)
+    if graded and not any(v == PASS for v in graded.values()):
+        ok("%s: a report with no ml.build.git_commit at all yields no PASS" % label)
+    else:
+        fail("%s: report without a git_commit key graded PASS: %s" % (label, graded), failures)
+
 
 MUTATIONS = (
     ("a missing machine key reads as satisfied",
      "MISSING_READS_AS_SATISFIED = False", "MISSING_READS_AS_SATISFIED = True"),
     ("any value matches the key the verdict needs",
      "    return value == expected", "    return True"),
+    # The identity gate removed, which is how a grader starts certifying an observation against
+    # a source tree nobody can name. The first assertion is the line the gate takes; the second
+    # keeps the harness honest by proving the mutation was really planted.
+    ("the build-identity precondition stops gating the matrix",
+     "        if not identified:", "        if False:"),
 )
 
 
