@@ -112,7 +112,7 @@ class SettingsClass: NSObject {
         // The name the connection reads to negotiate 10-bit samples for an SDR
         // picture (issue #22). One string on each side of the bridge, checked here.
         "sdr10bit": settings.enable10BitSdr ?? false,
-        "ignoreAspectRatio": settings.ignoreAspectRatio ?? true,
+        "ignoreAspectRatio": settings.ignoreAspectRatio ?? false,
         "showLocalCursor": settings.showLocalCursor ?? false,
         // The key the stream reads before arming the edge summon band. Absent and true
         // mean the same thing to it, and both mean armed.
