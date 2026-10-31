@@ -1,0 +1,5 @@
+{
+  "date": "2026-10-30T17:23:44Z",
+  "message_head": "fix(config): make boolean parsing case-insensitive (#5989)",
+  "sha": "2c8825ad5b66cf9750f8154691202f0cd8768ac0"
+}

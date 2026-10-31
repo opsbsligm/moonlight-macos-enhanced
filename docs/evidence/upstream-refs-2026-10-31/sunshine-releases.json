@@ -1,0 +1,32 @@
+[
+  {
+    "prerelease": true,
+    "published_at": "2026-10-28T14:21:16Z",
+    "tag_name": "v2026.1028.122642",
+    "target_commitish": "d7e5fe00701539a5be4a0304239730e1dfec4cf9"
+  },
+  {
+    "prerelease": true,
+    "published_at": "2026-10-28T05:23:58Z",
+    "tag_name": "v2026.1028.25602",
+    "target_commitish": "7974a409bb82f2e52a45dad901acdd10fd1d61c1"
+  },
+  {
+    "prerelease": false,
+    "published_at": "2026-09-15T01:17:17Z",
+    "tag_name": "v2026.914.233613",
+    "target_commitish": "63d35f702ee9e362e43263742981836ec0710384"
+  },
+  {
+    "prerelease": false,
+    "published_at": "2026-09-06T23:31:25Z",
+    "tag_name": "v2026.906.222525",
+    "target_commitish": "cb72dffa3233c5815cd5ba88f09f049dd679ba75"
+  },
+  {
+    "prerelease": false,
+    "published_at": "2026-05-16T18:37:51Z",
+    "tag_name": "v2026.516.143833",
+    "target_commitish": "14ffa6fdaa53f7b51512be2b3d24f3939695403c"
+  }
+]
