@@ -3532,6 +3532,27 @@ check(membership.returncode == 0,
       if membership.returncode == 0 else
       "the source membership audit failed:\n" + membership.stdout[-900:])
 
+# The competitive source matrix is the other half of "what do we actually know": it is where
+# each competitor claim gets its evidence tier, and a tier is a claim about re-verifiability
+# rather than a style choice. Four cells disagreed with this repository when the audit was
+# written -- a Sunshine release that does not exist, a qt snapshot the matrix disowned while
+# the evidence file had it pinned, a submodule SHA the checkout no longer held, an
+# abbreviated SHA-256 -- so the verify form is not decoration. The self-test form is the half
+# that keeps the rules honest: SM009 through SM014 fire on fixtures, and a rule that stopped
+# firing would look exactly like a matrix that stopped lying. Both forms need nothing but
+# git and the tree, so neither has an excuse to live only on a runner.
+for matrix_shape, matrix_arguments in (("the shipped matrix holds", []),
+                                       ("its red proofs", ["--self-test"])):
+    matrix_run = subprocess.run([sys.executable,
+                                 os.path.join(root, "scripts", "source-matrix-audit.py")]
+                                + matrix_arguments,
+                                capture_output=True, text=True, cwd=root)
+    check(matrix_run.returncode == 0,
+          "the competitive source matrix proves its own claims: %s" % matrix_shape
+          if matrix_run.returncode == 0 else
+          "the source matrix audit failed %s:\n%s"
+          % (matrix_shape, (matrix_run.stdout + matrix_run.stderr)[-900:]))
+
 glass_rules = subprocess.run([sys.executable,
                               os.path.join(root, "scripts", "liquid-glass-audit.py"),
                               "--self-test"], capture_output=True, text=True, cwd=root)
