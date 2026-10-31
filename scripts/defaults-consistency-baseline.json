@@ -1,0 +1,25 @@
+{
+  "_about": "Keys the defaults audit cannot yet reduce to one value on both sides. Regenerate with `python3 scripts/defaults-consistency.py --write-baseline` and read the diff: an entry that leaves means a key got proven, which is the only good reason for one to go. The reason text is part of the identity, so a key that stops being unprovable for the reviewed reason is a new debt, not an old one.",
+  "debts": [
+    {
+      "key": "clipboardSyncMode",
+      "reason": "clipboardSyncMode is read by the interface with no fallback anywhere"
+    },
+    {
+      "key": "customBitrate",
+      "reason": "profile key bitrate is not bound in this profile"
+    },
+    {
+      "key": "customFps",
+      "reason": "customFps has no default of its own: the stream only reads it inside a fps==.zero branch, whose fallback (60.0) does agree with the interface value for fps, so the derived framerate is settled and this key is not"
+    },
+    {
+      "key": "remoteResolutionHeight",
+      "reason": "remoteResolutionHeight is read by the interface with no fallback anywhere"
+    },
+    {
+      "key": "remoteResolutionWidth",
+      "reason": "remoteResolutionWidth is read by the interface with no fallback anywhere"
+    }
+  ]
+}

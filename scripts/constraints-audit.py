@@ -3518,6 +3518,24 @@ for coverage_shape, coverage_arguments in (("the two definitions reconcile", [])
           "the gate coverage audit failed %s:\n%s"
           % (coverage_shape, (coverage_run.stdout + coverage_run.stderr)[-900:]))
 
+# The defaults audit reads the two Swift layers and evaluates each absent-key fallback to
+# a literal, so it needs nothing but python -- no toolchain, no artefact, no build. That
+# makes it exactly the kind of gate the parity rule below refuses to let live on a runner
+# alone: the defect it looks for (the window shows one value, the stream uses another) is
+# invisible to every other check in this file, and Wave V shipped one. The judgement form
+# reads the tree; the self-test form mutates the source text and has to see each mutation,
+# including its negative twins, so a green self-test says the gate can still fail.
+for defaults_shape, defaults_arguments in (("with both layers agreeing", []),
+                                           ("its red proofs", ["--self-test"])):
+    defaults_run = subprocess.run(
+        [sys.executable, os.path.join(root, "scripts", "defaults-consistency.py")]
+        + defaults_arguments, capture_output=True, text=True, cwd=root)
+    check(defaults_run.returncode == 0,
+          "the defaults audit passes %s" % defaults_shape
+          if defaults_run.returncode == 0 else
+          "the defaults audit failed %s:\n%s"
+          % (defaults_shape, (defaults_run.stdout + defaults_run.stderr)[-1200:]))
+
 # The three greps below are the audits job's other steps, and they run here for
 # the same reason the parity rule above exists. Membership is the cheap one that
 # answers "will this file ever be compiled", the glass rules are a source rule

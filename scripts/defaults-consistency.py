@@ -1,0 +1,2073 @@
+#!/usr/bin/env python3
+"""Prove that an unset setting reads the same value in both layers.
+
+`SettingsObjCBridge.getSettings(for:)` builds the dictionary the stream reads,
+and `SettingsModel+Persistence.loadSettings()` builds the values the interface
+shows. Both start from `Settings.getSettings(for:)`, and both write `?? <expr>`
+for the case where nothing was ever stored. When those two expressions disagree,
+the window shows one number and the stream runs with another -- and nothing in
+the type system, the build, or the runtime notices. Wave V found the first
+instance (`ignoreAspectRatio`); this gate is what stops the second one from
+needing to be found by hand.
+
+Why the check evaluates instead of comparing text: most of the fallbacks that
+look different *are* the same value (`0.0` against `0`, `Self.defaultX` against
+the `false` that `defaultX` holds). A text comparison calls those divergences,
+and calls a shared name a match even after the name stops resolving to the
+literal the other side spells. Both errors point the wrong way, and both report
+green. So each fallback is parsed and evaluated down to a literal through a
+symbol table read out of the same sources.
+
+An expression that will not evaluate is not treated as a match. It goes to the
+ledger, and a ledger entry is only valid while a condition that is re-checked on
+every run still holds -- "harmless today" has to say what would make it not.
+
+Usage:
+  defaults-consistency.py            # audit the current tree
+  defaults-consistency.py --self-test
+  defaults-consistency.py --json
+Exit 0 only when every shared key either evaluates equal on both sides, or sits
+in the ledger with a condition that still holds.
+
+Keys the audit cannot yet reduce to a literal are debt, and debt is tracked rather
+than argued away: `--write-baseline` records the current set and a later run fails
+if the set grows (new unproven key) *or* shrinks (a key got proven and the entry is
+now an excuse). Same ratchet shape as `analyzer-baseline.json`.
+
+The entry binds the reason text too, not just the key. The reason is derived from the
+source -- it names the helper the interface reads through, or the neighbour key that
+is unbound -- so a refactor that changes the shape changes the reason, and the entry
+stops matching. An entry that only named the key would keep excusing a key whose
+unprovability had nothing to do with the one that was reviewed.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASELINE = os.path.join(ROOT, "scripts", "defaults-consistency-baseline.json")
+VC = os.path.join("Limelight", "macOS", "ViewControllers")
+BRIDGE = os.path.join(VC, "SettingsObjCBridge.swift")
+PERSISTENCE = os.path.join(VC, "SettingsModel+Persistence.swift")
+DERIVED = os.path.join(VC, "SettingsModel+DerivedValues.swift")
+STORE = os.path.join(VC, "SettingsStore.swift")
+STREAM_VIEW = os.path.join(VC, "StreamViewController.m")
+MODEL = os.path.join(VC, "SettingsModel.swift")
+# Every Objective-C file that can ask the stream dictionary for a setting. The
+# substitutions all live in one file, but the reads do not, and a reader that
+# only looked at StreamViewController.m concluded that the sidebar timers and
+# the mouse-capture flags were never read at all.
+#
+# This used to be a hand-written list of nine paths, and it was wrong in both of
+# the ways a list can be wrong: it omitted `DiscoveryWorker.m` and
+# `DiagnosticsReportBuilder+Live.m`, both of which bind the dictionary, and it
+# was therefore the ground on which every "nobody reads this key" ledger entry
+# stood. The set is derived now -- a reader is any Objective-C file that binds
+# the dictionary from `[SettingsClass getSettingsFor:]` -- because the question
+# the ledger asks is about the code, and a list of files is an answer that goes
+# stale in silence: nothing fails when a tenth reader appears, the ledger just
+# keeps excusing a key the stream already uses.
+OBJC_SOURCE_ROOT = os.path.join(ROOT, "Limelight")
+
+FALLBACK = re.compile(r"settings\.([A-Za-z_]\w*)\s*\?\?")
+# A newline continues an expression only when the next token cannot open a
+# statement. Without this the fallback swallows the following settings and every
+# shape statistic built from it is noise -- which is how the first draft of this
+# gate concluded that 74 keys had 74 distinct fallback shapes.
+CONTINUATION = re.compile(r"[.,:?)\]}&|<>=!*/%+-]")
+MEMBER = re.compile(r"^(Self|SettingsModel)\.([A-Za-z_]\w*)$")
+# A fallback can be written against an alias for the profile field rather than the
+# field itself: `let stored = settings.x` and then `stored ?? defaultX`, which is how
+# the mouse-settings migration reads the value twice (once to compare against the
+# legacy default, once to fall back). Matching only `settings.x ??` reported that key
+# as having no interface default at all, and the audit said so in as many words -- a
+# false excuse in the file whose whole purpose is to refuse false excuses. An alias
+# counts only when the binding and the read are both in the file being scanned, and
+# the alias name is required to be the sole thing on the right of its `let`, so a
+# same-named local built from something else cannot lend its fallback to the key.
+# `loadDefaultSettings()` is the interface's own answer to "what does the window
+# show when nothing was stored", written as a plain assignment rather than a `??`
+# fallback: `customFps = Self.defaultCustomFps`. Reading only `settings.x ??` called
+# five keys "read by the interface with no fallback anywhere" while the file said
+# otherwise on its first screen, and two of those keys are read by the stream, so the
+# excuse was doing real work. The function body is brace-matched and its assignments
+# read as fallbacks; the left side has to be a bare `self` property, so a `let` that
+# happens to share a name cannot lend a default to a setting.
+DEFAULTS_ASSIGN = re.compile(r"^\s*(?P<key>[a-zA-Z]\w*)\s*=\s*(?P<value>.+?)\s*$", re.M)
+
+
+def defaults_assignments(tree):
+    """{setting: [(line, expression)]} from `loadDefaultSettings()`."""
+    text = tree.read(PERSISTENCE)
+    marker = re.search(r"func loadDefaultSettings\(\)\s*\{", text)
+    if not marker:
+        return {}
+    try:
+        end = brace_matched(text, marker.end() - 1)
+    except Unresolved:
+        return {}
+    body = text[marker.end():end]
+    found = {}
+    for match in DEFAULTS_ASSIGN.finditer(body):
+        value = re.sub(r"\s+", " ", match.group("value")).strip()
+        if not value or value.startswith("//"):
+            continue
+        found.setdefault(match.group("key"), []).append(
+            (text[:match.start()].count("\n") + 1, value))
+    return found
+
+
+ALIAS = re.compile(r"^\s*(?:let|var)\s+(?P<alias>\w+)\s*=\s*settings\."
+                   r"(?P<key>[A-Za-z_]\w*)\s*$", re.M)
+ALIASED_FALLBACK = re.compile(r"\b(?P<alias>[A-Za-z_]\w*)\s*\?\?")
+# An array written on one line (`static var pacingOptions: [String] = ["a", "b"]`)
+# has no line-initial `]` for STRING_TABLE to stop at, so the multi-line pattern
+# ran past the end of the literal and the array came back missing.
+INLINE_ARRAY = re.compile(
+    r"static\s+(?:let|var)\s+(\w+)\s*:\s*\[\s*String\s*\]\s*=\s*\[(?P<body>[^\[\]]*)\]")
+# A numeric array is the other multi-entry default: `defaultEnhancedAudioEQGains`
+# is twelve Doubles, and an audit that only reads `[String]` tables reports the key
+# as an unknown symbol -- which reads like a gap in the sources when it is a gap in
+# the reader.
+NUMBER_ARRAY = re.compile(
+    r"static\s+(?:let|var)\s+(\w+)\s*:\s*\[\s*(?:Double|CGFloat|Float|Int)\s*\]\s*=\s*\["
+    r"(?P<body>[^\[\]]*)\]")
+
+
+def path(*parts):
+    return os.path.join(ROOT, *parts)
+
+
+def read(relative):
+    with open(path(relative), encoding="utf-8") as handle:
+        return handle.read()
+
+
+class Tree:
+    """The sources the audit reads, as text.
+
+    Every conclusion in this file is derived from source text, so the self-test
+    mutates source text too: it hands the audit the same files with one line
+    rewritten, and the audit re-derives everything from that text. A self-test
+    that patched an in-memory dictionary instead would only prove the test could
+    edit a dictionary -- which is the flaw that made the previous draft's claim
+    that three mutations were caught unprovable, so it is refused here by shape.
+    """
+
+    def __init__(self, overrides=None):
+        self.overrides = dict(overrides or {})
+
+    def read(self, relative):
+        if relative in self.overrides:
+            return self.overrides[relative]
+        return read(relative)
+
+    def with_override(self, relative, text):
+        """A copy of this tree with one file's text replaced.
+
+        Returned rather than mutated in place so a self-test can apply several
+        edits in sequence and each `audit` call still reads every other file from
+        disk. Without it `mutate` raised AttributeError, which is the shape the
+        self-test had before it reported anything about a mutation at all.
+        """
+        return Tree({**self.overrides, relative: text})
+
+
+# ---------------------------------------------------------------------------
+# expression extraction
+# ---------------------------------------------------------------------------
+def extract_expression(text, start):
+    """Return (expression_source, stop_index) for the expression at `start`."""
+    depth = 0
+    index = start
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char == "{" and depth == 0:
+            # A brace at the top level is the statement that follows, not part of
+            # the fallback: `if settings.x ?? false { selected = sentinel }` would
+            # otherwise swallow the whole body and refuse to parse. A brace inside
+            # parentheses is still a dictionary or closure, so only depth zero cuts.
+            return text[start:index].strip(), index
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            if depth == 0:
+                return text[start:index].strip(), index
+            depth -= 1
+        elif char == "," and depth == 0:
+            return text[start:index].strip(), index
+        elif text[index:index + 2] == "//" and depth == 0:
+            return text[start:index].strip(), index
+        elif char == "\n":
+            probe = index + 1
+            while probe < length and text[probe] in " \t":
+                probe += 1
+            if depth == 0 and (probe >= length or not CONTINUATION.match(text[probe])):
+                return text[start:index].strip(), index
+        index += 1
+    return text[start:].strip(), length
+
+
+# A fallback written inside a sentinel branch is not that key's answer to "nothing was
+# stored". `let dataFps = settings.fps == .zero ? Int(settings.customFps ?? 60.0)
+# : settings.fps` (`SettingsObjCBridge.swift`) answers "what framerate runs when no
+# preset was picked", and the 60 belongs to that derived framerate. Charging it to
+# `customFps` reported a fork that does not exist: the interface branches the same way
+# (`effectiveFpsForBitrate()` in `SettingsModel+DerivedValues.swift` falls to
+# `defaultFps`, and `loadSettings()` applies the same value under the same
+# `selectedFps == 0` test), so both layers land on 60 for an unset profile. Only the
+# `== .zero` sentinel shape is excused, because that is the shape this codebase uses to
+# mean "custom", and the excuse is tied to the guard text rather than to the key name:
+# delete the guard and the fallback is unconditional again, which is what the self-test
+# does to show the excuse can fail.
+GUARDED_FALLBACK = re.compile(
+    r"settings\.(?P<guard>[A-Za-z_]\w*)\s*==\s*\.zero\s*\?"
+    r"(?P<guard_arm>[^:;{}]*?)"
+    r"settings\.(?P<key>[A-Za-z_]\w*)\s*(?P<coalesce>\?\?)")
+
+
+def _guarded_fallbacks(text):
+    """[(coalesce offset, defaulted key, guard field, line source)] in a `.zero` branch.
+
+    The guard key has to differ from the defaulted key: `settings.x == .zero ? (x ?? y)`
+    is one key's own default written the long way round, and excusing that would excuse
+    the exact shape the audit exists to catch.
+    """
+    found = []
+    for match in GUARDED_FALLBACK.finditer(text):
+        if match.group("guard") == match.group("key"):
+            continue
+        start = text.rfind("\n", 0, match.start()) + 1
+        stop = text.find("\n", match.start())
+        line_source = re.sub(
+            r"\s+", " ", text[start:stop if stop > 0 else len(text)]).strip()
+        found.append((match.start("coalesce"), match.group("key"),
+                      match.group("guard"), line_source))
+    return found
+
+
+def guarded_fallbacks(tree, relative):
+    """{guard field: [(line, defaulted key, value source)]} for branch-local defaults.
+
+    Indexed by the *guard* field, because that is the key the branch is about:
+    `settings.fps == .zero ? Int(settings.customFps ?? 60.0) : settings.fps` states what
+    framerate runs when no preset was picked, so the 60 answers a question about `fps`
+    and not about `customFps`. Keeping these out of `fallbacks` is what stops that 60
+    from being charged to `customFps`, where it would report a fork that cannot happen.
+    """
+    text = tree.read(relative)
+    found = {}
+    for position, key, guard, _line in _guarded_fallbacks(text):
+        source, _ = extract_expression(text, position + 2)
+        source = re.sub(r"\s+", " ", source).strip()
+        line = text[:position].count("\n") + 1
+        found.setdefault(guard, []).append((line, key, source))
+    return found
+
+
+def fallbacks(tree, relative):
+    """{setting: [(line, expression_source)]} for every `settings.x ?? expr`.
+
+    A fallback inside a sentinel branch is skipped here and reported by
+    `guarded_fallbacks`: its value belongs to the branch's derived quantity rather than
+    to the absent key, and charging it to the key reports a fork that cannot happen.
+    """
+    text = tree.read(relative)
+    guarded = {position for position, _, _, _ in _guarded_fallbacks(text)}
+    found = {}
+    for match in FALLBACK.finditer(text):
+        # Both patterns end at the `??`, so the offsets line up on that token:
+        # `FALLBACK` starts at `settings`, which would never match a saved `??` offset.
+        if match.end() - 2 in guarded:
+            continue
+        source, _ = extract_expression(text, match.end())
+        source = re.sub(r"\s+", " ", source).strip()
+        line = text[:match.start()].count("\n") + 1
+        found.setdefault(match.group(1), []).append((line, source))
+    return found
+
+
+def chained_fallbacks(tree, relative):
+    """{setting: [(line, expression_source)]} for `(for: key)?.x ?? expr`.
+
+    Kept apart from `fallbacks` for the same reason aliased fallbacks are: the two
+    carry different evidence, and a self-test has to be able to break the chained
+    shape without breaking the direct one. The expression is extracted from after the
+    `??`, so what the evaluator and the one-expression comparison see is the same text
+    a direct fallback yields.
+    """
+    text = tree.read(relative)
+    found = {}
+    for match in CHAINED_FALLBACK.finditer(text):
+        tail = AFTER_CHAIN.match(text, match.end())
+        if not tail:
+            continue
+        source, _ = extract_expression(text, tail.end())
+        source = re.sub(r"\s+", " ", source).strip()
+        if not source:
+            continue
+        line = text[:match.start()].count("\n") + 1
+        found.setdefault(match.group("key"), []).append((line, source))
+    return found
+
+
+def aliased_fallbacks(tree, relative):
+    """{setting: [(line, expression_source)]} for fallbacks written against an alias.
+
+    Separated from `fallbacks` rather than merged into it because the two shapes
+    carry different evidence: an alias read says the default lives next to the
+    migration that compares against the legacy value, and the self-test needs to be
+    able to break one shape without breaking the other.
+    """
+    text = tree.read(relative)
+    found = {}
+    for binding in ALIAS.finditer(text):
+        alias, key = binding.group("alias"), binding.group("key")
+        for read in ALIASED_FALLBACK.finditer(text):
+            if read.group("alias") != alias:
+                continue
+            source, _ = extract_expression(text, read.end())
+            source = re.sub(r"\s+", " ", source).strip()
+            line = text[:read.start()].count("\n") + 1
+            # The expression alone is stored so the evaluator and the
+            # same-expression comparison see the same text they see for a direct
+            # `settings.x ?? expr`; the line lands on the alias read, which is where
+            # the default actually lives.
+            found.setdefault(key, []).append((line, source))
+    return found
+
+
+# ---------------------------------------------------------------------------
+# tokenizer
+# ---------------------------------------------------------------------------
+class Unresolved(Exception):
+    """The expression cannot be reduced to a value; never counts as agreement."""
+
+# Whitespace is stripped outside the alternation: `\s*` on the first branch only
+# would leave every expression with a space before an operator untokenisable.
+TOKEN = re.compile(r"""\s*(?:(?P<string>"(?:[^"\\]|\\.)*")
+    |(?P<number>\d+\.\d+|\d+)
+    |(?P<ident>[A-Za-z_]\w*)
+    |(?P<op>\?\?|\?\.|==|!=|<=|>=|&&|\|\||[.,(){}\[\]?:!<>+*/-]))""", re.X)
+
+
+def tokenize(source):
+    tokens = []
+    position = 0
+    while position < len(source):
+        if not source[position:].strip():
+            break
+        match = TOKEN.match(source, position)
+        if not match or match.start() != position:
+            raise Unresolved("cannot tokenise %r" % source[position:position + 40])
+        position = match.end()
+        kind = match.lastgroup
+        if kind == "op" and match.group("op") in ("|", "&", "%"):
+            raise Unresolved("operator outside the parsed subset: %r" % source[:40])
+        tokens.append((kind, match.group(kind)))
+    if not tokens:
+        raise Unresolved("empty expression")
+    return tokens
+
+
+# ---------------------------------------------------------------------------
+# parser -> AST
+# ---------------------------------------------------------------------------
+# `??` binds loosest, which is what lets a fallback expression that is itself a
+# coalesce (`(settings.x ?? false) ? 1 : 0`) be read without a special case.
+LEVELS = [["??"], ["||"], ["&&"], ["==", "!="], ["<", ">", "<=", ">="],
+          ["+", "-", "*", "/"]]
+
+
+class Parser:
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.at = 0
+
+    def peek(self):
+        return self.tokens[self.at] if self.at < len(self.tokens) else (None, None)
+
+    def eat(self, value):
+        if self.peek()[1] == value:
+            self.at += 1
+            return True
+        return False
+
+    def expect(self, value):
+        if not self.eat(value):
+            raise Unresolved("expected %r, found %r" % (value, self.peek()))
+
+    def parse(self):
+        node = self.ternary()
+        if self.at != len(self.tokens):
+            raise Unresolved("trailing tokens %r" % (self.tokens[self.at:self.at + 3],))
+        return node
+
+    def ternary(self):
+        cond = self.binary(0)
+        # `?.` is optional chaining, not the condition of a ternary.
+        if self.peek()[1] == "?" and self.peek() != ("op", "?."):
+            self.at += 1
+            when_true = self.ternary()
+            self.expect(":")
+            return ("ternary", cond, when_true, self.ternary())
+        return cond
+
+    def binary(self, level):
+        if level >= len(LEVELS):
+            return self.postfix()
+        left = self.binary(level + 1)
+        while self.peek()[1] in LEVELS[level]:
+            operator = self.peek()[1]
+            self.at += 1
+            left = ("binop", operator, left, self.binary(level + 1))
+        return left
+
+    def postfix(self):
+        node = self.primary()
+        while True:
+            kind, text = self.peek()
+            if text in (".", "?."):
+                self.at += 1
+                name = self.peek()[1]
+                if self.peek()[0] != "ident":
+                    raise Unresolved("expected a member name")
+                self.at += 1
+                node = ("member", name, node)
+            elif text == "(":
+                self.at += 1
+                node = self.call(node)
+            else:
+                return node
+
+    def call(self, callee):
+        arguments = []
+        if not self.eat(")"):
+            while True:
+                label = None
+                if self.peek()[0] == "ident" and self.tokens[self.at + 1:self.at + 2] \
+                        and self.tokens[self.at + 1][1] == ":":
+                    label = self.peek()[1]
+                    self.at += 2
+                arguments.append((label, self.ternary()))
+                if not self.eat(","):
+                    break
+            self.expect(")")
+        return ("call", callee, arguments)
+
+    def primary(self):
+        kind, text = self.peek()
+        if self.eat("("):
+            node = self.ternary()
+            self.expect(")")
+            return node
+        if self.eat("["):
+            items = []
+            if not self.eat("]"):
+                while True:
+                    items.append(self.ternary())
+                    if not self.eat(","):
+                        break
+                self.expect("]")
+            return ("array", items)
+        if self.eat("!"):
+            return ("not", self.postfix())
+        if kind == "string":
+            self.at += 1
+            return ("literal", text[1:-1].replace('\\"', '"'))
+        if kind == "number":
+            self.at += 1
+            return ("literal", float(text) if "." in text else int(text))
+        if kind == "ident":
+            self.at += 1
+            if text in ("true", "false"):
+                return ("literal", text == "true")
+            # `Self.foo` / `SettingsModel.foo` collapse into one node shape so the
+            # evaluator does not care which spelling a file happens to use.
+            if text in ("Self", "SettingsModel") and self.peek()[1] == ".":
+                self.at += 1
+                name = self.peek()[1]
+                if self.peek()[0] != "ident":
+                    raise Unresolved("expected a member after %s." % text)
+                self.at += 1
+                return ("symbol", name)
+            return ("name", text)
+        raise Unresolved("unexpected token %r" % (text,))
+
+
+# An option table read through a closure -- `Options.first(where: { $0.value == raw
+# })?.title` -- is the one spelling a fallback takes that the expression parser covers
+# in the source but not in its grammar, because the parser reads expressions and a
+# closure is a program. Refusing it outright reported five settings as "the interface
+# has no default anywhere", which is a claim about the code that the code contradicts:
+# the default is on the line, written as a lookup. NORMALISE rewrites that one shape
+# into a call with the table it names as an argument, so the evaluator reads the number
+# out of the same table the picker renders. It substitutes a call, not an answer: the
+# self-test breaks one table's number and expects a report, which is what proves the
+# lookup is real rather than the label being carried across by hand.
+OPTION_READ = re.compile(
+    r"\b(?P<table>\w*[Oo]ptions)\s*\.\s*first\s*\(\s*where:\s*\{\s*\$0\s*\.\s*value"
+    r"\s*==\s*(?P<raw>[\w.]+)\s*\}\s*\)\s*\?\.title")
+
+
+def normalise(source):
+    """Rewrite the one expression shape the grammar cannot hold into one it can."""
+    def rewrite(match):
+        return "titleForValue(%s, in: %s)" % (match.group("raw"), match.group("table"))
+    return OPTION_READ.sub(rewrite, source)
+
+
+def parse(source):
+    return Parser(tokenize(normalise(source))).parse()
+
+
+# ---------------------------------------------------------------------------
+# symbol table read out of the sources
+# ---------------------------------------------------------------------------
+DECL = re.compile(r"^\s*static\s+(?:let|var)\s+(\w+)\s*(?::[^=]+?)?=\s*(.+?)\s*$")
+TUPLE_TABLE = re.compile(
+    r"static\s+(?:let|var)\s+(\w+)\s*:\s*\[\s*\(\s*title:\s*String,\s*value:\s*Int\s*\)\s*\]\s*=\s*\["
+    r"(?P<body>.*?)\n\s*\]", re.S)
+STRING_TABLE = re.compile(
+    r"static\s+(?:let|var)\s+(\w+)\s*:\s*\[\s*String\s*\]\s*=\s*\[(?P<body>.*?)(?:\n\s*\]|\Z)", re.S)
+FUNC_DECL = re.compile(r"static\s+func\s+(\w+)\s*\(")
+
+# An `@objc enum … : Int` is the other place a default lives. Four settings
+# (`freeMouseMotionMode` and friends) get their absent-profile value from
+# `Type(persistedRawValue: settings.x).displayKey`, so the fallback is the enum's
+# `defaultMode` case rendered through `displayKey` -- a name the raw-value side of
+# the bridge spells as a number. Reading the enum is what makes that checkable;
+# filing it as "no fallback anywhere" would be the string-comparison shortcut this
+# gate refuses to take.
+ENUM_DECL = re.compile(r"@objc enum (\w+)\s*:\s*Int[^{]*\{")
+ENUM_CASE = re.compile(r"^\s*case\s+(\w+)(?:\s*=\s*(-?\d+))?\s*$", re.M)
+ENUM_DEFAULT = re.compile(r"static\s+let\s+defaultMode\s*:\s*Self\s*=\s*\.(\w+)")
+DISPLAY_KEY_BODY = re.compile(r"var\s+displayKey\s*:\s*String\s*\{(.*?)\n\s*\}", re.S)
+DISPLAY_KEY_CASE = re.compile(
+    r"case\s+\.(\w+)\s*:\s*return\s+\"((?:[^\"\\]|\\.)*)\"", re.S)
+# Which case an absent (nil) persisted value lands on. This is read from the
+# `default:` arm of `init(persistedRawValue:)` rather than assumed to be
+# `defaultMode`: the two happen to coincide for every enum today, and an
+# assumption that quietly stops being true is the exact class of defect this
+# gate exists to catch, so the arm is transcribed instead.
+INIT_PERSISTED = re.compile(r"init\s*\(\s*persistedRawValue\s*:\s*Int\?\s*\)\s*\{")
+DEFAULT_ARM = re.compile(r"default\s*:\s*self\s*=\s*\.(\w+)")
+ANY_ASSIGNMENT = re.compile(r"self\s*=\s*\.(\w+)")
+
+
+def brace_matched(text, open_index):
+    """Index just past the `}` that matches the `{` at `open_index`."""
+    depth = 0
+    index = open_index
+    while index < len(text):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    raise Unresolved("unbalanced braces")
+
+
+class Symbols:
+    def __init__(self):
+        self.values = {}       # name -> literal
+        self.pending = {}      # name -> expression source (resolved transitively)
+        self.arrays = {}       # name -> [literal]
+        self.tables = {}       # name -> {title: value}
+        self.enums = {}        # name -> {"default": case, "keys": {case: title},
+                               #           "raw": {case: int}}
+        self.functions = set()
+
+    def load(self, texts):
+        # Declarations first: a list built from those constants
+        # (`timingBufferLevels = [timingBufferLow, ...]`) cannot be read before
+        # the names inside it have values.
+        for text in texts:
+            self._declarations(text)
+        for text in texts:
+            self._tables(text)
+            self._arrays(text)
+            self._enums(text)
+            self.functions.update(FUNC_DECL.findall(text))
+        self._resolve_pending()
+        for text in texts:
+            self._arrays(text)
+
+    def _tables(self, text):
+        for match in TUPLE_TABLE.finditer(text):
+            pairs = re.findall(r'\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*(-?\d+)\s*\)', match.group("body"))
+            self.tables[match.group(1)] = {title: int(value) for title, value in pairs}
+
+    def _enums(self, text):
+        """Read `@objc enum … : Int` case lists, defaults and display names."""
+        for match in ENUM_DECL.finditer(text):
+            start = match.end() - 1  # the opening brace
+            try:
+                end = brace_matched(text, start)
+            except Unresolved:
+                continue
+            body = text[start:end]
+            name = match.group(1)
+            explicit = {case: int(value) for case, value in ENUM_CASE.findall(body)
+                        if value is not None}
+            cases = [case for case, _ in ENUM_CASE.findall(body)]
+            raw, counter = {}, 0
+            for case in cases:
+                if case in explicit:
+                    counter = explicit[case]
+                raw[case] = counter
+                counter += 1
+            keys = dict(DISPLAY_KEY_CASE.findall(
+                DISPLAY_KEY_BODY.search(body).group(1))) \
+                if DISPLAY_KEY_BODY.search(body) else {}
+            default = ENUM_DEFAULT.search(body)
+            entry = {"keys": keys, "raw": raw}
+            if default:
+                entry["default"] = default.group(1)
+            absent = self._absent_case(body)
+            if absent:
+                entry["absent"] = absent
+            # Merge rather than replace: an extension elsewhere may add `displayKey`.
+            previous = self.enums.get(name, {})
+            merged = {"keys": dict(previous.get("keys", {})), "raw": dict(previous.get("raw", {}))}
+            merged["keys"].update(keys)
+            merged["raw"].update(raw or merged["raw"])
+            if "default" in entry:
+                merged["default"] = entry["default"]
+            elif "default" in previous:
+                merged["default"] = previous["default"]
+            if "absent" in entry:
+                merged["absent"] = entry["absent"]
+            elif "absent" in previous:
+                merged["absent"] = previous["absent"]
+            self.enums[name] = merged
+
+    @staticmethod
+    def _absent_case(body):
+        """The case a nil persisted value produces, read from `init(persistedRawValue:)`."""
+        match = INIT_PERSISTED.search(body)
+        if not match:
+            return None
+        try:
+            init_body = body[match.end() - 1:brace_matched(body, match.end() - 1)]
+        except Unresolved:
+            return None
+        arm = DEFAULT_ARM.search(init_body)
+        if arm:
+            return arm.group(1)
+        if "switch" not in init_body:
+            assignments = ANY_ASSIGNMENT.findall(init_body)
+            if len(set(assignments)) == 1:
+                return assignments[0]
+        return None
+
+    def _arrays(self, text):
+        for match in INLINE_ARRAY.finditer(text):
+            body = match.group("body")
+            if "{" in body or "\\(" in body:
+                continue
+            entries = [item.strip() for item in split_top_level(body) if item.strip()]
+            if all(item.startswith('"') and item.endswith('"') and len(item) > 1
+                   for item in entries):
+                self.arrays[match.group(1)] = [item[1:-1] for item in entries]
+        for match in NUMBER_ARRAY.finditer(text):
+            body = match.group("body")
+            if "{" in body or "\\(" in body:
+                continue
+            entries = [item.strip() for item in split_top_level(body) if item.strip()]
+            numbers = [as_literal(item) for item in entries]
+            if any(number is NOT_LITERAL for number in numbers):
+                continue  # a computed entry is refused, as an interpolated string is
+            self.arrays[match.group(1)] = numbers
+        for match in STRING_TABLE.finditer(text):
+            body = match.group("body")
+            if "{" in body or "\\(" in body:
+                continue  # interpolated entries are refused at evaluation time
+            entries = [item.strip() for item in split_top_level(body) if item.strip()]
+            resolved = []
+            for entry in entries:
+                if entry.startswith('"') and entry.endswith('"') and len(entry) > 1:
+                    resolved.append(entry[1:-1])
+                elif re.fullmatch(r"[A-Za-z_]\w*", entry):
+                    if entry not in self.values:
+                        return  # forward reference: retry once declarations land
+                    resolved.append(self.values[entry])
+                else:
+                    return
+            self.arrays[match.group(1)] = resolved
+
+    def _declarations(self, text):
+        for line in text.splitlines():
+            match = DECL.match(line)
+            if not match:
+                continue
+            name, source = match.group(1), match.group(2)
+            source = re.sub(r"\s*//.*$", "", source).strip()
+            if source.endswith(",") and not source.endswith("),"):
+                source = source[:-1].strip()
+            literal = as_literal(source)
+            if literal is not NOT_LITERAL:
+                self.values.setdefault(name, literal)
+            elif re.fullmatch(r"[A-Za-z_]\w*", source):
+                self.pending.setdefault(name, source)
+
+    def _resolve_pending(self):
+        for _ in range(12):
+            outstanding = dict(self.pending)
+            for name, source in outstanding.items():
+                target = self.values.get(source)
+                if source in self.values:
+                    self.values.setdefault(name, target)
+                    self.pending.pop(name, None)
+            if not outstanding:
+                break
+
+
+# `None` is a value Swift holds, so it cannot double as "this text is not a literal".
+NOT_LITERAL = object()
+
+
+def as_literal(source):
+    if re.fullmatch(r"-?\d+\.\d+|-?\d+", source):
+        return float(source) if "." in source else int(source)
+    if source in ("true", "false"):
+        return source == "true"
+    if source == "nil":
+        # `static let defaultCustomFps: CGFloat? = nil` states the shipped default
+        # as the absence of a value. Refusing to read it left the key unproven, and
+        # an unproven key is what this file is for -- not an excuse to stop looking.
+        return None
+    if re.fullmatch(r'"(?:[^"\\]|\\.)*"', source):
+        return source[1:-1]
+    return NOT_LITERAL
+
+
+def split_top_level(body):
+    parts, depth, current, quote, index = [], 0, "", False, 0
+    while index < len(body):
+        char = body[index]
+        if quote:
+            current += char
+            if char == "\\":
+                current += body[index + 1]
+                index += 2
+                continue
+            if char == '"':
+                quote = False
+        elif char == '"':
+            quote = True
+            current += char
+        elif char in "([{":
+            depth += 1
+            current += char
+        elif char in ")]}":
+            depth -= 1
+            current += char
+        elif char == "," and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += char
+        index += 1
+    parts.append(current)
+    return parts
+
+
+# ---------------------------------------------------------------------------
+# evaluator
+# ---------------------------------------------------------------------------
+class Evaluator:
+    """Reduce a fallback expression to a literal.
+
+    `env` binds the neighbour settings a fallback reads (`settings.framePacing`
+    and friends). A name that is in neither the symbol table nor the environment
+    raises Unresolved -- assuming a value is the exact failure this gate exists
+    to catch.
+    """
+
+    def __init__(self, symbols, env=None):
+        self.symbols = symbols
+        self.env = dict(env or {})
+
+    _MISSING = object()
+
+    def symbol_value(self, name):
+        """Look a bare or qualified static member up in the symbol table."""
+        for store in (self.symbols.values, self.symbols.arrays, self.symbols.tables):
+            if name in store:
+                return store[name]
+        return self._MISSING
+
+    def value(self, node):
+        kind = node[0]
+        if kind == "literal":
+            return node[1]
+        if kind == "name":
+            if node[1] in self.env:
+                value = self.env[node[1]]
+                if isinstance(value, Deferred):
+                    return self.value(parse(value.source))
+                return value
+            # A bare identifier in these files is also a static member of the type
+            # that owns the expression (`guard let rawValue else { return
+            # defaultFrameQueueTarget }`), so the symbol table answers it too. Only
+            # a name that is in neither place is a gap.
+            resolved = self.symbol_value(node[1])
+            if resolved is not self._MISSING:
+                return resolved
+            raise Unresolved("unbound name %r" % node[1])
+        if kind == "symbol":
+            resolved = self.symbol_value(node[1])
+            if resolved is not self._MISSING:
+                return resolved
+            raise Unresolved("unknown symbol %r" % node[1])
+        if kind == "array":
+            return [self.value(item) for item in node[1]]
+        if kind == "binop" and node[1] == "??":
+            # Swift only evaluates the right side when the left is nil, and a
+            # missing setting is exactly `nil` here, so the branch that is taken
+            # is a fact about the profile rather than something to guess.
+            left = self.value(node[2])
+            return left if left is not None else self.value(node[3])
+        if kind == "not":
+            return not self.truthy(self.value(node[1]))
+        if kind == "ternary":
+            test = self.value(node[1])
+            return self.value(node[2]) if self.truthy(test) else self.value(node[3])
+        if kind == "binop":
+            return self.binop(node[1], self.value(node[2]), self.value(node[3]))
+        if kind == "member":
+            return self.member(node[1], node[2])
+        if kind == "call":
+            return self.call(node[1], node[2])
+        raise Unresolved("node %r" % kind)
+
+    @staticmethod
+    def truthy(value):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            raise Unresolved("truthiness of nil")
+        raise Unresolved("truthiness of a non-Bool %r" % (value,))
+
+    @staticmethod
+    def binop(operator, left, right):
+        if operator == "&&":
+            return Evaluator.truthy(left) and Evaluator.truthy(right)
+        if operator == "||":
+            return Evaluator.truthy(left) or Evaluator.truthy(right)
+        if operator in ("==", "!="):
+            equal = left == right
+            return equal if operator == "==" else not equal
+        if operator in ("<", ">", "<=", ">="):
+            return {"<": left < right, ">": left > right,
+                    "<=": left <= right, ">=": left >= right}[operator]
+        if isinstance(left, str) or isinstance(right, str):
+            raise Unresolved("string arithmetic is out of scope")
+        return {"+": left + right, "-": left - right,
+                "*": left * right, "/": left / right}[operator]
+
+    def member(self, name, base):
+        # `settings.x` is a read of the stored profile: its value is whatever the
+        # profile holds, which is what `env` binds. An absent binding is a gap in
+        # the analysis, not a zero.
+        if base[0] == "name" and base[1] == "settings":
+            if name in self.env:
+                value = self.env[name]
+                if isinstance(value, Deferred):
+                    return self.value(parse(value.source))
+                return value
+            raise Unresolved("profile key %s is not bound in this profile" % name)
+        # `Type.defaultMode` is a static member of an enum, and the enum is described
+        # by its cases rather than by a literal in the symbol table. It yields the same
+        # marker an initializer yields so `.rawValue` and `.displayKey` both resolve.
+        if base[0] == "name" and base[1] in self.symbols.enums and name == "defaultMode":
+            entry = self.symbols.enums[base[1]]
+            if "default" in entry:
+                return ("enum-value", base[1], entry["default"])
+            raise Unresolved("%s declares no defaultMode" % base[1])
+        target = self.value(base) if base[0] != "symbol" or base[1] not in ("enhancedAudioEQGains",) else None
+        # An enum initializer evaluates to a marker rather than a literal, so
+        # `.displayKey` and `.rawValue` resolve against the table the enum itself
+        # declares. Without this the picker's label and the stored number look like two
+        # different defaults, which is precisely the false fork this gate must not file.
+        if isinstance(target, tuple) and target[:1] == ("enum-value",):
+            _, enum_name, case = target
+            entry = self.symbols.enums.get(enum_name, {})
+            if name == "displayKey" and case in entry.get("keys", {}):
+                return entry["keys"][case]
+            if name == "rawValue" and case in entry.get("raw", {}):
+                return entry["raw"][case]
+            raise Unresolved("%s.%s is not readable" % (enum_name, name))
+        if name == "count":
+            if isinstance(target, (list, tuple, dict)):
+                return len(target)
+            raise Unresolved(".count of %r" % (target,))
+        if name == "first":
+            if isinstance(target, list) and target:
+                return target[0]
+            raise Unresolved(".first of an empty or non-sequence value")
+        raise Unresolved("unsupported member %r" % name)
+
+    def callee_name(self, node):
+        if node[0] == "symbol":
+            return node[1]
+        if node[0] == "member":
+            return node[1]
+        # An enum initializer is spelled as a bare type name, unlike the
+        # `Self.helper(...)` form the fallbacks elsewhere use.
+        if node[0] == "name":
+            return node[1]
+        raise Unresolved("cannot resolve the callee")
+
+    def call(self, callee, arguments):
+        name = self.callee_name(callee)
+        positional = [self.value(node) for _, node in arguments]
+        named = {label: self.value(node) for label, node in arguments if label}
+        if name == "getInt":
+            selected = named.get("from", positional[0] if positional else None)
+            names = named.get("in", positional[1] if len(positional) > 1 else None)
+            if not isinstance(names, list):
+                raise Unresolved("getInt without a list")
+            # Swift answers 0 when the selection is absent. Keeping that matters:
+            # a renamed option silently becomes index 0 instead of failing.
+            return names.index(selected) if selected in names else 0
+        if name == "getString":
+            index = named.get("from", positional[0] if positional else None)
+            names = named.get("in", positional[1] if len(positional) > 1 else None)
+            if not isinstance(names, list):
+                raise Unresolved("getString without a list")
+            if isinstance(index, int) and 0 <= index < len(names):
+                return names[index]
+            return names[0]
+        if name == "titleForValue":
+            # The label the option table carries for a stored number. Refusing an
+            # unknown number is deliberate: `xRawValue(for:)` above answers 0 because
+            # that is what Swift does with a failed `firstIndex(of:)`, but this call
+            # replaces a `?.title` that yields nil and falls through to whatever the
+            # expression spells next, so inventing a label here could hide a fork.
+            raw = named.get("value", positional[0] if positional else None)
+            table = named.get("in", positional[1] if len(positional) > 1 else None)
+            if not isinstance(table, dict):
+                raise Unresolved("titleForValue without a readable options table")
+            labels = [title for title, value in table.items() if value == raw]
+            if len(labels) != 1:
+                raise Unresolved("value %r is carried by %d options" % (raw, len(labels)))
+            return labels[0]
+        match = re.fullmatch(r"(\w+)RawValue", name)
+        if match:
+            table = self.symbols.tables.get(match.group(1) + "Options")
+            selection = named.get("for", positional[0] if positional else None)
+            if not isinstance(table, dict):
+                raise Unresolved("%s has no readable options table" % name)
+            return table.get(selection, 0)
+        if name in self.symbols.enums:
+            return self.enum_init(name, positional, named)
+        raise Unresolved("unsupported call %s(...)" % name)
+
+    def enum_init(self, name, positional, named):
+        """`Type(persistedRawValue: settings.x)` for the profile under audit.
+
+        The audited profile never stored the key, so the argument is nil and the
+        initializer lands on whichever case its own `default:` arm names. A non-nil
+        argument is refused: the value then depends on what the user stored, which is
+        not the state being compared.
+        """
+        entry = self.symbols.enums[name]
+        if "persistedRawValue" in named:
+            argument = named["persistedRawValue"]
+        elif positional:
+            argument = positional[0]
+        else:
+            raise Unresolved("%s(...) has no persisted value to read" % name)
+        if argument is not None:
+            raise Unresolved("%s(persistedRawValue:) is only evaluable when absent"
+                             % name)
+        case = entry.get("absent") or entry.get("default")
+        if not case:
+            raise Unresolved("%s does not say which case an absent value gives" % name)
+        return ("enum-value", name, case)
+
+    @staticmethod
+    def getInt(selected, names):
+        return names.index(selected) if selected in names else 0
+
+    @staticmethod
+    def getString(index, names):
+        return names[index] if isinstance(index, int) and 0 <= index < len(names) else names[0]
+
+
+# ---------------------------------------------------------------------------
+# the ledger
+# ---------------------------------------------------------------------------
+# Keys that cannot be reduced to a literal, and the condition under which the
+# difference stays harmless. The condition is re-checked on every run; an entry
+# whose condition no longer holds is a violation, and so is an entry for a key
+# that no longer needs one.
+LEDGER = {
+    "enhancedAudioEQLayout": {
+        "condition": "no ObjC reader asks the stream dictionary for this key",
+        "check": "objc_does_not_read_key:enhancedAudioEQLayout",
+        "why": "Persistence infers a layout from the stored gain count where the "
+               "bridge spells the shipped default, so the picker can show 24-Band "
+               "while the dictionary says 12-Band; nothing on the stream side reads "
+               "the key, so no behaviour differs today",
+    },
+}
+
+
+
+# ---------------------------------------------------------------------------
+# the third layer: what Objective-C does when the dictionary has no key
+# ---------------------------------------------------------------------------
+# `getSettings(for:)` ends with `compactMapValues { $0 }`, so a setting the bridge
+# exports without a fallback does not arrive as NSNull -- the key is simply absent.
+# The stream side then either ignores it or substitutes its own number, and that
+# substitution is a default too. An audit of two layers would report "the interface
+# says Balanced, the bridge says nothing" and call it a divergence when the stream
+# actually runs Balanced, or would miss a real fork because the two places that do
+# agree are both one file away from where it looked. All three are read here.
+OBJC_FALLBACK = re.compile(
+    r'prefs\[@"(?P<key>[A-Za-z_]\w*)"\]\s*!=\s*nil\s*\?'
+    r'(?P<used>.*?)\s*:\s*(?P<fallback>[^;{}]*?)(?=\s*[;,)])', re.S)
+# The dictionary is bound to eight different local names across the files that read
+# it -- `prefs`, `settings`, `windowPrefs`, `windowGamepadPrefs`, `resignPrefs`,
+# `resignGamepadPrefs`, `currentPrefs`, `hostSettings`. The pattern used to list two
+# of them, which made the wider read list decorative: `StreamViewController.m` was
+# scanned, and the reads through `windowPrefs[@"muteOnFocusLoss"]` and
+# `windowGamepadPrefs[@"backgroundGamepad"]` still came back absent, so two keys the
+# stream demonstrably uses were reported as unread. Matching any identifier would
+# over-count, so the names come from the file itself: a name counts when that file
+# binds it from `[SettingsClass getSettingsFor:]`. Over-counting stays the safe
+# direction -- a spurious read retires a ledger excuse and the key gets reported --
+# while an under-count is the silence that lets a fork ship.
+OBJC_BIND = re.compile(
+    r"\b([A-Za-z_]\w*)\s*=\s*(?:id\s*)?\[SettingsClass getSettingsFor")
+OBJC_READ = re.compile(r'\b([A-Za-z_]\w*)\[@"([A-Za-z_]\w*)"\]')
+# The guard clause is read with a brace-matching scan rather than a regex over the
+# function text. A pattern cannot express "the braces balance" -- the body of a
+# `guard let ... else { ... }` routinely holds a closure (`options.first(where: { ...
+# })?.title ?? "Off"`), so a `[^{}]*` body stops at the first inner brace and the
+# default goes unread. What that costs is not a missing note: an unread default is
+# reported as "no fallback anywhere", which is a claim about the code that the code
+# contradicts. GUARD_LET finds the clause, brace_matched finds its end, and FUNC_DECL --
+# the same pattern the symbol table uses -- attributes it to the function that owns it.
+GUARD_LET = re.compile(r"guard let \w+ else \{")
+# The absent-value arm of every `...Selection(for:)` helper in this codebase is one
+# spelling: `Options.first(where: { $0.value == defaultX })?.title ?? "Off"`. Reading it
+# means reading a closure, and the parser here covers expressions, not closures -- so
+# the idiom is normalised to a call the evaluator resolves against the option table it
+# names, rather than the answer being written down. What the normalisation must not do
+# is invent a value: `title(forRaw:)` looks the number up in the same table the picker
+# renders, and self-test item 9 breaks the table to show the read is real.
+OPTION_TITLE = re.compile(
+    r"\b(?P<table>\w*[Oo]ptions)\s*\.\s*first\s*\(\s*where:\s*\{\s*\$0\s*\.\s*value"
+    r"\s*==\s*(?P<raw>[\w.]+)\s*\}\s*\)\s*\?\.title")
+# Any argument label is allowed: the helpers take `for:`, `persistedRawValue:`,
+# `rawValue:` and `selection:`, and a label-specific pattern silently matched
+# none of them, which read as "the interface has no default anywhere".
+HELPER_ARGUMENT = re.compile(
+    r"(?:Self|SettingsModel|SettingsClass)\.(?P<name>\w+)\(\s*(?:\w+\s*:\s*)?"
+    r"settings\.(?P<key>[A-Za-z_]\w*)\s*(?:,[^()]*\))?"
+    r"\)")
+# The same read written against an optional chain (`?.key ?? default`) is a fallback
+# for that key: `Settings.getSettings(for: key)?.enhancedAudioEQGains
+# ?? SettingsModel.defaultEnhancedAudioEQGains` is the accessor Objective-C calls, so
+# the stream layer does state a default there. Matching only `settings.x ??` reported
+# three keys as having no default on either side, and the audit said so in a file whose
+# purpose is to refuse false excuses. The chain's left side must be a `Settings` lookup,
+# not any optional, so `runtimeCadenceReadout(for: key)?.refreshHz ?? 0` -- a runtime
+# readout, not a profile field -- cannot lend a default to a setting.
+CHAINED_FALLBACK = re.compile(
+    r"(?:Settings\.getSettings\(for:|Settings\.persistedSettings\(for:)\s*[^)]*\)"
+    r"\s*\?\.\s*(?P<key>[A-Za-z_]\w*)\s*(?P<tail>\?\?|\Z|\n)", re.M)
+AFTER_CHAIN = re.compile(r"\s*(?:\?\.\s*\w+\s*)?\?\?")
+# A `let` inside the same function can be the fallback (`?? legacyBias`), so a
+# single-line binding is a symbol like any other. Multi-line bindings are left
+# out: reading them would need brace tracking, and the audit says so rather than
+# guessing.
+# `re.M` is what makes the `^`/`$` anchors mean lines rather than the file;
+# without it the pattern matched nothing at all, and the fallback that reads
+# like `?? legacyResponsivenessBias` came back unbound.
+LOCAL_LET = re.compile(r"^\s*let\s+(\w+)\s*=\s*(.+?)\s*$", re.M)
+
+
+def objc_fallbacks(tree):
+    """{setting: expression_source} for every `prefs[@"k"] != nil ? .. : <fallback>`."""
+    text = tree.read(STREAM_VIEW)
+    found = {}
+    for match in OBJC_FALLBACK.finditer(text):
+        source = re.sub(r"\s+", " ", match.group("fallback")).strip()
+        found.setdefault(match.group("key"), []).append((
+            text[:match.start()].count("\n") + 1, source))
+    return found
+
+
+def objc_reads(tree):
+    """Every setting Objective-C asks the dictionary for, fallback or not."""
+    return {key for key, _ in read_keys(tree)}
+
+
+def objc_reader_files(tree):
+    """Objective-C sources that bind the stream dictionary at all."""
+    for dirpath, _, names in os.walk(OBJC_SOURCE_ROOT):
+        for name in sorted(names):
+            if not name.endswith((".m", ".mm")):
+                continue
+            relative = os.path.relpath(os.path.join(dirpath, name), ROOT)
+            if "getSettingsFor" in tree.read(relative):
+                yield relative
+
+
+def read_keys(tree):
+    """[(key, file)] for every dictionary read in a file that binds the dictionary.
+
+    Returned as pairs rather than a set because the self-test has to name where a
+    newly visible read came from: "the audit sees this key now" and "the audit sees
+    this key in the file the mutation edited" are different claims, and only the
+    second one shows that widening the scan actually bought something.
+    """
+    found = []
+    for relative in objc_reader_files(tree):
+        text = tree.read(relative)
+        bound = set(OBJC_BIND.findall(text))
+        for name, key in OBJC_READ.findall(text):
+            if name in bound:
+                found.append((key, relative))
+    return found
+
+
+def local_bindings(text):
+    """{name: expression_source} for single-line `let name = expr` bindings."""
+    found = {}
+    for match in LOCAL_LET.finditer(text):
+        found.setdefault(match.group(1), re.sub(r"\s+", " ", match.group(2)))
+    return found
+
+
+def helper_defaults(tree):
+    """{helper: default-expression} for `guard let x else { return defaultX }`.
+
+    A bare `settings.x` inside `Self.someSelection(for: settings.x)` is not a missing
+    fallback; the fallback lives in the helper. Reading only the call site would call
+    every one of those a divergence, which is how a two-layer draft of this gate
+    invented twenty fake forks while missing the two real ones.
+    """
+    found = {}
+    for relative in (BRIDGE, PERSISTENCE, DERIVED, MODEL):
+        text = tree.read(relative)
+        # At most one function-scope clause is taken per function: a guard inside a
+        # closure inside the function returns from the closure, and a function with two
+        # such clauses states two defaults, which is a conflict for `self_conflict` to
+        # judge rather than something to settle by taking the first one found.
+        claimed = {}
+        for clause in GUARD_LET.finditer(text):
+            try:
+                end = brace_matched(text, clause.end() - 1)
+            except Unresolved:
+                continue
+            body = text[clause.end():end].strip()
+            returned = re.match(r"return\b\s*", body)
+            if not returned:
+                continue
+            owner = list(FUNC_DECL.finditer(text[:clause.start()]))
+            if not owner or owner[-1].group(1) in claimed:
+                continue
+            claimed[owner[-1].group(1)] = True
+            # The offset is found, not assumed: the clause opens with `{`, so the
+            # keyword is somewhere inside the body rather than at a fixed distance from
+            # the brace, and reading from `brace + len("return")` starts mid-word.
+            start = text.index(body, clause.end()) + returned.end()
+            default, _ = extract_expression(text, start)
+            default = re.sub(r"\s+", " ", default).strip()
+            if not default:
+                continue
+            found.setdefault(owner[-1].group(1), []).append((
+                text[:clause.start()].count("\n") + 1, default))
+    return found
+
+
+def helper_wrapped(tree):
+    """{setting: [helper]} for `Self.<helper>(for: settings.<setting>)`."""
+    found = {}
+    for relative in (BRIDGE, PERSISTENCE):
+        text = tree.read(relative)
+        for match in HELPER_ARGUMENT.finditer(text):
+            found.setdefault(match.group("key"), set()).add(match.group("name"))
+    return found
+
+# `Type(persistedRawValue: settings.x).displayKey` is a read with no `??`, so the
+# fallback lives inside the initializer. Without this the audit says "no fallback
+# anywhere" for four input settings whose two layers do agree, and a ledger entry
+# would hide a fork that could be detected. The expression is kept whole -- the
+# evaluator resolves the case, the display name, and the raw value from the enum.
+ENUM_INIT_READ = re.compile(
+    r"\b([A-Z]\w+)\(\s*persistedRawValue:\s*settings\.(?P<key>[A-Za-z_]\w*)\s*\)"
+    r"\s*\.(?P<member>displayKey|rawValue)")
+
+
+def enum_init_reads(tree):
+    """{setting: expression source} for enum-initializer reads of a profile key."""
+    found = {}
+    for relative in (BRIDGE, PERSISTENCE):
+        text = tree.read(relative)
+        for match in ENUM_INIT_READ.finditer(text):
+            source = re.sub(r"\s+", " ", match.group(0))
+            found.setdefault(match.group("key"), set()).add(source)
+    return found
+
+
+def settings_fields(tree):
+    """{field: optional?} for the profile struct.
+
+    A fallback on a non-optional field is dead code, and a `settings.x` read on one
+    is a value the profile always has. Without the nullability the audit has to guess
+    whether an absent key is possible at all.
+    """
+    text = tree.read(STORE)
+    body = text[text.index("struct Settings:"):]
+    optional = set(re.findall(r"(?:let|var)\s+(\w+)\s*:\s*[^=\n]+\?", body))
+    # The type fragment may itself contain `?`, and a property may carry an
+    # initialiser (`var hdrToneMappingPolicy: Int? = nil`), so the line -- not the
+    # type -- is the unit being matched.
+    declared = set(re.findall(r"(?:let|var)\s+(\w+)\s*:\s*[^\n]*\n", body))
+    return {name: (name in optional) for name in declared - PRIVATE_FIELDS}
+
+
+PRIVATE_FIELDS = frozenset(("cachedPersistedSettingsByProfileKey",))
+
+
+def profile_bindings(symbols, fields, overrides=None):
+    """Bind every profile field for the all-defaults profile.
+
+    Non-optional fields are bound to the value the struct is decoded with, which is
+    the shipped default that `loadDefaultSettings()` writes; optional fields are bound
+    to `None`, because the case under audit is the one where nothing was ever stored.
+    A field that is bound to neither is a gap, and the evaluator refuses to guess.
+    """
+    env = {}
+    for name, optional in fields.items():
+        if optional:
+            env[name] = None
+        else:
+            symbol = "default" + name[0].upper() + name[1:]
+            if symbol in symbols.values:
+                env[name] = symbols.values[symbol]
+            elif name in NON_OPTIONAL_FROM_DEFAULTS:
+                env[name] = NON_OPTIONAL_FROM_DEFAULTS[name]
+    env.update(overrides or {})
+    return env
+
+
+# A non-optional field whose value comes from a computed default rather than a
+# `defaultX` constant. Listed rather than inferred: an inferred value that drifted
+# would silently change what the audit concludes about the keys that read it.
+NON_OPTIONAL_FROM_DEFAULTS = {}
+
+
+def evaluate_sources(evaluator, sources):
+    return [evaluator.value(parse(source)) for _, source in sources]
+
+
+def self_conflict(values):
+    """Spellings one layer writes for the same absent key that do not agree.
+
+    A layer can state a default twice: the bridge spells one fallback in the
+    dictionary it hands the stream and another in the accessor Objective-C calls
+    directly, and the interface can spell one in the loader and another in the helper
+    the picker reads. Which of the two the runtime reaches depends on which path the
+    reader took, so a layer that disagrees with itself has two answers to "what runs
+    when nothing was stored" -- and the two-layer comparison cannot see it, because
+    each side picks one expression and they may both pick the same one. Today one key
+    has two spellings on each side and they hold the same value, which is why the
+    check passes; it is a check, not a note.
+    """
+    distinct = []
+    for value in values:
+        if not any(equivalent(value, seen) for seen in distinct):
+            distinct.append(value)
+    return distinct if len(distinct) > 1 else None
+
+
+def same_expression(interface, stream):
+    """True when both layers spell one and the same expression.
+
+    Compared as syntax trees, so `Self.f(...)` and `SettingsModel.f(...)` -- the two
+    spellings the same codebase uses in the two files -- count as one expression.
+    An expression that is literally one expression cannot have forked, which is what
+    lets a key reading a stored non-optional field (`displayMode` reads
+    `autoFullscreen` both ways) be settled without inventing a value for it.
+
+    An expression that will not evaluate still counts here, and that is deliberate:
+    the two sides share one expression *and* one environment, so any gap in the
+    analysis is a gap on both sides at once. Refusing to conclude in that case would
+    report a fork that cannot exist, and the report would be noise that hides the
+    forks that can.
+    """
+    left, right = interface.get("source", []), stream.get("source", [])
+    if len(left) != 1 or len(right) != 1:
+        return False
+    try:
+        return parse(left[0]) == parse(right[0])
+    except Unresolved:
+        return False
+
+
+def describe(sources):
+    return sorted({source for _, source in sources})
+
+
+RAW_VALUE_CALL = re.compile(r"\b(\w+)RawValue\b")
+
+
+def value_tables_named(sources, symbols):
+    """Every `{display name: stored number}` map a source text names.
+
+    Two shapes exist. A `(title: String, value: Int)` option table is named through
+    the `xRawValue(for:)` helper that reads it -- the helper's own name is the only
+    thing that identifies which table it consults, and it is the same naming rule
+    `Evaluator.call` already uses, so the identity is inherited rather than guessed.
+    The other shape is an `@objc enum … : Int`, named directly by its type, whose
+    display names and raw values both come out of the enum's text. Both are collected
+    because the label side and the number side of one choice live in different files
+    and either spelling can appear on either side.
+    """
+    tables = []
+    for source in sources:
+        for match in RAW_VALUE_CALL.finditer(source):
+            candidate = match.group(1) + "Options"
+            if candidate in symbols.tables:
+                tables.append(symbols.tables[candidate])
+        for identifier in re.findall(r"[A-Za-z_]\w*", source):
+            # Two spellings name a table: the setting's own name plus the suffix,
+            # which is how `xRawValue(for:)` is resolved, and the table's name
+            # written out, which is how a `first(where:)` lookup names it. Only the
+            # second spelling exists once normalisation exists, and a source that
+            # names the table is the strongest claim of the two.
+            candidate = identifier + "Options"
+            if candidate in symbols.tables:
+                tables.append(symbols.tables[candidate])
+            if identifier in symbols.tables:
+                tables.append(symbols.tables[identifier])
+            entry = symbols.enums.get(identifier)
+            if entry and entry.get("keys") and entry.get("raw"):
+                tables.append({title: entry["raw"][case]
+                               for case, title in entry["keys"].items()
+                               if case in entry["raw"]})
+    return tables
+
+
+def display_names_agree(interface, stream, symbols):
+    """True when the picker's label and the stream's number are one option.
+
+    The interface layer returns what the row shows (`"Auto"`), the bridge exports the
+    number that gets stored (`0`), and both come from one table. Calling that a fork is
+    the mistake this function prevents; calling it an agreement without checking the
+    table is the opposite mistake, so the mapping is looked up rather than assumed --
+    a fallback that points at a *different* row still reports. A table that names the
+    label but maps it elsewhere is enough to refuse, so an ambiguous spelling is never
+    resolved by picking whichever table happens to match.
+    """
+    label, number = interface.get("value"), stream.get("value")
+    if isinstance(number, bool) or not isinstance(number, int):
+        return False
+    if not isinstance(label, str):
+        return False
+    tables = value_tables_named(stream.get("source", []), symbols)
+    tables += value_tables_named(interface.get("source", []), symbols)
+    naming = [table for table in tables if label in table]
+    return bool(naming) and all(table[label] == number for table in naming)
+
+
+class Deferred:
+    """An environment binding whose value is another expression, not a literal.
+
+    A `let` inside the loader can be the fallback the interface uses
+    (`legacyResponsivenessBias` is derived from another setting), so the audit binds
+    it and evaluates it lazily. The alternative -- treating any such name as
+    unresolved -- would push a third of the keys into the ledger for no gain.
+    """
+
+    def __init__(self, source):
+        self.source = source
+
+
+def audit(tree=None):
+    """Compare the interface value, the bridge value, and the stream value.
+
+    Returns the full account, not just the verdict, because `--self-test` needs to
+    point at the specific item a mutation was supposed to break.
+    """
+    tree = tree or Tree()
+    symbols = Symbols()
+    symbols.load([tree.read(BRIDGE), tree.read(PERSISTENCE),
+                  tree.read(DERIVED), tree.read(MODEL)])
+    problems = []
+    fields = settings_fields(tree)
+    bridge = fallbacks(tree, BRIDGE)
+    persistence = fallbacks(tree, PERSISTENCE)
+    # A default written against an alias for the profile field is still that layer's
+    # default for that key, so it joins the same table rather than a side list: the
+    # audit's conclusion for the key has to depend on every fallback the layer
+    # states, and a shape that only shows up in a second table would be consulted by
+    # whichever code path happened to look there.
+    for key, entries in aliased_fallbacks(tree, PERSISTENCE).items():
+        persistence.setdefault(key, []).extend(entries)
+    for key, entries in aliased_fallbacks(tree, BRIDGE).items():
+        bridge.setdefault(key, []).extend(entries)
+    # A default written on an optional chain is that layer's default for that key, and
+    # it is the only default some accessors state: `enhancedAudioEQGains(for:)` never
+    # binds `Settings.getSettings` to a name, so `settings.x ??` cannot see it. The
+    # chained reads go through the `Settings`/`persistedSettings` lookup, which is a
+    # *stream-side* path -- they therefore join `bridge`, and joining `persistence` too
+    # would let a stream-only default settle an interface question.
+    for key, entries in chained_fallbacks(tree, BRIDGE).items():
+        bridge.setdefault(key, []).extend(entries)
+    # Branch-local defaults, indexed by the field the branch is about. Kept out of
+    # `bridge` so the value inside a sentinel arm is not charged to the key it merely
+    # reads, and passed to `stream_value` so it is *proved* against the interface rather
+    # than skipped: skipping would remove a report without replacing it with evidence.
+    guarded_bridge = guarded_fallbacks(tree, BRIDGE)
+    stream_view = objc_fallbacks(tree)
+    read_by_objc = objc_reads(tree)
+    wrapped = helper_wrapped(tree)
+    helper_defaults_found = helper_defaults(tree)
+    enum_reads = enum_init_reads(tree)
+
+    local = local_bindings(tree.read(PERSISTENCE))
+    fields_for_env = settings_fields(tree)
+    # A `let` in the loader can be the fallback, so it is bound the same way a
+    # default constant is. Names that are also profile fields are skipped: there the
+    # profile binding is the one that matters, and a same-named local elsewhere in
+    # the file would be a different value.
+    overrides = {name: source for name, source in local.items()
+                 if name not in fields_for_env}
+    overrides = {name: Deferred(source) for name, source in overrides.items()}
+
+    compared, divergences, ledger, unresolved, unread = [], [], [], [], []
+    # Every setting either layer mentions with a fallback of its own, plus every key
+    # the stream substitutes a number for. A key only the stream defaults is exactly
+    # as much a fork risk as a key only the interface defaults.
+    # `guarded_bridge` is in the union on purpose: a key the audit only reaches through
+    # a sentinel branch still has to be on the books, because a key that leaves the
+    # candidate set looks identical to a key that got proven, and the debt ratchet
+    # would retire its entry on a silence.
+    candidates = sorted(set(bridge) | set(persistence) | set(stream_view)
+                        | {key for entries in guarded_bridge.values()
+                           for _line, key, _source in entries})
+    for key in candidates:
+        optional = fields.get(key)
+        if optional is False:
+            # The left side of `??` can never be nil, so whatever follows it is
+            # decoration. Saying so is cheaper than deleting it and keeps the claim
+            # checkable if the field ever becomes optional.
+            if key in bridge or key in persistence:
+                problems.append("dead fallback: %s is not optional" % key)
+            continue
+        if optional is None:
+            problems.append("unknown profile field %s" % key)
+            continue
+
+        evaluator = Evaluator(symbols,
+                              profile_bindings(symbols, fields, overrides=overrides))
+        interface = interface_value(key, tree, evaluator, persistence,
+                                    wrapped, helper_defaults_found, enum_reads)
+        stream = stream_value(key, tree, evaluator, bridge, stream_view, read_by_objc,
+                              guarded_bridge)
+        entry = {"key": key, "interface": interface, "stream": stream}
+
+        # One layer stating two different values for the same absent key is a fault
+        # in that layer, checked before the two layers are compared: the comparison
+        # picks one expression per side and can be green while each side has two
+        # answers. Checked on evaluated values, so `0.0` beside `0` stays quiet.
+        for side, table in (("interface", persistence), ("stream", bridge)):
+            if key not in table:
+                continue
+            try:
+                rival = self_conflict(evaluate_sources(evaluator, table[key]))
+            except Unresolved:
+                continue  # the side already reports itself as unresolved
+            if rival:
+                problems.append(
+                    "%s layer defaults %s to %r and %r in the same layer -- which "
+                    "value runs depends on which path the reader took"
+                    % (side, key, rival[0], rival[1]))
+
+        if same_expression(interface, stream):
+            entry["same_expression"] = True
+            compared.append(entry)
+            continue
+        if stream.get("unread"):
+            # Nothing on the stream side asks for the key, so there is one value in
+            # the system and no way for the two layers to disagree. It is reported
+            # separately: an unread key that *starts* being read is how a real fork
+            # gets created, and the ledger entry for it has to say so.
+            if interface.get("unresolved"):
+                unresolved.append((key, describe(persistence.get(key, [])),
+                                   describe(bridge.get(key, [])),
+                                   interface["unresolved"]))
+                continue
+            unread.append((key, interface["value"], interface["source"]))
+            continue
+        if interface.get("unresolved") or stream.get("unresolved"):
+            note = interface.get("unresolved") or stream.get("unresolved")
+            if key in LEDGER and condition_holds(LEDGER[key]["check"], key, tree):
+                ledger.append((key, note))
+            else:
+                unresolved.append((key, describe(persistence.get(key, [])),
+                                   describe(bridge.get(key, []))
+                                   + describe(stream_view.get(key, [])), note))
+            continue
+        if stream.get("divergent_from_guard"):
+            # The key's own interface value is not the left side of this comparison --
+            # the branch answers its guard -- so the guard's interface value is
+            # substituted. Comparing the key's value instead reports a fork between two
+            # numbers that were never claimed to be the same thing.
+            guard = stream["guard"]
+            guard_interface = interface_value(guard, tree, evaluator, persistence,
+                                             wrapped, helper_defaults_found, enum_reads)
+            left = guard_interface.get("value") if not guard_interface.get("unresolved") \
+                else interface["value"]
+            divergences.append((key, left, ["interface value for the branch guard %s"
+                                            % guard],
+                                stream["value"], stream["source"]))
+            continue
+        if equivalent(interface["value"], stream["value"]):
+            compared.append(entry)
+        else:
+            if display_names_agree(interface, stream, symbols):
+                # Recorded as an evaluation rather than a ledger entry: the two layers
+                # do hold different literals, and the reason they are the same choice
+                # is a table both sides read, so the table is what makes the judgement.
+                entry["display_name_mapping"] = True
+                compared.append(entry)
+                continue
+            divergences.append((key, interface["value"], interface["source"],
+                                stream["value"], stream["source"]))
+
+    for key in LEDGER:
+        if key not in candidates:
+            problems.append("ledger entry %s no longer names a compared key" % key)
+        elif any(item["key"] == key for item in compared):
+            problems.append("ledger entry %s is stale: the key now evaluates equal" % key)
+    return {"candidates": candidates, "compared": compared, "divergences": divergences,
+            "ledger": ledger, "unresolved": unresolved, "unread": unread,
+            "problems": problems,
+            "read_by_objc": read_by_objc, "stream_view": stream_view}
+
+
+def interface_value(key, tree, evaluator, persistence, wrapped, helper_defaults_found,
+                    enum_reads=None):
+    """What the window shows when the profile holds nothing for `key`."""
+    if key in persistence:
+        try:
+            values = evaluate_sources(evaluator, persistence[key])
+        except Unresolved as error:
+            return {"unresolved": str(error), "source": describe(persistence[key])}
+        return {"value": values[0], "source": describe(persistence[key])}
+    # No inline fallback. The value can still come from an enum initializer whose
+    # absent-value arm is the default, read from the enum's own text.
+    for source in sorted((enum_reads or {}).get(key, ())):
+        try:
+            return {"value": evaluator.value(parse(source)), "source": [source]}
+        except Unresolved as error:
+            return {"unresolved": str(error), "source": [source]}
+    # No inline fallback. The value can still come from a helper that defaults it.
+    helpers = sorted(wrapped.get(key, ()))
+    for helper in helpers:
+        for _, default in helper_defaults_found.get(helper, ()):
+            try:
+                return {"value": evaluator.value(parse(default)),
+                        "source": ["%s() guard-let %s" % (helper, default)]}
+            except Unresolved as error:
+                return {"unresolved": str(error),
+                        "source": ["%s() guard-let %s" % (helper, default)]}
+    if helpers:
+        return {"unresolved": "%s reads the value through %s, which has no absent "
+                              "default to read" % (key, ", ".join(helpers)),
+                "source": ["%s(...)"] * len(helpers)}
+    # Still nothing inline. The interface's own all-defaults function is the last
+    # place it can have said so, and it says it for most keys.
+    assigned = defaults_assignments(tree).get(key)
+    if assigned:
+        try:
+            return {"value": evaluator.value(parse(assigned[0][1])),
+                    "source": ["loadDefaultSettings() %s" % assigned[0][1]]}
+        except Unresolved as error:
+            return {"unresolved": str(error),
+                    "source": ["loadDefaultSettings() %s" % assigned[0][1]]}
+    return {"unresolved": "%s is read by the interface with no fallback anywhere" % key,
+            "source": []}
+
+
+def stream_value(key, tree, evaluator, bridge, stream_view, read_by_objc,
+                 guarded=None):
+    """What the stream runs with when the profile holds nothing for `key`.
+
+    Three possible sources, in the order the runtime reaches them: the bridge's own
+    fallback (the key is present), Objective-C's substitution for an absent key, or
+    no value at all because nothing asks for the key.
+
+    A key whose only stream-side default sits inside a sentinel branch (`customFps`)
+    is settled here rather than left out of the audit: the branch's value has to equal
+    what the interface lands on for the same all-defaults profile, which is the claim
+    the branch is implicitly making. The judgement is on values, and an unevaluable
+    guard is reported as unproven -- excusing the fallback without checking it is the
+    silence every other rule in this file exists to refuse.
+    """
+    if key in bridge:
+        try:
+            values = evaluate_sources(evaluator, bridge[key])
+        except Unresolved as error:
+            return {"unresolved": str(error), "source": describe(bridge[key])}
+        return {"value": values[0], "source": describe(bridge[key])}
+    if key in stream_view:
+        try:
+            return {"value": evaluator.value(parse(stream_view[key][0][1])),
+                    "source": describe(stream_view[key])}
+        except Unresolved as error:
+            return {"unresolved": str(error), "source": describe(stream_view[key])}
+    branch = [(guard, line, source)
+              for guard, entries in (guarded or {}).items()
+              for line, defaulted, source in entries if defaulted == key]
+    if branch:
+        # One branch per (guard, value) pair is one claim to check; two different
+        # values for the same key is a fork inside the stream layer, reported as such
+        # rather than settled by whichever branch was read first.
+        checked = []
+        for guard, line, source in branch:
+            try:
+                branch_value = evaluator.value(parse(source))
+                guard_value = evaluator.value(parse("settings.%s" % guard))
+            except Unresolved as error:
+                return {"unresolved": "the branch default for %s (line %d) cannot be "
+                                      "checked because %s" % (key, line, error),
+                        "source": ["%s.%s == .zero ? ... %s ?? %s ..."
+                                   % ("settings", guard, key, source)]}
+            checked.append((branch_value, guard, guard_value, line, source))
+        first = checked[0]
+        for other in checked[1:]:
+            if not equivalent(other[0], first[0]):
+                return {"unresolved": "%s is defaulted twice inside sentinel branches "
+                                      "(lines %d and %d) with %r and %r"
+                                % (key, first[3], other[3], first[0], other[0]),
+                        "source": [item[4] for item in checked]}
+        if not equivalent(first[0], first[2]):
+            # The branch's literal answers its guard, so the comparison that means
+            # something is branch value against the interface's value for the guard --
+            # that pair is the derived quantity both layers are really claiming. A
+            # mismatch is a live fork in what the stream runs with, not a gap in the
+            # audit, so it is reported as a divergence on those two values.
+            return {"divergent_from_guard": True,
+                    "value": first[0],
+                    "guard": first[1],
+                    "guard_value": first[2],
+                    "source": ["settings.%s == .zero ? ... ?? %s (line %d)"
+                               % (first[1], first[4], first[3])]}
+        # Proved equal is not the same as proved *equal to this key's* default. The
+        # branch answers a question about its guard (`fps` runs at 60 when no preset
+        # was picked), while the key inside the branch keeps its own meaning --
+        # `customFps` is nil by design, meaning "follow the global framerate". Charging
+        # the branch's number to the key reports a fork that cannot happen; saying
+        # nothing instead would let the key leave the books, where a later edit to the
+        # branch's literal would go unread. So the guard comparison is the check that
+        # stays, and the key is reported as unproven with that check named.
+        return {"unresolved": "%s has no default of its own: the stream only reads it "
+                              "inside a %s==.zero branch, whose fallback (%s) does agree "
+                              "with the interface value for %s, so the derived framerate "
+                              "is settled and this key is not"
+                              % (key, first[1], first[4], first[1]),
+                "source": ["settings.%s == .zero ? ... ?? %s (line %d)"
+                           % (first[1], first[4], first[3])]}
+    if key in read_by_objc:
+        return {"unresolved": "%s reaches Objective-C with no fallback in either the "
+                              "bridge or the stream, so an unset profile reads as the "
+                              "zero of its type" % key,
+                "source": ['prefs[@"%s"]' % key]}
+    return {"value": None, "source": ["nobody reads the key"], "unread": True}
+
+
+def condition_holds(name, key, tree):
+    if name.startswith("objc_does_not_read_key:"):
+        return key not in objc_reads(tree)
+    if name.startswith("both_sides_read_absent_as_false:"):
+        # The interface spells `false`. The bridge exports the bare optional, so an
+        # unset key does not reach the dictionary at all, and Objective-C reading it
+        # gets a nil object -- whose `boolValue` is false. The two agree because
+        # there is only one value in the system, not because two expressions matched.
+        # If the bridge ever gains a `?? true`, or the stream starts substituting a
+        # number, the condition stops holding and the key is reported.
+        persistence = fallbacks(tree, PERSISTENCE).get(key, [])
+        interface_false = bool(persistence) and all(
+            source == "false" for _, source in persistence)
+        stream_silent = (key in objc_reads(tree)
+                         and key not in objc_fallbacks(tree)
+                         and key not in fallbacks(tree, BRIDGE))
+        return interface_false and stream_silent
+    return False
+
+
+def equivalent(left, right):
+    """Numeric equality across int/float spellings; strict otherwise."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left is right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return float(left) == float(right)
+    return left == right
+
+
+def read_baseline():
+    """The accepted debt: {(key, reason)} plus the file's own notes."""
+    if not os.path.exists(BASELINE):
+        # A set, not {}: the bare literal is a dict, and `current - accepted` below
+        # then dies on a first run before anyone has reviewed any debt at all.
+        return set()
+    with open(BASELINE, encoding="utf-8") as handle:
+        document = json.load(handle)
+    return {(entry["key"], entry["reason"]) for entry in document.get("debts", ())}
+
+
+def write_baseline(result):
+    document = {
+        "_about": "Keys the defaults audit cannot yet reduce to one value on both "
+                  "sides. Regenerate with `python3 scripts/defaults-consistency.py "
+                  "--write-baseline` and read the diff: an entry that leaves means a "
+                  "key got proven, which is the only good reason for one to go. The "
+                  "reason text is part of the identity, so a key that stops being "
+                  "unprovable for the reviewed reason is a new debt, not an old one.",
+        "debts": [{"key": key, "reason": note}
+                  for key, _, _, note in sorted(result["unresolved"])],
+    }
+    with open(BASELINE, "w", encoding="utf-8") as handle:
+        json.dump(document, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    return len(document["debts"])
+
+
+def reconcile_debt(unresolved, accepted):
+    """Split the unproven keys into accepted debt, new debt, and stale excuses.
+
+    Shrinking is a failure too, on purpose: an entry whose key now evaluates means the
+    file still carries an excuse for something that no longer needs one, which is how a
+    baseline turns into a list of things nobody looks at.
+    """
+    current = {(key, note) for key, _, _, note in unresolved}
+    return (sorted(current - accepted), sorted(accepted - current))
+
+
+# ---------------------------------------------------------------------------
+# self-test: the gate has to refuse the mistakes it exists to catch
+# ---------------------------------------------------------------------------
+# Mutations are made to source *text*, and the audit re-derives everything from
+# that text. A harness that patched an in-memory dictionary instead would prove
+# only that the test can edit a dictionary -- which is the flaw that let an earlier
+# draft claim three caught mutations with no evidence behind the claim.
+def mutate(tree, relative, old, new, count=1):
+    text = tree.read(relative)
+    if text.count(old) < count:
+        raise AssertionError("mutation anchor missing: %r" % old[:60])
+    return tree.with_override(relative, text.replace(old, new, count))
+
+
+def relaunch(mutations):
+    """Re-audit the tree with the given (file, old, new) edits applied."""
+    tree = Tree()
+    for relative, old, new in mutations:
+        tree = mutate(tree, relative, old, new)
+    return audit(tree)
+
+
+def key_reported(result, key):
+    return (any(item[0] == key for item in result["divergences"])
+            or any(item[0] == key for item in result["unresolved"]))
+
+
+def self_test():
+    baseline = audit()
+    if baseline["divergences"]:
+        for item in baseline["divergences"]:
+            # The tuple is (key, interface value, interface source, stream value,
+            # stream source); printing [1] and [2] printed the value next to its own
+            # source and raised, so this path crashed instead of explaining itself.
+            print("VIOLATION %s: interface %r vs stream %r" % (item[0], item[1], item[3]))
+        print("self-test refused: the tree has real divergences, so a mutation result "
+              "here would say nothing about the mutation", file=sys.stderr)
+        return 1
+    checks = []
+
+    # 1. A bridge fallback that stops matching the interface has to be reported. This
+    #    is the defect the whole gate exists for -- Wave V's `ignoreAspectRatio`, where
+    #    the interface read `false` and the stream ran `true`. The anchor is the literal
+    #    the bridge spells today; the interface side reads the named constant, so a
+    #    bridge that stops agreeing with it is exactly the shape Wave V shipped in.
+    result = relaunch([(BRIDGE, '"ignoreAspectRatio": settings.ignoreAspectRatio ?? false,',
+                             '"ignoreAspectRatio": settings.ignoreAspectRatio ?? true,')])
+    checks.append(("bridge fallback flipped",
+                   key_reported(result, "ignoreAspectRatio")))
+
+    # 2. A default constant that one layer reads by name and the other re-spells as a
+    #    literal. Moving the constant has to be reported for the key whose interface
+    #    value depends on it while the stream side keeps its own literal: this is the
+    #    same-value-spelled-two-ways trap, seen from the side where the value changes.
+    result = relaunch([(DERIVED, "static let defaultEdgeSensorBandWidthPoints = 0.0",
+                              "static let defaultEdgeSensorBandWidthPoints = 13.0")])
+    checks.append(("interface default moved alone",
+                   key_reported(result, "edgeSensorBandWidthPoints")))
+
+    # 3. An Objective-C substitution that stops agreeing with the interface has to be
+    #    reported. This is the third layer; a two-layer audit cannot see it at all. The
+    #    key has to be one the bridge does *not* export -- for a key the bridge always
+    #    puts in the dictionary the substitution is unreachable, and a mutation there
+    #    would prove nothing about the gate. `videoRendererMode` is the one key the
+    #    stream substitutes a number for and the bridge leaves out.
+    result = relaunch([(STREAM_VIEW,
+                        '[prefs[@"videoRendererMode"] intValue] : 2',
+                        '[prefs[@"videoRendererMode"] intValue] : 3')])
+    checks.append(("stream-side substitution changed",
+                   key_reported(result, "videoRendererMode")))
+
+    # 4. A fallback that disappears must leave the key accounted for as uncovered,
+    #    never silently reclassified as agreement. The anchor has to be a key whose
+    #    interface default is stated exactly once: `enableVsync` looked like the obvious
+    #    choice and is not, because `loadDefaultSettings()` also writes it, so deleting
+    #    the inline `??` leaves the layer still defaulting the key and the two layers
+    #    still equal -- which is the correct verdict, not a miss. `upscalingMode` is
+    #    defaulted in one place, so a vanished fallback has nowhere else to hide.
+    result = relaunch([(PERSISTENCE,
+                        "settings.upscalingMode ?? Self.defaultUpscalingMode",
+                        "settings.upscalingMode")])
+    checks.append(("deleted fallback reports as unresolved",
+                   key_reported(result, "upscalingMode")))
+
+    # 4b. Negative control for the check above: the same deletion on a key that keeps a
+    #     second default must stay quiet. Reporting it would mean the gate treats the
+    #     *shape* of a fallback as the default rather than the value the layer lands on,
+    #     and a gate that cries at that shape gets muted the same way an over-eager
+    #     linter does.
+    result = relaunch([(PERSISTENCE,
+                        "settings.enableVsync ?? SettingsModel.defaultEnableVsync",
+                        "settings.enableVsync")])
+    checks.append(("deleting one of two interface defaults stays green",
+                   not key_reported(result, "enableVsync")))
+
+    # 5. Negative control, paired with its positive twin on the same key and line:
+    #    rewriting the bridge's `?? defaultHoverActivatesStreamWindow` to the literal
+    #    that constant holds must stay green, while the literal one step away must
+    #    fire. One negative control alone only proves the gate is quiet; the pair
+    #    proves the judgement is made on the evaluated value rather than the spelling
+    #    -- which is the whole reason the audit evaluates instead of diffing text.
+    result = relaunch([(BRIDGE,
+                        "settings.hoverActivatesStreamWindow ?? SettingsModel"
+                        ".defaultHoverActivatesStreamWindow",
+                        "settings.hoverActivatesStreamWindow ?? true")])
+    checks.append(("equal literal stays green",
+                   not key_reported(result, "hoverActivatesStreamWindow")))
+    result = relaunch([(BRIDGE,
+                        "settings.hoverActivatesStreamWindow ?? SettingsModel"
+                        ".defaultHoverActivatesStreamWindow",
+                        "settings.hoverActivatesStreamWindow ?? false")])
+    checks.append(("unequal literal on the same line fires",
+                   key_reported(result, "hoverActivatesStreamWindow")))
+
+    # 6. The derivation both layers now share has to stay shared. Neither layer spells
+    #    the mode: each calls `derivedSmoothnessLatencyMode`, so the audit settles the
+    #    key by one shared expression. Breaking that sharing -- one side going back to
+    #    a constant -- has to land in the accounted-for states, never silently in
+    #    "agrees". The mutation is chosen so the value still evaluates to something: a
+    #    gate that only notices when evaluation breaks would stay green here.
+    #    The mutation is the pre-Wave-W code restored: the bridge going back to the
+    #    static preset while the interface still derives. The value still evaluates on
+    #    the mutated side, so a gate that only notices when evaluation breaks is green.
+    result = relaunch([(BRIDGE,
+                        "        ?? SettingsModel.derivedSmoothnessLatencyMode(\n"
+                        "          framePacing: settings.framePacing,\n"
+                        "          enableVsync: settings.enableVsync,\n"
+                        "          timingBufferLevel: settings.timingBufferLevel,\n"
+                        "          timingPrioritizeResponsiveness: settings"
+                        ".timingPrioritizeResponsiveness,\n"
+                        "          timingCompatibilityMode: settings"
+                        ".timingCompatibilityMode,\n"
+                        "          timingSdrCompatibilityWorkaround: settings"
+                        ".timingSdrCompatibilityWorkaround\n"
+                        "        )",
+                        "        ?? SettingsModel.getInt(\n"
+                        "          from: SettingsModel.defaultSmoothnessLatencyMode,\n"
+                        "          in: SettingsModel.smoothnessLatencyModes)")])
+    checks.append(("shared derivation unshared reported",
+                   key_reported(result, "smoothnessLatencyMode")))
+
+    # 7. The ledger rests on "nothing on the stream side reads this key", so a read
+    #    appearing anywhere the audit looks has to retire that excuse. The mutation
+    #    writes the read into `Connection.m` rather than `StreamViewController.m`:
+    #    the ledger's key is read by neither file today, and a scan list that silently
+    #    stopped including the second file would keep this check green while the
+    #    unread-ness it asserts was already false.
+    connection = os.path.join("Limelight", "Stream", "Connection.m")
+    result = relaunch([(connection,
+                        "        NSDictionary* settings = [SettingsClass getSettingsFor:settingsKey];",
+                        "        NSDictionary* settings = [SettingsClass getSettingsFor:settingsKey];\n"
+                        "        (void)[settings[@\"enhancedAudioEQLayout\"] intValue];")])
+    checks.append(("ledger excuse retired by a read outside the main file",
+                   key_reported(result, "enhancedAudioEQLayout")))
+
+    # 7b. The check above still writes the read through a name the old pattern knew
+    #     (`settings`) into a file the old list knew. The two blind spots that made
+    #     two live keys look unread were independent: a file the scan never opened,
+    #     and a local name the read pattern never matched. This mutation puts a read
+    #     in `DiscoveryWorker.m` -- a file the hand-written list omitted -- through
+    #     `hostSettings` -- a name the hand-written alternation omitted -- and asks
+    #     that a key currently reported as "unread, so no fork is possible" stops
+    #     being excused on those grounds. Both halves have to be derived from the
+    #     source for this to pass, which is the property the list used to break.
+    discovery = os.path.join("Limelight", "Network", "DiscoveryWorker.m")
+    result = relaunch([(discovery,
+                        "        hostSettings = [SettingsClass getSettingsFor:_host.uuid];",
+                        "        hostSettings = [SettingsClass getSettingsFor:_host.uuid];\n"
+                        '            (void)hostSettings[@"mouseMode"];')])
+    checks.append(("read in a never-scanned file through an unknown name is seen",
+                   key_reported(result, "mouseMode")))
+
+    # 7c. A layer that states two defaults for one key is a fault inside that layer,
+    #     and the two-layer comparison cannot see it: each side contributes one
+    #     expression to the comparison, and both may contribute the same one.
+    #     `timingPrioritizeResponsiveness` is defaulted twice today -- once as the
+    #     named constant, once as the literal the constant holds -- so it is the one
+    #     key where the check can be shown working rather than merely present. The
+    #     positive twin moves one spelling off the constant's value; the negative
+    #     twin re-spells it as that value, which must stay green for the same reason
+    #     check 5 does: the judgement is on values, not on text.
+    result = relaunch([(PERSISTENCE,
+                        "settings.timingPrioritizeResponsiveness "
+                        "?? Self.defaultTimingPrioritizeResponsiveness",
+                        "settings.timingPrioritizeResponsiveness ?? true")])
+    checks.append(("a layer defaulting one key two ways is reported",
+                   any("timingPrioritizeResponsiveness" in problem
+                       for problem in result["problems"])))
+    result = relaunch([(PERSISTENCE,
+                        "settings.timingPrioritizeResponsiveness "
+                        "?? Self.defaultTimingPrioritizeResponsiveness",
+                        "settings.timingPrioritizeResponsiveness ?? false")])
+    checks.append(("two spellings of one value in a layer stay green",
+                   not any("timingPrioritizeResponsiveness" in problem
+                           for problem in result["problems"])))
+
+    # 8. The debt ratchet has to refuse both ways, and it is checked as a function
+    #    rather than against the tree: the point is the rule, and a rule checked
+    #    against the current tree cannot show what an entry that should not be there
+    #    does. A key nobody reviewed must fail, and an entry whose key stopped being
+    #    unprovable must fail too -- otherwise a baseline only ever grows.
+    sample = [("someKey", [], [], "read through a helper with no absent default")]
+    fresh, stale = reconcile_debt(sample, set())
+    same, stale_same = reconcile_debt(sample, {("someKey", sample[0][3])})
+    proven_new, proven_stale = reconcile_debt([], {("someKey", sample[0][3])})
+    # A key that is still unprovable but for another reason is new debt: the entry on
+    # file reviewed a different shape, and an excuse carried across a refactor is the
+    # thing this whole file argues against.
+    reshaped_new, _ = reconcile_debt(
+        [("someKey", [], [], "profile key is not bound in this profile")],
+        {("someKey", sample[0][3])})
+    checks.append(("unreviewed debt fails and reviewed debt does not",
+                   bool(fresh) and not same and not stale_same))
+    checks.append(("an excuse for a proven key fails",
+                   bool(proven_stale) and not proven_new))
+    checks.append(("debt that changed shape is new debt", bool(reshaped_new)))
+
+    # 9. A sentinel branch's fallback is checked against its *guard's* interface value,
+    #    not against the defaulted key's own (`customFps` is nil by design -- "follow
+    #    the global framerate" -- so the branch's 60 is not claiming to be its default).
+    #    The positive twin moves the branch literal off `Self.defaultFps`, which is a
+    #    live fork in what framerate the stream runs with when no preset was picked:
+    #    the interface shows 60 and the stream sends 120. The negative twin re-spells
+    #    the same number as an integer, which has to stay green for the same reason the
+    #    other negative controls do -- the judgement is on values, not on text.
+    result = relaunch([(BRIDGE, "Int(settings.customFps ?? 60.0)",
+                             "Int(settings.customFps ?? 120.0)")])
+    checks.append(("sentinel branch literal off the guard's default reported",
+                   any(item[0] == "customFps" for item in result["divergences"])))
+    result = relaunch([(BRIDGE, "Int(settings.customFps ?? 60.0)",
+                             "Int(settings.customFps ?? 60)")])
+    checks.append(("sentinel branch literal re-spelled stays green",
+                   not any(item[0] == "customFps" for item in result["divergences"])))
+
+    failed = 0
+    for name, passed in checks:
+        print("%s %s" % ("ok  " if passed else "FAIL", name))
+        if not passed:
+            failed += 1
+    if failed:
+        print("self-test failed: %d of %d checks did not fire" % (failed, len(checks)),
+              file=sys.stderr)
+        return 1
+    print("self-test ok: %d checks -- bridge fallback, interface default, stream "
+          "substitution, deleted fallback, the derived Objective-C read set (a file the "
+          "old list omitted and a name the old pattern omitted), a layer defaulting one "
+          "key two ways, a sentinel branch's fallback against its guard's default, and "
+          "the debt ratchet both ways; %d of the checks are negative controls, so an "
+          "equivalent re-spelling staying green is asserted, not assumed"
+          % (len(checks), sum(1 for name, _ in checks
+                              if "stays green" in name or "stay green" in name)))
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--write-baseline", action="store_true",
+                        help="record the current unproven keys as accepted debt")
+    options = parser.parse_args()
+    if options.self_test:
+        return self_test()
+    result = audit()
+    if options.write_baseline:
+        count = write_baseline(result)
+        print("baseline written: %d unproven key(s)" % count)
+        return 0
+    readable = {key: value for key, value in result.items() if key != "symbols"}
+    if options.json:
+        print(json.dumps(readable, default=str, indent=2))
+    print("shared keys: %d evaluated equal, %d ledgered, %d unresolved, %d divergent"
+          % (len(result["compared"]), len(result["ledger"]), len(result["unresolved"]),
+             len(result["divergences"])))
+    if result["unread"]:
+        print("unread by the stream (one value exists, so no fork is possible): %s"
+              % ", ".join(key for key, _, _ in result["unread"]))
+    failed = False
+    for key, interface, interface_source, stream, stream_source in result["divergences"]:
+        failed = True
+        print("VIOLATION %s: interface %r vs stream %r" % (key, interface, stream))
+        print("             interface: %s" % interface_source)
+        print("             stream:    %s" % stream_source)
+    accepted = read_baseline()
+    new_debt, stale = reconcile_debt(result["unresolved"], accepted)
+    for key, bridge_sources, stream_sources, note in result["unresolved"]:
+        if (key, note) not in accepted:
+            failed = True
+        print("%s %s: %s" % ("UNRESOLVED" if (key, note) not in accepted else "debt    ",
+                             key, note))
+        if bridge_sources:
+            print("             bridge: %s" % bridge_sources)
+        if stream_sources:
+            print("             stream: %s" % stream_sources)
+    if accepted:
+        print("debt baseline: %d accepted, %d new, %d stale"
+              % (len(accepted), len(new_debt), len(stale)))
+    for key, note in stale:
+        failed = True
+        print("PROBLEM baseline excuses %s (%s) but the audit no longer reports it -- "
+              "the key is proven now, drop the entry" % (key, note))
+    for problem in result["problems"]:
+        failed = True
+        print("PROBLEM %s" % problem)
+    for key, note in result["ledger"]:
+        print("ledger   %s -- condition holds (%s)" % (key, note))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
