@@ -246,9 +246,13 @@ def main():
     check("backgroundGamepad: backgroundGamepad," in persist,
           "SettingsModel+Persistence re-encodes backgroundGamepad into Settings")
 
-    # ObjCBridge dictionary carries the key.
-    check('"backgroundGamepad": settings.backgroundGamepad,' in bridge,
-          "SettingsObjCBridge dictionary exposes backgroundGamepad for ObjC readers")
+    # ObjCBridge dictionary carries the key *with its default named in place*. The
+    # dictionary ends with `compactMapValues { $0 }`, so the bare optional that
+    # shipped before Wave X exported no key at all for an unset profile, and the
+    # reader's zero-of-type only happened to agree with `defaultBackgroundGamepad`.
+    check(re.search(r'"backgroundGamepad":\s*settings\.backgroundGamepad\s*\n?\s*'
+                    r'\?\? SettingsModel\.defaultBackgroundGamepad,', bridge),
+          "SettingsObjCBridge dictionary exposes backgroundGamepad with its default")
     # Struct-copy mirrors (settings / updated / per-host): three distinct call sites.
     count_mirror = 0
     for variant in [

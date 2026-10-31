@@ -72,6 +72,19 @@ MODEL = os.path.join(VC, "SettingsModel.swift")
 OBJC_SOURCE_ROOT = os.path.join(ROOT, "Limelight")
 
 FALLBACK = re.compile(r"settings\.([A-Za-z_]\w*)\s*\?\?")
+# The dictionary the stream actually reads, and the only place a fallback can change
+# what the stream runs with. `getSettings(for:)` builds one dictionary literal and ends
+# with `compactMapValues { $0 }`, so a key whose expression is nil does not arrive as
+# NSNull -- the key is absent, and Objective-C reading it gets the zero of its type.
+# The same file also holds 76 standalone `@objc static func x(for key:)` accessors, and
+# their `?? defaultX` belongs to *that* call path: `fallbacks` used to search the whole
+# file, so 21 keys were credited with a fallback the stream dictionary never had. Three
+# of them (`muteOnFocusLoss`, `backgroundGamepad`, `matchDisplayResolution`) are read
+# out of the dictionary, so flipping `SettingsModel.defaultMuteOnFocusLoss` to `true`
+# -- interface shows YES, stream reads nil as NO -- left this gate reporting
+# "0 divergent" and exit 0. That is the green-wrong verdict this gate exists to refuse,
+# so a dictionary read is now judged only against a fallback written inside this body.
+BRIDGE_EXPORTED_FUNCTION = "@objc static func getSettings(for key: String)"
 # A newline continues an expression only when the next token cannot open a
 # statement. Without this the fallback swallows the following settings and every
 # shape statistic built from it is noise -- which is how the first draft of this
@@ -268,17 +281,24 @@ def guarded_fallbacks(tree, relative):
     return found
 
 
-def fallbacks(tree, relative):
+def fallbacks(tree, relative, within=None):
     """{setting: [(line, expression_source)]} for every `settings.x ?? expr`.
 
     A fallback inside a sentinel branch is skipped here and reported by
     `guarded_fallbacks`: its value belongs to the branch's derived quantity rather than
     to the absent key, and charging it to the key reports a fork that cannot happen.
+
+    `within` restricts the search to a byte range. The bridge needs it: the same file
+    holds standalone accessors whose `?? default` never reaches the stream dictionary,
+    and crediting one to a dictionary key is what made this gate green while the
+    interface and the stream disagreed.
     """
     text = tree.read(relative)
     guarded = {position for position, _, _, _ in _guarded_fallbacks(text)}
     found = {}
     for match in FALLBACK.finditer(text):
+        if within and not (within[0] <= match.start() < within[1]):
+            continue
         # Both patterns end at the `??`, so the offsets line up on that token:
         # `FALLBACK` starts at `settings`, which would never match a saved `??` offset.
         if match.end() - 2 in guarded:
@@ -287,6 +307,112 @@ def fallbacks(tree, relative):
         source = re.sub(r"\s+", " ", source).strip()
         line = text[:match.start()].count("\n") + 1
         found.setdefault(match.group(1), []).append((line, source))
+    return found
+
+
+def bridge_export_body(tree, relative=BRIDGE):
+    """Byte range of the `getSettings(for:)` body: what the stream dictionary holds.
+
+    Brace-matched rather than regex-terminated because the body holds nested
+    dictionaries and closures, and a pattern that stops at the first `}` returns a
+    range that quietly excludes most of the exports -- which would be reported as
+    "this key has no stream fallback", a claim about the code that the code denies.
+    """
+    text = tree.read(relative)
+    anchor = text.index(BRIDGE_EXPORTED_FUNCTION)
+    brace = text.index("{", anchor + len(BRIDGE_EXPORTED_FUNCTION))
+    return brace + 1, brace_matched(text, brace)
+
+
+def bridge_stream_accessors(tree, text):
+    """Accessors that stand in for one key on the stream side, by name and by caller.
+
+    Two conditions, both needed:
+
+    * The function is named after the setting. `@objc static func muteOnFocusLoss(for
+      key:)` answers one question and its `??` is that key's stream default, while
+      `loadMoonlightSettings(for:)` returns nothing, reads a dozen settings to derive
+      a resolution, and its `settings.matchDisplayResolution ?? false` is a local
+      step in that arithmetic -- charging it to `matchDisplayResolution` credits the
+      stream with a default that only ever decides a width and a height.
+    * Objective-C really calls it, found in code rather than comments. An accessor
+      nobody calls cannot supply the stream's default: `muteOnFocusLoss(for:)` is
+      that shape, where the only mention of `muteOnFocusLossFor:` in the tree is a
+      comment explaining why the reader uses the dictionary instead ("so the Swift
+      getter does not need an @objc rename"). Reading comments kept crediting
+      `defaultMuteOnFocusLoss` to a dictionary key that ships without it.
+
+    Comments are stripped line by line; a stray block comment only costs an
+    attribution, which reports as unproven rather than as agreement.
+    """
+    fields = settings_fields(tree)
+    named = {match.group(1) for match in re.finditer(
+        r"@objc static func (\w+)\(for key: String\)", text) if match.group(1) in fields}
+    called = set()
+    for dirpath, _, filenames in os.walk(OBJC_SOURCE_ROOT):
+        for filename in filenames:
+            if not filename.endswith((".m", ".mm")):
+                continue
+            with open(os.path.join(dirpath, filename), encoding="utf-8",
+                      errors="replace") as handle:
+                for line in handle:
+                    code = line.split("//")[0]
+                    for name in named:
+                        if "%sFor:" % name in code:
+                            called.add(name)
+    return named & called
+
+
+def bridge_read_ranges(tree, relative=BRIDGE):
+    """Byte ranges where a `??` really is the stream's default for a key.
+
+    The stream reaches a setting two ways, and each has its own default:
+
+    * the `getSettings(for:)` dictionary, read as `prefs[@"key"]` -- 54 keys;
+    * a standalone `@objc static func key(for key:)`, called as `[SettingsClass
+      keyFor:]` -- 46 keys.
+
+    Measured across the whole Objective-C tree, **no key is read both ways**, so each
+    key has exactly one stream default and the two ranges can share one table. What
+    may not happen is what searching the whole file did: it charged an accessor's
+    `?? defaultX` to the dictionary's copy of the same key, which made
+    `muteOnFocusLoss` read as agreed while the dictionary -- `compactMapValues` drops
+    the nil -- gave Objective-C nothing, and setting `defaultMuteOnFocusLoss` to `true`
+    left the gate printing "0 divergent" and exiting 0.
+
+    Only accessors that pass `bridge_stream_accessors` contribute, and a `??` outside
+    every range -- a free helper, a reader that computes several settings at once, or an
+    accessor no caller uses -- is left unattributed. That is the strict direction: an
+    unattributed default makes the key report as unproven and go on the debt books,
+    where a reviewer sees it, instead of silently settling a two-layer comparison.
+    """
+    text = tree.read(relative)
+    allowed = bridge_stream_accessors(tree, text)
+    ranges = [bridge_export_body(tree, relative)]
+    for match in re.finditer(r"@objc static func (\w+)\(for key: String\)", text):
+        if match.group(1) not in allowed:
+            continue
+        brace = text.index("{", match.end())
+        try:
+            ranges.append((brace + 1, brace_matched(text, brace)))
+        except Unresolved:
+            continue  # unbalanced: no range claimed, so nothing is attributed to it
+    return ranges
+
+
+def bridge_fallbacks(tree, relative=BRIDGE):
+    """The stream's own defaults for the dictionary and the accessors, one table.
+
+    Kept as its own function so `audit` and `condition_holds` cannot drift apart --
+    the ledger condition asks the same question the comparison asks, and the two
+    answering it differently would let a key be excused by one and reported by the
+    other, which reads as a flake rather than as a fork.
+    """
+    found = {}
+    for start, stop in bridge_read_ranges(tree, relative):
+        for key, entries in fallbacks(tree, relative,
+                                      within=(start, stop)).items():
+            found.setdefault(key, []).extend(entries)
     return found
 
 
@@ -1409,7 +1535,7 @@ def audit(tree=None):
                   tree.read(DERIVED), tree.read(MODEL)])
     problems = []
     fields = settings_fields(tree)
-    bridge = fallbacks(tree, BRIDGE)
+    bridge = bridge_fallbacks(tree)
     persistence = fallbacks(tree, PERSISTENCE)
     # A default written against an alias for the profile field is still that layer's
     # default for that key, so it joins the same table rather than a side list: the
@@ -1707,7 +1833,7 @@ def condition_holds(name, key, tree):
             source == "false" for _, source in persistence)
         stream_silent = (key in objc_reads(tree)
                          and key not in objc_fallbacks(tree)
-                         and key not in fallbacks(tree, BRIDGE))
+                         and key not in bridge_fallbacks(tree))
         return interface_false and stream_silent
     return False
 
@@ -1994,6 +2120,88 @@ def self_test():
     checks.append(("sentinel branch literal re-spelled stays green",
                    not any(item[0] == "customFps" for item in result["divergences"])))
 
+    # 10. The consumer surface: a key read out of the `getSettings` dictionary has to
+    #     be defaulted *in that dictionary*. This is the false green Wave X found --
+    #     `muteOnFocusLoss` was exported as a bare optional, `compactMapValues { $0 }`
+    #     dropped the nil so the key never arrived, and the only `?? default` in the
+    #     file sat in `muteOnFocusLoss(for:)`, an accessor no Objective-C caller uses.
+    #     Four checks, because the one that mattered failed silently:
+    #
+    # 10a. A dictionary fallback that stops agreeing with the interface fires. The
+    #      interface reads the named constant, so this is the shape where the settings
+    #      window shows YES while the stream mutes nothing.
+    dict_row = ('"muteOnFocusLoss": settings.muteOnFocusLoss\n'
+                '          ?? SettingsModel.defaultMuteOnFocusLoss,')
+    result = relaunch([(BRIDGE, dict_row,
+                        dict_row.replace("?? SettingsModel.defaultMuteOnFocusLoss",
+                                         "?? true"))])
+    checks.append(("dictionary export fallback flipped fires",
+                   any(item[0] == "muteOnFocusLoss"
+                       for item in result["divergences"])))
+
+    # 10b. Negative twin on the same line: the named constant re-spelled as the literal
+    #      it holds must stay green, for the reason every other negative control gives.
+    result = relaunch([(BRIDGE, dict_row,
+                        dict_row.replace("?? SettingsModel.defaultMuteOnFocusLoss",
+                                         "?? false"))])
+    checks.append(("dictionary fallback equal literal stays green",
+                   not key_reported(result, "muteOnFocusLoss")))
+
+    # 10c. The shipped bug, restated as a check: put the row back to a bare optional so
+    #     the dictionary has no fallback and the file still has one (in the accessor
+    #     nobody calls). The key must land in the accounted-for states, never in
+    #     "agrees" -- before Wave X it read as agreed, and that verdict was wrong.
+    result = relaunch([(BRIDGE, dict_row,
+                        '"muteOnFocusLoss": settings.muteOnFocusLoss,')])
+    checks.append(("bare optional in the dictionary is never read as agreement",
+                   key_reported(result, "muteOnFocusLoss")))
+
+    # 10d. Attribution stays narrow in the strict direction. `loadMoonlightSettings`
+    #     reads a dozen settings to derive a width and a height; its
+    #     `?? false` is a step in that arithmetic, not the dictionary's default for
+    #     `matchDisplayResolution`. Crediting it is what let the key look agreed, so a
+    #     change there must not be *credited* to the key as a fork. What it does mean
+    #     is stated where it can be seen: that line is a third consumer path this audit
+    #     does not model, so it is unattributed rather than excused.
+    result = relaunch([(BRIDGE,
+                        "let usingMatchDisplayResolution = "
+                        "settings.matchDisplayResolution ?? false",
+                        "let usingMatchDisplayResolution = "
+                        "settings.matchDisplayResolution ?? true")])
+    checks.append(("a multi-key reader's fallback is not credited to the key",
+                   not key_reported(result, "matchDisplayResolution")))
+
+    # 11. Spelling the default at the export must not freeze a value. Moving the
+    #     constant the interface reads has to move the stream too, because the export
+    #     names the same constant: were this reported, X2 would have traded a false
+    #     green for a literal that silently rots.
+    result = relaunch([(DERIVED, "static let defaultMuteOnFocusLoss = false",
+                             "static let defaultMuteOnFocusLoss = true")])
+    checks.append(("export naming the constant follows it",
+                   not key_reported(result, "muteOnFocusLoss")))
+
+    # 11b. The accessor half of `bridge_read_ranges` has to be credited, not just the
+    #      dictionary half. `pointerSensitivity` is the accessor-read key that is also
+    #      exported by the dictionary, so moving only the accessor's fallback is a fork
+    #      *inside one layer* -- reported as a problem rather than a divergence, which
+    #      is the honest shape: which value runs really does depend on which path the
+    #      reader took. Deleting the attribution instead (searching the dictionary body
+    #      only) makes this mutation invisible, so a check has to fail on it. The
+    #      negative twin re-spells the accessor's default as the literal the named
+    #      constant holds, which must stay quiet for the usual reason.
+    accessor = ("      return settings.pointerSensitivity ?? "
+                "SettingsModel.defaultPointerSensitivity")
+    result = relaunch([(BRIDGE, accessor,
+                        "      return settings.pointerSensitivity ?? 3.0")])
+    checks.append(("credited accessor fallback moved is reported",
+                   any("pointerSensitivity" in problem
+                       for problem in result["problems"])))
+    result = relaunch([(BRIDGE, accessor,
+                        "      return settings.pointerSensitivity ?? 1.0")])
+    checks.append(("accessor default re-spelled as its own value stays green",
+                   not any("pointerSensitivity" in problem
+                           for problem in result["problems"])))
+
     failed = 0
     for name, passed in checks:
         print("%s %s" % ("ok  " if passed else "FAIL", name))
@@ -2007,8 +2215,11 @@ def self_test():
           "substitution, deleted fallback, the derived Objective-C read set (a file the "
           "old list omitted and a name the old pattern omitted), a layer defaulting one "
           "key two ways, a sentinel branch's fallback against its guard's default, and "
-          "the debt ratchet both ways; %d of the checks are negative controls, so an "
-          "equivalent re-spelling staying green is asserted, not assumed"
+          "the debt ratchet both ways, and the consumer surface (a dictionary export "
+          "fallback flipped, a bare optional that must never read as agreement, a "
+          "multi-key reader's fallback that must not be credited to its key, and an "
+          "accessor fallback that must be credited); %d of the checks are negative "
+          "controls, so an equivalent re-spelling staying green is asserted, not assumed"
           % (len(checks), sum(1 for name, _ in checks
                               if "stays green" in name or "stay green" in name)))
     return 0
