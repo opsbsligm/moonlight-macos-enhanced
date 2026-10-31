@@ -103,7 +103,17 @@ class SettingsClass: NSObject {
     if let settings = Settings.getSettings(for: key) {
       let objcSettings: [String: Any?] = [
         "resolution": settings.resolution,
-        "matchDisplayResolution": settings.matchDisplayResolution,
+        // Wave X: the three keys below are read out of this dictionary by
+        // Objective-C (`windowPrefs[@"muteOnFocusLoss"]`,
+        // `resignPrefs[@"backgroundGamepad"]`, `currentPrefs[@"matchDisplayResolution"]`)
+        // and the dictionary ends with `compactMapValues { $0 }`, so a bare optional
+        // here does not ship `nil` -- it ships *no key*, and the reader falls back to
+        // the zero of its type. That happened to agree with the interface (both NO),
+        // which is why it survived: `SettingsModel.defaultMuteOnFocusLoss` lives only
+        // in `muteOnFocusLoss(for:)`, an accessor nothing calls, so raising that
+        // constant would have moved the settings window and left the stream muting
+        // nothing. Spelling the default here makes the shipped value the audited one.
+        "matchDisplayResolution": settings.matchDisplayResolution ?? false,
         "customResolution": settings.customResolution,
         "fps": settings.fps,
         "customFps": settings.customFps,
@@ -241,8 +251,10 @@ class SettingsClass: NSObject {
         "absoluteMouseMode": settings.absoluteMouseMode,
         "relativeMouseAsAbsolute": settings.relativeMouseAsAbsolute,
         "swapMouseButtons": settings.swapMouseButtons,
-        "muteOnFocusLoss": settings.muteOnFocusLoss,
-        "backgroundGamepad": settings.backgroundGamepad,
+        "muteOnFocusLoss": settings.muteOnFocusLoss
+          ?? SettingsModel.defaultMuteOnFocusLoss,
+        "backgroundGamepad": settings.backgroundGamepad
+          ?? SettingsModel.defaultBackgroundGamepad,
         "imeLocalComposition": settings.imeLocalComposition,
         "reverseScrollDirection": settings.reverseScrollDirection,
         "gamepadMouseMode": settings.gamepadMouseMode,
