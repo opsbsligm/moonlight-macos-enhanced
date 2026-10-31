@@ -116,6 +116,8 @@ audit:python:
       python scripts/leak-audit.py --log scripts/leak-sample.txt --red-team
       python scripts/ownership-audit.py --self-test
       python scripts/ownership-audit.py --red-team
+      python scripts/defaults-consistency.py --self-test
+      python scripts/defaults-consistency.py
       python scripts/workflow-audit.py --self-test
       python scripts/workflow-audit.py
       for script in scripts/*.sh scripts/ci/*.sh; do bash -n "$script"; done
