@@ -76,6 +76,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
+      # Full history, because two steps below promise it and neither could keep the promise
+      # at the default depth 1. Measured on a depth-1 fetch of this repository: 712 objects
+      # out of 18963, and `git rev-list --count HEAD` answers 1. So the credential scan's
+      # `--history` walk (run through constraints-audit) visited only the tip tree and still
+      # printed `ok`, and `source-matrix-audit.py` would have graded a pinned commit/build
+      # pair against a history it had never seen. `source-matrix-audit.py` refuses that
+      # honestly (SM014); the credential scan cannot tell, so the depth is fixed here rather
+      # than the claim being quietly dropped. Every other job that reads git history in this
+      # workflow already fetches it completely.
+      with:
+        fetch-depth: 0
       uses: actions/checkout@v6
 
     - name: Set up Python for the audits
@@ -114,6 +125,19 @@ jobs:
 
     - name: Verify every source file is compiled
       run: python3 scripts/source-membership-audit.py
+
+    - name: Verify the competitive source matrix proves its own claims
+      # The matrix is where every competitor claim gets its evidence tier, and the tier is
+      # the whole point: `仅宣传` must never be designed against. Nothing checked that the
+      # tier a cell claims is the tier its own evidence file supports -- measured when this
+      # step was written, four cells disagreed with the repository (a Sunshine release that
+      # does not exist, a qt snapshot that was actually pinned while the cell denied it, a
+      # submodule SHA the checkout no longer had, an abbreviated SHA-256 nothing can
+      # re-verify) and no gate noticed. Self-test first: a rule that never fires and a
+      # matrix that never lied look identical from green.
+      run: |
+        python3 scripts/source-matrix-audit.py --self-test
+        python3 scripts/source-matrix-audit.py
 
     - name: Verify project constraints
       # --no-battery: the 71-minute mutation battery is its own job below.
