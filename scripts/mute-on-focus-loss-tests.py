@@ -300,8 +300,16 @@ def main():
           "SettingsStore.applyToSettings: carries muteOnFocusLoss alongside relativeMouseAsAbsolute")
     check(_adjacent("relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,", "muteOnFocusLoss: settings.muteOnFocusLoss,", store),
           "SettingsStore toBridgeSettings: copies muteOnFocusLoss to bridge")
-    check('"muteOnFocusLoss": settings.muteOnFocusLoss,' in bridge,
-          "ObjCBridge dictionary carries the muteOnFocusLoss key")
+    # The key has to be in the dictionary *and* carry its default there. The
+    # dictionary ends with `compactMapValues { $0 }`, so a bare optional does not
+    # ship `nil` -- it ships no key, and the reader gets the zero of its type. That
+    # agreed with the shipped default by accident, which is why the bare form
+    # survived: raising `defaultMuteOnFocusLoss` moved the settings window and left
+    # the stream muting nothing. Wave X named the constant at the export, so the
+    # shipped value is now the audited one and this check says so.
+    check(re.search(r'"muteOnFocusLoss":\s*settings\.muteOnFocusLoss\s*\n?\s*'
+                    r'\?\? SettingsModel\.defaultMuteOnFocusLoss,', bridge),
+          "ObjCBridge dictionary carries the muteOnFocusLoss key with its default")
     check(_adjacent("relativeMouseAsAbsolute: settings.relativeMouseAsAbsolute,", "muteOnFocusLoss: settings.muteOnFocusLoss,", bridge),
           "ObjCBridge struct copy carries muteOnFocusLoss")
     check('muteOnFocusLoss: updated.muteOnFocusLoss,' in bridge,
