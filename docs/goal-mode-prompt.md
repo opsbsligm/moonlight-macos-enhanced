@@ -443,14 +443,26 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-31，MR 1–43 全部合并，在途 MR = 0）
+## 1. 当前基点（截至 2026-11-01，MR 1–44 全部合并，在途 MR = MR 45）
 
-- 代码基点 main = `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
+- 代码基点 main = `1031a42a`（`Merge branch 'wave-w-defaults-truthfulness' into 'main'`，
+  MR 44，合并者 `liguangming`，head pipeline **#952 = success**）。其上是 Wave W
+  `1e29c661`（`scripts/defaults-consistency.py` 求值判等 + 债务账 + self-test）。
+  合并后的 main 流水线 **#959（`1031a42a`）**在本文档刷新时 `audit:python` /
+  `build-app` / `test-app` / `audit:sources` / `audit:gates` / `audit:deep` /
+  `package-dmg` 与五个必跑安全扫描已 success，`mutation-battery` 仍在 Mac runner
+  （id 8，`mac-m2-130`，全局 `concurrent = 1`）上跑，`publish-github` 排队 ——
+  属自愈排队，不是失败，**其终态未到之前该 DMG 不计入"已验证产物"**。
+- 在途：**MR 45 `de8b7596`**（Wave X —— `defaults-consistency.py` 的归属必须按消费路径，
+  否则同一缺陷会读成绿色；三个真被字典读的键在导出出处命名单一默认值）。
+  head pipeline **#966** 排队中；`detailed_merge_status=security_policy_violations`
+  是 merge-preview 未跑完的瞬时状态（MR 23 已实证过一次），等预览管线到终态再判。
+  本机门禁实测 **114 passed / 0 failed / 13 skipped**（skip 逐项是需要构建产物或 CI
+  变量的项，加完整变异电池与 render-probe）。
+- 上一基点 `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
   MR 43，合并者 `liguangming`，head pipeline **#900 = success**）。其上是 Wave V
   `c1f0eeac`（MR 42，head pipeline **#897 = success**，12 个 job，
   `跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）。
-  合并后的 main 流水线 **#898（`c1f0eeac`）与 #901（`0fc2faa2`）**在本文档刷新时仍在
-  Mac runner 队列里排队（全局 `concurrent = 1`，属自愈排队，不是失败），**尚未产出 DMG**。
 - 上一基点 `b7be1dec`（MR 41，Wave U 对标矩阵自证）对应 main 流水线 **#895**：
   `audit:deep`/`package-dmg`/全部必跑安全扫描已 success，`mutation-battery` 仍在跑，
   `publish-github` 排队；`package-dmg`（job 5580）产物为
@@ -808,8 +820,8 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 ## 11. 下一步执行
 
-（2026-10-31 五次刷新）**代码层里程碑 0.1→P2 + K1.1/K1.2 + Wave B/C/D/E/H/I/K/Q/R/S/T/U/V
-已全部在 main**；MR 1–43 全合并，**在途 MR = 0**，main 基点 `0fc2faa2`。
+（2026-11-01 六次刷新）**代码层里程碑 0.1→P2 + K1.1/K1.2 + Wave B/C/D/E/H/I/K/Q/R/S/T/U/V/W
+已全部在 main**；MR 1–44 全合并，**在途 MR = MR 45（Wave X）**，main 基点 `1031a42a`。
 `docs/common-c-drift-2026-10-26.md` 的"未取待定"四类中，RFI 修复族已随 G-3（MR 32）处置完，
 剩下的 `342b106`（control stream 就地加密）、`f1cca2d`（pen event 批处理）、
 `7022b33`/`1fddbcb`（BSD socket 错误重构 / rswrapper 头泄漏）仍未评估，
