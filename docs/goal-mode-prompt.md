@@ -1,8 +1,25 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-31 八次基点刷新：Wave U 对标矩阵自证）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-31 九次基点刷新：main=`c1f0eeac`，Wave U 已合并、Wave V 桥接默认值修复已合并）
 
-## 0. Wave U 目标模式（当前执行窗口，2026-10-31）
+## 0. Wave U 目标模式（已完成并合并：MR 41 → `b7be1dec`，合并者 liguangming；保留供追溯）
 
-> 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
+> 本节已收口。完成判据的回读结果见下，Wave V（桥接默认值分叉修复）另见 §0.01。
+
+**回读结果（2026-10-31 实测）**：
+- `source-matrix-audit.py --self-test`：`rule inventory: 13 codes documented, emitted and
+  proved` + 14 条变异逐条 caught（SM001–SM014 全部有实现、有文档、有变异证明会触发）。
+- `source-matrix-audit.py`（verify 形态）：`source matrix: 0 violation(s)`。
+- `bash scripts/local-gates.sh`：**112 passed / 0 failed / 13 skipped**（skip 逐项在日志里
+  列名：`release-gate.py` 需 CI 计算的 tag、`render-probe.py` 自带 20 分钟 Debug 构建、
+  `source-membership-audit.py --build-log` 需构建产物等）。上一轮那一格
+  `scaling-output-evidence-tests.py` 在无并发完整复跑里 **0 failed**，判定为编译抖动，
+  非真实缺陷。
+- `python3 scripts/gate-coverage-audit.py --verify`：rc=0，0 violation。新门禁经
+  `--emit-commands --class=fast` 下发，`.gitlab-ci.yml` 的
+  `bash -eo pipefail -x < gates-fast.txt` 真实执行；镜像侧 `build.yml` 同时跑
+  `--self-test` 与 verify。
+- MR 41：`state=merged`，`merged_by=liguangming`，merge commit `b7be1dec`，
+  合并后 main 的 pipeline #895 除 `mutation-battery`（verify stage，长任务）外全部
+  success，其中 `跨文件静态安全扫描` `allow_failure=true` → 只记**已豁免**，不计入通过。
 
 **目标**：让对标矩阵的每一格"证据层级"由仓库自己复算，而不是由写下它的人自证。
 Wave S 把"报告生产者"和"判读消费者"连上了；同一类缺陷在对标侧还有一个：
@@ -51,6 +68,27 @@ Wave S 把"报告生产者"和"判读消费者"连上了；同一类缺陷在对
 `python3 scripts/constraints-audit.py --no-battery` = 0 constraint failures；
 `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；本次 SHA 流水线到终态；
 `liguangming` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
+
+## 0.01 Wave V 目标模式（已完成并合并：MR 42 → `c1f0eeac`，合并者 liguangming）
+
+**发现（源码级，非推测）**：`SettingsObjCBridge.swift:115` 写的是
+`settings.ignoreAspectRatio ?? true`，而模型默认
+`SettingsModel+DerivedValues.swift:1123 defaultIgnoreAspectRatio = false`，ObjC 侧
+`StreamViewController.m:783` 缺省 `NO`。三层里只有 Bridge 这一层是 `true`：没有显式写入
+偏好的用户，运行时读到 `true` → `if (!ignoreAspectRatio)` 分支不执行 → **窗口宽高比默认不锁**，
+与模型自述的默认值相反。
+
+**修复**：`?? true` → `?? false`（一个词）。**用户可见路径零变化** —— 改之前运行时就是不锁，
+改之后仍是不锁；改的是"模型/ObjC/Bridge 三层说法一致"这件事本身。审计文档
+`docs/wave-v-settings-bridge-audit-2026-10-31.md` 同时记录其余分叉：
+`autoAdjustBitrate`（Bridge/Model 同为 true，ObjC 缺省 NO 不触发）、
+`edgeSensorSummon`、`edgeSensorSummonOnArrival`（三层一致）—— 均无行为影响，未改。
+
+**验证**：MR 42 的 head pipeline **#897 = success**（`lint:toolchain`/`audit:python`/
+`download-deps`/`build-app`/`test-app`/`audit:sources`/`audit:gates` + 4 项必跑安全扫描
+success；`跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）。
+合并由 `liguangming` 完成，`PUT /merge` 带精确 `sha=f6b071fe…`，main 新 SHA `c1f0eeac`。
+`hardware_validated=false` 维持：无行为改动，不需要真机验收，但也不因此宣称任何真机结论。
 
 ## 0.1 Wave T 目标模式（已完成并合并：MR 40 → `bf055b23`；保留供追溯）
 
@@ -268,9 +306,34 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-30，MR 1–31 全部合并，MR 32 在途）
+## 1. 当前基点（截至 2026-10-31，MR 1–42 全部合并，在途 MR = 0）
 
-- 代码基点 main = `18ee83cd`（`Merge branch 'ci/wave-k2-merge-request-pipelines' into 'main'`）。
+- 代码基点 main = `c1f0eeac`（`Merge branch 'wave-v-bridge-fix' into 'main'`，MR 42，
+  合并者 `liguangming`）。其 merge-request 侧流水线 **#897 = success**（12 个 job，
+  `跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）；
+  合并后的 main 流水线 **#898** 在本文档刷新时仍在 Mac runner 队列里排队
+  （全局 `concurrent = 1`，属自愈排队，不是失败），**尚未产出 DMG**。
+- 上一基点 `b7be1dec`（MR 41，Wave U 对标矩阵自证）对应 main 流水线 **#895**：
+  `audit:deep`/`package-dmg`/全部必跑安全扫描已 success，`mutation-battery` 仍在跑，
+  `publish-github` 排队；`package-dmg`（job 5580）产物为
+  `Moonlight-1.6.0-build2063.dmg`，**该包未做过包内三件套验收**
+  （`hdiutil verify` / `codesign --verify --deep --strict` / `CFBundleVersion` 读回），
+  因此**不计入"已验证 DMG"**，不得当作已验证产物引用。
+- 自基点 `18ee83cd` 以来的合并链（原提交 → merge commit，MR 号）：
+  - Wave G-3 common-c submodule bump（RFI 丢帧诚实性）：`20c4739a` → `c1662eda`（MR 32）。
+  - 五个待定上游 commit 的源码级结论：`1bc05087` → `4a9e3da9`（MR 33）。
+  - Steam Controller 按 STEAM 而非 Xbox 通告：`0c6b93df` → `6bd3fad3`（MR 34）。
+  - 能力矩阵按 main 纠偏 + 两份新证据快照：`2e049b5f` → `dd68e529`（MR 35）。
+  - 硬编码凭据门禁 + 运行期随机临时密钥链口令：`8233424e` → `dcad899d`（MR 36）。
+  - 诊断报告命名来源字节 + 验收判分：`cccbfde0` → `27e076fe`（MR 37）。
+  - 出厂镜像自证内容：`805d0e2b` → `c8e959d0`（MR 38）。
+  - 报告导出即判读器哈希的字节 + 双管线相连：`6d8e2680` → `71a62394`（MR 39）。
+  - Wave T 七行验收判据建立在导出字节上：`fd3557fd` → `bf055b23`（MR 40）。
+  - Wave U 对标来源矩阵自证（规则三集合相等 + 断链不崩审计）：`7bf5e2c6`/`544cad84`
+    → `b7be1dec`（MR 41）。
+  - Wave V 桥接默认值分叉修复（`ignoreAspectRatio ?? true` → `false`）：`f6b071fe`
+    → `c1f0eeac`（MR 42）。
+- 历史基点链（保留追溯）：main 曾为 `18ee83cd`（`Merge branch 'ci/wave-k2-merge-request-pipelines' into 'main'`）。
   该基点自身的 pipeline **#813** 到本文档刷新时仍为 `running`：
   `lint`/`deps`/`build`/`test`/`package`/`audit:deep` 已 success，
   `package-dmg` 产物为 `Moonlight-1.6.0-build2041.dmg`，
@@ -345,11 +408,11 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
   `hdiutil verify` VALID、包内 `CFBundleVersion=2021`、
   `codesign --verify --deep --strict` OK，ad hoc 签名）。验收记录见
   `moonlight-ci-evidence/20261028-wave-f-feature-state/release-verification.json`。
-  之后 main 各基点的 `package-dmg` 已产出到 `build2036`（#789 job 4572）与
-  `build2041`（#813 job 4788），但**这两个包都没做过包内三件套验收**，
-  不得当作"已验证产物"引用。
+  之后 main 各基点的 `package-dmg` 已产出到 `build2036`（#789 job 4572）、
+  `build2041`（#813 job 4788），最新到 `build2063`（#895 job 5580），
+  但**这些包都没做过包内三件套验收**，不得当作"已验证产物"引用。
   本机 `/Applications/MoonlightEnhanced.app` 实测为 **build2029**（`plutil` 读回），
-  既不是 2021 也不是最新的 2041。
+  既不是 2021 也不是最新的 2063。
   旧版回滚链保留在 `/Applications/MoonlightEnhanced.app.b{1933,1984,1993,2015}`。
 - `hardware_validated=false` 保留：0.2/M1/M2/M3/M4/K1.1/K1.2/E1/P2-1/P2-2/P2-3
   全是代码层完成 + CI 绿 + 真机待取证。
@@ -384,6 +447,13 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 | 变异电池 held-key 变异体可编译化 | `5884c6db` → merge `27b1206e`（MR 21） | CI 绿（#716/#717/#719）/ 已合并 | 变异体编不出探针时如实报 `unproved`，不再伪装成已捕获行为变异 |
 | 诊断报告机器可读镜像（Wave I） | 本分支 | 本地门禁 105 checks / 0 failures（含 6 个新行为变异）/ CI 待 / 真机待 | `machineStateSectionWithState:snapshot:` 之前是死代码，无人组装；现接入 `currentReport`，与散文块共用同一次读取的 `DiagnosticsFeatureState` + inventory 快照。键名契约见 §4.1 |
 | 真机验收判读器 + 操作单（Wave I） | 本分支 | 自测 7 项契约 + 2 个弱化判读器被拒 / 双管线已接线 / 真机待 | `scripts/hardware-acceptance-check.py` 把 §4 七行判据变成可执行判读：报告证明设置生效 + 观测者声明绑定该报告 SHA，两半缺一即 `UNKNOWN`；动作→键→期望值见 `docs/hardware-acceptance-checklist.md` |
+| Steam Controller 按 STEAM 通告 | `0c6b93df` → merge `6bd3fad3`（MR 34） | 代码完成 / CI 绿 / 真机待 | 不再误判为 Xbox 类型 |
+| 诊断报告来源字节命名 + 验收判分（Wave Q） | `cccbfde0` → merge `27e076fe`（MR 37） | 代码完成 / CI 绿 | 报告自带来源指纹，判读器可绑定 |
+| 出厂镜像自证内容（Wave R） | `805d0e2b` → merge `c8e959d0`（MR 38） | 代码完成 / CI 绿 | DMG 内本地化与包内容自证 |
+| 报告导出即判读器哈希的字节（Wave S） | `6d8e2680` → merge `71a62394`（MR 39，pipeline 883 全绿） | 代码完成 / CI 绿 | 生产者与消费者首次相连；`ml.build.git_commit` 不再被脱敏正则吞掉 |
+| 七行验收判据建立在导出字节上（Wave T） | `fd3557fd` → merge `bf055b23`（MR 40） | 代码完成 / CI 绿 | 验收矩阵不再全 `UNKNOWN` |
+| 对标来源矩阵自证（Wave U） | `7bf5e2c6` → merge `b7be1dec`（MR 41） | 代码完成 / CI 绿 | `source-matrix-audit.py`：规则三集合相等（13 codes）+ 14 变异逐条 caught + 断链报 SM001 不崩审计 |
+| 桥接默认值分叉修复（Wave V） | `f6b071fe` → merge `c1f0eeac`（MR 42，#897 success） | 代码完成 / CI 绿 | `ignoreAspectRatio` 三层默认值统一为 false；用户可见路径零变化 |
 
 ## 3. 待开工（按优先级，不依赖真机排期）
 
@@ -600,30 +670,39 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 ## 11. 下一步执行
 
-（2026-10-30 三次刷新）**代码层里程碑 0.1→P2 + K1.2 + Wave B/C/D/E/H/I/K 已全部在 main**；
-MR 1–31 全合并，main 基点 `18ee83cd`；唯一在途是 MR 32（Wave G-3 RFI 丢帧诚实性
-submodule bump `6e1aa0b1`）。`docs/common-c-drift-2026-10-26.md` 的"未取待定"四类中，
-RFI 修复族已随 G-3 处置完，剩下的 `342b106`（control stream 就地加密）、
-`f1cca2d`（pen event 批处理）、`7022b33`/`1fddbcb`（BSD socket 错误重构 / rswrapper 头泄漏）
-仍未评估，不是遗漏就是待定，不得当作已完成。
+（2026-10-31 四次刷新）**代码层里程碑 0.1→P2 + K1.1/K1.2 + Wave B/C/D/E/H/I/K/Q/R/S/T/U/V
+已全部在 main**；MR 1–42 全合并，**在途 MR = 0**，main 基点 `c1f0eeac`。
+`docs/common-c-drift-2026-10-26.md` 的"未取待定"四类中，RFI 修复族已随 G-3（MR 32）处置完，
+剩下的 `342b106`（control stream 就地加密）、`f1cca2d`（pen event 批处理）、
+`7022b33`/`1fddbcb`（BSD socket 错误重构 / rswrapper 头泄漏）仍未评估，
+不是遗漏就是待定，不得当作已完成。
 
 1. **本文档自身的收口**：本 docs 分支 → 准确 SHA CI 到终态 → `liguangming` 审批合并 →
    回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
    `跨文件静态安全扫描` 在本环境 `allow_failure=true`，只能记为「已豁免」，不得计入通过。
-2. **真机验收矩阵**（不阻塞代码侧）：装新 DMG（build 号以 main 合并 pipeline 的 `package-dmg`
-   产物为准，≥ 2014；本机当前仍是 build1993）→ 串流 → 逐项取证：
+2. **真机验收矩阵（当前唯一的真实缺口）**：`hardware_validated` 自项目开始就是 `false`，
+   Wave Q→V 五波都在给"验收能不能被机器复核"上地基，而验收本身一次没做。
+   装 DMG（build 号以 main 合并 pipeline 的 `package-dmg` 产物为准；`b7be1dec`/`#895`
+   job 5580 已产出 `build2063` 但**未做包内三件套验收**，装之前先补
+   `hdiutil verify` + `codesign --verify --deep --strict` + `CFBundleVersion` 读回）→ 串流 → 逐项取证：
    0.1 双手柄诊断分类 / 0.2 双手柄互不覆盖 / M1–M4 主机侧类型、震动、IMU、电量、触摸板 /
   K1.1 中文 + emoji / **K1.2 本地输入法组合（开 per-host 开关验 §15 契约）** /
    K2 SAS 拉起 / E1 单双屏边栏 / P2-1 绝对鼠标 / P2-2 断网退避与主机关闭 / P2-3a 三后端失焦静音 / P2-3b 后台手柄抑制。
-3. **对标来源矩阵钉版本**：`docs/source-matrix-2026-10-25.md` 目前只有 moonlight-qt v6.2.0
-   （快照 `de2467e4`）达到源码级；Parsec / UU / Horizon / Citrix / 深信服 / 锐捷仍是宣传级或未知，
-   后续任何对标结论先回矩阵补版本与证据层级，不升级证据等级。
+   判据用 `scripts/hardware-acceptance-check.py`（报告 + 观测者声明绑定报告 SHA，两半缺一即 `UNKNOWN`）。
+3. **对标来源矩阵**：Wave U 之后每一格的证据层级由 `scripts/source-matrix-audit.py` 复算，
+   但**门禁只能证明"写的和仓库里的一致"，不能把宣传级升成源码级**。Parsec / UU / Horizon /
+   Citrix / 深信服 / 锐捷在拿到机制级来源前继续锁"仅宣传"，不升级证据等级。
 4. **上游按 commit 回吸**：`docs/common-c-drift-2026-10-26.md` 列 fork 点 `62687809` 之后的漂移与
    17 个交集文件冲突面；逐 commit 判断吸收/拒绝，不整支 rebase。
 5. 每波开发分支、MR、准确 SHA CI、`liguangming` 凭据审批合并；`PUT /merge` 必须带 `sha=<head sha>`；
    审核未完成保留 MR，不得用 codex 凭据提权代批。
 6. CI 排队已知事实：Mac runner 全局 `concurrent = 1`，多 pipeline 并发时 Mac job 会长时间
    `created/running`，属自愈排队，不是失败；不改 runner 配置、不绕门禁。
+7. **默认值一致性检查的可扩展面**（Wave V 的后续）：本轮只逐字段人工比对了
+   `SettingsObjCBridge` 的 `??` 与模型默认值，发现 1 处真分叉。这个比对**目前是一次性人工动作，
+   没有门禁把守**，新加字段仍可能再分叉。若要收口，方向是新增一个门禁脚本解析
+   Bridge 的 `key: settings.x ?? LIT` 与 `SettingsModel+DerivedValues.swift` 的
+   `default<Lit>`，把"三层不一致"变成 CI 红；先加 self-test 变异证明它会失败，再接 fast 类。
 
 ## 12. 历史与现状的界限
 
