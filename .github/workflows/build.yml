@@ -203,6 +203,19 @@ jobs:
       # the shape a broken experiment reports, not a fixed app.
       run: python3 scripts/ownership-audit.py --red-team
 
+    - name: Verify the interface and the stream default one unset setting the same way
+      # The bridge and the persistence loader read the same optional and each substitutes
+      # its own fallback, so a profile that never wrote a key can show one value in the
+      # window and stream another. Wave V shipped that as `ignoreAspectRatio`. The gate
+      # evaluates both sides to literals rather than comparing text, because the same
+      # value spelled two ways (`0.0` beside `0`, a named constant beside its literal) is
+      # a match a string comparison cannot see. Any key it cannot evaluate has to appear
+      # in a reviewed debt baseline with a falsifiable condition, so an excuse cannot
+      # outlive the reason it was written for.
+      run: |
+        python3 scripts/defaults-consistency.py --self-test
+        python3 scripts/defaults-consistency.py
+
     - name: Verify the workflow can actually run
       # A plain yaml.safe_load accepts a step whose run: key was dropped, and a
       # step with two run: keys. GitHub accepts neither: the run turns red before

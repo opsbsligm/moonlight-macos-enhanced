@@ -1,8 +1,99 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-31 九次基点刷新：main=`c1f0eeac`，Wave U 已合并、Wave V 桥接默认值修复已合并）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-10-31 十次基点刷新：main=`0fc2faa2`，Wave W 默认值诚实性）
 
-## 0. Wave U 目标模式（已完成并合并：MR 41 → `b7be1dec`，合并者 liguangming；保留供追溯）
+## 0. Wave W 目标模式（当前执行窗口，2026-10-31）
 
-> 本节已收口。完成判据的回读结果见下，Wave V（桥接默认值分叉修复）另见 §0.01。
+> 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
+
+**目标**：让"同一个未写入的设置项，界面显示什么、串流就用什么"成为机器可证的性质，
+而不是靠人记得在两个文件里写同一个默认值。
+
+**已量化事实（2026-10-31 逐处读源码实测，非估计）**：
+- 两层读的是**同一个对象的同一个 optional**：`SettingsObjCBridge.getSettings(for:)`
+  （`Limelight/macOS/ViewControllers/SettingsObjCBridge.swift:103`）与
+  `SettingsModel+Persistence.loadSettings()`（`…/SettingsModel+Persistence.swift:244`）
+  都从 `Settings.getSettings(for:)` 取值再各自 `??` 回退。两处回退不等价，就等价于
+  **界面显示一个值、串流层用另一个值**。Wave V 修的 `ignoreAspectRatio ?? true` 是这条的第一例。
+- 把符号解析成真实值后复核，上一轮用字符串粗比得到的"19 处疑似分叉"里 **15 处是误报**
+  （`defaultEdgeSensorBandWidthPoints = 0.0` 对 `0`、`defaultSystemKeyboardShortcutCapture
+  = systemKeyboardShortcutCaptureFollowFullscreen` 对 `0` 这类同值不同写法）。
+  粗比的危害不是误报本身，是它会给出**绿色的错误结论**：上一版草稿（未入库）的 self-test
+  只改内存字典、不改源码文本，因此它"证明了三个变异会被捕获"这句话没有任何证据支撑，
+  与 Wave U 刚修掉的"幽灵规则"是同一类病 —— 故本波不继承那份草稿。
+- 真分叉 **2 处，都有行为影响**，触发条件都是"老 profile：该键 nil、但相关旧键已设置"：
+  （a）`smoothnessLatencyMode`：Persistence 用 `derivedSmoothnessLatencyMode(…)` 按
+  pacing/vsync/buffer/responsiveness 推导，无预设命中时得 `Custom`；Bridge 的
+  `smoothnessLatencyMode(for:)`（`:1461`）直接用静态 `Balanced`。该键**被串流消费**
+  （`Limelight/macOS/ViewControllers/StreamViewController.m:1502`），所以界面显示 Custom
+  而流用 Balanced。
+  （b）`timingResponsivenessBias`：Persistence 用
+  `?? (timingPrioritizeResponsiveness ?? false ? 1 : 0)` 的 legacy 推导（`…Persistence.swift:535`）；
+  Bridge（`:286`）用静态 `Off`。`timingPrioritizeResponsiveness=true` 且该键 nil 时，
+  界面 Mild、流用 Off。
+- 第三处 `enhancedAudioEQLayout`（Persistence 按 `enhancedAudioEQGains.count` 推断带数、
+  Bridge 用静态 12-Band）**当前无行为影响**：全仓 `.m`/`.h` 无任何位置读该 dict 键。
+  它是"今天无害"，不是"永远无害"，所以必须钉住它无害的**条件**，不能只钉结论。
+- 两处修复对**全新安装是恒等变换**（已代入默认值核算）：全默认时
+  `derivedSmoothnessLatencyMode` 命中第二个预设 → Balanced，与静态默认相同；
+  `timingPrioritizeResponsiveness` 默认 false → legacy 推导 0 → Off，与静态默认相同。
+  这是本波唯一允许的行为变更边界，且必须由门禁复算而非由本文声称。
+
+**完成边界（五条全绿才算完成，缺一不算）**：
+1. **门禁不做字符串粗比**：`??` 后的表达式用括号平衡抽取，再按符号表**求值**到字面值
+   （`Self.defaultX` 传递解析、`getInt(from:in:)` 按列表下标求值、
+   `xxxRawValue(for:)` 按 options 表求值）。求值不出来的键**不得当作一致**。
+2. **求不出值的键必须有账**：每条 ledger 记录必须带**可证伪的条件**（例：
+   `enhancedAudioEQLayout` 的条件写作"ObjC 侧没有任何地方读该 dict 键"，一旦有人开始读，
+   条目自己变成 violation）；条件已不成立的陈旧条目本身是 violation。
+3. **self-test 改的是源码文本，不是内存字典**，且必须含**负对照**：
+   （i）把 Bridge 某回退改成错值 → 报红；（ii）把模型默认值改成错值 → 报红；
+   （iii）删掉一处读取路径 → 该键落入"未覆盖"而不是静默消失；
+   （iv）负对照：语义等价的改写（`0.0` → `0`）不得报红。
+   缺负对照就是本波要修的病的原始形态，缺它则 self-test 通过不说明门禁有效。
+4. **两处真分叉修复且行为边界可证**：Bridge 两处改为与 Persistence 同一求值路径；
+   门禁同时钉住"全默认时推导值 == 静态默认值"这一条，使"修复对全新安装恒等"由 CI 复算。
+5. **接缝在事实源 + 本地门禁 0 failed + 本次 SHA 流水线到终态**：经
+   `gate-coverage-audit.py --emit-commands --class=fast` 下发，由
+   `.gitlab-ci.yml:344` 的 `bash -eo pipefail -x < gates-fast.txt` 真实执行，
+   镜像侧同步调用；`bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；
+   `liguangming` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
+
+**边界**：不改设置面板任何默认值与标签栏外观（本波改的是"未写入时读到什么"，
+不是"界面默认选了什么"）；不解冻 USB 真重定向 / Developer ID 公证 / 自动更新；
+`hardware_validated` 保持 `false` —— 本波把"两层是否读同一个值"变成机器可证，
+真机验收仍按 §4 独立保留。
+
+**验收判据**（2026-10-31 落地后按实际命令与输出校正过一次：初稿写的
+`defaults-consistency-tests.py` 并不存在，落地文件名是 `defaults-consistency.py`，
+自测输出是逐条 `ok <检查名>` 而非 `caught`）：
+`python3 scripts/defaults-consistency.py --self-test` 全部 `ok`（含负对照）；
+`python3 scripts/defaults-consistency.py` 末行 `0 divergent` 且 `0 new / 0 stale` debt；
+`python3 scripts/gate-coverage-audit.py` = 0 violation；`bash scripts/local-gates.sh`
+0 failed；本次 SHA 流水线到终态。
+
+## 0.1 Wave V 目标模式（已完成并合并：MR 42 → `c1f0eeac`，合并者 liguangming）
+
+**发现（源码级，非推测）**：`SettingsObjCBridge.swift:115` 写的是
+`settings.ignoreAspectRatio ?? true`，而模型默认
+`SettingsModel+DerivedValues.swift:1123 defaultIgnoreAspectRatio = false`，ObjC 侧
+`StreamViewController.m:783` 缺省 `NO`。三层里只有 Bridge 这一层是 `true`：没有显式写入
+偏好的用户，运行时读到 `true` → `if (!ignoreAspectRatio)` 分支不执行 → **窗口宽高比默认不锁**，
+与模型自述的默认值相反。
+
+**修复**：`?? true` → `?? false`（一个词）。**用户可见路径零变化** —— 改之前运行时就是不锁，
+改之后仍是不锁；改的是"模型/ObjC/Bridge 三层说法一致"这件事本身。审计文档
+`docs/wave-v-settings-bridge-audit-2026-10-31.md` 同时记录其余分叉：
+`autoAdjustBitrate`（Bridge/Model 同为 true，ObjC 缺省 NO 不触发）、
+`edgeSensorSummon`、`edgeSensorSummonOnArrival`（三层一致）—— 均无行为影响，未改。
+
+**验证**：MR 42 的 head pipeline **#897 = success**（`lint:toolchain`/`audit:python`/
+`download-deps`/`build-app`/`test-app`/`audit:sources`/`audit:gates` + 4 项必跑安全扫描
+success；`跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）。
+合并由 `liguangming` 完成，`PUT /merge` 带精确 `sha=f6b071fe…`，main 新 SHA `c1f0eeac`。
+`hardware_validated=false` 维持：无行为改动，不需要真机验收，但也不因此宣称任何真机结论。
+
+## 0.2 Wave U 目标模式（已完成并合并：MR 41 → `b7be1dec`，合并者 liguangming；保留供追溯）
+
+> 本节已收口。完成判据的回读结果见下，Wave V（桥接默认值分叉修复）另见 §0.1。
 
 **回读结果（2026-10-31 实测）**：
 - `source-matrix-audit.py --self-test`：`rule inventory: 13 codes documented, emitted and
@@ -69,28 +160,7 @@ Wave S 把"报告生产者"和"判读消费者"连上了；同一类缺陷在对
 `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；本次 SHA 流水线到终态；
 `liguangming` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
 
-## 0.01 Wave V 目标模式（已完成并合并：MR 42 → `c1f0eeac`，合并者 liguangming）
-
-**发现（源码级，非推测）**：`SettingsObjCBridge.swift:115` 写的是
-`settings.ignoreAspectRatio ?? true`，而模型默认
-`SettingsModel+DerivedValues.swift:1123 defaultIgnoreAspectRatio = false`，ObjC 侧
-`StreamViewController.m:783` 缺省 `NO`。三层里只有 Bridge 这一层是 `true`：没有显式写入
-偏好的用户，运行时读到 `true` → `if (!ignoreAspectRatio)` 分支不执行 → **窗口宽高比默认不锁**，
-与模型自述的默认值相反。
-
-**修复**：`?? true` → `?? false`（一个词）。**用户可见路径零变化** —— 改之前运行时就是不锁，
-改之后仍是不锁；改的是"模型/ObjC/Bridge 三层说法一致"这件事本身。审计文档
-`docs/wave-v-settings-bridge-audit-2026-10-31.md` 同时记录其余分叉：
-`autoAdjustBitrate`（Bridge/Model 同为 true，ObjC 缺省 NO 不触发）、
-`edgeSensorSummon`、`edgeSensorSummonOnArrival`（三层一致）—— 均无行为影响，未改。
-
-**验证**：MR 42 的 head pipeline **#897 = success**（`lint:toolchain`/`audit:python`/
-`download-deps`/`build-app`/`test-app`/`audit:sources`/`audit:gates` + 4 项必跑安全扫描
-success；`跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）。
-合并由 `liguangming` 完成，`PUT /merge` 带精确 `sha=f6b071fe…`，main 新 SHA `c1f0eeac`。
-`hardware_validated=false` 维持：无行为改动，不需要真机验收，但也不因此宣称任何真机结论。
-
-## 0.1 Wave T 目标模式（已完成并合并：MR 40 → `bf055b23`；保留供追溯）
+## 0.3 Wave T 目标模式（已完成并合并：MR 40 → `bf055b23`；保留供追溯）
 
 > 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
 
@@ -137,7 +207,7 @@ Wave S 把生产者与消费者连上了，但那条缝只验到"能解析 + 构
 —— 那七行 PASS 需要**人**在真机上写观察记录，门禁证明的是"报告载得起那七行"，不是"有人观察过"；
 不解冻 §5 冻结项；不动设置页原生控件。
 
-## 0.2 Wave S 目标模式（已完成并合并：MR 39 → `71a62394`，pipeline 883 全绿；保留供追溯）
+## 0.4 Wave S 目标模式（已完成并合并：MR 39 → `71a62394`，pipeline 883 全绿；保留供追溯）
 
 > 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
 
@@ -198,7 +268,7 @@ MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
 真机验收矩阵（§4）仍独立保留；不动设置页原生控件与已验收默认值；
 不签 Developer ID、不公证、不做自动更新（§5 冻结项）。
 
-## 0.3 Wave R 目标模式（已完成并合并：MR 38 → `c8e959d0`；保留供追溯）
+## 0.5 Wave R 目标模式（已完成并合并：MR 38 → `c8e959d0`；保留供追溯）
 
 **目标**：让事实源流水线在发出 DMG 的那一刻审计这个镜像本身。今天 `package-dmg`
 只负责"造出镜像"，没有任何一步读过造出来的东西；`dmg-audit.py` 存在、且在 GitHub
@@ -255,7 +325,7 @@ job trace 里能看到 `ok bundle MoonlightEnhanced.app version 1.6.0 build <本
 **边界**：不签 Developer ID、不公证、不做自动更新（§5 冻结项）；不顺手改设置页控件与
 已验收默认值；不把 `spctl rejected` 说成已解决；真机验收仍按 §4 独立保留。
 
-## 0.4 Wave P 目标模式（已完成并合并：MR 36 → `dcad899d`；保留供追溯）
+## 0.6 Wave P 目标模式（已完成并合并：MR 36 → `dcad899d`；保留供追溯）
 
 > 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
 
@@ -306,13 +376,14 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-31，MR 1–42 全部合并，在途 MR = 0）
+## 1. 当前基点（截至 2026-10-31，MR 1–43 全部合并，在途 MR = 0）
 
-- 代码基点 main = `c1f0eeac`（`Merge branch 'wave-v-bridge-fix' into 'main'`，MR 42，
-  合并者 `liguangming`）。其 merge-request 侧流水线 **#897 = success**（12 个 job，
-  `跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）；
-  合并后的 main 流水线 **#898** 在本文档刷新时仍在 Mac runner 队列里排队
-  （全局 `concurrent = 1`，属自愈排队，不是失败），**尚未产出 DMG**。
+- 代码基点 main = `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
+  MR 43，合并者 `liguangming`，head pipeline **#900 = success**）。其上是 Wave V
+  `c1f0eeac`（MR 42，head pipeline **#897 = success**，12 个 job，
+  `跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）。
+  合并后的 main 流水线 **#898（`c1f0eeac`）与 #901（`0fc2faa2`）**在本文档刷新时仍在
+  Mac runner 队列里排队（全局 `concurrent = 1`，属自愈排队，不是失败），**尚未产出 DMG**。
 - 上一基点 `b7be1dec`（MR 41，Wave U 对标矩阵自证）对应 main 流水线 **#895**：
   `audit:deep`/`package-dmg`/全部必跑安全扫描已 success，`mutation-battery` 仍在跑，
   `publish-github` 排队；`package-dmg`（job 5580）产物为
@@ -670,8 +741,8 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 ## 11. 下一步执行
 
-（2026-10-31 四次刷新）**代码层里程碑 0.1→P2 + K1.1/K1.2 + Wave B/C/D/E/H/I/K/Q/R/S/T/U/V
-已全部在 main**；MR 1–42 全合并，**在途 MR = 0**，main 基点 `c1f0eeac`。
+（2026-10-31 五次刷新）**代码层里程碑 0.1→P2 + K1.1/K1.2 + Wave B/C/D/E/H/I/K/Q/R/S/T/U/V
+已全部在 main**；MR 1–43 全合并，**在途 MR = 0**，main 基点 `0fc2faa2`。
 `docs/common-c-drift-2026-10-26.md` 的"未取待定"四类中，RFI 修复族已随 G-3（MR 32）处置完，
 剩下的 `342b106`（control stream 就地加密）、`f1cca2d`（pen event 批处理）、
 `7022b33`/`1fddbcb`（BSD socket 错误重构 / rswrapper 头泄漏）仍未评估，
@@ -698,11 +769,15 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
    审核未完成保留 MR，不得用 codex 凭据提权代批。
 6. CI 排队已知事实：Mac runner 全局 `concurrent = 1`，多 pipeline 并发时 Mac job 会长时间
    `created/running`，属自愈排队，不是失败；不改 runner 配置、不绕门禁。
-7. **默认值一致性检查的可扩展面**（Wave V 的后续）：本轮只逐字段人工比对了
-   `SettingsObjCBridge` 的 `??` 与模型默认值，发现 1 处真分叉。这个比对**目前是一次性人工动作，
-   没有门禁把守**，新加字段仍可能再分叉。若要收口，方向是新增一个门禁脚本解析
-   Bridge 的 `key: settings.x ?? LIT` 与 `SettingsModel+DerivedValues.swift` 的
-   `default<Lit>`，把"三层不一致"变成 CI 红；先加 self-test 变异证明它会失败，再接 fast 类。
+7. **默认值一致性检查的可扩展面**（Wave V 的后续，Wave W 已收口）：本项原是一次性人工动作。
+   现由 `scripts/defaults-consistency.py` 把守：90 个共享键求值到字面值后判等，
+   两层各自 `??` 的回退必须解析到同一个值，求值不出的键进
+   `scripts/defaults-consistency-baseline.json` 带可证伪条件的债务账（当前 5 条，
+   新增/过期都算 violation）。self-test 17 项，其中 4 项是负对照（语义等价改写必须保持绿），
+   改的是源码文本而非内存字典。
+   接入面：`.gitlab-ci.yml` 与镜像侧各一次裸审计 + 一次 self-test，
+   并由 `constraints-audit.py` 在进程内重跑两种形态，故 `local-gates.sh` 也会跑到。
+   扩展方向（未做）：把"新增 `@Published` 设置字段但未在任一层给默认"也纳入检查。
 
 ## 12. 历史与现状的界限
 

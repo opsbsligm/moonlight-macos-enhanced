@@ -283,9 +283,16 @@ class SettingsClass: NSObject {
         "frameQueueTarget": settings.frameQueueTarget
           ?? SettingsModel.frameQueueTargetRawValue(
             for: SettingsModel.defaultFrameQueueTarget),
+        // Wave W: a profile that set the old `timingPrioritizeResponsiveness` switch
+        // before the bias existed shows Mild in the window (Persistence applies the
+        // same legacy derivation) while a static `Off` here made the stream run
+        // without it. One expression on both sides: the legacy switch is the only
+        // thing that can disagree, so it is what the fallback reads. At the shipped
+        // default the switch is false, so the derivation is 0 -- the same value the
+        // static fallback spelled, which scripts/defaults-consistency.py recomputes
+        // rather than trusts.
         "timingResponsivenessBias": settings.timingResponsivenessBias
-          ?? SettingsModel.responsivenessBiasRawValue(
-            for: SettingsModel.defaultResponsivenessBias),
+          ?? ((settings.timingPrioritizeResponsiveness ?? false) ? 1 : 0),
         "allowDrawableTimeoutMode": settings.allowDrawableTimeoutMode
           ?? SettingsModel.allowDrawableTimeoutRawValue(
             for: SettingsModel.defaultAllowDrawableTimeoutMode),
@@ -1460,10 +1467,24 @@ class SettingsClass: NSObject {
 
   @objc static func smoothnessLatencyMode(for key: String) -> Int {
     if let settings = Settings.getSettings(for: key) {
+      // Wave W: Persistence shows the mode *derived* from the timing choices
+      // (`SettingsModel+Persistence.swift` calls the same function), so a profile
+      // that never wrote this key could display Custom while the stream ran
+      // Balanced. The key is consumed -- `StreamViewController.m` assigns it to
+      // `streamConfig.smoothnessLatencyMode` and `VideoDecoderRenderer.m` branches
+      // on it -- so the two layers disagreeing is a behaviour difference, not a
+      // cosmetic one. With everything at the shipped defaults the derivation hits
+      // the Balanced preset, which is the value the static fallback used to spell;
+      // scripts/defaults-consistency.py pins that identity instead of trusting it.
       return settings.smoothnessLatencyMode
-        ?? SettingsModel.getInt(
-          from: SettingsModel.defaultSmoothnessLatencyMode,
-          in: SettingsModel.smoothnessLatencyModes)
+        ?? SettingsModel.derivedSmoothnessLatencyMode(
+          framePacing: settings.framePacing,
+          enableVsync: settings.enableVsync,
+          timingBufferLevel: settings.timingBufferLevel,
+          timingPrioritizeResponsiveness: settings.timingPrioritizeResponsiveness,
+          timingCompatibilityMode: settings.timingCompatibilityMode,
+          timingSdrCompatibilityWorkaround: settings.timingSdrCompatibilityWorkaround
+        )
     }
     return SettingsModel.getInt(
       from: SettingsModel.defaultSmoothnessLatencyMode,
