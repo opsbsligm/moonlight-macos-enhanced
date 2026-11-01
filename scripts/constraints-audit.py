@@ -3536,6 +3536,25 @@ for defaults_shape, defaults_arguments in (("with both layers agreeing", []),
           "the defaults audit failed %s:\n%s"
           % (defaults_shape, (defaults_run.stdout + defaults_run.stderr)[-1200:]))
 
+# The settings-usage audit judges which persisted keys nothing acts on, and its whole
+# subject is a shape no other gate in this file can see: a control that persists a value
+# and is never read still passes every compile, every defaults comparison, and every
+# runtime probe, because nothing was ever supposed to look at it. It needs no toolchain
+# and no artefact, so the parity rule below has no escape hatch available to it. The
+# judgement form reads the tree; the self-test form rewrites source text and has to see
+# each rewrite, which is what keeps the five parsers (export rows, selectors, header
+# readers, declarations, interface reads) from quietly degrading into a name grep.
+for usage_shape, usage_arguments in (("with every exposed control accounted for", []),
+                                     ("its red proofs", ["--self-test"])):
+    usage_run = subprocess.run(
+        [sys.executable, os.path.join(root, "scripts", "settings-usage-audit.py")]
+        + usage_arguments, capture_output=True, text=True, cwd=root)
+    check(usage_run.returncode == 0,
+          "the settings usage audit passes %s" % usage_shape
+          if usage_run.returncode == 0 else
+          "the settings usage audit failed %s:\n%s"
+          % (usage_shape, (usage_run.stdout + usage_run.stderr)[-1200:]))
+
 # The three greps below are the audits job's other steps, and they run here for
 # the same reason the parity rule above exists. Membership is the cheap one that
 # answers "will this file ever be compiled", the glass rules are a source rule

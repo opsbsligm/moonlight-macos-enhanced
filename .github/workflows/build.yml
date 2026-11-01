@@ -216,6 +216,18 @@ jobs:
         python3 scripts/defaults-consistency.py --self-test
         python3 scripts/defaults-consistency.py
 
+    - name: Verify every exposed setting is acted on
+      # A switch that persists a value nothing reads is worse than a missing switch: the
+      # player changes it, sees nothing, and stops trusting the panel. This audit follows
+      # each persisted key through the export dictionary (whose keys are renamed, so a
+      # name grep excuses exactly the cases it should catch), the `@objc` accessors' real
+      # selectors, and the inline header helpers that are the only reader for the scroll
+      # keys. A key with no consumer has to sit in a reviewed baseline whose reason is
+      # derived from the source, so an excuse cannot outlive the shape that made it true.
+      run: |
+        python3 scripts/settings-usage-audit.py --self-test
+        python3 scripts/settings-usage-audit.py
+
     - name: Verify the workflow can actually run
       # A plain yaml.safe_load accepts a step whose run: key was dropped, and a
       # step with two run: keys. GitHub accepts neither: the run turns red before
