@@ -965,6 +965,19 @@ jobs:
         python3 scripts/reconnect-backoff-tests.py
         python3 scripts/reconnect-backoff-tests.py --self-test
 
+    - name: Verify the battery dies when the terminal asks
+      # The battery writes the shipped source and restores it in a finally plus a signal
+      # handler. That handler blocks the three interrupts so a second one cannot land
+      # mid-restore, then re-raises -- and a signal still masked when it is re-raised
+      # stays pending forever, so the process walks on with a restored tree and a log
+      # that reads like an orderly shutdown: a Ctrl+C the terminal believes it gave,
+      # cancelled only by SIGKILL. The gate runs the shipped handler in a child rather
+      # than grepping for the unblock, and its negative control deletes the unblock to
+      # prove the harness would have noticed.
+      run: |
+        python3 scripts/battery-interrupt-tests.py
+        python3 scripts/battery-interrupt-tests.py --self-test
+
     - name: Verify the settings page renders embedded
       # Goals that are visual cannot be signed off by a compile, and the two
       # visual goals here were waiting on a human eye that was not available. The
