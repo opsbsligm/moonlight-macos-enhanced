@@ -1,0 +1,41 @@
+{
+  "_about": "Keys the settings interface exposes and nothing acts on. Regenerate with `python3 scripts/settings-usage-audit.py --write-baseline` and read the diff: an entry that leaves means the key got wired or the reason stopped matching, which is the only good reason for one to go. The reason text is part of the identity, so a key that stops being unwired for the reviewed reason is a new debt and has to be re-reviewed.",
+  "debts": [
+    {
+      "key": "absoluteMouseMode",
+      "reason": "absoluteMouseMode is in no pane, is not exported to the stream, and no accessor or settings-layer code reads it"
+    },
+    {
+      "key": "captureSystemShortcuts",
+      "reason": "captureSystemShortcuts is a switch shown by captureSystemShortcuts that no accessor is messaged for and no stream or settings-layer code reads"
+    },
+    {
+      "key": "clipboardSyncMode",
+      "reason": "clipboardSyncMode is in no pane, is not exported to the stream, and no accessor or settings-layer code reads it"
+    },
+    {
+      "key": "coreHIDAutoEnabled",
+      "reason": "coreHIDAutoEnabled is in no pane, is not exported to the stream, and no accessor or settings-layer code reads it"
+    },
+    {
+      "key": "emulateGuide",
+      "reason": "emulateGuide is a switch shown by emulateGuide that no accessor is messaged for and no stream or settings-layer code reads"
+    },
+    {
+      "key": "enhancedAudioEQLayout",
+      "reason": "enhancedAudioEQLayout is a switch shown by selectedEnhancedAudioEQLayout that no accessor is messaged for and no stream or settings-layer code reads"
+    },
+    {
+      "key": "keyboardCompatibilityMode",
+      "reason": "keyboardCompatibilityMode is a switch shown by selectedKeyboardCompatibilityMode that no accessor is messaged for and no stream or settings-layer code reads"
+    },
+    {
+      "key": "shortQueueOnDoubledCadence",
+      "reason": "shortQueueOnDoubledCadence is a switch shown by shortQueueOnDoubledCadence that no accessor is messaged for and no stream or settings-layer code reads"
+    },
+    {
+      "key": "swapABXYButtons",
+      "reason": "swapABXYButtons is a switch shown by swapButtons that no accessor is messaged for and no stream or settings-layer code reads"
+    }
+  ]
+}
