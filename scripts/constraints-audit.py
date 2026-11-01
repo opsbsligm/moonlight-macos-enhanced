@@ -3555,6 +3555,31 @@ for usage_shape, usage_arguments in (("with every exposed control accounted for"
           "the settings usage audit failed %s:\n%s"
           % (usage_shape, (usage_run.stdout + usage_run.stderr)[-1200:]))
 
+# The host's half of the acceptance pairing, judged on the snapshot that was actually
+# collected from 192.0.2.1. It needs no toolchain and no artefact -- one json file and
+# one report -- so it has no excuse for living on a runner, and the shape it protects is the
+# one no client-side check can see: a pad this client advertises and the host silently
+# refuses. Only the judgement form runs here, and that choice is measured rather than
+# assumed: this aggregate is the battery's judge for 32 mutations, so every second added to
+# it is paid thirty-two times, and the battery job on `e2334917` had already spent its whole
+# three-hour ceiling. The judgement reads the committed snapshot in 0.04s and stays. The
+# self-test form costs 6.3s -- it re-runs the audit once per planted weakening, eight times
+# -- so it is driven where a pass costs one: `local-gates.sh` runs it from the mirror's
+# command list, and both pipeline definitions run it as their own step.
+HOST_EXPECTED = ("host-identity=OK,xbox-360-emulation=OK,ds5-emulation=BLOCKED,"
+                 "switch-emulation=BLOCKED,advertised-versus-host=BLOCKED")
+host_run = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "host-side-evidence-audit.py"),
+     "--snapshot", "scripts/fixtures/home-pc-host-snapshot.json",
+     "--report", "scripts/fixtures/home-pc-claim-report.txt",
+     "--expect", HOST_EXPECTED],
+    capture_output=True, text=True, cwd=root)
+check(host_run.returncode == 0,
+      "the host-side evidence audit judges the collected home-PC snapshot"
+      if host_run.returncode == 0 else
+      "the host-side evidence audit failed on the collected home-PC snapshot:\n%s"
+      % ((host_run.stdout + host_run.stderr)[-1200:],))
+
 # The three greps below are the audits job's other steps, and they run here for
 # the same reason the parity rule above exists. Membership is the cheap one that
 # answers "will this file ever be compiled", the glass rules are a source rule
