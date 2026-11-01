@@ -475,6 +475,55 @@ def chained_fallbacks(tree, relative):
     return found
 
 
+def depth_zero_trailing_return(body):
+    """(offset, expression_source) for the last depth-zero `return` in a body.
+
+    A `return` nested in an `if`/`switch`/closure answers that branch, not "the
+    profile was absent", so only depth-zero returns count, and the *last* one is the
+    one the fall-through reaches. A returned expression that reads `settings.` is the
+    stored value rather than a default, so it is not claimed. Shared by the accessor
+    reader and the helper reader below: the two must disagree about nothing, or the
+    same source text answers "what is the default" two different ways one file apart.
+    """
+    depth = 0
+    last = None
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif (body.startswith("return", index) and depth == 0
+              and not (index and (body[index - 1].isalnum()
+                                  or body[index - 1] == "_"))):
+            source, stop = extract_expression(body, index + len("return"))
+            source = re.sub(r"\s+", " ", source).strip()
+            if source and "settings." not in source:
+                last = (index, source)
+            index = stop
+            continue
+        index += 1
+    return last
+
+
+def implicit_trailing_expression(body):
+    """The body-as-one-expression default, for a body with no statement keyword.
+
+    A Swift function body may be a bare expression, and two accessors are written that
+    way (`mouseDriver(for:)` is one). Taking only an explicit `return` means the key
+    reaches no account at all -- neither compared nor unproven -- which is the silence
+    this reader exists to remove. Accepted only when the whole body *is* one
+    expression: a body that opens with a statement keyword has no trailing expression
+    to credit, and guessing one would invent a default the source does not state.
+    """
+    candidate = re.sub(r"\s+", " ", strip_leading_comments(body)).strip()
+    if (candidate and IMPLICIT_TAIL_OK.match(candidate)
+            and ";" not in candidate and "settings." not in candidate):
+        return (0, candidate)
+    return None
+
+
 def accessor_tails(tree, relative=BRIDGE):
     """{setting: [(line, expression_source)]} for an accessor's trailing `return`.
 
@@ -516,37 +565,9 @@ def accessor_tails(tree, relative=BRIDGE):
             body = text[brace + 1:brace_matched(text, brace)]
         except Unresolved:
             continue  # unbalanced: no body claimed, so nothing is attributed to it
-        depth = 0
-        last = None
-        index = 0
-        while index < len(body):
-            char = body[index]
-            if char in "([{":
-                depth += 1
-            elif char in ")]}":
-                depth -= 1
-            elif (body.startswith("return", index) and depth == 0
-                  and not (index and (body[index - 1].isalnum()
-                                      or body[index - 1] == "_"))):
-                source, stop = extract_expression(body, index + len("return"))
-                source = re.sub(r"\s+", " ", source).strip()
-                if source and "settings." not in source:
-                    last = (index, source)
-                index = stop
-                continue
-            index += 1
+        last = depth_zero_trailing_return(body)
         if last is None:
-            # A Swift function body may be a bare expression, and two accessors are
-            # written that way (`mouseDriver(for:)` is one). Taking only an explicit
-            # `return` means the key reaches no account at all -- neither compared nor
-            # unproven -- which is the silence this reader exists to remove. Accepted
-            # only when the whole body *is* one expression: a body that opens with a
-            # statement keyword has no trailing expression to credit, and guessing one
-            # would invent a default the source does not state.
-            candidate = re.sub(r"\s+", " ", strip_leading_comments(body)).strip()
-            if (candidate and IMPLICIT_TAIL_OK.match(candidate)
-                    and ";" not in candidate and "settings." not in candidate):
-                last = (0, candidate)
+            last = implicit_trailing_expression(body)
         if not last:
             continue
         line = text[:brace].count("\n") + body[:last[0]].count("\n") + 2
@@ -558,6 +579,82 @@ def accessor_tails(tree, relative=BRIDGE):
 # one expression" reading does not apply and nothing is credited.
 IMPLICIT_TAIL_OK = re.compile(r"^(?!//)(?!(?:let|var|if|guard|for|while|repeat|do|"
                               r"switch|return|throw|assert|self|deinit)\b)")
+
+
+# A helper the accessor delegates to has to be declared in the same file and take the
+# accessor's own `key`; a helper that lives elsewhere, or that is handed a different
+# host id, answers a different question and its tail return is not this key's default.
+LOCAL_HELPER = re.compile(
+    r"\bprivate static func (?P<name>\w+)\s*\(\s*for key: String\s*\)\s*(?:->[^{]+)?\{")
+
+
+def accessor_tail_readthrough(tree, relative=BRIDGE):
+    """{setting: {"expression"|"stopped", "helper", "line"}} for delegated tails.
+
+    `mouseDriver(for:)` states no default of its own: its whole body is
+    `mouseInputStrategy(for: key).rawValue`, and the default lives one function away,
+    as that helper's trailing `return MouseInputDriverStrategy.defaultStrategy`. An
+    auditor that stops at the accessor either reports "unsupported call" (which is what
+    Wave Y shipped: the key on the debt books with a reason about an initializer) or,
+    worse, learns to ignore delegation-shaped tails and lets the key leave the books.
+
+    So the reader crosses **exactly one** function, under the same rule that reads an
+    accessor's own tail: the depth-zero last `return` is the default, and a return
+    nested in an `if`/`switch`/closure answers that branch rather than "the profile was
+    absent". The helper's default is then substituted for the call -- `(default).rawValue`
+    -- so the evaluator sees one expression and the member access still resolves against
+    the enum's own table.
+
+    Crossing twice is where a reader starts inventing defaults, so a helper whose own
+    default is *another* call stops here and says so: `clipboardSyncMode(for:)` delegates
+    to `inferredDefaultClipboardSyncMode(for:)`, whose tail is
+    `SettingsModel.clipboardSyncModeRawValue(for: "Auto Sync")` -- one layer in, stopped
+    at a second. The key keeps its entry and the reason names both places, which is the
+    strict direction: a proof the reader does not hold is never credited as agreement.
+    """
+    text = tree.read(relative)
+    helpers = {}
+    for match in LOCAL_HELPER.finditer(text):
+        try:
+            body = text[match.end():brace_matched(text, match.end() - 1)]
+        except Unresolved:
+            continue  # unbalanced: no body claimed, so the helper answers nothing
+        tail = depth_zero_trailing_return(body) or implicit_trailing_expression(body)
+        if tail:
+            helpers[match.group("name")] = tail[1]
+    found = {}
+    for setting, entries in accessor_tails(tree, relative).items():
+        line, source = entries[-1]
+        name = re.match(r"([A-Za-z_]\w*)\s*\(", source)
+        if not name or name.group(1) not in helpers:
+            continue
+        # Only the accessor's own `key` may be handed over: `helper(for: globalHostId)`
+        # reads another host's profile, so its absent arm is not this key's default.
+        depth, index, stop = 0, name.end() - 1, None
+        while index < len(source):
+            if source[index] == "(":
+                depth += 1
+            elif source[index] == ")":
+                depth -= 1
+                if depth == 0:
+                    stop = index
+                    break
+            index += 1
+        if stop is None:
+            continue
+        call = source[name.start():stop + 1]
+        if re.fullmatch(r"\w+\(\s*for:\s*key\s*\)", re.sub(r"\s+", " ", call)) is None:
+            continue
+        default = helpers[name.group(1)]
+        entry = {"helper": name.group(1), "line": line}
+        if LOCAL_HELPER.search(default) or re.search(r"[\w)\]]\s*\(", default):
+            entry["stopped"] = ("read through %s(), stopped at its own default %r, "
+                                "which is another call: the audit crosses one function "
+                                "and no further" % (name.group(1), default))
+        else:
+            entry["expression"] = "(%s)%s" % (default, source[stop + 1:])
+        found[setting] = entry
+    return found
 
 
 def strip_leading_comments(text):
@@ -1141,6 +1238,26 @@ class Evaluator:
         for store in (self.symbols.values, self.symbols.arrays, self.symbols.tables):
             if name in store:
                 return store[name]
+        # A `static let` written as a one-line expression is a stated default, not a
+        # gap: `defaultMouseDriver = MouseInputDriverStrategy.defaultStrategy.displayKey`
+        # says exactly which row the picker shows, and refusing to follow the binding
+        # reported the loader's own default as "unknown symbol". Following it is the
+        # same reading the `?? defaultX` shape already gets -- the name is a window onto
+        # its right-hand side, so moving the enum moves the default with it.
+        source = self.symbols.exprs.get(name)
+        if source:
+            # `a = b; b = a` is two bindings with no value under them, so the walk is
+            # bounded rather than left to the call stack.
+            walking = getattr(self, "_walking", None)
+            if walking is None:
+                walking = self._walking = set()
+            if name in walking:
+                raise Unresolved("symbol %s is defined in a cycle" % name)
+            walking.add(name)
+            try:
+                return self.value(parse(source))
+            finally:
+                walking.discard(name)
         return self._MISSING
 
     def value(self, node):
@@ -1236,6 +1353,14 @@ class Evaluator:
                 return ("enum-value", base[1], statics[name])
             if name == "default" and "default" in entry:
                 return ("enum-value", base[1], entry["default"])
+            # `Type.gameController` is the case, not a lookup: an enum spelled out by
+            # its cases states which case a name picks, so reading a case as a static
+            # member needs no defaulting rule at all. This matters once the audit
+            # reads through a helper -- a helper is free to end on any case, and only
+            # the `default*` spelling being answerable would make the reader blind to
+            # exactly the mutations this wave exists to catch.
+            if name in entry.get("raw", {}):
+                return ("enum-value", base[1], name)
             if name.startswith("default"):
                 raise Unresolved("%s declares no static member %s" % (base[1], name))
         target = self.value(base) if base[0] != "symbol" or base[1] not in ("enhancedAudioEQGains",) else None
@@ -1744,6 +1869,41 @@ def display_names_agree(interface, stream, symbols):
     return bool(naming) and all(table[label] == number for table in naming)
 
 
+def display_name_conflict(interface, stream, symbols):
+    """The row *every* naming table gives the interface label, when it is not `stream`'s.
+
+    The mirror of `display_names_agree`, and it exists because the absence of agreement
+    is not one state: "a table resolves the label to another number" and "nothing in the
+    source says which row this number is" look the same to the caller unless they are
+    told apart, and the second is unproven while the first is a fork. Reporting the
+    first as unproven is not conservative -- it lets a change that moves the stream to
+    another option be filed as a gap in the analysis, which is exactly the kind of
+    quiet the other rules in this file were written to remove.
+
+    Returns that number only when the tables that name the label agree on it and it
+    differs from the stream's; None otherwise. The unanimity is required, not decoration:
+    two tables that resolve one label to two rows mean the source does not say which row
+    governs, and that is a question for a reviewer, so it stays unproven. The unproven
+    account is where an unprovable claim must remain -- promoting it to a divergence to
+    avoid a debt entry would put a verdict the source does not support into the one book
+    that cannot be excused.
+    """
+    label, number = interface.get("value"), stream.get("value")
+    if isinstance(number, bool) or not isinstance(number, int):
+        return None
+    if not isinstance(label, str):
+        return None
+    tables = value_tables_named(stream.get("source", []), symbols)
+    tables += value_tables_named(interface.get("source", []), symbols)
+    naming = [table[label] for table in tables if label in table]
+    if not naming:
+        return None
+    first = naming[0]
+    if any(other != first for other in naming[1:]):
+        return None  # the tables answer two different ways: which governs is unknown
+    return first if first != number else None
+
+
 # `Self.getInt(from: Self.defaultPacingOptions, in: Self.pacingOptions)` is how the
 # stream spells "the row the picker shows". The table is a plain `[String]`, so its
 # stored number is the element's position and there is no `(title, value)` pair to
@@ -1912,6 +2072,18 @@ def audit(tree=None):
     # the keys that join are the ones no account held at all.
     tails = {key: entries for key, entries in accessor_tails(tree).items()
              if key not in coalesced and key not in persistence}
+    # One layer deeper for the keys whose accessor delegates its whole tail. The
+    # substitution happens *before* the tails join `bridge` so the bridge keeps exactly
+    # one expression for the key: leaving both the delegated call and the helper's
+    # default in the table would make `same_expression` refuse (it requires one
+    # expression per side) and turn a key this wave can now prove into a new red.
+    # Keys whose read-through stopped at a second call are not substituted -- their
+    # bridge entry stays the call, and `stream_value` reports where the proof stopped.
+    readthrough = {key: entry for key, entry in accessor_tail_readthrough(tree).items()
+                   if key in tails}
+    for key, entry in readthrough.items():
+        if entry.get("expression"):
+            tails[key] = [(entry["line"], entry["expression"])]
     for key, entries in tails.items():
         bridge.setdefault(key, []).extend(entries)
     # Branch-local defaults, indexed by the field the branch is about. Kept out of
@@ -1992,7 +2164,8 @@ def audit(tree=None):
                         "profile key %s" % key]
                     interface = retry
         stream = stream_value(key, tree, evaluator, bridge, stream_view, read_by_objc,
-                              guarded_bridge, dangling=dangling)
+                              guarded_bridge, dangling=dangling,
+                              readthrough=readthrough)
         entry = {"key": key, "interface": interface, "stream": stream}
 
         # One layer stating two different values for the same absent key is a fault
@@ -2077,6 +2250,20 @@ def audit(tree=None):
                 # in the source that says which row it is. Reported as unproven so the
                 # key lands on the debt books, where a reviewer sees it and can settle
                 # it by spelling the index against the table.
+                # One exception, checked before filing: if another table in the tree
+                # *does* resolve the label and puts it on a different number, the source
+                # proves a disagreement and calling that a gap in the analysis hands a
+                # route to green -- the unproven key can be accepted as reviewed debt,
+                # and the fork then hides there permanently. A proven fork has to stay
+                # in the one account that cannot be excused.
+                conflict = display_name_conflict(interface, stream, symbols)
+                if conflict is not None:
+                    divergences.append((
+                        key, interface["value"], interface["source"],
+                        stream["value"],
+                        stream["source"] + ["the option table names %r row %r"
+                                            % (interface["value"], conflict)]))
+                    continue
                 unresolved.append((key, describe(persistence.get(key, [])),
                                    describe(bridge.get(key, []))
                                    + describe(stream_view.get(key, [])), note))
@@ -2148,7 +2335,7 @@ def interface_value(key, tree, evaluator, persistence, wrapped, helper_defaults_
 
 
 def stream_value(key, tree, evaluator, bridge, stream_view, read_by_objc,
-                 guarded=None, dangling=None):
+                 guarded=None, dangling=None, readthrough=None):
     """What the stream runs with when the profile holds nothing for `key`.
 
     Three possible sources, in the order the runtime reaches them: the bridge's own
@@ -2162,6 +2349,15 @@ def stream_value(key, tree, evaluator, bridge, stream_view, read_by_objc,
     guard is reported as unproven -- excusing the fallback without checking it is the
     silence every other rule in this file exists to refuse.
     """
+    if readthrough and key in readthrough and readthrough[key].get("stopped"):
+        # Checked before the bridge read on purpose: for such a key the bridge entry
+        # *is* the delegated call the reader just followed, so evaluating it would
+        # answer "what is the default" with `unbound name 'key'` -- true, but it names
+        # neither function, which is what a reviewer needs in order to finish the proof
+        # by hand. The key stays on the books either way; only the reason improves.
+        entry = readthrough[key]
+        return {"unresolved": entry["stopped"],
+                "source": ["%s line %d" % (entry["helper"], entry["line"])]}
     if key in bridge:
         try:
             values = evaluate_sources(evaluator, bridge[key])
@@ -2683,6 +2879,76 @@ def self_test():
                         "settings.framePacingRenamed, in: Self.pacingOptions)")])
     checks.append(("the profile-key-to-field mapping is read from the loader",
                    key_books(result, "framePacing") != ["compared"]))
+
+    # 13. The one-function read-through. `mouseDriver`'s accessor states no default:
+    #     its whole body is `mouseInputStrategy(for: key).rawValue`, and the default is
+    #     that helper's trailing `return MouseInputDriverStrategy.defaultStrategy`. The
+    #     three polarities below are what tell "the reader crossed one function and
+    #     read it" apart from "the reader gave up and called it equal".
+    #     (a) the helper's own default moved -- the accessor text is untouched, so only
+    #     a reader that actually entered the helper can see the fork;
+    result = relaunch([(BRIDGE, "    return MouseInputDriverStrategy.defaultStrategy",
+                             "    return MouseInputDriverStrategy.gameController")])
+    checks.append(("a delegated default that moved is reported",
+                   key_books(result, "mouseDriver") == ["divergences"]))
+    #     (b) the delegation inlined: the accessor spells the helper's value itself.
+    #     The value did not move, so this must stay green -- without it, (a) would only
+    #     prove the reader marks call-shaped tails red;
+    result = relaunch([(BRIDGE, "    mouseInputStrategy(for: key).rawValue",
+                             "    MouseInputDriverStrategy.defaultStrategy.rawValue")])
+    checks.append(("a delegated default inlined at the accessor stays green",
+                   key_books(result, "mouseDriver") == ["compared"]))
+    #     (c) a second layer appears under the helper. Crossing twice is where a reader
+    #     starts inventing defaults, so the reader has to stop *and say where*: the key
+    #     keeps an entry whose reason names the helper it read and the call it stopped
+    #     at. Vanishing (the key leaves every book) and judging it equal are both fails.
+    result = relaunch([(BRIDGE, "    return MouseInputDriverStrategy.defaultStrategy",
+                             "    return fallbackMouseDriverStrategy(for: key)")])
+    stopped = [note for key, _left, _right, note in result["unresolved"]
+               if key == "mouseDriver"]
+    checks.append(("a second delegation layer stops and names where",
+                   key_books(result, "mouseDriver") == ["unresolved"]
+                   and any("mouseInputStrategy" in note and "another call" in note
+                           for note in stopped)))
+    #     (d) the helper has to be handed *this* key. `helper(for: someOtherHost)`
+    #     answers what another profile would run, so its absent arm is not this key's
+    #     default and may not be substituted; the key stays on the books unproven.
+    result = relaunch([(BRIDGE, "    mouseInputStrategy(for: key).rawValue",
+                             "    mouseInputStrategy(for: SettingsModel.globalHostId)"
+                             ".rawValue")])
+    checks.append(("a helper handed another host's id is not credited",
+                   key_books(result, "mouseDriver") == ["unresolved"]))
+
+    # 14. The three states behind "the two sides did not match" on the label/number
+    #     seam. No key on the clean tree reaches this arm, so a source mutation cannot
+    #     summon it -- the judgement is exercised directly against a symbol table, which
+    #     is the only way to show the arm answers all three ways rather than one.
+    def conflict(label, number, tables):
+        """Judge one label/number pair against hand-written tables.
+
+        The tables are reached the way a real source reaches them -- the source text
+        names each one with an `xRawValue(for:)` call, and `value_tables_named` resolves
+        that name through the symbol table -- so the check exercises the shipped lookup
+        rather than a private shape. One table per named call, which is how two tables
+        come to answer one label at all.
+        """
+        names = ["probe", "spare"][:len(tables)]
+        stub = Symbols()
+        stub.tables = {"%sOptions" % name: table for name, table in zip(names, tables)}
+        source = " ".join("%sRawValue(for: key)" % name for name in names)
+        return display_name_conflict({"value": label},
+                                     {"value": number, "source": [source]}, stub)
+
+    checks.append(("a table that resolves the label to the same row is not a fork",
+                   conflict("Automatic", 3, [{"Automatic": 3}]) is None))
+    checks.append(("a table that resolves the label to another row is a fork",
+                   conflict("Automatic", 1, [{"Automatic": 3}]) == 3))
+    # Two tables name one label and disagree, so the source does not say which row
+    # governs. That answers a fork no better than no table at all, and it must not be
+    # filed as one: the unproven book is where an unprovable claim stays reviewable.
+    checks.append(("two tables that disagree about the row leave it unproven",
+                   conflict("Automatic", 1, [{"Automatic": 3},
+                                             {"Automatic": 4}]) is None))
 
     failed = 0
     for name, passed in checks:

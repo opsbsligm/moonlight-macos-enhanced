@@ -18,10 +18,6 @@
       "reason": "customFps has no default of its own: the stream only reads it inside a fps==.zero branch, whose fallback (60.0) does agree with the interface value for fps, so the derived framerate is settled and this key is not"
     },
     {
-      "key": "mouseDriver",
-      "reason": "MouseInputDriverStrategy(persistedRawValue:) is only evaluable when absent"
-    },
-    {
       "key": "remoteResolutionHeight",
       "reason": "remoteResolutionHeight is read by the interface with no fallback anywhere"
     },
