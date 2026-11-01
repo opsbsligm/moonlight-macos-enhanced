@@ -1,8 +1,75 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-10-31 十次基点刷新：main=`0fc2faa2`，Wave W 默认值诚实性）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-01 十一次基点刷新：main=`1031a42a`，Wave X 默认值门禁的反假绿）
 
-## 0. Wave W 目标模式（当前执行窗口，2026-10-31）
+## 0. Wave X 目标模式（当前执行窗口，2026-11-01）
 
-> 本节是本轮唯一执行契约。完成后按 §11 交回常规顺序，不得扩大范围。
+> 本节是本轮唯一执行契约。Wave W 已收口（§0.1），本波修的是 Wave W 那把尺子自身的读数错误。
+
+**目标**：让 `scripts/defaults-consistency.py` 在"两层其实不一致"时**必须变红**。
+Wave W 把"界面显示什么、串流就用什么"变成机器可证的性质，本波证明这把尺子
+**不会在同一个缺陷面前给出绿色**。
+
+**已量化事实（2026-11-01 逐处读源码实测，非估计）**：
+- 桥接层有**两条**把设置交给串流的路径：`getSettings(for:)` 组装的字典（ObjC 侧
+  `prefs[@"key"]` 读，实测 **54 个键**）与 76 个 `@objc static func key(for key:)`
+  单体访问器（ObjC 侧 `[SettingsClass keyFor:]` 读，实测 **46 个键**）。
+  实测**没有任何键同时被两种方式读**，所以每个键在串流侧只有一个默认值来源。
+- Wave W 落地的 `fallbacks()` 用 `settings\.(\w+)\s*\?\?` 搜**整个**
+  `SettingsObjCBridge.swift`，于是 90 个访问器里的 `?? defaultX` 被记到同一个键的
+  **字典导出**名下：**21 个键**多算了不属于自己的回退。
+- 字典组装以 `compactMapValues { $0 }` 收尾（`SettingsObjCBridge.swift:315`），
+  所以裸 Optional 为 nil 时**不是**导出 `NSNull`，而是**这个键根本不存在**；
+  ObjC 读到 nil，`[nil boolValue]` 得 `NO`、`[nil intValue]` 得 `0`，**不报错**。
+- 三个键正好踩在两处叠加面上并且**真的被字典读**：`muteOnFocusLoss`
+  （`StreamViewController.m:375/488`）、`backgroundGamepad`（`:393/506`）、
+  `matchDisplayResolution`（`StreamViewController+MenuUI.m:1845/2415/2457/2505`）。
+  它们的 `?? defaultX` 只写在**没有任何调用者**的访问器里
+  （`muteOnFocusLoss(for:)` 在 `Limelight/**` 的 `.m/.mm` 中零调用，唯一提及是一行注释）。
+- **假绿的量法**（决定性对照，同一棵源码树，只换归属逻辑）：把导出面还原成修复前的
+  裸 Optional，并把 `SettingsModel+DerivedValues.swift:1089
+  defaultMuteOnFocusLoss` 抬成 `true` —— 此时设置窗口显示"静音"、串流因键缺失读成
+  `NO` 不静音；旧归属逻辑报 **0 divergent / exit 0**，收窄后报该键
+  `unresolved`（"到 ObjC 侧没有任何回退"）。这条对照本身已固化进 self-test。
+
+**完成边界（五条全绿才算完成，缺一不算）**：
+1. **归属按消费路径**：字典键的回退只在 `getSettings(for:)` 体内寻找；访问器键的回退
+   只在**同名且 ObjC 真实调用**（注释不算）的访问器体内寻找。多键推导函数
+   （如 `loadMoonlightSettings(for:)` 用它算分辨率宽高）的 `??` **不得记到键名下**。
+   归属不上的回退留空 —— 让键报"未证明"进债务账，绝不让它报"一致"。
+2. **导出面写死可见默认值**：三个真被字典读的键在导出出处显式
+   `?? SettingsModel.defaultX`（`matchDisplayResolution` 用字面 `false`，与界面侧
+   `SettingsModel+Persistence.swift:248` 同一写法）。对全新安装是恒等变换：
+   `false`/`false`/`false` 三值与 nil→`NO` 的运行时结果逐一相同，改的是"出厂值即被审计的值"。
+3. **self-test 必须证明这把尺子会红**：新增负/正对照 —— 导出面回退改成错值→报红；
+   导出面回退删成裸 Optional→报未覆盖（不得读作一致）；多键推导函数里的 `??` 改动→
+   **不得**记到键名下（负对照）；被归属的访问器回退改动→报该层内分叉；
+   导出面命名的是常量本身，故抬高常量→**保持绿**（证明修复没有把值冻成字面量）。
+4. **下游断言同步升级**：`mute-on-focus-loss-tests.py` 与 `background-gamepad-tests.py`
+   原来精确匹配裸 Optional 字符串，升级后必须匹配"键在字典中**且**默认值就地命名模型常量"，
+   并各自用植入裸 Optional 的反向证明确实会红（已实测各抓 1 条 FAIL）。
+5. **接缝在事实源 + 本地门禁 0 failed + 本次 SHA 流水线到终态**：
+   `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；
+   `liguangming` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
+   `跨文件静态安全扫描` 在本环境 `allow_failure=true`，只记「已豁免」不计入通过。
+
+**边界**：不改设置面板任何默认值与标签栏 `NSSegmentedControl` role=`.tabs` 外观
+（本波三个键的运行时结果逐一不变）；不解冻 USB 真重定向 / Developer ID 公证 / 自动更新；
+`hardware_validated` 保持 `false`。
+
+**已知未建模面（诚实登记，不当已完成）**：`loadMoonlightSettings(for:)` 是字典与访问器
+之外的**第三条**串流侧消费路径（它把十余个设置算成宽高后写入 `DataManager`）。
+本波只保证它的 `??` 不被**误记**为某键的默认，**没有**把它纳入两层判等。
+
+**验收判据**：`python3 scripts/defaults-consistency.py --self-test` 全 `ok`（含负对照）；
+`python3 scripts/defaults-consistency.py` 末行 `0 divergent` 且 `0 new / 0 stale` debt；
+`python3 scripts/mute-on-focus-loss-tests.py`（含 `--self-test`）与
+`python3 scripts/background-gamepad-tests.py` 0 failures；`bash scripts/local-gates.sh`
+0 failed；本次 SHA 流水线到终态。
+
+## 0.1 Wave W 目标模式（已完成并合并：MR 44 → `1031a42a`，合并者 liguangming，head pipeline 952 success）
+
+> 本节已收口：五条完成边界全部落地（`defaults-consistency.py` 求值判等、带可证伪条件的
+> 债务账、改源码文本的 self-test、两处真分叉修复、接缝进事实源）。它给出的尺子在
+> **归属范围**上读数错误 —— 那是 Wave X（§0）的标的，见其"假绿的量法"一条。
 
 **目标**：让"同一个未写入的设置项，界面显示什么、串流就用什么"成为机器可证的性质，
 而不是靠人记得在两个文件里写同一个默认值。
@@ -376,14 +443,26 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-10-31，MR 1–43 全部合并，在途 MR = 0）
+## 1. 当前基点（截至 2026-11-01，MR 1–44 全部合并，在途 MR = MR 45）
 
-- 代码基点 main = `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
+- 代码基点 main = `1031a42a`（`Merge branch 'wave-w-defaults-truthfulness' into 'main'`，
+  MR 44，合并者 `liguangming`，head pipeline **#952 = success**）。其上是 Wave W
+  `1e29c661`（`scripts/defaults-consistency.py` 求值判等 + 债务账 + self-test）。
+  合并后的 main 流水线 **#959（`1031a42a`）**在本文档刷新时 `audit:python` /
+  `build-app` / `test-app` / `audit:sources` / `audit:gates` / `audit:deep` /
+  `package-dmg` 与五个必跑安全扫描已 success，`mutation-battery` 仍在 Mac runner
+  （id 8，`mac-m2-130`，全局 `concurrent = 1`）上跑，`publish-github` 排队 ——
+  属自愈排队，不是失败，**其终态未到之前该 DMG 不计入"已验证产物"**。
+- 在途：**MR 45 `de8b7596`**（Wave X —— `defaults-consistency.py` 的归属必须按消费路径，
+  否则同一缺陷会读成绿色；三个真被字典读的键在导出出处命名单一默认值）。
+  head pipeline **#966** 排队中；`detailed_merge_status=security_policy_violations`
+  是 merge-preview 未跑完的瞬时状态（MR 23 已实证过一次），等预览管线到终态再判。
+  本机门禁实测 **114 passed / 0 failed / 13 skipped**（skip 逐项是需要构建产物或 CI
+  变量的项，加完整变异电池与 render-probe）。
+- 上一基点 `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
   MR 43，合并者 `liguangming`，head pipeline **#900 = success**）。其上是 Wave V
   `c1f0eeac`（MR 42，head pipeline **#897 = success**，12 个 job，
   `跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）。
-  合并后的 main 流水线 **#898（`c1f0eeac`）与 #901（`0fc2faa2`）**在本文档刷新时仍在
-  Mac runner 队列里排队（全局 `concurrent = 1`，属自愈排队，不是失败），**尚未产出 DMG**。
 - 上一基点 `b7be1dec`（MR 41，Wave U 对标矩阵自证）对应 main 流水线 **#895**：
   `audit:deep`/`package-dmg`/全部必跑安全扫描已 success，`mutation-battery` 仍在跑，
   `publish-github` 排队；`package-dmg`（job 5580）产物为
@@ -741,8 +820,8 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 ## 11. 下一步执行
 
-（2026-10-31 五次刷新）**代码层里程碑 0.1→P2 + K1.1/K1.2 + Wave B/C/D/E/H/I/K/Q/R/S/T/U/V
-已全部在 main**；MR 1–43 全合并，**在途 MR = 0**，main 基点 `0fc2faa2`。
+（2026-11-01 六次刷新）**代码层里程碑 0.1→P2 + K1.1/K1.2 + Wave B/C/D/E/H/I/K/Q/R/S/T/U/V/W
+已全部在 main**；MR 1–44 全合并，**在途 MR = MR 45（Wave X）**，main 基点 `1031a42a`。
 `docs/common-c-drift-2026-10-26.md` 的"未取待定"四类中，RFI 修复族已随 G-3（MR 32）处置完，
 剩下的 `342b106`（control stream 就地加密）、`f1cca2d`（pen event 批处理）、
 `7022b33`/`1fddbcb`（BSD socket 错误重构 / rswrapper 头泄漏）仍未评估，
