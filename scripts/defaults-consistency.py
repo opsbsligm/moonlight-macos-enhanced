@@ -400,6 +400,41 @@ def bridge_read_ranges(tree, relative=BRIDGE):
     return ranges
 
 
+def dangling_accessor_calls(tree):
+    """{setting: call site} where ObjC calls a `...For:` accessor that does not exist.
+
+    A rename on one side of the bridge seam is the way a key leaves the audit books by
+    accident: the accessor's trailing return stops being credited (its name no longer
+    matches the setting), the dictionary never carried the key, and the key vanishes
+    from *every* account -- not compared, not unproven, gone. The call site is the
+    surviving half of the seam, and it is as much a stream-side consumer as a
+    `prefs[@"key"]` read: charge the key to it and the audit reports the loss instead
+    of swallowing it. (A build would not ship like this; the gate's job is to make the
+    same-shaped accident in *defaults* visible even in the tree that does compile.)
+    """
+    text = tree.read(BRIDGE)
+    named = {m.group(1) for m in re.finditer(
+        r"@objc static func (\w+)\(for key: String\)", text)}
+    fields = settings_fields(tree)
+    dangling = {}
+    for dirpath, _, filenames in os.walk(OBJC_SOURCE_ROOT):
+        for filename in filenames:
+            if not filename.endswith((".m", ".mm")):
+                continue
+            with open(os.path.join(dirpath, filename), encoding="utf-8",
+                      errors="replace") as handle:
+                for number, line in enumerate(handle, 1):
+                    code = line.split("//")[0]
+                    for match in re.finditer(r"\[\s*\w+\s+(\w+?)For:", code):
+                        key = match.group(1)
+                        key = key[0].lower() + key[1:]
+                        if key in named or key not in fields:
+                            continue
+                        dangling.setdefault(key, "%s:%d %sFor:"
+                                            % (filename, number, match.group(1)))
+    return dangling
+
+
 def bridge_fallbacks(tree, relative=BRIDGE):
     """The stream's own defaults for the dictionary and the accessors, one table.
 
@@ -438,6 +473,168 @@ def chained_fallbacks(tree, relative):
         line = text[:match.start()].count("\n") + 1
         found.setdefault(match.group("key"), []).append((line, source))
     return found
+
+
+def accessor_tails(tree, relative=BRIDGE):
+    """{setting: [(line, expression_source)]} for an accessor's trailing `return`.
+
+    `fallbacks` can only see a default written with `??`, so a key whose accessor
+    reads
+
+        if let settings = Settings.getSettings(for: key) { return settings.x }
+        return SettingsModel.defaultX
+
+    is invisible to the audit: it lands in no account at all, not even "unproven".
+    Eight such keys exist, and the shape is not exotic -- it is what an accessor whose
+    profile field is *non-optional* has to look like, because there is no `??` to
+    write. Measured before this existed: `return SettingsModel.defaultRumble` changed
+    to `return false` (window shows rumble ON, stream runs it OFF) printed
+    "0 divergent" and exited 0, and `rumble` appeared nowhere in the result.
+
+    Only accessors that pass `bridge_stream_accessors` contribute, so a trailing
+    return in a helper nobody calls is still not credited to a key. The return is
+    found at brace/paren/bracket depth zero and must be the *last* one in the body:
+    a `return` nested in an `if`/`switch`/closure answers that branch, not "the
+    profile was absent", and taking the first depth-zero return instead of the last
+    would credit an early-exit arm as the default. A trailing expression that reads
+    `settings.` is the stored value rather than a default, so it is not claimed.
+
+    A trailing expression the evaluator cannot reduce -- a delegation
+    (`mouseInputStrategy(for: key).rawValue`) or a call into another type
+    (`CGSizeMake(300, 400)`) -- is still returned here. That is the strict direction:
+    the key then reports as unproven and goes on the debt books, where a reviewer
+    sees it, instead of leaving the audit the way it was, which was silence.
+    """
+    text = tree.read(relative)
+    allowed = bridge_stream_accessors(tree, text)
+    found = {}
+    for match in re.finditer(r"@objc static func (\w+)\(for key: String\)", text):
+        if match.group(1) not in allowed:
+            continue
+        brace = text.index("{", match.end())
+        try:
+            body = text[brace + 1:brace_matched(text, brace)]
+        except Unresolved:
+            continue  # unbalanced: no body claimed, so nothing is attributed to it
+        depth = 0
+        last = None
+        index = 0
+        while index < len(body):
+            char = body[index]
+            if char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth -= 1
+            elif (body.startswith("return", index) and depth == 0
+                  and not (index and (body[index - 1].isalnum()
+                                      or body[index - 1] == "_"))):
+                source, stop = extract_expression(body, index + len("return"))
+                source = re.sub(r"\s+", " ", source).strip()
+                if source and "settings." not in source:
+                    last = (index, source)
+                index = stop
+                continue
+            index += 1
+        if last is None:
+            # A Swift function body may be a bare expression, and two accessors are
+            # written that way (`mouseDriver(for:)` is one). Taking only an explicit
+            # `return` means the key reaches no account at all -- neither compared nor
+            # unproven -- which is the silence this reader exists to remove. Accepted
+            # only when the whole body *is* one expression: a body that opens with a
+            # statement keyword has no trailing expression to credit, and guessing one
+            # would invent a default the source does not state.
+            candidate = re.sub(r"\s+", " ", strip_leading_comments(body)).strip()
+            if (candidate and IMPLICIT_TAIL_OK.match(candidate)
+                    and ";" not in candidate and "settings." not in candidate):
+                last = (0, candidate)
+        if not last:
+            continue
+        line = text[:brace].count("\n") + body[:last[0]].count("\n") + 2
+        found.setdefault(match.group(1), []).append((line, last[1]))
+    return found
+
+
+# A body that starts with one of these is a statement sequence, so the "the body is
+# one expression" reading does not apply and nothing is credited.
+IMPLICIT_TAIL_OK = re.compile(r"^(?!//)(?!(?:let|var|if|guard|for|while|repeat|do|"
+                              r"switch|return|throw|assert|self|deinit)\b)")
+
+
+def strip_leading_comments(text):
+    """Drop whole-line comments so a leading doc/`//` note is not read as the body."""
+    lines = text.splitlines()
+    while lines and (not lines[0].strip() or lines[0].strip().startswith("//")):
+        lines.pop(0)
+    return "\n".join(lines)
+
+
+def interface_field_map(tree):
+    """{profile key: interface field} for a loader that renames the key.
+
+    `interface_value`'s last resort is `loadDefaultSettings()`, which assigns the
+    model's *own* fields, and those are not always named after the profile key:
+    `framePacing` is shown as `selectedPacingOptions`, `audioConfiguration` as
+    `selectedAudioConfiguration`, `controllerDriver` as `selectedControllerDriver`
+    (`SettingsModel+Persistence.swift` reads `settings.framePacing` into
+    `selectedPacingOptions` through `getString`). Hard-coding those four would be a
+    table that rots in silence the day a key is renamed, so the pairing is read out
+    of the loader: an assignment to a model field whose right-hand side names exactly
+    one `settings.<key>` binds that key to that field.
+
+    Exactly one, because an expression that reads two settings (`settings.mouseMode
+    ?? (Self.defaultMouseMode == "game" ? 0 : 1)`, or a resolution derived from
+    several) does not state the default of either. `let`/`var` bindings are excluded:
+    those are locals inside the loader, not the field the window binds to.
+    """
+    text = tree.read(PERSISTENCE)
+    marker = re.search(r"func loadSettings\(\)\s*\{", text)
+    if not marker:
+        return {}
+    try:
+        body = text[marker.end():brace_matched(text, marker.end() - 1)]
+    except Unresolved:
+        return {}
+    found = {}
+    for statement in split_statements(body):
+        assignment = re.match(r"(?![lL]et\s|\var\s)([a-z]\w*)\s*=(?!=)(.+)",
+                              statement, re.S)
+        if not assignment:
+            continue
+        keys = re.findall(r"settings\.([A-Za-z_]\w*)", assignment.group(2))
+        if len(keys) != 1:
+            continue
+        found.setdefault(keys[0], assignment.group(1))
+    return found
+
+
+def split_statements(body):
+    """The statements of a function body, joined across their line breaks.
+
+    Every line is a candidate, including the ones inside `if let settings = ...`: the
+    loader binds the profile inside such a block, so a top-level-only scan sees one
+    giant statement and finds no assignment at all -- which is how the first draft of
+    this reader returned an empty map and left four renamed keys reporting "no fallback
+    anywhere". An assignment nested in a branch still names the field the window binds
+    to, so it counts.
+
+    A line is joined to the next while its parentheses are unbalanced, because the
+    common shape wraps: `selectedAudioConfiguration = Self.getString(` /
+    `from: settings.audioConfiguration, in: ...)`. Braces are not a join reason --
+    a block opener must terminate the statement before it.
+    """
+    joined = []
+    pending = ""
+    for line in body.splitlines():
+        candidate = (pending + " " + line.strip()) if pending else line.strip()
+        if candidate.count("(") != candidate.count(")"):
+            pending = candidate
+            continue
+        pending = ""
+        if candidate:
+            joined.append(candidate)
+    if pending:
+        joined.append(pending)
+    return joined
 
 
 def aliased_fallbacks(tree, relative):
@@ -671,6 +868,12 @@ FUNC_DECL = re.compile(r"static\s+func\s+(\w+)\s*\(")
 ENUM_DECL = re.compile(r"@objc enum (\w+)\s*:\s*Int[^{]*\{")
 ENUM_CASE = re.compile(r"^\s*case\s+(\w+)(?:\s*=\s*(-?\d+))?\s*$", re.M)
 ENUM_DEFAULT = re.compile(r"static\s+let\s+defaultMode\s*:\s*Self\s*=\s*\.(\w+)")
+# The same shape under another name. `MouseInputDriverStrategy` names its default
+# `defaultStrategy`, and a reader that only knows `defaultMode` reads that enum as
+# having no default at all -- which surfaced as a debt entry claiming
+# "profile key mouseDriver is not bound in this profile", pointing a reviewer at the
+# profile struct when the default is stated one file away.
+ENUM_STATIC = re.compile(r"static\s+let\s+(\w+)\s*:\s*Self\s*=\s*\.(\w+)")
 DISPLAY_KEY_BODY = re.compile(r"var\s+displayKey\s*:\s*String\s*\{(.*?)\n\s*\}", re.S)
 DISPLAY_KEY_CASE = re.compile(
     r"case\s+\.(\w+)\s*:\s*return\s+\"((?:[^\"\\]|\\.)*)\"", re.S)
@@ -703,6 +906,7 @@ class Symbols:
     def __init__(self):
         self.values = {}       # name -> literal
         self.pending = {}      # name -> expression source (resolved transitively)
+        self.exprs = {}        # name -> one-line expression it is defined by
         self.arrays = {}       # name -> [literal]
         self.tables = {}       # name -> {title: value}
         self.enums = {}        # name -> {"default": case, "keys": {case: title},
@@ -755,13 +959,16 @@ class Symbols:
             entry = {"keys": keys, "raw": raw}
             if default:
                 entry["default"] = default.group(1)
+            entry["statics"] = dict(ENUM_STATIC.findall(body))
             absent = self._absent_case(body)
             if absent:
                 entry["absent"] = absent
             # Merge rather than replace: an extension elsewhere may add `displayKey`.
             previous = self.enums.get(name, {})
-            merged = {"keys": dict(previous.get("keys", {})), "raw": dict(previous.get("raw", {}))}
+            merged = {"keys": dict(previous.get("keys", {})), "raw": dict(previous.get("raw", {})),
+                      "statics": dict(previous.get("statics", {}))}
             merged["keys"].update(keys)
+            merged["statics"].update(entry.get("statics", {}))
             merged["raw"].update(raw or merged["raw"])
             if "default" in entry:
                 merged["default"] = entry["default"]
@@ -841,6 +1048,13 @@ class Symbols:
                 self.values.setdefault(name, literal)
             elif re.fullmatch(r"[A-Za-z_]\w*", source):
                 self.pending.setdefault(name, source)
+            elif source and "{" not in source and "\n" not in source:
+                # A one-line expression constant (`defaultMouseDriver =
+                # MouseInputDriverStrategy.defaultStrategy.displayKey`). Held aside
+                # rather than dropped so a binding can say *which* expression it
+                # choked on; a multi-line literal is a table or array, and those are
+                # read by their own readers.
+                self.exprs.setdefault(name, source)
 
     def _resolve_pending(self):
         for _ in range(12):
@@ -1012,11 +1226,18 @@ class Evaluator:
         # `Type.defaultMode` is a static member of an enum, and the enum is described
         # by its cases rather than by a literal in the symbol table. It yields the same
         # marker an initializer yields so `.rawValue` and `.displayKey` both resolve.
-        if base[0] == "name" and base[1] in self.symbols.enums and name == "defaultMode":
+        # The member's *name* is not part of the shape: four enums spell it
+        # `defaultMode`, the mouse driver's spells it `defaultStrategy`, and matching on
+        # the name is what made the latter read as "enum has no default".
+        if base[0] == "name" and base[1] in self.symbols.enums:
             entry = self.symbols.enums[base[1]]
-            if "default" in entry:
+            statics = entry.get("statics", {})
+            if name in statics:
+                return ("enum-value", base[1], statics[name])
+            if name == "default" and "default" in entry:
                 return ("enum-value", base[1], entry["default"])
-            raise Unresolved("%s declares no defaultMode" % base[1])
+            if name.startswith("default"):
+                raise Unresolved("%s declares no static member %s" % (base[1], name))
         target = self.value(base) if base[0] != "symbol" or base[1] not in ("enhancedAudioEQGains",) else None
         # An enum initializer evaluates to a marker rather than a literal, so
         # `.displayKey` and `.rawValue` resolve against the table the enum itself
@@ -1384,6 +1605,16 @@ def profile_bindings(symbols, fields, overrides=None):
             symbol = "default" + name[0].upper() + name[1:]
             if symbol in symbols.values:
                 env[name] = symbols.values[symbol]
+            elif symbol in symbols.pending or symbol in symbols.exprs:
+                source = symbols.pending.get(symbol) or symbols.exprs[symbol]
+                # The constant exists but is written as an expression -- 
+                # `defaultMouseDriver = MouseInputDriverStrategy.defaultStrategy
+                # .displayKey` -- so the binding is the expression and the evaluator
+                # either reduces it or says which shape stopped it. Binding nothing
+                # instead reported "profile key mouseDriver is not bound in this
+                # profile", which points the reviewer at the wrong file: the default
+                # is stated, the reader is what cannot read it.
+                env[name] = Deferred(source)
             elif name in NON_OPTIONAL_FROM_DEFAULTS:
                 env[name] = NON_OPTIONAL_FROM_DEFAULTS[name]
     env.update(overrides or {})
@@ -1435,7 +1666,10 @@ def same_expression(interface, stream):
     report a fork that cannot exist, and the report would be noise that hides the
     forks that can.
     """
-    left, right = interface.get("source", []), stream.get("source", [])
+    left = [interface["expression"]] if interface.get("expression") \
+        else list(interface.get("source", []))
+    right = [stream["expression"]] if stream.get("expression") \
+        else list(stream.get("source", []))
     if len(left) != 1 or len(right) != 1:
         return False
     try:
@@ -1510,6 +1744,112 @@ def display_names_agree(interface, stream, symbols):
     return bool(naming) and all(table[label] == number for table in naming)
 
 
+# `Self.getInt(from: Self.defaultPacingOptions, in: Self.pacingOptions)` is how the
+# stream spells "the row the picker shows". The table is a plain `[String]`, so its
+# stored number is the element's position and there is no `(title, value)` pair to
+# read -- `value_tables_named` cannot see it, and `Symbols.arrays` holds the labels
+# under the name the call's `in:` label names.
+STRING_INDEX_READ = re.compile(r"\bgetInt\(\s*(?:[^()]*?,\s*)?in:\s*(?:[\w.]*\.)?(\w+)")
+
+
+def index_tables_named(sources, symbols):
+    """The `[String]` option tables a piece of source reads an index out of.
+
+    Only the table named at the call site counts. Searching the surrounding text for
+    any array whose elements include the label would let an unrelated list -- the app
+    has `mouseModes`, `videoCodecs`, and a dozen more, and two of them carry the word
+    "Auto" -- settle a comparison it has nothing to do with.
+    """
+    found = []
+    for source in sources:
+        for match in STRING_INDEX_READ.finditer(source):
+            table = symbols.arrays.get(match.group(1))
+            if table:
+                found.append((match.group(1), table))
+    return found
+
+
+# The loader decodes a stored index back into the label the row shows:
+# `selectedPacingOptions = Self.getString(from: settings.framePacing, in:
+# Self.pacingOptions)`. The table named there is the same table `getInt` writes the
+# index into, so it is what says which option the number 0 stands for -- the source
+# fact a bare `return 0` in an accessor is missing.
+ENCODE_TABLE = re.compile(r"\bgetString\(\s*from:\s*settings\.(\w+)"
+                          r"(?:\s*\?\?[^,]*)?,?\s*in:\s*(?:[\w.]*\.)?(\w+)", re.S)
+
+
+def key_index_tables(tree):
+    """{profile key: [table name]} for keys the loader decodes out of an option array.
+
+    Read out of the loader rather than hard-coded: a table that rots silently is the
+    defect class this whole gate exists for. A key that decodes out of two different
+    tables is dropped rather than guessed -- the index would then mean two things, and
+    picking one is how a false green gets manufactured.
+    """
+    text = tree.read(PERSISTENCE)
+    marker = re.search(r"func loadSettings\(\)\s*\{", text)
+    if not marker:
+        return {}
+    try:
+        body = text[marker.end():brace_matched(text, marker.end() - 1)]
+    except Unresolved:
+        return {}
+    found = {}
+    for key, table in ENCODE_TABLE.findall(body):
+        found.setdefault(key, set()).add(table)
+    return {key: sorted(tables) for key, tables in found.items() if len(tables) == 1}
+
+
+def label_index_agreement(interface, stream, symbols, loader_tables=()):
+    """Decide a label compared against an index: 'agrees', 'conflicts', or 'unproven'.
+
+    Three answers, because there are three situations and the old code conflated two
+    of them. When the stream side reads an index out of a table it names
+    (`in: pacingOptions`), the table settles the question: `1` beside "Smoothest
+    Video" is that row, and calling it a fork is the false red this function prevents
+    -- three of them, on `audioConfiguration`, `controllerDriver`, and `framePacing`,
+    all shipped and all harmless. When the stream side reads *no* table --
+    `audioConfiguration(for:)` ends with a bare `return 0` and a `// Stereo default`
+    comment -- nothing in the source says which row 0 is, and the comment is not
+    evidence: a comment is exactly what stops agreeing with the code. That is
+    'unproven', which goes on the debt books. And when the named table puts the label
+    at a different index, that is a real fork and stays a violation.
+
+    Returning 'unproven' rather than falling through to a violation is the strict
+    direction: the key leaves the ledger-less green column, a reviewer sees it, and a
+    later edit that spells the index against the table clears it for real.
+    """
+    label, number = interface.get("value"), stream.get("value")
+    if isinstance(number, bool) or not isinstance(number, int):
+        return None
+    if not isinstance(label, str):
+        return None
+    tables = index_tables_named(stream.get("source", ()), symbols)
+    tables += index_tables_named(interface.get("source", ()), symbols)
+    if not tables:
+        # The accessor spells a bare number, so the call site names no table. The
+        # loader may still name one: `audioConfiguration` is decoded with
+        # `getString(from: settings.audioConfiguration, in: audioConfigurations)`, and
+        # the encoder writes the index into that same array, so the number's meaning
+        # is a source fact -- not the `// Stereo default` comment beside it, which is
+        # the first thing to stop being true when the array is reordered.
+        tables = [(name, symbols.arrays[name]) for name in loader_tables
+                  if symbols.arrays.get(name)]
+    if not tables:
+        return "unproven", ("the stream side spells its default as the bare index %r "
+                            "and names no option table, so no source says which row "
+                            "the picker's %r is" % (number, label))
+    naming = [(name, table) for name, table in tables if label in table]
+    if not naming:
+        return "conflicts", ("%r is not a row of %s, which is the table the index is "
+                             "read out of" % (label, ", ".join(sorted({
+                                 name for name, _ in tables}))))
+    if all(table.index(label) == number for _, table in naming):
+        return "agrees", ", ".join(sorted({name for name, _ in naming}))
+    return "conflicts", ("the table %s puts %r at index %d, the stream defaults to %d"
+                         % (naming[0][0], label, naming[0][1].index(label), number))
+
+
 class Deferred:
     """An environment binding whose value is another expression, not a literal.
 
@@ -1554,6 +1894,26 @@ def audit(tree=None):
     # would let a stream-only default settle an interface question.
     for key, entries in chained_fallbacks(tree, BRIDGE).items():
         bridge.setdefault(key, []).extend(entries)
+    # Snapshot of what the `??` search found, before the trailing-return shape joins.
+    # A non-optional profile field makes `settings.x ?? d` dead code, and that verdict
+    # must keep applying to the coalesce; the accessor's trailing `return` answers a
+    # different question (`Settings.getSettings(for:)` returned nil, so there is no
+    # profile at all) and is live for exactly those non-optional fields -- which is why
+    # the shape exists. Without the split, the six non-optional tail keys would be
+    # reported as dead fallbacks and skipped, trading one false green for a false red.
+    coalesced = set(bridge)
+    # A key that already has a coalesce default on either layer keeps the judgement it
+    # had. Adding a second stream-side source to it would break `same_expression`
+    # (which requires one expression per side) and push the key into evaluation, so
+    # `displayMode` -- green before this shape existed -- would report as unproven
+    # purely because the reader got wider. That is a new red this wave did not earn, and
+    # a gate that moves verdicts it was not asked to move stops being evidence. Those
+    # keys keep one audited default and the gap is recorded in the goal-mode contract;
+    # the keys that join are the ones no account held at all.
+    tails = {key: entries for key, entries in accessor_tails(tree).items()
+             if key not in coalesced and key not in persistence}
+    for key, entries in tails.items():
+        bridge.setdefault(key, []).extend(entries)
     # Branch-local defaults, indexed by the field the branch is about. Kept out of
     # `bridge` so the value inside a sentinel arm is not charged to the key it merely
     # reads, and passed to `stream_value` so it is *proved* against the interface rather
@@ -1583,18 +1943,35 @@ def audit(tree=None):
     # a sentinel branch still has to be on the books, because a key that leaves the
     # candidate set looks identical to a key that got proven, and the debt ratchet
     # would retire its entry on a silence.
+    dangling = dangling_accessor_calls(tree)
     candidates = sorted(set(bridge) | set(persistence) | set(stream_view)
+                        | set(dangling)
                         | {key for entries in guarded_bridge.values()
                            for _line, key, _source in entries})
+    field_map = interface_field_map(tree)
+    # {profile key: [option array name]} for keys the loader decodes by index.
+    loader_tables = {key: tuple(tables) for key, tables in key_index_tables(tree).items()}
     for key in candidates:
         optional = fields.get(key)
         if optional is False:
             # The left side of `??` can never be nil, so whatever follows it is
             # decoration. Saying so is cheaper than deleting it and keeps the claim
             # checkable if the field ever becomes optional.
-            if key in bridge or key in persistence:
+            # `coalesced` is the pre-merge snapshot: a trailing return that just joined
+            # `bridge` is *not* a dead coalesce, and reading `bridge` here would report
+            # every non-optional tail key as a dead fallback the audit cannot skip.
+            if key in coalesced or key in persistence:
                 problems.append("dead fallback: %s is not optional" % key)
-            continue
+            if key not in tails and key not in dangling:
+                continue
+            # The dead coalesce is still reported above; the key keeps its audit,
+            # because its live default is the accessor's trailing return.
+            # `dangling` is the second reason a non-optional key keeps its audit: the
+            # stream still asks Objective-C for the value, so the key has a live
+            # consumer whose default is no longer stated anywhere. Skipping it here is
+            # how a one-sided rename makes a key leave the books in silence -- the
+            # accessor's tail return is uncredited (wrong name), the dictionary never
+            # carried it, and the surviving call site is the only evidence left.
         if optional is None:
             problems.append("unknown profile field %s" % key)
             continue
@@ -1603,8 +1980,19 @@ def audit(tree=None):
                               profile_bindings(symbols, fields, overrides=overrides))
         interface = interface_value(key, tree, evaluator, persistence,
                                     wrapped, helper_defaults_found, enum_reads)
+        if interface.get("unresolved") and key not in persistence:
+            # The loader may name the field something else (`framePacing` is shown as
+            # `selectedPacingOptions`), which is a source fact, not a guess.
+            renamed = field_map.get(key)
+            if renamed and renamed != key:
+                retry = interface_value(renamed, tree, evaluator, persistence,
+                                        wrapped, helper_defaults_found, enum_reads)
+                if not retry.get("unresolved"):
+                    retry["source"] = list(retry.get("source", [])) + [
+                        "profile key %s" % key]
+                    interface = retry
         stream = stream_value(key, tree, evaluator, bridge, stream_view, read_by_objc,
-                              guarded_bridge)
+                              guarded_bridge, dangling=dangling)
         entry = {"key": key, "interface": interface, "stream": stream}
 
         # One layer stating two different values for the same absent key is a fault
@@ -1673,6 +2061,26 @@ def audit(tree=None):
                 entry["display_name_mapping"] = True
                 compared.append(entry)
                 continue
+            verdict, note = label_index_agreement(
+                interface, stream, symbols,
+                loader_tables=loader_tables.get(key, ())) or (None, None)
+            if verdict == "agrees":
+                # The picker's label and the stored index are one option row, and the
+                # array the call names is what proves it. Recorded on the entry so the
+                # report says *why* two different literals are the same choice.
+                entry["display_name_mapping"] = True
+                entry["index_table"] = note
+                compared.append(entry)
+                continue
+            if verdict == "unproven":
+                # Not a fork, not an agreement: the stream side's number has no table
+                # in the source that says which row it is. Reported as unproven so the
+                # key lands on the debt books, where a reviewer sees it and can settle
+                # it by spelling the index against the table.
+                unresolved.append((key, describe(persistence.get(key, [])),
+                                   describe(bridge.get(key, []))
+                                   + describe(stream_view.get(key, [])), note))
+                continue
             divergences.append((key, interface["value"], interface["source"],
                                 stream["value"], stream["source"]))
 
@@ -1721,18 +2129,26 @@ def interface_value(key, tree, evaluator, persistence, wrapped, helper_defaults_
     # place it can have said so, and it says it for most keys.
     assigned = defaults_assignments(tree).get(key)
     if assigned:
+        # `expression` is what `same_expression` compares; `source` is what the report
+        # prints. They cannot be the same string: the prefixed spelling is the one that
+        # tells a reviewer where the value came from, and it is also the one that makes
+        # two identical expressions parse differently, which is how `streamShortcuts`
+        # -- both layers calling `StreamShortcutProfile.defaultShortcuts()` -- reported
+        # "unsupported call" instead of "one expression, so it cannot have forked".
         try:
             return {"value": evaluator.value(parse(assigned[0][1])),
+                    "expression": assigned[0][1],
                     "source": ["loadDefaultSettings() %s" % assigned[0][1]]}
         except Unresolved as error:
             return {"unresolved": str(error),
+                    "expression": assigned[0][1],
                     "source": ["loadDefaultSettings() %s" % assigned[0][1]]}
     return {"unresolved": "%s is read by the interface with no fallback anywhere" % key,
             "source": []}
 
 
 def stream_value(key, tree, evaluator, bridge, stream_view, read_by_objc,
-                 guarded=None):
+                 guarded=None, dangling=None):
     """What the stream runs with when the profile holds nothing for `key`.
 
     Three possible sources, in the order the runtime reaches them: the bridge's own
@@ -1810,6 +2226,15 @@ def stream_value(key, tree, evaluator, bridge, stream_view, read_by_objc,
                               % (key, first[1], first[4], first[1]),
                 "source": ["settings.%s == .zero ? ... ?? %s (line %d)"
                            % (first[1], first[4], first[3])]}
+    if dangling and key in dangling:
+        # The stream still asks Objective-C for this key; the Swift side no longer
+        # exports an accessor under the name it asks with. Whatever default the old
+        # accessor spelled is no longer the stream's default for anything, and the
+        # key must stay visible while a reviewer works that out.
+        return {"unresolved": "%s is called by Objective-C through %s, which names no "
+                              "accessor on the Swift side, so its default left the "
+                              "books with the accessor" % (key, dangling[key]),
+                "source": [dangling[key]]}
     if key in read_by_objc:
         return {"unresolved": "%s reaches Objective-C with no fallback in either the "
                               "bridge or the stream, so an unset profile reads as the "
@@ -1911,6 +2336,23 @@ def relaunch(mutations):
 def key_reported(result, key):
     return (any(item[0] == key for item in result["divergences"])
             or any(item[0] == key for item in result["unresolved"]))
+
+
+def key_books(result, key):
+    """The names of every account the audit filed `key` under.
+
+    The Wave Y contract is about *silence*, and silence is not the same defect as a
+    wrong verdict: a key that leaves the books entirely reports nothing at all, so a
+    check that only asks "is it red" passes when the gate stops looking. Returning the
+    account names lets a check assert the book the key landed in, including the
+    "must be somewhere" case that has no red to point at.
+    """
+    books = []
+    for name in ("divergences", "compared", "unresolved", "unread", "ledger"):
+        if any((item["key"] if isinstance(item, dict) else item[0]) == key
+               for item in result[name]):
+            books.append(name)
+    return books
 
 
 def self_test():
@@ -2202,6 +2644,46 @@ def self_test():
                    not any("pointerSensitivity" in problem
                            for problem in result["problems"])))
 
+    # 12. The trailing-`return` shape: eight keys state their stream-side default as
+    #     the last statement of an accessor that Objective-C calls by name, with no
+    #     `??` anywhere. A gate that only searches `settings.x ??` never sees them, so
+    #     the window can offer rumble while the stream refuses it and the audit prints
+    #     "0 divergent" (measured on this tree, 2026-11-01). Four checks, both
+    #     polarities, because the failure mode is a key with no entry at all.
+    #     (a) the accessor's tail default moved while the interface still reads the
+    #         named constant -- a real fork, so it must be a divergence;
+    result = relaunch([(BRIDGE, "    return SettingsModel.defaultRumble",
+                        "    return false")])
+    checks.append(("accessor trailing return diverging from the interface is reported",
+                   key_books(result, "rumble") == ["divergences"]))
+    #     (b) the same default re-spelled as the literal the constant holds: the value
+    #         did not move, so this must stay green. Without it, (a) only proves the
+    #         gate string-matches a constant name;
+    result = relaunch([(BRIDGE, "    return SettingsModel.defaultRumble",
+                        "    return true")])
+    checks.append(("accessor trailing return re-spelled as its own value stays green",
+                   key_books(result, "rumble") == ["compared"]))
+    #     (c) the accessor renamed so Objective-C's `rumbleFor:` names nothing: the tail
+    #         return stops being credited *and* the dictionary never carried the key, so
+    #         the easy way out is for the key to vanish. It has to surface as unproven,
+    #         naming the surviving call site.
+    result = relaunch([(BRIDGE, "@objc static func rumble(for key: String) -> Bool",
+                        "@objc static func rumbleRenamed(for key: String) -> Bool")])
+    checks.append(("an accessor rename cannot delete the key from the books",
+                   key_books(result, "rumble") == ["unresolved"]))
+    #     (d) the interface-side name mapping has to come from the source too:
+    #         `framePacing` is shown as `selectedPacingOptions`, which the loader fills
+    #         from `settings.framePacing`. Renaming the profile key the loader reads has
+    #         to break the mapping and the proof with it -- a hardcoded alias table
+    #         would keep judging the two equal.
+    result = relaunch([(PERSISTENCE,
+                        "selectedPacingOptions = Self.getString(from: settings.framePacing,"
+                        " in: Self.pacingOptions)",
+                        "selectedPacingOptions = Self.getString(from: "
+                        "settings.framePacingRenamed, in: Self.pacingOptions)")])
+    checks.append(("the profile-key-to-field mapping is read from the loader",
+                   key_books(result, "framePacing") != ["compared"]))
+
     failed = 0
     for name, passed in checks:
         print("%s %s" % ("ok  " if passed else "FAIL", name))
@@ -2217,8 +2699,11 @@ def self_test():
           "key two ways, a sentinel branch's fallback against its guard's default, and "
           "the debt ratchet both ways, and the consumer surface (a dictionary export "
           "fallback flipped, a bare optional that must never read as agreement, a "
-          "multi-key reader's fallback that must not be credited to its key, and an "
-          "accessor fallback that must be credited); %d of the checks are negative "
+          "multi-key reader's fallback that must not be credited to its key, an "
+          "accessor fallback that must be credited) and the accessor's trailing return "
+          "(moved reported, re-spelled forgiven, a rename that must not silence the key, "
+          "and a name mapping read from the loader rather than hardcoded); %d of the "
+          "checks are negative "
           "controls, so an equivalent re-spelling staying green is asserted, not assumed"
           % (len(checks), sum(1 for name, _ in checks
                               if "stays green" in name or "stay green" in name)))

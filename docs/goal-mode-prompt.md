@@ -1,6 +1,96 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-01 十一次基点刷新：main=`1031a42a`，Wave X 默认值门禁的反假绿）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-01 十二次基点刷新：main=`515dfcf9`，Wave Y 默认值门禁的第二把假绿）
 
-## 0. Wave X 目标模式（当前执行窗口，2026-11-01）
+## 0. Wave Y 目标模式（当前执行窗口，2026-11-01）
+
+> 本节是本轮唯一执行契约。Wave X 已收口（§0.1），本波修的是同一把尺子上**另一个**
+> 读数错误：Wave X 修的是"回退记到错误的键名下"，本波修的是"回退根本不在被搜索的
+> 语法形状里，于是那个键连账本都不上"。
+
+**目标**：让 `scripts/defaults-consistency.py` 对**以访问器尾部 `return` 表达默认值**
+的键也必须在两层不一致时变红，并且在这类键无法判等时**必须报未证明**，绝不给"该键
+不存在"这种沉默。
+
+**已量化事实（2026-11-01 逐处读源码实测，非估计）**：
+- `bridge_read_ranges` 只搜 `settings\.(\w+)\s*\?\?` 这一种形状，因此一个键要被审计
+  看见，它的串流侧默认值**必须写成 `??`**。
+- 实测有 **8 个键**被 ObjC 真实调用（`[SettingsClass keyFor:]`），其默认值却写成
+  `if let settings = … { return … }` + **函数末尾 `return 默认值`**：
+  `appArtworkDimensions`（`SettingsObjCBridge.swift:1365`）、`audioConfiguration`
+  （`:1388`）、`controllerDriver`（`:995`）、`dimNonHoveredArtwork`（`:1373`）、
+  `framePacing`（`:1475`）、`mouseDriver`（`:1000`，委托私有 helper）、
+  `rumble`（`:987`）、`streamShortcuts`（`:1726`）。
+  这 8 个键在 `compared / divergences / unresolved / unread` **四本账上全部不存在**
+  （35 个被调用访问器中减去这 8 个 = 27，即当前 `bridge_stream_accessors` 的读数里
+  它们全被静默丢弃）。
+- **假绿的量法（决定性变异，同一棵源码树）**：把 `SettingsObjCBridge.swift:987` 的
+  `return SettingsModel.defaultRumble` 改成 `return false` —— 界面侧仍是
+  `SettingsModel+DerivedValues.swift:1065 defaultRumble = true`，即"设置窗口显示开启
+  震动、串流实际不震动" —— 审计打印 `0 divergent`、exit 0，且 `rumble` 在整个返回值
+  里一次都没出现。**这条对照必须固化进 self-test。**
+- 界面侧对这 8 个键同样**没有** `??`：默认值来自 `loadDefaultSettings()` 的赋值
+  （`defaults_assignments` 已能读到），但**字段名不一定同名**：`framePacing` 对应
+  `selectedPacingOptions`、`audioConfiguration` 对应 `selectedAudioConfiguration`、
+  `controllerDriver` 对应 `selectedControllerDriver`、`mouseDriver` 对应
+  `selectedMouseDriver`（见 `SettingsModel+Persistence.swift:308/322/387/389` 的
+  `selectedX = Self.getString(from: settings.<profileKey>, …)`）。因此界面侧默认值的
+  键名映射也必须**从源码反查**，不得硬编码一张表。
+- 已逐键核对运行时结论（用于校准，不作为"已修好"的依据）：`audioConfiguration` 两侧
+  都落在 `audioConfigurations[0]="Stereo"`、`controllerDriver`/`mouseDriver`/
+  `framePacing` 两侧都走同一张表或同一常量、`dimNonHoveredArtwork`/`rumble` 同名同
+  常量、`appArtworkDimensions` 界面侧是 `nil`+placeholder(300×400) 而串流侧是
+  `CGSizeMake(300, 400)`、`streamShortcuts` 两侧同调 `defaultShortcuts()`。
+  **本波不预期出现真实分叉**；尺子的正确性由变异证明，不由"现在报红"证明。
+
+**完成边界（六条全绿才算完成，缺一不算）**：
+1. **尾部 `return` 归属**：只在通过 `bridge_stream_accessors`（同名 + ObjC 真实调用）
+   的访问器体内，取**大括号深度 0** 的最后一个 `return` 表达式；表达式里含 `settings.`
+   的不算（那是读到的值，不是缺省值）。guard / 闭包内的 `return` 不得被当作函数默认值。
+2. **界面侧键名映射来自源码**：`<profileKey>` → 界面字段名从 `loadSettings()` 体内
+   `field = Self.getString(from: settings.<profileKey>` / `field = MouseInputDriverStrategy(
+   persistedRawValue: settings.<profileKey>` 反查；反查不到才退回同名。映射结果必须
+   能在 self-test 里被改名突变打破。
+3. **无法判等必须报未证明，不得沉默**：`mouseDriver` 这类"尾部 return 是委托表达式"
+   （`mouseInputStrategy(for: key).rawValue`）的键，若求值不到字面量，**必须**进
+   `unresolved`（进而进债务账），绝不允许回到"键不在账上"。`appArtworkDimensions`
+   的 `CGSizeMake` 同理：求值不出就报未证明，**不得**为凑绿而特判成尺寸相等。
+4. **self-test 至少四条，且含正/负对照**：
+   (a) 负向（尺子会红）：`rumble` 访问器尾部改成 `return false` → 报该键分叉；
+   (b) 正向（未过拟合）：把 `return SettingsModel.defaultRumble` 重述成 `return true`
+       → **保持绿**（证明判的是值，不是常量名）；
+   (c) 负向（不得沉默）：把某访问器名改成 ObjC 不再调用的名字 → 该键报未证明/新债务，
+       **不得**从账上消失；
+   (d) 负向（映射来自源码）：把 `loadSettings` 里 `selectedPacingOptions` 的读取键改名
+       → 该映射必须失效并报错/报未证明，**不得**继续判等。
+5. **既有性质不回退**：`--self-test` 原 24 项全绿，且 `mute-on-focus-loss-tests.py`、
+   `background-gamepad-tests.py` 仍 0 failures；字典侧 87 键的 compared 数、5 项已受理
+   债务不得因本波减少（新增未证明键须进基线，`0 new / 0 stale`）。
+6. **接缝在事实源 + 本地门禁 0 failed + 本次 SHA 流水线到终态**：
+   `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；`liguangming` 审批合并后
+   回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
+   `跨文件静态安全扫描` 在本环境 `allow_failure=true`，只记「已豁免」不计入通过。
+
+**边界**：不改设置面板任何默认值与标签栏 `NSSegmentedControl` role=`.tabs` 外观；
+**不改任何 `.swift`/`.m` 运行时行为**（本波只改 `scripts/` 下的尺子 + 债务基线 + 文档，
+八个键的出厂运行时结果逐一不变）；不解冻 USB 真重定向 / Developer ID 公证 / 自动更新；
+`hardware_validated` 保持 `false`。
+
+**已知未建模面（诚实登记，不当已完成）**：私有 helper 委托（`mouseInputStrategy(for:)`）
+内部的 `return MouseInputDriverStrategy.defaultStrategy` 本波**不**跨函数求值，该键按
+未证明处理；跨函数求值需要调用图，留作独立一波，不在本波偷偷扩大尺子范围。
+
+**验收判据**：`python3 scripts/defaults-consistency.py --self-test` 全 `ok`（含新负对照）；
+`python3 scripts/defaults-consistency.py` 末行 `0 divergent` 且 `0 new / 0 stale` debt，
+并且 `rumble` 等键**出现在账上**（`compared` 或 `unresolved`，不再是缺席）；
+`bash scripts/local-gates.sh` 0 failed；本次 SHA 流水线到终态。
+
+## 0.1 Wave X 目标模式（已完成并合并：MR 45 → `515dfcf9`，合并者 liguangming，head pipeline 968 success，main pipeline 973 success）
+
+> 本节已收口：五条完成边界全部落地（归属按消费路径、导出面写死可见默认值、
+> self-test 含"这把尺子会红"的正负对照、两个下游门禁升级、事实源接缝 + 本地门禁）。
+> 它修的是**归属**读错；同一把尺子还有一处**语法形状**读错（只认 `??`），
+> 那是 Wave Y（§0）的标的，见其"假绿的量法"一条。
+
+### 0.1.1 Wave X 契约原文（保留供追溯）
 
 > 本节是本轮唯一执行契约。Wave W 已收口（§0.1），本波修的是 Wave W 那把尺子自身的读数错误。
 
@@ -443,22 +533,17 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-01，MR 1–44 全部合并，在途 MR = MR 45）
+## 1. 当前基点（截至 2026-11-01，MR 1–45 全部合并，在途 MR = Wave Y）
 
-- 代码基点 main = `1031a42a`（`Merge branch 'wave-w-defaults-truthfulness' into 'main'`，
-  MR 44，合并者 `liguangming`，head pipeline **#952 = success**）。其上是 Wave W
-  `1e29c661`（`scripts/defaults-consistency.py` 求值判等 + 债务账 + self-test）。
-  合并后的 main 流水线 **#959（`1031a42a`）**在本文档刷新时 `audit:python` /
-  `build-app` / `test-app` / `audit:sources` / `audit:gates` / `audit:deep` /
-  `package-dmg` 与五个必跑安全扫描已 success，`mutation-battery` 仍在 Mac runner
-  （id 8，`mac-m2-130`，全局 `concurrent = 1`）上跑，`publish-github` 排队 ——
-  属自愈排队，不是失败，**其终态未到之前该 DMG 不计入"已验证产物"**。
-- 在途：**MR 45 `de8b7596`**（Wave X —— `defaults-consistency.py` 的归属必须按消费路径，
-  否则同一缺陷会读成绿色；三个真被字典读的键在导出出处命名单一默认值）。
-  head pipeline **#966** 排队中；`detailed_merge_status=security_policy_violations`
-  是 merge-preview 未跑完的瞬时状态（MR 23 已实证过一次），等预览管线到终态再判。
-  本机门禁实测 **114 passed / 0 failed / 13 skipped**（skip 逐项是需要构建产物或 CI
-  变量的项，加完整变异电池与 render-probe）。
+- 代码基点 main = `515dfcf9`（`Merge branch 'wave-x-consumer-surface' into 'main'`，
+  MR 45，合并者 `liguangming`，`merged_at=2026-11-01T01:03:05Z`，merge-preview
+  pipeline **#968 = success**）。合并后的 main 流水线 **#973（`515dfcf9`）= 16 jobs
+  全 success**，其中 `跨文件静态安全扫描` 是 `allow_failure=true` ——
+  **已豁免，不计入通过**。
+- 在途：Wave Y（本波，分支 `wave-y-accessor-default-arm`，基于 `515dfcf9`）——
+  `defaults-consistency.py` 的第二把假绿：只搜 `settings.x ??` 因而看不见"访问器尾部
+  `return` 表达默认值"的八个键。本机门禁实测 **114 passed / 0 failed / 13 skipped**
+  （skip 逐项是需要构建产物或 CI 变量的项，加完整变异电池与 render-probe）。
 - 上一基点 `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
   MR 43，合并者 `liguangming`，head pipeline **#900 = success**）。其上是 Wave V
   `c1f0eeac`（MR 42，head pipeline **#897 = success**，12 个 job，
