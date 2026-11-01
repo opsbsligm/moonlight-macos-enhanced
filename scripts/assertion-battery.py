@@ -2512,6 +2512,17 @@ def main():
                                {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
         restore_pending()
         # Then end the way the terminal asked, with the tree whole.
+        # The re-raise only lands if the signal is unmasked first: a signal still
+        # blocked when os.kill delivers it stays pending forever, the handler
+        # returns, and the process walks on with the tree restored and the stop
+        # never honoured -- a Ctrl+C that reads as ignored. That is shown by
+        # scripts/battery-interrupt-tests.py, which runs this body in a child and
+        # times it; its negative control deletes the unblock below and gets a
+        # child that outlives its own goodbye. Unblocking after the restore also
+        # re-delivers a signal that arrived during the plant, so an interrupt is
+        # honoured whichever side of the restore it landed on.
+        signal.pthread_sigmask(signal.SIG_UNBLOCK,
+                               {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 

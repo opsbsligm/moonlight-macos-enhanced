@@ -3679,6 +3679,22 @@ check(rco_rules.returncode == 0,
       "the reconnect-backoff self-test failed:\n"
       + (rco_rules.stdout + rco_rules.stderr)[-900:])
 
+# Wave Z-2: battery-interrupt needs no toolchain -- it runs the battery's own handler
+# body in a plain python child against a tempfile -- so it belongs on the local list
+# rather than in CI_ONLY. Excusing it here would be the weaker choice: the defect it
+# watches (restore, then fail to die) is what makes a Ctrl+C look ignored until something
+# sends SIGKILL, and the fastest place to notice that is the command a developer runs
+# before pushing.
+bip_rules = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "battery-interrupt-tests.py"),
+     "--self-test"],
+    capture_output=True, text=True, cwd=root)
+check(bip_rules.returncode == 0,
+      "the battery still dies when a signal asks it to"
+      if bip_rules.returncode == 0 else
+      "the battery-interrupt self-test failed:\n"
+      + (bip_rules.stdout + bip_rules.stderr)[-900:])
+
 # What a DMG has to be is a three-part rule, and until now the repository had none
 # of it: the packaging step fell back from create-dmg to a bare `hdiutil create`
 # with `||`, which succeeds and produces an image with no Applications drop target,

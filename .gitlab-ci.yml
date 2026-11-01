@@ -275,6 +275,13 @@ audit:sources:
     - python3 scripts/mute-on-focus-loss-tests.py --self-test
     - python3 scripts/background-gamepad-tests.py --self-test
     - python3 scripts/reconnect-backoff-tests.py --self-test
+    # Wave Z-2: the battery writes the shipped source, so an interrupt that restores the
+    # tree and then fails to die leaves a run that said goodbye and kept going -- a Ctrl+C
+    # that reads as ignored, and a cancel that only lands on SIGKILL. The unblock that
+    # fixes it is run in a child and timed, not grepped; delete it and the harness reports
+    # a child still alive 15s after its own signal.
+    - python3 scripts/battery-interrupt-tests.py
+    - python3 scripts/battery-interrupt-tests.py --self-test
     - python3 scripts/keyboard-unicode-routing-tests.py
     - python3 scripts/keyboard-ime-routing-tests.py
     - python3 scripts/sas-preset-tests.py
