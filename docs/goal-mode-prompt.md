@@ -1,6 +1,104 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-01 十二次基点刷新：main=`515dfcf9`，Wave Y 默认值门禁的第二把假绿）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-02 十五次基点刷新：main=`e2334917`，Wave Z 未接线的设置开关）
 
-## 0. Wave Y 目标模式（当前执行窗口，2026-11-01）
+## 0. Wave Z 目标模式（当前执行窗口，2026-11-02）
+
+> 本节是本轮唯一执行契约。Wave Y/Z-1/Z-2 已收口（§0.2）。这一波不在默认值尺子上，
+> 而是那把尺子的结论**被误读**所掩盖的另一类缺陷：审计对一个键写
+> `unread by the stream (one value exists, so no fork is possible)`，这句话本身
+> 没错，于是"这个键查过了"就被当成了"这个键没问题"。它只证明了两层不会分叉，
+> **没有证明有人在读它**。
+
+**目标**：让"设置面板里有开关、写进了持久化、运行时零消费者"成为**门禁级红色**，
+并把现存实例登记成带可证伪条件的债务，绝不允许它继续以"已审计通过"的形态存在。
+
+**已量化事实（2026-11-01/02 逐键读源码实测，非估计）**：
+- 探针从 `SettingsStore.swift` 读出 **119 个持久化键**，对每个键在
+  `Limelight/` 全部 `.swift/.m/.h/.mm`（排除设置层自身）里找消费者。
+  判定结果：**110 个有实际消费者，9 个登记为债务**
+  （6 个 `unwired-control` + 3 个 `unreachable-field`）。
+- 匹配必须用**前缀**而非 `\b`：ObjC 访问器是 `settings.keyFor:` 形状，
+  `\bkey\b` 在 `relativeMouseAsAbsoluteFor:` 处失配，会把**有消费者**的键
+  误报成死开关（本探针第一版就是这样误报了 `relativeMouseAsAbsolute`，
+  其真实消费点在 `Limelight/Input/HIDSupport_Internal.h:886`）。
+- 还必须先解析**导出字典键的改名**：`enable10BitSdr` → `sdr10bit`
+  （消费点 `Limelight/Stream/Connection.m:2702`）、`enableMicrophone` → `microphone`
+  （`Connection.m:2553`、`Network/HttpManager.m:519/604`）；按 Swift 字段名 grep
+  会把这两个**有消费者**的键误判成死开关。
+- `unlockMaxBitrate` 也不是死开关：它的消费点在 pane 内部
+  （`SettingsModel+DerivedValues.swift:1408`、`SettingsModel.swift:577/600` 用
+  `bitrateSteps(unlocked:)` 决定滑块档位），"运行时文件里没有"不等于"没有效果"。
+- **逐键手工复核后坐实的实例只有两个半**：
+  1. `captureSystemShortcuts`：UI 在 `SettingsInputPane.swift:503`，访问器
+     `SettingsObjCBridge.swift:1631 captureSystemShortcuts(for:)` **全仓无调用者**
+     （`git log -S "captureSystemShortcutsFor:" --all` 零命中，从未有过调用者）。
+  2. `emulateGuide`：UI 在 `SettingsInputPane.swift:575`，**连 `@objc` 访问器都没有**；
+     Guide 仿真实际在 `Limelight/Input/ControllerEventBaseline.m:19-20` 无条件启用
+     （Start+Select → Guide），与该开关无关。
+  3. （半个）`absoluteMouseMode`：既无 UI 绑定也无消费者，真实决策走
+     `HIDShouldUseAbsolutePointerPath(...)`（`HIDSupport+Pointer.m:608/913`）；
+     它是**死字段**而非死开关，与上两类的处置不同。
+
+**为什么这一波值得做**：用户能拨动一个不生效的开关，比没有这个开关更糟——它是对
+行为的错误承诺。这与"默认值两层一致"是同一个产品的两面：那一半管"显示的值是不是
+生效的值"，这一半管"生效的东西有没有人显示"。
+
+**完成边界（六条全绿才算完成，缺一不算）**：
+1. **消费者判定基于符号解析，不基于键名 grep**：必须解析 `@objc` 访问器的 selector
+   名（含 `@objc(...)` 显式改名）与其 `For:` 调用形状，必须解析导出字典的
+   `"<dictKey>": settings.<swiftName>` 改名映射，两类都要能证明"改名字不会漏判"。
+2. **pane 内部消费算消费**：判定域是整个 `Limelight/`，不是"设置层之外的运行时文件"。
+   `unlockMaxBitrate` 必须是绿；把它判成死开关的门禁视为坏的。
+3. **只登记，不改行为**：本波**不得**接任何新功能、**不得**删除任何 UI 开关、
+   **不得**改任何默认值——那三者都是产品决策，须 owner 逐项批准（见 §5 与本节末）。
+   交付物是"红线 + 债务账 + 每一项的现状说明"。
+4. **self-test 含正/负对照至少四条**：(a) 负向：给某已接线键的访问器调用点删掉 →
+   该键必须报未接线；(b) 正向：把访问器调用改写成另一等价形状 → 保持绿；
+   (c) 负向：把字典导出改名 → 必须仍能追到消费者（证明改名映射在读，不是硬编码）；
+   (d) 负向：pane 内绑定删除 → 该键不得因"无人绑定"而从账上消失。
+5. **既有性质不回退**：`defaults-consistency.py --self-test` 现 35 项
+   （其中 8 项负对照）全绿、`0 divergent`、`0 new / 0 stale`；
+   `mute-on-focus-loss-tests.py`、`background-gamepad-tests.py`、
+   `battery-interrupt-tests.py` 各 0 failures；`bash scripts/local-gates.sh` 0 failed
+   （skip 逐项列名）。
+6. **接缝在事实源**：新门禁同时进 `.gitlab-ci.yml`、镜像 workflow 与
+   `constraints-audit.py`（本地门禁）三处，并由 `gate-coverage-audit` 证明三处都在；
+   `liguangming` 对精确 SHA 审批合并后回读 MR 状态/合并者/main 新 SHA/流水线终态。
+   `跨文件静态安全扫描` 在本环境 `allow_failure=true`，只记「已豁免」不计入通过。
+
+**处置须 owner 决策（本波不动手，只登记）**：`captureSystemShortcuts` 是接上
+（串流全屏时吞掉 Cmd-Tab 等系统快捷键）还是撤掉开关；`emulateGuide` 是让它真正
+门控 `ControllerEventBaseline.m` 的 Guide 仿真还是撤掉；`absoluteMouseMode` 死字段
+是删还是接到 `HIDShouldUseAbsolutePointerPath`。三者都可能改变用户可见行为。
+
+**本波明确不做**：不改任何 `.swift`/`.m` 运行时行为，不改设置面板默认值与
+`NSSegmentedControl role=.tabs` 外观，不解冻 USB 真重定向/公证/自动更新，
+`hardware_validated` 保持 `false`。
+
+**完成边界自证（2026-11-02 实测，逐条对应上节六条）**：
+1. 判定用符号解析：`--json` 119 键中 `relativeMouseAsAbsolute`/`wheelScrollSpeed`/
+   `enable10BitSdr`/`enableMicrophone` 全部 `consumed`（前两个靠 `For:` selector 形状
+   与 `.h` 内联 helper，后两个靠导出字典改名映射），证明不是键名 grep。
+2. pane 内部消费算消费：`unlockMaxBitrate` = `consumed`。
+3. 只登记不改行为：本波 diff 只含新审计脚本 + 基线 + 三处接缝 + 文档，
+   无任何 `Limelight/` 运行时改动、无默认值改动。
+4. self-test 7 个变异 + 16 条钉死判读，覆盖契约要求的四类
+   （(a) `accessor-call-site-deleted` 转红；(b) `export-row-restated`、
+   `accessor-selector-stated-explicitly` 保持绿；(c) `exported-key-read-removed`
+   证明改名映射被真读；(d) `pane-binding-deleted` 后键仍以 `unreachable-field`
+   留在账上，不消失）。实测 `7 mutations, 16 pinned verdicts, 0 failures`。
+5. 既有性质不回退（本机实测）：`defaults-consistency.py --self-test` **35 项全绿**
+   （含 8 项负对照）、判定 **94 evaluated equal / 1 ledgered / 6 unresolved /
+   0 divergent**、债务 **0 new / 0 stale**；`mute-on-focus-loss-tests.py` **0 failures**；
+   `background-gamepad-tests.py` **OK**；`battery-interrupt-tests.py` **0 failures**；
+   `bash scripts/local-gates.sh` **118 passed / 0 failed / 13 skipped**。
+6. 三处接缝齐全：`.gitlab-ci.yml` `audit:python`、镜像 `build.yml`、
+   `constraints-audit.py`（本地门禁）各加判定形态 + self-test 形态；
+   `gate-coverage-audit.py --verify` = **92/92 reachable**、exit 0。
+
+## 0.2 Wave Y 目标模式（已完成并合并：MR 46 → `3a4f47f1`，合并者 liguangming，head pipeline 988 success）
+
+> 本节已收口。Wave Z-1（MR 47 → `2012367a`，合并者 liguangming）继续跨过了
+> 它登记的"私有 helper 委托不跨函数求值"那一层。
 
 > 本节是本轮唯一执行契约。Wave X 已收口（§0.1），本波修的是同一把尺子上**另一个**
 > 读数错误：Wave X 修的是"回退记到错误的键名下"，本波修的是"回退根本不在被搜索的
@@ -533,17 +631,20 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-01，MR 1–45 全部合并，在途 MR = Wave Y）
+## 1. 当前基点（截至 2026-11-02，MR 1–48 全部合并，在途 MR = Wave Z-3）
 
-- 代码基点 main = `515dfcf9`（`Merge branch 'wave-x-consumer-surface' into 'main'`，
-  MR 45，合并者 `liguangming`，`merged_at=2026-11-01T01:03:05Z`，merge-preview
-  pipeline **#968 = success**）。合并后的 main 流水线 **#973（`515dfcf9`）= 16 jobs
-  全 success**，其中 `跨文件静态安全扫描` 是 `allow_failure=true` ——
-  **已豁免，不计入通过**。
-- 在途：Wave Y（本波，分支 `wave-y-accessor-default-arm`，基于 `515dfcf9`）——
-  `defaults-consistency.py` 的第二把假绿：只搜 `settings.x ??` 因而看不见"访问器尾部
-  `return` 表达默认值"的八个键。本机门禁实测 **114 passed / 0 failed / 13 skipped**
-  （skip 逐项是需要构建产物或 CI 变量的项，加完整变异电池与 render-probe）。
+- 代码基点 main = `e2334917`（`Merge branch 'wave-z2-battery-interrupt-honoured' into 'main'`，
+  MR 48，合并者 `liguangming`，`merged_at=2026-11-01T15:30:30Z`，head pipeline
+  **#1005 = success**）。合并后的 main 流水线 **#1006（`e2334917`）** 在本文档刷新时仍为
+  `waiting_for_resource`（单 Mac runner 排队），**未计入通过**，收尾前须回读终态。
+- 上一基点 `2012367a`（Wave Z-1：读取一层委托 helper 求默认值，并停止把"无法证明"
+  当作"不存在"），MR 47，合并者 `liguangming`。
+- 在途：Wave Z-3（本波，分支 `wave-z3-settings-usage-audit`，基于 `e2334917`）——
+  新增 `scripts/settings-usage-audit.py`：把"面板里有开关、写进了持久化、运行时零消费者"
+  变成门禁级红色。本机门禁实测 **118 passed / 0 failed / 13 skipped**（skip 逐项是
+  需要构建产物或 CI 计算变量的项，加完整变异电池与 render-probe），
+  `gate-coverage-audit --verify` 报 **source of truth 38 gates / mirror 92 gates /
+  92 reachable**。
 - 上一基点 `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
   MR 43，合并者 `liguangming`，head pipeline **#900 = success**）。其上是 Wave V
   `c1f0eeac`（MR 42，head pipeline **#897 = success**，12 个 job，
