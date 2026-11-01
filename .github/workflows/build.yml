@@ -571,6 +571,18 @@ jobs:
       # key the verdict depends on fails here as well.
       run: python3 scripts/hardware-acceptance-check.py --self-test
 
+    - name: Verify the host's own answer still outranks the client's claim
+      # The grader above only ever sees what this client says. This is the other half: the
+      # host's own snapshot of 192.0.2.1, captured 2026-11-02, judged against the client
+      # report it is paired with. A DS5 pad the client advertised and the host refuses is the
+      # failure that cannot be seen from the client at all -- the pad appears to work, and the
+      # player finds out which side gave up when a game asks for a feature the host never
+      # emulated. The five verdicts below are the reviewed state of that machine, so a BLOCKED
+      # row is a fact about the host; what would go red is the audit losing its grip on it.
+      run: |
+        python3 scripts/host-side-evidence-audit.py --self-test
+        python3 scripts/host-side-evidence-audit.py --snapshot scripts/fixtures/home-pc-host-snapshot.json --report scripts/fixtures/home-pc-claim-report.txt --expect host-identity=OK,xbox-360-emulation=OK,ds5-emulation=BLOCKED,switch-emulation=BLOCKED,advertised-versus-host=BLOCKED
+
     - name: Verify the stream's panels get real glass
       # Seven overlays drew the pre-glass HUD-window vibrancy, so the surfaces a player
       # looks at during a session were the part of the interface that never moved to the

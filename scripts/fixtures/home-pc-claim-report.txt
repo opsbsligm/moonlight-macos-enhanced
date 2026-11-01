@@ -1,0 +1,12 @@
+# The client half of the pairing: a report that advertises one ps and one xbox slot.
+# `arrivals=yes` is what makes the slot rows a claim rather than a leftover block, and the
+# ps row is the whole point -- the host printed its refusal to emulate a DualSense before
+# any client connected, so a PS pad nobody could have seen is the lie this file exists to
+# catch. Kept as a committed fixture rather than a string in the audit so the shape CI
+# judges is the shape `hardware-acceptance-check.py` actually exports.
+[machine]
+ml.schema=1
+ml.controllers.present=yes
+ml.controllers.arrivals=yes
+ml.controllers.slot.0=ps
+ml.controllers.slot.1=xbox
