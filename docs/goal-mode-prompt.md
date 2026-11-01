@@ -1,8 +1,70 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-02 十五次基点刷新：main=`e2334917`，Wave Z 未接线的设置开关）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-02 十六次基点刷新：main=`9e914350`，Wave AA 主机侧证据审计）
 
-## 0. Wave Z 目标模式（当前执行窗口，2026-11-02）
+## 0. Wave AA 目标模式（当前执行窗口，2026-11-02）
 
-> 本节是本轮唯一执行契约。Wave Y/Z-1/Z-2 已收口（§0.2）。这一波不在默认值尺子上，
+> 本节是本轮唯一执行契约。Wave Z-3 已收口（MR 49 → `9e914350`，合并者 `liguangming`，
+> head pipeline #1010 success），其目标模式见 §0.0。这一波的标的不是又一处客户端缺陷，
+> 而是**验收的另外一半从来没有人看过**：`hardware-acceptance-check.py` 判的是"报告与观测者
+> 声明是否同意同一场会话"，两半都出自本仓，主机从没被问过。
+
+**目标**：让"客户端通告了某种手柄，而主机根本模拟不了"成为**门禁级可见事实**，
+判定依据必须是主机自己的话，不是本仓的推断。
+
+**为什么这一波值得做**：通告与主机能力不符时，本仓一切指标都是绿的——手柄出现、按键有响应、
+诊断报告与声明一致。玩家要等到游戏问起一个主机从没模拟的功能（DS5 的陀螺仪、触摸板）才发现
+问题。这与 Wave S 修掉的 P1 是同一形状：生产者与消费者从未相连，只是那一次连的是本仓两侧，
+这一次要连的是**网络对面的另一台机器**。
+
+**已量化事实（2026-11-02 WinRM 实采 `192.0.2.1`，非估计）**：
+- 主机是 Sunshine `v2026.925.152547.杂鱼`（版本串含非 ASCII，采集器必须原样保存，
+  转码即丢失真机身份）；ViGEmBus `Running`（`ViGEmBus.sys`）→ Xbox 360 仿真可用。
+- `gamepads.ds5_manifest = true` 而 `ds5_sidecar_installed = false`；主机日志原话：
+  `Warning: Gamepad ds5 is disabled due to gamepads.ds5-sidecar-not-available`，
+  switch 一路同理 `motion-server-not-available`。**清单在而载荷不在，不算已安装。**
+- 客户端报告里 slot 0 通告 `ps`，与主机自己的拒绝直接冲突 →
+  `advertised-versus-host = BLOCKED`。
+
+**完成边界（五条全绿才算完成，缺一不算）**：
+1. **判定来自主机快照**：五个结论（`host-identity` / `xbox-360-emulation` /
+   `ds5-emulation` / `switch-emulation` / `advertised-versus-host`）全部从实采快照与
+   原始 WinRM 转写派生；无快照时不产出能力结论（silent pass 即缺陷）。
+2. **时序诚实**：启用戳早于拒绝戳不为永久否决，拒绝戳早于启用戳才说明主机后来改了主意；
+   两者顺序颠倒必须转红。
+3. **主机的拒绝压过客户端的宣称**：载荷已装但主机日志仍在拒绝，仍判 BLOCKED。
+4. **self-test 覆盖八类削弱**，每一类由其归属检查转红（缺主机版本、无 ViGEmBus、
+   WinRM 运行失败、清单缺载荷、启用戳早于拒绝、拒绝戳早于启用、"改主意"两份快照仅差在
+   哪个文件上取戳、采集器转码主机版本）；良性基线必须同时成立，否则变异是被"全红"而非"被抓住"。
+5. **接缝在事实源，且不为门禁拖垮流水线**：判定形态 + self-test 形态进
+   `.gitlab-ci.yml` 与镜像 workflow，本地聚合跑判定形态；`gate-coverage-audit` 证明两处都在。
+   本地聚合是变异电池的默认判读门（#1006 trace 实测：120 个变异中 81 个由它判读，每次
+   130–180 秒），故 6.3s 的 self-test 形态**不**入聚合——换算代价是 +8.5 分钟，
+   而那个 job 已经用满过 3 小时上限。只留 0.04s 的判定形态；这条取舍是实测决定的，不是偏好。
+
+**本波明确不做**：不改任何 `.swift`/`.m` 运行时行为，不改设置面板默认值与
+`NSSegmentedControl role=.tabs` 外观，不解冻 USB 真重定向/公证/自动更新，
+**不安装 DS5 sidecar / motion server**（那是主机侧变更，须 owner 决定），
+`hardware_validated` 保持 `false`——本节记的是主机状态的证据，不是真机验收通过。
+
+**完成边界自证（2026-11-02 实测，逐条对应上节五条）**：
+1. 判定来自主机快照：`--snapshot scripts/fixtures/home-pc-host-snapshot.json --report
+   scripts/fixtures/home-pc-claim-report.txt` 产出五行结论，与 `--expect` 钉死的
+   `OK/OK/BLOCKED/BLOCKED/BLOCKED` 逐项相符，exit 0；`--parse-capture` 用原始 WinRM
+   转写重解析，除主机版本一字段外与快照逐字段相同（该字段正是变异 (h) 的标的）。
+2. 时序诚实：`enablement-older-than-refusal` 与 `refusal-older-than-enablement` 两个
+   快照只在"戳取自哪个文件"上不同，各自转红自己该转红的一路。
+3. 拒绝压过宣称：`installed-payload-still-judged-on-host-words` 证明 sidecar 已装
+   而主机日志仍拒绝时，结论仍是 BLOCKED。
+4. `--self-test` 实测 **8 个变异全部由其归属检查转红 + 良性基线成立**，最后一行
+   `self-test ok`；缺主机版本、无 ViGEmBus、WinRM 失败、清单缺载荷、两枚时间戳互序、
+   "改主意"配对、转写可解析、转码丢版本各一条。
+5. 接缝：`.gitlab-ci.yml` `audit:python`、镜像 `build.yml`（新增独立步骤）各含判定 +
+   self-test 两形态；`constraints-audit.py` 内跑判定形态；`gate-coverage-audit.py` 报
+   **source of truth 40 gates / mirror 94 gates / 94 reachable**、exit 0，不再出现
+   `host-side-evidence-audit.py: source-of-truth only` 那条 note。
+
+## 0.0 Wave Z 目标模式（已完成并合并：MR 49 → `9e914350`，合并者 `liguangming`，head pipeline #1010 success）
+
+> 本节已收口。Wave Y/Z-1/Z-2 在其之前收口（§0.2）。这一波不在默认值尺子上，
 > 而是那把尺子的结论**被误读**所掩盖的另一类缺陷：审计对一个键写
 > `unread by the stream (one value exists, so no fork is possible)`，这句话本身
 > 没错，于是"这个键查过了"就被当成了"这个键没问题"。它只证明了两层不会分叉，
@@ -631,12 +693,23 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-02，MR 1–48 全部合并，在途 MR = Wave Z-3）
+## 1. 当前基点（截至 2026-11-02，MR 1–49 全部合并，在途 MR = Wave AA）
 
-- 代码基点 main = `e2334917`（`Merge branch 'wave-z2-battery-interrupt-honoured' into 'main'`，
-  MR 48，合并者 `liguangming`，`merged_at=2026-11-01T15:30:30Z`，head pipeline
-  **#1005 = success**）。合并后的 main 流水线 **#1006（`e2334917`）** 在本文档刷新时仍为
-  `waiting_for_resource`（单 Mac runner 排队），**未计入通过**，收尾前须回读终态。
+- 代码基点 main = `9e914350`（`Merge branch 'wave-z3-settings-usage-audit' into 'main'`，
+  MR 49，合并者 `liguangming`，`merged_at=2026-11-01T19:45:09Z`，head pipeline
+  **#1010 = success**）。**合并后的 main 流水线未全绿，两条红色都是基础设施**：
+  **#1017（`9e914350`）** `audit:python` 在 `pip install pyyaml==6.0.2` 上因
+  `SSLEOFError` 五次重试全败（job 6623，无一条门禁跑到）；
+  **#1006（`e2334917`）** `mutation-battery` 用满 3h 上限被 `Terminated: 15`（job 6530，
+  trace 里 `RUN` 120 条、`CAUGHT` 119 条、`MISSED` 0 条——第 120 条
+  `membership-exceptions-attached-to-a-target` 刚开跑就被杀，**因此这一轮的电池是"未跑完"，
+  不是"全过"**，已跑到的 119 条全部被抓住。两条红色均与代码无关，**但 #1006 直接约束本波**：
+  电池的默认判读门就是 `constraints-audit.py --no-battery`：`assertion-battery.py` 的
+  变异条目不带归属门时继承该默认（`gate = entry[4] if len(entry) > 4 else AUDIT_GATE`），
+  #1006 的 trace 实测**120 个变异里 81 个由本聚合判读**，每次 130–180 秒——加进聚合的每一秒
+  按 81 计息。因此 Wave AA 的 self-test 形态（本机实测 6.3s，≈ 加 8.5 分钟）只进两份流水线
+  定义与 `local-gates.sh`，聚合里只留实测 0.04s 的判定形态。retry 后须回读终态，
+  未计入通过前不得引用为绿。
 - 上一基点 `2012367a`（Wave Z-1：读取一层委托 helper 求默认值，并停止把"无法证明"
   当作"不存在"），MR 47，合并者 `liguangming`。
 - 在途：Wave Z-3（本波，分支 `wave-z3-settings-usage-audit`，基于 `e2334917`）——

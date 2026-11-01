@@ -1,0 +1,70 @@
+{
+ "config": [
+  "adapter_name = NVIDIA GeForce RTX 2080 Ti",
+  "address_family = both",
+  "display_device_prep = ensure_only_display",
+  "encoder = nvenc",
+  "fps = [60,90,120,144,165,240]",
+  "hevc_mode = 2",
+  "locale = zh",
+  "nv_preset = p5",
+  "output_name = ZakoHDR",
+  "refresh_rate_change = 1",
+  "resolution_change = 1",
+  "resolutions = [800x600,1366x768,1920x1080,2560x1440,3840x2160]",
+  "setup_wizard_completed = true",
+  "tray_locale = zh",
+  "upnp = enabled",
+  "vdd_headless_create_enabled = disabled",
+  "vdd_prep = 0",
+  "\ufeffadapter_name = GPU-d572cea4-2934-2af4-2b53-b52bc7a0cdc8"
+ ],
+ "ds5_devices": 0,
+ "ds5_manifest": true,
+ "ds5_sidecar_installed": false,
+ "host": "192.0.2.1",
+ "logs": [
+  {
+   "file": "sunshine.log00006",
+   "lines": [
+    "[2026-10-30 22:59:05.186]: Warning: Gamepad ds5 is disabled due to gamepads.ds5-sidecar-not-available",
+    "[2026-10-30 22:59:05.186]: Warning: Gamepad switch is disabled due to gamepads.motion-server-not-available",
+    "[2026-10-31 22:58:00.933]: Info: Gamepad mode set to: global"
+   ],
+   "mtime": "2026-10-31T22:58:00"
+  },
+  {
+   "file": "sunshine.log00005",
+   "lines": [
+    "[2026-10-26 20:02:22.226]: Warning: Gamepad ds5 is disabled due to gamepads.ds5-sidecar-not-available",
+    "[2026-10-26 20:02:22.226]: Warning: Gamepad switch is disabled due to gamepads.motion-server-not-available",
+    "[2026-10-27 18:35:04.825]: Info: Gamepad mode set to: global"
+   ],
+   "mtime": "2026-10-27T18:35:04"
+  },
+  {
+   "file": "sunshine.log00004",
+   "lines": [
+    "[2026-10-18 04:07:06.939]: Warning: Gamepad ds5 is disabled due to gamepads.ds5-sidecar-not-available",
+    "[2026-10-18 04:07:06.939]: Warning: Gamepad switch is disabled due to gamepads.motion-server-not-available",
+    "[2026-10-18 04:07:27.199]: Info: Gamepad mode set to: global"
+   ],
+   "mtime": "2026-10-18T04:07:27"
+  }
+ ],
+ "motion_server_installed": false,
+ "sidecar": [
+  "ds5-sidecar-package.json"
+ ],
+ "version": "Sunshine version: v2026.925.152547.\u6742\u9c7c",
+ "vigem": [
+  {
+   "name": "ViGEmBus",
+   "path": "C:\\WINDOWS\\system32\\drivers\\ViGEmBus.sys",
+   "state": "Running"
+  }
+ ],
+ "winrm_rc": 0,
+ "xbox_360_count": 0,
+ "xbox_360_devices": []
+}
