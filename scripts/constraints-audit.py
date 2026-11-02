@@ -71,6 +71,9 @@ Each check below corresponds to a defect that shipped at some point:
 """
 import plistlib, re, subprocess, sys, os, xml.etree.ElementTree as ET
 
+import importlib
+battery_scope = importlib.import_module('battery-self-proof-scope')
+
 # The audit is also the CI entry point for the assertion battery, so the battery's
 # own runs have to opt out or the two would call each other forever. Flags are
 # separated from the positional root because the root is a path, not an option.
@@ -78,12 +81,14 @@ flags = [a for a in sys.argv[1:] if a.startswith("--")]
 positional = [a for a in sys.argv[1:] if not a.startswith("--")]
 root = positional[0] if positional else "."
 run_battery = "--no-battery" not in flags
+mutated_file = battery_scope.mutated_file()
 failures = []
 
 def check(ok, message):
     print("%-4s %s" % ("ok" if ok else "FAIL", message))
     if not ok:
         failures.append(message)
+
 
 info_path = os.path.join(root, "Limelight/macOS/Supporting Files/Info.plist")
 with open(info_path, "rb") as handle:
@@ -2630,14 +2635,19 @@ for reader_shape, reader_arguments in (("its readings", []),
 # The other shape stays where it belongs: a real verdict needs an exported report and an
 # observer statement bound to that report's hash, so there is no fixture here to pass, and a
 # grader handed no report says so and exits 2 instead of grading nothing into a green sweep.
-grader_run = subprocess.run(
-    [sys.executable, os.path.join(scripts_dir, "hardware-acceptance-check.py"), "--self-test"],
-    capture_output=True, text=True, cwd=root)
-check(grader_run.returncode == 0,
-      "the hardware acceptance grader passes its red proofs"
-      if grader_run.returncode == 0 else
-      "the hardware acceptance grader failed its red proofs: "
-      + (grader_run.stdout + grader_run.stderr).strip().splitlines()[-1:])
+if not (run_battery and not battery_scope.self_proof_is_about(
+        [sys.executable, os.path.join(scripts_dir, 'hardware-acceptance-check.py'), '--self-test'],
+        mutated_file)):
+    grader_run = subprocess.run(
+        [sys.executable, os.path.join(scripts_dir, 'hardware-acceptance-check.py'), '--self-test'],
+        capture_output=True, text=True, cwd=root)
+    check(grader_run.returncode == 0,
+          'the hardware acceptance grader passes its red proofs'
+          if grader_run.returncode == 0 else
+          'the hardware acceptance grader failed its red proofs: '
+          + (grader_run.stdout + grader_run.stderr).strip().splitlines()[-1:])
+else:
+    print('skip self-proof  hardware acceptance grader (mutation out of scope)')
 
 # The audit above proves no reader can invent a key from a field that means nothing on a mouse
 # event. It cannot say which side a player's next phantom-key report came from, and every
@@ -2677,13 +2687,18 @@ for cadence_shape, cadence_arguments in (("its readings", []),
           % (cadence_shape, (cadence_run.stdout + cadence_run.stderr).strip().splitlines()[-1:]))
 
 # Presentation ordering is also pure C: replay pressure without an Apple GPU.
-presentation_run = subprocess.run(
-    [sys.executable, os.path.join(scripts_dir, "enhanced-presentation-tests.py")],
-    capture_output=True, text=True, cwd=root)
-check(presentation_run.returncode == 0,
-      "enhanced submission ordering, retry and stale-result replay passes"
-      if presentation_run.returncode == 0 else
-      "enhanced presentation replay failed: " + (presentation_run.stdout + presentation_run.stderr)[-1200:])
+if not (run_battery and not battery_scope.self_proof_is_about(
+        [sys.executable, os.path.join(scripts_dir, 'enhanced-presentation-tests.py')],
+        mutated_file)):
+    presentation_run = subprocess.run(
+        [sys.executable, os.path.join(scripts_dir, 'enhanced-presentation-tests.py')],
+        capture_output=True, text=True, cwd=root)
+    check(presentation_run.returncode == 0,
+          "enhanced submission ordering, retry and stale-result replay passes"
+          if presentation_run.returncode == 0 else
+          "enhanced presentation replay failed: " + (presentation_run.stdout + presentation_run.stderr)[-1200:])
+else:
+    print("skip self-proof  enhanced presentation (mutation out of scope)")
 
 # The readout is judged by scripts/interpolation-readout-tests.py, which lifts the shipping
 # publisher out of VideoDecoderRenderer.m and runs it against a fake settings class. That is a
@@ -3527,10 +3542,13 @@ for coverage_shape, coverage_arguments in (("the two definitions reconcile", [])
 # including its negative twins, so a green self-test says the gate can still fail.
 for defaults_shape, defaults_arguments in (("with both layers agreeing", []),
                                            ("its red proofs", ["--self-test"])):
-    defaults_run = subprocess.run(
-        [sys.executable, os.path.join(root, "scripts", "defaults-consistency.py")]
-        + defaults_arguments, capture_output=True, text=True, cwd=root)
-    check(defaults_run.returncode == 0,
+    if not (run_battery and not battery_scope.self_proof_is_about(
+            [sys.executable, os.path.join(root, 'scripts', 'defaults-consistency.py')]
+            + defaults_arguments, mutated_file)):
+        defaults_run = subprocess.run(
+            [sys.executable, os.path.join(root, 'scripts', 'defaults-consistency.py')]
+            + defaults_arguments, capture_output=True, text=True, cwd=root)
+        check(defaults_run.returncode == 0,
           "the defaults audit passes %s" % defaults_shape
           if defaults_run.returncode == 0 else
           "the defaults audit failed %s:\n%s"
@@ -3753,15 +3771,20 @@ check(rco_rules.returncode == 0,
 # watches (restore, then fail to die) is what makes a Ctrl+C look ignored until something
 # sends SIGKILL, and the fastest place to notice that is the command a developer runs
 # before pushing.
-bip_rules = subprocess.run(
-    [sys.executable, os.path.join(root, "scripts", "battery-interrupt-tests.py"),
-     "--self-test"],
-    capture_output=True, text=True, cwd=root)
-check(bip_rules.returncode == 0,
-      "the battery still dies when a signal asks it to"
-      if bip_rules.returncode == 0 else
-      "the battery-interrupt self-test failed:\n"
-      + (bip_rules.stdout + bip_rules.stderr)[-900:])
+if not (run_battery and not battery_scope.self_proof_is_about(
+        [sys.executable, os.path.join(root, 'scripts', 'battery-interrupt-tests.py'),
+         '--self-test'], mutated_file)):
+    bip_rules = subprocess.run(
+        [sys.executable, os.path.join(root, 'scripts', 'battery-interrupt-tests.py'),
+         '--self-test'],
+        capture_output=True, text=True, cwd=root)
+    check(bip_rules.returncode == 0,
+          "the battery still dies when a signal asks it to"
+          if bip_rules.returncode == 0 else
+          "the battery-interrupt self-test failed:\n"
+          + (bip_rules.stdout + bip_rules.stderr)[-900:])
+else:
+    print("skip self-proof  battery interrupt self-test (mutation out of scope)")
 
 # What a DMG has to be is a three-part rule, and until now the repository had none
 # of it: the packaging step fell back from create-dmg to a bare `hdiutil create`

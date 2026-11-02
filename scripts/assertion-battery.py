@@ -16,6 +16,9 @@ import signal
 import subprocess
 import sys
 import time
+
+import importlib
+battery_scope = importlib.import_module("battery-self-proof-scope")
 from apple_toolchain import NO_TOOLCHAIN_MESSAGE, PROBE_BUILD_FAILED_MESSAGE
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2559,6 +2562,7 @@ def main():
                 unapplied.append(name)
                 continue
             pending[path] = original[path]
+            os.environ[battery_scope.MUTATED_ENVIRONMENT_VARIABLE] = os.path.relpath(path, root)
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(mutated)
             started = time.monotonic()
@@ -2595,6 +2599,7 @@ def main():
             if not failed:
                 missed.append(name)
     finally:
+        os.environ.pop(battery_scope.MUTATED_ENVIRONMENT_VARIABLE, None)
         restore_pending()
         for signum, handler in displaced.items():
             signal.signal(signum, handler)
