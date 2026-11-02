@@ -746,9 +746,16 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-02，MR 1–49 全部合并，在途 MR = Wave AA）
+## 1. 当前基点（截至 2026-11-02，MR 1–50 全部合并，在途 MR = Wave AB）
 
-- 代码基点 main = `9e914350`（`Merge branch 'wave-z3-settings-usage-audit' into 'main'`，
+- 代码基点 main = `d16497a4`（`Merge branch 'wave-aa-host-side-evidence' into 'main'`，
+  MR 50，合并者 `liguangming`，`merged_at=2026-11-02T05:27:39Z`，合并流水线
+  **#1040 = success**（12 个 job 全绿，无 `allow_failure` 豁免项可记）。该合并**未触碰任何
+  `.m`/`.swift`/`.h`**，全部是脚本、fixtures 与文档，故 `hardware_validated` 的判断不受影响。
+  判读器本体在本机重跑复核：`--self-test` 报 9 个变异各自转红，快照＋真实报告形态
+  报 `host-identity=OK, xbox-360-emulation=OK, ds5/switch=BLOCKED, advertised-versus-host=BLOCKED`，
+  与 `--expect` 钉死的一致（evidence：`moonlight-ci-evidence/20261102-wave-aa-host-side-evidence/`）。
+- 上一基点 `9e914350`（`Merge branch 'wave-z3-settings-usage-audit' into 'main'`，
   MR 49，合并者 `liguangming`，`merged_at=2026-11-01T19:45:09Z`，head pipeline
   **#1010 = success**）。**合并后的 main 流水线未全绿，两条红色都是基础设施**：
   **#1017（`9e914350`）** `audit:python` 在 `pip install pyyaml==6.0.2` 上因
@@ -765,12 +772,15 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
   未计入通过前不得引用为绿。
 - 上一基点 `2012367a`（Wave Z-1：读取一层委托 helper 求默认值，并停止把"无法证明"
   当作"不存在"），MR 47，合并者 `liguangming`。
-- 在途：Wave Z-3（本波，分支 `wave-z3-settings-usage-audit`，基于 `e2334917`）——
+- 上一波 Wave Z-3（分支 `wave-z3-settings-usage-audit`，基于 `e2334917`）——
   新增 `scripts/settings-usage-audit.py`：把"面板里有开关、写进了持久化、运行时零消费者"
   变成门禁级红色。本机门禁实测 **118 passed / 0 failed / 13 skipped**（skip 逐项是
   需要构建产物或 CI 计算变量的项，加完整变异电池与 render-probe），
   `gate-coverage-audit --verify` 报 **source of truth 38 gates / mirror 92 gates /
   92 reachable**。
+  Wave AA 的装配缺口证明这一层问得没错、但问的不是最后一跳，见 §0。
+  同一轮的门禁计数在 Wave AB 后是 **事实源 41 / 镜像 95 / 可达 95**，
+  本地并集 **135 条命令**（旧数字保留是为了让"加了几条"可核对）。
 - 上一基点 `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
   MR 43，合并者 `liguangming`，head pipeline **#900 = success**）。其上是 Wave V
   `c1f0eeac`（MR 42，head pipeline **#897 = success**，12 个 job，
