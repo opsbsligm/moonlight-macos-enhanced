@@ -1,8 +1,113 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-02 十七次基点刷新：Wave AB 装配层审计）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-02 十八次基点刷新：Wave AC 捕获真相）
 
-## 0. Wave AB 目标模式（当前执行窗口，2026-11-02）
+## 0. Wave AC 目标模式（当前执行窗口，2026-11-02）
 
-> 本节是本轮唯一执行契约。Wave AA 已收口（MR 50 → `d16497a4`，合并者 `liguangming`，
+> 本节是本轮唯一执行契约。Wave AB 已收口（MR 51 → `60ddce2c`，合并者 `liguangming`，
+> head pipeline #1051 success），其目标模式见 §0.AB。
+
+**标的**：渲染探针把**"从未测到"**报成**"测得一片平坦"**，而它判读器自己的 `--self-test`
+形态从来不在任何管道定义里 —— 于是一句描述 CI 环境故障的红色被读成应用渲染回归，
+且这条判读视觉主张的门（51 条变异）自身的可失败性从未被任何管道或本地扫描跑过。
+
+**已验证事实（本机实测与 CI 日志，非估计）**：
+- `MLProbeCaptureView`（`Limelight/macOS/AppDelegateForAppKit.m:70`）在两种情况下返回
+  `nil`：SCShareableContent 列表里找不到自己的窗口，或 `captureImageWithFilter` 回不到图像。
+  `MLProbePixels`（同文件 `:139`）拿到 `nil` rep 走的是空采样路径，返回
+  `mean/stddev/distinctColours/sampled` **全 0** —— 与"页面真的画成一片纯色"在报告里不可区分。
+- 判读侧因此说谎两次：`scripts/render-probe.py:296` 只看 `stddev >= 0.02`，报
+  "the page drew no variation at all"；ObjC 侧 `:1885` 同一条规则报
+  "the settings page rendered as flat"。两句都断言了页面**被看过**并且平坦。
+- 探针其实**知道**自己没拿到画面：CI job 6840 的 trace 里有 7 行
+  `[render-probe] own window capture failed: 音频/视频捕捉失败，无法开始流播放`。
+  这句话只进 stderr，报告字段不携带，判读器只能从 0 反推。
+- A/B 实测见 `moonlight-ci-evidence/20261102-audit-deep-display-ab/`：
+  显示器熄灭 `sampled:0 / stddev:0 / failures:["...rendered as flat..."]`；
+  显示器常亮 `sampled:85878 / stddev:0.0730 / 275 colours / failures:[]`。
+  第三份 `report-display-race.json` 才是决定性的一条：同一轮里 `initialPixels` 正常
+  （`sampled:1517`、`stddev:0.353`）而 `settingsPagePixels` 全 0 —— 这是**逐次捕获的
+  暂时性通道故障**，"整机熄屏"解释不了它，所以重试与"环境"话术都得按逐次通道来写。
+- 判读器的 `--self-test` 本机实测 **0.12–0.16 秒**（51 条变异 + 2 个良性通过点，
+  其中 3 条是本波新增的"红色话说对了"话术断言），
+  但 `scripts/gate-coverage-audit.py:96` 把 `render-probe.py` 登记为 `class=deep` 且**没有**
+  `self_test` 字段，于是 `--emit-commands --class=deep` 只发射需要 20 分钟构建的全形态；
+  `scripts/local-gates.sh:426` 又把任何含 `render-probe` 的命令一律 skip。两条路径合起来：
+  这个门从未在事实源管道、merge-request 管道或本地扫描里跑过它的判定形态。
+- **同一类谎言的第二处，且更彻底**（执行中发现，不在最初的七条边界内）：
+  `MLProbeBlockAnalysis`（同文件 `:247`）的遍历范围来自视图 bounds 而不是图像，
+  所以拿到 `nil` 图像时它照样走完每一块，而 `[nil redComponent]` 返回 0。
+  `report-display-off.json` 里因此写着 `behindPageBlocks: {blocks: 1305, flat: 1305,
+  meanBlockStddev: 0}`、`backdropBlocksBeforePresent` 同样是 `blocks: 1305, flat: 1305` ——
+  这不是"采了 0 个点"，而是**把一页从未捕获的像素逐块数完并判定整页平坦**，
+  比 `sampled: 0` 更像一次真测量。`MLProbeTranslucentRegions`（`:291`）同时把
+  `consideredBlocks: 0` 配上 `readThroughPageWhere: "no block changed ... (expected while
+  the page base is opaque)"` —— 把一个没发生的比较写成一条已验证的设计结论。
+  判读侧不消费这三块（只 `print` 那句 `readThroughPageWhere`），所以修在探针侧即可，
+  不需要判读器同步；这也是它一直没被发现的原因。
+
+**完成边界（七条全绿才算完成，缺一不算）**：
+1. **没测到就不给数值**：捕获不可用时，像素测量不携带 `mean/stddev/distinctColours`，
+   改为携带捕获失败的原始句子；`sampled` 一类的"我采了 0 个点"不得伪装成测量结果。
+   同一规则覆盖分块统计与读透比较（执行中发现的第二处）：`blocks/flat/meanBlockStddev`
+   与 `changedBlocks/consideredBlocks` 在未捕获时一律不出现，那句"expected while the page
+   base is opaque"的设计结论也不得在未测量时给出。
+2. **判读器分得开两种红色**：未测量 → 说"捕获通道不可用"并附探针给的那句话；
+   真的平坦 → 保留现有的渲染回归话术。把未测量重新读成平坦的变异必须被 self-test 拒绝。
+3. **阈值一分不放松**：真机亮屏那组数字（0.0730 / 275 colours，以及历史上更紧的
+   0.0702 / 53）必须继续通过；`0.001/2` 与 `0.012/44` 两个 fixture 必须继续被拒。
+   0.02 与 40 的下限不因本波改动。
+4. **判定形态进事实源**：`render-probe.py` 在 registry 里登记为 selftest 类并给出
+   `self_test` 与 `full_form`，`--emit-commands --class=selftest` 发射它，
+   `local-gates.sh` 不再把它一律 skip（0.12 秒，快速扫描就该跑）。
+5. **三方一致**：`.gitlab-ci.yml`、镜像 workflow、registry 三者对同一个门不再互相矛盾，
+   `gate-coverage-audit.py --verify` 绿，deep 类仍只发射全形态给 tag/main。
+6. **探针侧与判读侧同步**：ObjC 那条 `stddev/distinct` 断言在未测量时不得再说
+   "rendered as flat"，它必须说没拿到画面 —— 两处话术不一致就是下一次误判的起点。
+7. **真机基线复现**：本机用盘上已有的 Debug 产物跑一次全形态，拿到 `sampled > 0`
+   且判定为绿，作为"阈值没被放松"的实证；同时把捕获失败形态跑一次，确认红色话说对了。
+
+**本波明确不做**：不改任何设置面板默认值，不动 `NSSegmentedControl role=.tabs`；
+不解冻 USB 真重定向/Developer ID 公证/自动更新；不为让 `audit:deep` 转绿而放宽阈值、
+把"未测量"算作通过，或给探针加删除/植入数据的开关（该探针读写真实 store，
+见本文件顶部说明）；`hardware_validated` 保持 `false` —— 本波让红色**说实话**，
+不宣称真机验收通过。
+
+**已知非本波红色（如实记录，不计入通过）**：`audit:deep` 在显示器熄灭的槽位上仍会是红的，
+这是环境事实而非应用回归；本波的产出是让它在日志里说"捕获通道不可用 + 探针原话"，
+而不是让人去 diff 一个从没改过 `.m`/`.swift` 的提交。承接方是本机 Mac runner
+（launchd `com.user.gitlab-runner`，实例 id 8）。
+
+---
+
+## 0.AD Wave AD 目标模式（当前执行，2026-11-02）
+
+> Wave AD 的目标：让"文件不在盘上"这个事实从报告里被诚实记录，而不是被生产者和判读器各说各话，更不要让读者被引向一个不存在的文件。
+> 与 Wave AC 的关联：AC 只修了"从未测到"的话术，但没有修"测到了但没落盘"的话术，也没有让三处文件名调用共用同一判据。
+
+**标的**：渲染探针在两种情况下不声称文件名——捕获通道拒绝（Wave AC 已修）和编码器/卷拒绝写入（Wave AD 新增）。任何调用者都不再单独判断 `rep != nil`，统一用 `MLProbePixelsHaveArtefact()`。判读器 `verify_panes` 把"未测量"、"测了未落盘"、"沉默（两个问题都不答）"、"自相矛盾"四种新故障各说各话。
+
+**已完成（门禁验证，非估计）**：
+- ObjC 生产者 `MLProbePixels()` 现在先采样、后写盘，写盘失败记 `captureWriteFailure`；`MLProbePixelsHaveArtefact()` 作为唯一入口供三处 `initialCapture`/`scrolledCapture`/`capture` 使用。
+- 判读器 `artefact_absence()` 返回 `(类别, 原句)`，`verify_panes` 根据类别各说各话：`no-capture` → "never captured to disk"；`no-artefact` → "artefact was never written, so its numbers cannot be reopened"；沉默 → "cannot say whether the pane was ever drawn"。
+- self-test 从 45 条增至 51 条，含 6 条新断言（写盘失败话术、沉默话术、自相矛盾话术、测了不给文件名话术、无 capture 也不无故障话术、有 measurements 但无文件名话术）。
+- 变异测试证明 3 场人为删改全部被拦截：`no-capture` 分支摘掉后拒绝写盘失败；两种故障合并后话术混淆；沉默 pane 被放过。还原后 0 failures。
+- `gate-coverage-audit.py` 登记更新：45 → 51 条变异。
+- `scripts/render-probe.py --self-test` 实测 0.05–0.08 秒（51 条变异 + 2 个良性通过点）。
+
+**未完成边界**：
+- `hardware_validated=false`：没有编译或运行产物验证过。
+- `artefact_absent_reason`/`artefact_absence` 在判读器里只读 JSON 字段，未经任何 CI 管道验证——需要 pipeline 跑过 `render-probe.py --self-test` 才算 CI 闭环。
+- 旧二进制（wave AC build）仍包含 AC 的旧逻辑（未落盘时只报 `captureFailure`，没有 `captureWriteFailure` 字段）；新二进制需要 build 验证 `MLProbePixelsHaveArtefact()` 三处调用全部走同一判断。
+- 三处调用点之外，`MLProbePixels` 在 `:1812`/`:1912`/`:1955` 还有额外调用，但它们不写文件名到报告里（只读像素数据），不受本波影响——需要确认没有新调用点遗漏。
+
+**门**：
+1. ObjC 编译通过（Release build）
+2. `render-probe.py --self-test` 0 failures
+3. CI pipeline 包含 `render-probe.py --self-test` 且 pass
+4. `gate-coverage-audit.py --self-test --verify` 全绿
+
+## 0.AB Wave AB 目标模式（已完成并合并：MR 51 → `60ddce2c`，合并者 `liguangming`；保留供追溯）
+
+> Wave AA 已收口（MR 50 → `d16497a4`，合并者 `liguangming`，
 > `merged_at=2026-11-02T05:27:39Z`），其目标模式见 §0.A。
 
 **标的**：设置字典 → `StreamConfiguration` 对象**这一跳**从来没有任何审计看过，
