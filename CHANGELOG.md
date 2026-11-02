@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - 新增 "Allow"/"允许" 本地化键，覆盖 USB 设备页允许按钮翻译
+- **主机侧证据审计（Wave AA）**：新增 `scripts/host-side-evidence-audit.py`，把真机验收的
+  **主机那一半**接进门禁。`hardware-acceptance-check.py` 只看客户端自己说了什么，于是"客户端
+  通告 DS5、主机因缺 sidecar 静默拒绝"这类缺陷在本仓一侧永远看不见——手柄看起来是好的，玩家
+  要等游戏问起主机从没模拟的功能才发现是哪一侧放弃了。审计以 2026-11-02 从 `192.0.2.1`
+  实采的快照（`scripts/fixtures/home-pc-host-snapshot.json` + 原始 WinRM 转写）判定五个结论：
+  `host-identity`/`xbox-360-emulation` = OK，`ds5-emulation`/`switch-emulation`/
+  `advertised-versus-host` = BLOCKED（主机日志自己写了 `gamepads.ds5-sidecar-not-available`）。
+  主机的拒绝优先于客户端的宣称；清单在而载荷不在不算已安装；启用戳早于拒绝戳不为永久否决。
+  self-test 8 个变异各由其归属检查转红（含"采集器转码主机版本"这一条——主机版本串含非 ASCII，
+  `v2026.925.152547.杂鱼`，必须原样保存）。三处接缝齐全：`.gitlab-ci.yml`、镜像 workflow、
+  `constraints-audit.py`（仅判定形态入本地聚合，self-test 形态 6.3s 不进电池的 32 倍判读路径）。
+  `hardware_validated` 仍为 `false`：本节记的是主机状态的证据，不是真机验收通过。
 - **门禁覆盖对账（Wave H）**：新增 `scripts/gate-coverage-audit.py` 解析两份 CI 定义并强制
   "镜像调用的每个门禁都必须在事实源可达"；`audit:gates` job 用 `--emit-commands` 驱动 47 个快速
   门禁 + 5 个自测形态，`audit:deep`（tag/main only）承担两个编译型门禁；`local-gates.sh` 改读

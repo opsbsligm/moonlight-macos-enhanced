@@ -79,6 +79,7 @@ Usage:
 Exit 0 only when the sweep really ran and first-party leaks stayed inside the ceiling.
 """
 
+import ast
 import json
 import os
 import re
@@ -882,6 +883,46 @@ def judge_growth(shorter, longer, baseline):
     return problems, notes
 
 
+def capture_arity_fixture():
+    """Every exit from `capture()` must be the pair its caller unpacks.
+
+    `--growth` unpacks `sweep_text, sweep_probe = capture(...)`, so a single `return None`
+    anywhere inside that function does not fail the gate -- it crashes it, mid-traceback,
+    under the FAIL lines that were already printed. Observed on 2026-11-02 on a headless
+    laptop: the probe correctly refused a settings page that rendered flat, and what the
+    run reported was `TypeError: cannot unpack non-iterable NoneType object`. The refusal
+    was the useful sentence, and the reader never saw it.
+
+    Checked as source, because the branch that returns the wrong shape needs a GUI session
+    to reach, and a fixture that needs a display to prove a structural fact is a fixture
+    that does not run on the machines that break.
+    """
+    findings = 0
+    with open(os.path.join(ROOT, "scripts", "leak-audit.py"), encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename="leak-audit.py")
+    body = next((node for node in ast.walk(tree)
+                 if isinstance(node, ast.FunctionDef) and node.name == "capture"), None)
+    if body is None:
+        print("FAIL no `capture` function to check the shape of")
+        return 1
+    bad = []
+    for node in ast.walk(body):
+        if not isinstance(node, ast.Return):
+            continue
+        value = node.value
+        if isinstance(value, ast.Tuple) and len(value.elts) == 2:
+            continue
+        # A bare `return` means "fell off the end", which is a None of the same arity class
+        # as a real None; it is wrong here for the same reason, so it counts as wrong.
+        bad.append("line %d returns %s" % (
+            node.lineno, "nothing" if value is None else ast.dump(value)[:60]))
+    if bad:
+        print("FAIL capture() must return a pair on every path (its caller unpacks two"
+              " names); wrong shape at %s" % "; ".join(bad))
+        findings += 1
+    return findings
+
+
 def growth_fixture():
     """The slope rule, driven without a process.
 
@@ -1127,7 +1168,13 @@ def capture(timeout, report_path=None, cycles=None):
     for problem in refused:
         print("FAIL %s" % problem)
     if refused:
-        return None
+        # A two-tuple, like every other exit from here. Returning a bare None makes the
+        # caller's `sweep_text, sweep_probe = capture(...)` die in the middle of a
+        # traceback, which buries the FAIL lines printed just above -- the reader gets a
+        # TypeError instead of the one sentence that says the settings page rendered flat.
+        # Measured this way on 2026-11-02: a headless laptop, a probe that correctly
+        # refused, and a gate that reported a crash rather than its own refusal.
+        return None, None
     seed = probe.get("seedHosts")
     if isinstance(seed, dict):
         print("sweep ran on %s host(s) in the library (%s)"
@@ -1202,7 +1249,7 @@ def main():
         text = open(log, encoding="utf-8", errors="replace").read()
     if "--self-test" in arguments:
         failures = (fixtures() + class_discovery_fixture() + growth_fixture()
-                    + probe_record_fixture())
+                    + probe_record_fixture() + capture_arity_fixture())
         print("%d leak-audit fixture failure(s)" % failures)
         return 1 if failures else 0
     # Both refusals belong here rather than inside the growth branch below: after them sits

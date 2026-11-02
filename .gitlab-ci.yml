@@ -99,9 +99,13 @@ audit:python:
       set -euo pipefail
       venv_dir="$(mktemp -d /tmp/moonlight-gitlab-gates.XXXXXX)"
       trap 'rm -rf "$venv_dir"' EXIT
-      python3 -m venv "$venv_dir"
-      . "$venv_dir/bin/activate"
-      python -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
+      # The parser bootstrap lives in a script so both jobs that need it fail the
+      # same loud way: pipelines 1017 and 1020 both died on a pip TLS failure against
+      # a pypi.org that was unreachable from this network, and the job said only
+      # "exit status 1". Sourced, not run: pipeline 1025 called this with `bash`,
+      # the activation died in the child, and the next line could not find `python`.
+      # See scripts/ci/bootstrap-python.sh and the WF026 rule in workflow-audit.py.
+      . scripts/ci/bootstrap-python.sh "$venv_dir"
       python scripts/ci/test_pipeline.py
       bash scripts/local-gates.sh --self-test
       python scripts/project_identity.py --self-test
@@ -120,6 +124,14 @@ audit:python:
       python scripts/defaults-consistency.py
       python scripts/settings-usage-audit.py --self-test
       python scripts/settings-usage-audit.py
+      # The host's own half of the acceptance pairing. `--expect` states the reviewed verdicts
+      # of the real host (192.0.2.1, captured 2026-11-02) so the judgement runs on a
+      # committed snapshot instead of a live machine: a BLOCKED row here is a fact about that
+      # host, not a failure, and what would be a failure is the audit no longer reaching it.
+      # One line per command: inside a `|` block a bare continuation line is its own shell
+      # word, so the audit would run with no --snapshot and report "nothing to judge".
+      python scripts/host-side-evidence-audit.py --self-test
+      python scripts/host-side-evidence-audit.py --snapshot scripts/fixtures/home-pc-host-snapshot.json --report scripts/fixtures/home-pc-claim-report.txt --expect host-identity=OK,xbox-360-emulation=OK,ds5-emulation=BLOCKED,switch-emulation=BLOCKED,advertised-versus-host=BLOCKED
       python scripts/workflow-audit.py --self-test
       python scripts/workflow-audit.py
       for script in scripts/*.sh scripts/ci/*.sh; do bash -n "$script"; done
@@ -434,9 +446,10 @@ mutation-battery:
       set -euo pipefail
       venv_dir="$(mktemp -d /tmp/moonlight-battery-venv.XXXXXX)"
       trap 'rm -rf "$venv_dir"' EXIT
-      python3 -m venv "$venv_dir"
-      . "$venv_dir/bin/activate"
-      python -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2
+      # Same bootstrap as `audit:python`: the battery's judge imports the parser
+      # through `constraints-audit.py`, so a parser that did not install would send
+      # every mutation down a path that cannot judge it.
+      . scripts/ci/bootstrap-python.sh "$venv_dir"
       # The battery refuses a dirty checkout on its own, and the CI working
       # directory is a fresh clone, so no --allow-dirty is needed. Each gate it
       # invokes carries its own recursion flag internally.
