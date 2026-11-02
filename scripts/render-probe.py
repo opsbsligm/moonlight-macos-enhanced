@@ -105,6 +105,23 @@ PIXEL_STDDEV_MIN = 0.02
 PIXEL_DISTINCT_MIN = 40
 
 
+def artefact_absence(pixels):
+    """`("no-capture" | "no-artefact" | None, the probe's own sentence)`.
+
+    There are two ways a fold has no PNG to open and they are not interchangeable: the capture
+    channel refused, so no pixels were ever looked at, or the pixels were sampled and the
+    encoder or volume refused the write, so the numbers are real but nothing can be opened and
+    checked against them. The probe withholds the filename in both cases, so this is the one
+    place that decides when a missing name is expected -- and it returns which of the two it
+    was, because the two sentences a reader deserves are different.
+    """
+    if pixels.get("captureFailure"):
+        return "no-capture", pixels["captureFailure"]
+    if pixels.get("captureWriteFailure"):
+        return "no-artefact", pixels["captureWriteFailure"]
+    return None, None
+
+
 def pixel_refusal(pixels, what, require_distinct=True):
     """Why this pixel measurement refuses the build, or None when it does not.
 
@@ -112,10 +129,17 @@ def pixel_refusal(pixels, what, require_distinct=True):
     measured luminance spread there; adding a colour floor to it would refuse captures every
     earlier run accepted, which is a different claim wearing this wave's clothes.
     """
-    failure = pixels.get("captureFailure")
-    if failure:
+    kind, reason = artefact_absence(pixels)
+    if kind == "no-capture":
         return ("%s was never captured, so nothing here can say whether it drew: %s"
-                % (what, failure))
+                % (what, reason))
+    if kind == "no-artefact":
+        # A third colour, and it is not a rendering fault either: the pixels were sampled and
+        # the numbers are real, but the PNG a reader would check them against never reached the
+        # disk, so the measurement cannot be reopened or hashed. Refusing it in the flat-page
+        # vocabulary would send a reader to diff an application change that did not happen.
+        return ("%s was measured but its artefact was never written, so its numbers cannot be "
+                "checked: %s" % (what, reason))
     stddev = pixels.get("stddev")
     if not (isinstance(stddev, (int, float)) and stddev >= PIXEL_STDDEV_MIN):
         return "%s drew no variation at all (stddev %r)" % (what, stddev)
@@ -133,9 +157,13 @@ def verify_panes(report, refusals, out_dir):
         if not ok:
             refusals.append(message)
 
+    # One entry per pane that answered the question, keyed by what it said: either the PNG it
+    # wrote, or why there is none. A pane that says both is itself the defect this wave is
+    # about, so it is recorded under both and the count below refuses it -- counting the two
+    # maps separately would let a contradictory pane look like two panes and hide it.
     captures = {}
-    seen_texts = {}
     uncaptured = {}
+    seen_texts = {}
     for name in ("streamPane", "videoPane", "appPane", "devicesPane"):
         pane = report.get(name)
         if not isinstance(pane, dict):
@@ -155,14 +183,29 @@ def verify_panes(report, refusals, out_dir):
         expect(pane.get("stillMountedAfterDismiss") is False, "%s was left mounted after dismiss" % name)
         expect(pane.get("panePreferenceRestored") is True,
                "%s left the user's saved pane selection changed" % name)
+        # A pane has to answer one of two questions, and which one it answers decides the
+        # wording: either it names a PNG that must open, or it says the fold was never
+        # measured and quotes why. The probe used to do both -- naming a file its own capture
+        # channel had refused to write -- so a missing artefact was read as a second, separate
+        # defect. Remembering the refusal lets the reader keep the two sentences apart.
+        pixels = pane.get("pixels") or {}
+        absence, absence_reason = artefact_absence(pixels)
+        if absence:
+            uncaptured[name] = (absence, absence_reason)
         if pane.get("capture"):
             captures[name] = pane["capture"]
-        # The probe names the PNG it meant to write whether or not the channel produced one,
-        # so a missing file here has two causes. Remembering which lets the digest loop below
-        # say "never captured, because the channel refused" instead of pointing at a file that
-        # was never going to exist.
-        if (pane.get("pixels") or {}).get("captureFailure"):
-            uncaptured[name] = pane["pixels"]["captureFailure"]
+        elif not absence:
+            # The same size lie in the opposite shape: a fold that reports measurements but
+            # names no file has numbers with nothing behind them, and a fold that names neither
+            # leaves the digest comparison below silently short of a pane. One sentence per
+            # pane, because both halves of that are the one defect of not answering.
+            if pixels.get("stddev") is not None:
+                expect(False, "%s reports pixel measurements but names no capture file, so the "
+                              "numbers here have no artefact behind them" % name)
+            else:
+                expect(False, "%s said neither which capture file it wrote nor why there is "
+                              "none, so this report cannot say whether the pane was ever drawn"
+                       % name)
 
         nodes = pane.get("readableContent") or []
         expect(len(nodes) > 0,
@@ -180,9 +223,9 @@ def verify_panes(report, refusals, out_dir):
             pixels = pane.get("initialPixels") or {}
             refusal = pixel_refusal(pixels, "the USB permission page's initial fold",
                                     require_distinct=False)
-            if not pixels.get("captureFailure"):
-                # The probe writes no PNG when the capture channel refused, so a missing file
-                # beside a `captureFailure` is the same fact twice. Asking for it again would
+            if not artefact_absence(pixels)[0]:
+                # The probe writes no filename unless the PNG is on disk, so a missing name
+                # beside an absence is the same fact twice. Asking for the file again would
                 # read as a second defect and hide which one to fix.
                 initial = pane.get("initialCapture")
                 expect(bool(initial), "USB permission page supplied no initial-fold capture")
@@ -276,15 +319,27 @@ def verify_panes(report, refusals, out_dir):
                    "%s and %s vend exactly the same text, so switching panes changed nothing "
                    "a reader can see" % (names[index], other))
 
-    expect(len(captures) == 4, "the four panes did not all supply final captures")
+    # Each fold without an artefact earns its own sentence naming why, rather than one
+    # collective "the four panes did not all supply final captures", which reads as the probe
+    # having forgotten to take a screenshot. The two absences are still two different faults:
+    # one says nothing about rendering, the other says the pixels were real and unopenable.
+    for name in sorted(uncaptured):
+        absence, reason = uncaptured[name]
+        if absence == "no-artefact":
+            expect(False, "%s was measured but its artefact was never written, so its numbers "
+                          "cannot be reopened and checked: %s" % (name, reason))
+        else:
+            expect(False, "%s was never captured to disk, so nothing here can say whether it "
+                          "drew: %s" % (name, reason))
     if len(captures) == 4:
         digests = {}
         for name, capture in captures.items():
             path = capture if os.path.isabs(capture) else os.path.join(out_dir or ".", capture)
             if not os.path.exists(path):
                 if name in uncaptured:
-                    refusals.append("%s was never captured, so %r was never written: %s"
-                                    % (name, capture, uncaptured[name]))
+                    refusals.append("%s names capture %r while also reporting none (%s), so the "
+                                    "report contradicts itself"
+                                    % (name, capture, uncaptured[name][1]))
                 else:
                     refusals.append("%s capture %r is missing" % (name, capture))
                 continue
@@ -765,6 +820,32 @@ def self_test():
                      "capture": "probe-fixture-never-written.png",
                      "pixels": {"captureFailure": "own window not offered for capture"}}),
                  "never captured", ["is missing"]),
+                # The write can fail after a good capture, and that is a third thing: the
+                # numbers are real, so "nothing here can say whether it drew" would be false,
+                # and the page drew, so "no variation" would be false too.
+                ("a pane whose PNG failed to land says the artefact is missing, not that the "
+                 "page was never captured or flat",
+                 lambda report: report["videoPane"].update({
+                     "capture": "probe-fixture-never-written.png",
+                     "pixels": {"stddev": 0.31, "distinctColours": 88, "sampled": 4000,
+                                "captureWriteFailure": "the volume refused the write"}}),
+                 "artefact was never written", ["no variation", "never captured"]),
+                ("a pane that measured pixels and named no file says so, instead of the "
+                 "digest comparison going quiet about it",
+                 lambda report: report["videoPane"].update(
+                     {"pixels": {"stddev": 0.31, "distinctColours": 88, "sampled": 4000},
+                      "capture": None}),
+                 "no artefact behind them", ["never captured", "no variation"]),
+                ("a pane that answers neither question is named, not counted as a capture",
+                 lambda report: report["videoPane"].update({"capture": None}),
+                 "cannot say whether the pane was ever drawn", ["no variation"]),
+                # A report that does both is the exact defect this wave removes on the producer
+                # side; the reader has to refuse it too, or an older binary keeps passing.
+                ("a pane that names a file and reports it never happened is refused as "
+                 "uncaptured, and its file is never hashed as if it were a capture",
+                 lambda report: report["videoPane"].update({
+                     "pixels": {"captureFailure": "own window not offered for capture"}}),
+                 "never captured", ["drew the same pixels"]),
             ]
             for what, mutation, wanted, forbidden in wording_cases:
                 doctored = json.loads(json.dumps(good))
