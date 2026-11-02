@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - 新增 "Allow"/"允许" 本地化键，覆盖 USB 设备页允许按钮翻译
+- **装配层审计（StreamConfiguration 字段是否真被写入）**：新增
+  `scripts/stream-config-assembly-audit.py`，把"流会读、却没人写"的字段变成门禁级红色。
+  Wave Z-3 的 `settings-usage-audit.py` 问的是"这个持久化键有没有人动作"，而它问得没错——
+  渲染器确实动作了；断链在**下一跳**：从设置字典进 `StreamConfiguration` 对象这一段，此前
+  没有任何审计看过。新审计对头文件声明的每个属性问一句"有没有人赋值"，当前 68/68 已装配、
+  债务账为空（`scripts/stream-config-assembly-baseline.json`）。判定只认树里声明为
+  `StreamConfiguration *` 的接收者：`Connection.m` 里的 `_streamConfig` 是同名 C 结构体成员，
+  若把它算作写入，真正的空缺就能永远藏住；`SCStreamConfiguration`（ScreenCaptureKit）
+  靠词边界排除。`==` 不算写入，注释与日志格式串里的 `streamConfig.width` 也不算——
+  这后两条都是第一版真踩过的坑。self-test 五个变异各只移动它该移动的判据（含"注释吃掉装配行"
+  这条跨行配对缺陷），另钉三条既有判据防解析器静默退化。接缝四处齐全：`.gitlab-ci.yml`、
+  镜像 workflow、`constraints-audit.py`（仅判定形态入本地聚合，实测 0.4s；self-test 形态
+  2.6s，电池里 107 条变异以本聚合为判读门，故不入）、`local-gates.sh` 并集发现（135 条命令）；
+  `gate-coverage-audit.py` 报事实源 41 / 镜像 95 / 可达 95。
 - **主机侧证据审计（Wave AA）**：新增 `scripts/host-side-evidence-audit.py`，把真机验收的
   **主机那一半**接进门禁。`hardware-acceptance-check.py` 只看客户端自己说了什么，于是"客户端
   通告 DS5、主机因缺 sidecar 静默拒绝"这类缺陷在本仓一侧永远看不见——手柄看起来是好的，玩家
@@ -39,6 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - 设置窗口卡片布局响应式：`.frame(maxWidth: .infinity)` + 弹性宽度范围（minWidth: 400, idealWidth: 680, maxWidth: 800）
 - l10n 全覆盖修复：1284 个键值对中英文对称，无遗漏
+- **视频页的"帧率翻倍时缩短队列"开关此前不可能改变画面**：`shortQueueOnDoubledCadence`
+  一路齐全——设置页有开关、持久化有字段、导出字典有键、`VideoDecoderRenderer.m` 也确实按它
+  少排一帧——唯独从设置字典写进 `StreamConfiguration` 对象的那一行从来没人写过。ObjC 的零初始化
+  让它永远读作 `NO`，于是编译干净、启动正常、开关可拨，画面不动。补上装配行后，
+  Wave Z-3 的 `settings-usage-audit.py` 立即由绿转红（该键已不再是"未接线"债务），这正是它
+  设计上的诚实反应：账本条目随之退场，钉死判据改钉 `consumed`，装配行再次丢失时仍会转红。
+  真机效果未验收，`hardware_validated` 仍为 `false`。
 
 ## [1.6.0-build1720] - 2026-09-29
 

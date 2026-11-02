@@ -30,10 +30,6 @@
       "reason": "keyboardCompatibilityMode is a switch shown by selectedKeyboardCompatibilityMode that no accessor is messaged for and no stream or settings-layer code reads"
     },
     {
-      "key": "shortQueueOnDoubledCadence",
-      "reason": "shortQueueOnDoubledCadence is a switch shown by shortQueueOnDoubledCadence that no accessor is messaged for and no stream or settings-layer code reads"
-    },
-    {
       "key": "swapABXYButtons",
       "reason": "swapABXYButtons is a switch shown by swapButtons that no accessor is messaged for and no stream or settings-layer code reads"
     }
