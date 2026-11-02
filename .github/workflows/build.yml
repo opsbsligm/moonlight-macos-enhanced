@@ -228,6 +228,18 @@ jobs:
         python3 scripts/settings-usage-audit.py --self-test
         python3 scripts/settings-usage-audit.py
 
+    - name: Verify every StreamConfiguration field is assembled
+      # The settings audit above stops at "something acts on this key". The hop before
+      # that -- the settings dictionary into the `StreamConfiguration` object handed to
+      # the stream -- had no auditor, and a field nobody assigns silently reads as zero
+      # forever. `shortQueueOnDoubledCadence` shipped with a switch, a persisted key, an
+      # export row and a renderer that acts on it, and no assembly line. Writes only
+      # count through a receiver the tree declares as `StreamConfiguration *`, so
+      # Connection.m's colliding `_streamConfig` struct cannot excuse a gap.
+      run: |
+        python3 scripts/stream-config-assembly-audit.py --self-test
+        python3 scripts/stream-config-assembly-audit.py
+
     - name: Verify the workflow can actually run
       # A plain yaml.safe_load accepts a step whose run: key was dropped, and a
       # step with two run: keys. GitHub accepts neither: the run turns red before

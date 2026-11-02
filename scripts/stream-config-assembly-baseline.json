@@ -1,0 +1,4 @@
+{
+ "_about": "StreamConfiguration fields that nothing writes. Regenerate with `python3 scripts/stream-config-assembly-audit.py --write-baseline` and read the diff: an entry that leaves means the field got assembled or the reason stopped matching, which is the only good reason for one to go. The reason names the reader, so a field that gains a different reader is a different debt and has to be re-reviewed.",
+ "debts": []
+}
