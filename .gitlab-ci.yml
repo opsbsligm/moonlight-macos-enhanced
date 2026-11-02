@@ -124,6 +124,15 @@ audit:python:
       python scripts/defaults-consistency.py
       python scripts/settings-usage-audit.py --self-test
       python scripts/settings-usage-audit.py
+      # One stage later than the audit above: a persisted key can have an export row, an
+      # accessor, and a consumer, and still do nothing, because the hop from the settings
+      # dictionary into `StreamConfiguration` was never written. `shortQueueOnDoubledCadence`
+      # shipped that way. This asks, per declared field of the object the stream reads,
+      # whether anything assigns it, and only credits a receiver the tree declares as
+      # `StreamConfiguration *` -- Connection.m's `_streamConfig` C struct collides on
+      # spelling and must not excuse an unwritten property.
+      python scripts/stream-config-assembly-audit.py --self-test
+      python scripts/stream-config-assembly-audit.py
       # The host's own half of the acceptance pairing. `--expect` states the reviewed verdicts
       # of the real host (192.0.2.1, captured 2026-11-02) so the judgement runs on a
       # committed snapshot instead of a live machine: a BLOCKED row here is a fact about that

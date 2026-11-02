@@ -1514,6 +1514,10 @@ highFreqMotor:(unsigned short)highFreqMotor {
     streamConfig.upscalingMode = (int)[SettingsClass upscalingModeFor:self.app.host.uuid];
     streamConfig.frameInterpolationMode = prefs[@"frameInterpolationMode"] != nil ? [prefs[@"frameInterpolationMode"] intValue] : 0;
     streamConfig.frameInterpolationForce = prefs[@"frameInterpolationForce"] != nil ? [prefs[@"frameInterpolationForce"] boolValue] : NO;
+    // The renderer trims one frame off the pending queue when this is set
+    // (VideoDecoderRenderer.m); without the read the Settings switch could not
+    // change anything. The fallback is the shipped default, not a choice.
+    streamConfig.shortQueueOnDoubledCadence = prefs[@"shortQueueOnDoubledCadence"] != nil ? [prefs[@"shortQueueOnDoubledCadence"] boolValue] : NO;
     Log(LOG_I, @"[diag] Stream timing config: preset=%d framePacing=%d buffer=%d responsiveness=%d compatibility=%d vsync=%d sdrCompat=%d",
         (int)streamConfig.smoothnessLatencyMode,
         (int)streamConfig.framePacingMode,
