@@ -459,6 +459,13 @@ MUTATIONS = (
      '            snapshot["version"] = re.sub(r"\\s+", " ", decoded(0)).strip().encode(\n'
      '                "ascii", "replace").decode("ascii")',
      "the transcript captured from the host parses into the shipped snapshot"),
+    # The collector's own branch is judged, not just parsed: removing the import makes the
+    # collection die on an undefined name, which is the exact defect this check was written
+    # over. It stays green on every other mutant, so it pins the branch and not the file.
+    ("the collect branch loses the module it writes its snapshot through",
+     "import tempfile\n",
+     "",
+     "the collected snapshot is judged in the same run that wrote it"),
 )
 
 # A copy that changes no behaviour at all. The contract has to be green on it, or "mutation
@@ -510,7 +517,7 @@ def write(workdir, name, text):
     return path
 
 
-def run_tool(tool, argv):
+def run_tool(tool, argv, env_extra=None):
     # The fixture location is handed down, not derived. A mutated copy lives in /tmp, where
     # `__file__` points at a directory with no fixtures beside it; without this the child
     # dies on a missing snapshot, the parent sees an empty verdict list, and every mutation
@@ -518,6 +525,8 @@ def run_tool(tool, argv):
     # with the variable stripped, a copy that differs from the original by one comment still
     # reported all 7 mutations caught.
     env = dict(os.environ, HSE_GATE_NESTED="1", HSE_FIXTURE_DIR=FIXTURE_DIR)
+    if env_extra:
+        env.update(env_extra)
     done = subprocess.run([sys.executable, tool] + argv, capture_output=True, text=True, env=env)
     if done.returncode == 2 and "nested self-test refused" in done.stderr:
         return done.returncode, done.stdout, done.stderr
@@ -739,6 +748,42 @@ def contract(tool, workdir, failures, label):
           "the committed claim report is held back by the host's own refusal",
           reason_for(rows, "advertised-versus-host"))
 
+    # The collector's own branch, end to end. Nothing in any gate ever ran `--collect`: it
+    # needs a Windows host, and it carried an undefined name -- `tempfile` was used and never
+    # imported -- so the first real collection would have died with a traceback after writing
+    # its own file. A stub `winrm` answers with the captured transcript, which puts the whole
+    # branch (password file, parse, write, judge) inside a check a laptop can run.
+    stub = write(workdir, "winrm.py",
+                 "import os\n"
+                 "class _Result:\n"
+                 "    def __init__(self, payload, status):\n"
+                 "        self.std_out, self.status_code = payload, status\n"
+                 "class Session:\n"
+                 "    def __init__(self, *args, **kwargs):\n"
+                 "        pass\n"
+                 "    def run_ps(self, script):\n"
+                 "        with open(os.environ['HSE_STUB_CAPTURE'], 'rb') as handle:\n"
+                 "            return _Result(handle.read(), 0)\n")
+    collected = os.path.join(workdir, "collected.json")
+    code, out, err = run_tool(
+        tool, ["--collect", "--host", "stub-host", "--user", "u",
+               "--password-file", write(workdir, "pw.txt", "stub\n"), "--out", collected],
+        {"PYTHONPATH": os.path.dirname(stub), "HSE_STUB_CAPTURE": RAW_CAPTURE})
+    written = None
+    try:
+        with open(collected, encoding="utf-8") as handle:
+            written = json.load(handle)
+    except (OSError, ValueError):
+        written = None
+    check(written is not None and written.get("host") == "stub-host"
+          and "v2026." in str(written.get("version", "")),
+          "the collect branch writes the snapshot it read from the host",
+          "collect answered rc=%s out=%s err=%s" % (code, out[-200:], err[-300:]))
+    check("host-identity" in out and "stub-host" in out
+          and "ds5-sidecar-not-available" in out,
+          "the collected snapshot is judged in the same run that wrote it",
+          "collect answered rc=%s out=%s err=%s" % (code, out[-200:], err[-300:]))
+
     for label_shape, text in (("a duplicated slot row", "ml.controllers.slot.0=xbox\n"
                                                         "slot.0=xbox\n"),
                               ("a malformed slot row", "ml.controllers.slot.0 xbox")):
@@ -857,8 +902,13 @@ def main():
         snapshot_path = handle.name
         with handle:
             handle.write(text)
+        # This run made the file, so this run removes it. The cleanup used to hide behind
+        # `HSE_OWN_TEMP`, an environment variable no caller in the repository ever set, so
+        # every collection left a snapshot in the system temp directory.
+        own_temp = True
     elif args.snapshot:
         snapshot_path = args.snapshot
+        own_temp = False
     else:
         parser.error("nothing to judge -- pass --snapshot, --collect, --parse-capture, or "
                      "--self-test")
@@ -872,7 +922,7 @@ def main():
     print(json.dumps(rows, indent=2) if args.json else render(rows))
     if args.expect:
         return verify_expectations(rows, args.expect)
-    if os.environ.get("HSE_OWN_TEMP"):
+    if own_temp:
         os.unlink(snapshot_path)
     return 0 if all(row["verdict"] == OK for row in rows) else 1
 
