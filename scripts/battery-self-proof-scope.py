@@ -1,76 +1,70 @@
-"""Which self-proof a gate owes a mutation that was planted somewhere else.
+"""Which files a self-proof gate actually opens, and what that lets the battery skip.
 
-The assertion battery judges a planted mutation by running a gate over the mutated
-tree. Thirty of its cases ask the aggregate auditor (`constraints-audit.py`), and
-the aggregate answers by running every gate it drives -- including four gates whose
-red proofs re-derive their own verdict from a fixture or from a compiled harness:
+The assertion battery judges one planted mutation at a time by running a gate over
+the mutated tree. Of its 153 cases, 107 ask the aggregate auditor
+(`constraints-audit.py`) -- 77 by the default gate, 30 by naming it -- and the
+aggregate answers by running every gate it drives, including four whose red proofs
+re-derive their verdict from a fixture or a compiled harness. Measured here, in the
+exact call shape the battery makes, one aggregate run costs 103.1s, and 85.1s of it
+is those four red proofs (the snapshot's per-form seconds sum to more, 94s, because
+they are timed in isolation and this delta shares a process tree). The answer each
+returns is the answer it returns on a clean tree, because the line the battery moved
+sits in nothing they open. That accounts for the record: 107 cases x 103.1s projects
+to 11032s. The source of truth agrees from the other side: the untrimmed baseline
+job 7141 (pipeline 1075) timed the first 34 aggregate cases at a mean of 154.2s, so
+all 107 of them are 16500s against a 180-minute ceiling -- the job cannot finish
+however long it is allowed. With the marker set and the mutation out of scope the
+same local run measured 18.0s.
 
-    defaults-consistency.py --self-test        35.4s
-    enhanced-presentation-tests.py             30.0s
-    battery-interrupt-tests.py --self-test     15.1s
-    hardware-acceptance-check.py --self-test    3.5s
+The narrow question this module answers: would this gate's proof say anything about
+the file that was just moved? A proof that re-runs unchanged is not evidence about
+the mutation -- it is the same evidence, bought twice. The judgement half of each
+gate, the half that reads the tree, always runs; only the self-proof is skipped, and
+only when the battery says which file it moved. Outside the battery nothing is
+skipped at all: no marker is in the environment, so a push, a merge request, and a
+developer's `local-gates.sh` each still run every red proof.
 
-Eighty-four seconds of the aggregate's measured 104 seconds. Multiplied by the
-mutations that go through it, pipeline 1053 spent 10537 of its 10801 seconds there
-and was killed by its own timeout -- and the answer each of those four returned was
-the same answer it returns on a clean tree, because the line the battery moved does
-not sit in anything they read.
+The read surfaces come from `scripts/battery-scope-probe.py`, which runs each gate
+with an audit hook on `open` and records what it touched. A hand-written list went
+wrong exactly that way: the first draft declared that `enhanced-presentation-tests.py`
+reads three policy headers, when it also opens `VideoDecoderRenderer.m`,
+`StreamViewController+Diagnostics.m` and three fixtures, and it declared that the
+defaults audit reads five Swift files, when it walks the whole `Limelight` tree. A
+list narrower than the truth silences a proof on precisely the mutations it exists
+to catch, and does it quietly.
 
-So the question this file answers is narrow: does the proof still prove something
-about the file that was just changed? A red proof that re-runs unchanged is not
-evidence about the mutation; it is the same evidence, bought twice. The judgement
-form -- the half that actually reads the tree -- always runs, because that half can
-see the mutation. And outside the battery nothing is skipped at all: no marker is in
-the environment, so a push, a merge request, and a developer's `local-gates.sh` each
-still run every red proof, which is where these four gates are covered anyway (the
-`audit:python` job runs all four on every push).
+Two failures this module has to refuse, because it has had both:
 
-The subject lists below are the honest scope of each gate: the files it opens. A
-subject that does not exist is a bug in this file, not an excuse -- see
-`scripts/battery-self-proof-scope-tests.py`, which refuses a list naming a file that
-is not in the repository, because a typo there would silence a proof permanently and
-silently.
+  * answering about a gate it does not know. Unknown is not the same as irrelevant;
+    an unlisted gate keeps its proof.
+  * treating a caller's argument as a filename. The first draft passed the gate's
+    whole command line -- a list -- where a path was expected.
 """
+import json
 import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SNAPSHOT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "battery-self-proof-scope.json")
 
 # Set by the battery for the duration of one judged mutation, to the repository-
 # relative path it just rewrote. Deliberately absent everywhere else.
 MUTATED_ENVIRONMENT_VARIABLE = "ML_MUTATED_FILE"
 
-STREAM = os.path.join("Limelight", "Stream")
-VIEW_CONTROLLERS = os.path.join("Limelight", "macOS", "ViewControllers")
 
-# gate script -> the files that gate reads. A mutation outside this set cannot
-# change what the gate says about the tree, so its self-proof adds cost and no
-# verdict. Paths are repository-relative and must exist.
-SUBJECTS = {
-    # Compiles the three shipping C policy headers and replays ordering against them.
-    "enhanced-presentation-tests.py": [
-        os.path.join(STREAM, "EnhancedPresentationPolicy.h"),
-        os.path.join(STREAM, "EnhancementProcessingPolicy.h"),
-        os.path.join(STREAM, "ActualPresentationMetrics.h"),
-    ],
-    # Evaluates each absent-key fallback in the settings layers against the stream side.
-    "defaults-consistency.py": [
-        os.path.join(VIEW_CONTROLLERS, "SettingsObjCBridge.swift"),
-        os.path.join(VIEW_CONTROLLERS, "SettingsModel+Persistence.swift"),
-        os.path.join(VIEW_CONTROLLERS, "SettingsModel+DerivedValues.swift"),
-        os.path.join(VIEW_CONTROLLERS, "SettingsStore.swift"),
-        os.path.join(VIEW_CONTROLLERS, "SettingsModel.swift"),
-        os.path.join(VIEW_CONTROLLERS, "StreamViewController.m"),
-    ],
-    # Runs the battery's own signal handler, extracted from the battery's text.
-    "battery-interrupt-tests.py": [
-        os.path.join("scripts", "assertion-battery.py"),
-    ],
-    # Grades acceptance rows out of an exported report; its red proofs move fixtures,
-    # and it opens no shipping source at all. It judges itself, so it reads itself.
-    "hardware-acceptance-check.py": [
-        os.path.join("scripts", "hardware-acceptance-check.py"),
-    ],
-}
+def _relative(path):
+    """A repository-relative path with forward slashes, or None if it is outside."""
+    if not path:
+        return None
+    absolute = path if os.path.isabs(path) else os.path.join(ROOT, path)
+    try:
+        resolved = os.path.realpath(absolute)
+        relative = os.path.relpath(resolved, os.path.realpath(ROOT))
+    except (ValueError, OSError):
+        return None
+    if relative == os.pardir or relative.startswith(os.pardir + os.sep):
+        return None
+    return relative.replace(os.sep, "/")
 
 
 def mutated_file(environ=None):
@@ -79,35 +73,101 @@ def mutated_file(environ=None):
     raw = source.get(MUTATED_ENVIRONMENT_VARIABLE, "").strip()
     if not raw:
         return None
-    absolute = raw if os.path.isabs(raw) else os.path.join(ROOT, raw)
+    return _relative(raw)
+
+
+def load(path=SNAPSHOT_PATH):
+    """The measured read surfaces. Raises if the snapshot is absent or unreadable.
+
+    Loud on purpose: a missing snapshot means every gate is unknown, and unknown
+    gates keep their proofs, so a silent fallback would look like the mechanism
+    working while nothing was ever skipped.
+    """
+    with open(path, encoding="utf-8") as handle:
+        document = json.load(handle)
+    gates = document.get("gates")
+    if not isinstance(gates, dict) or not gates:
+        raise ValueError("%s declares no gates" % path)
+    return gates
+
+
+def gate_of(script):
+    """The snapshot entry for a gate, found by its file name."""
+    if script is None:
+        return None
+    name = os.path.basename(str(script))
     try:
-        return os.path.relpath(os.path.realpath(absolute), os.path.realpath(ROOT))
-    except ValueError:
-        # Off-volume on a platform that has volumes; not a file this repository owns.
+        return load().get(name)
+    except (OSError, ValueError):
         return None
 
 
-def self_proof_is_about(script, mutated=None):
-    """Whether this mutation reaches anything `script` reads.
+def is_about(script, mutated=None):
+    """Whether this mutation reaches anything `script` opens.
 
-    True is the answer that costs time and earns it. Outside the battery -- no
-    marker, no mutation -- it is always True, so nothing is skipped on a push.
+    `script` is the gate file, not a command line: the caller knows which gate it is
+    about to excuse, and a list here is a caller bug worth hearing about. True is the
+    answer that costs time and earns it; outside the battery it is always the answer.
     """
+    if script is not None and not isinstance(script, (str, bytes, os.PathLike)):
+        raise TypeError("is_about wants a gate path, got %s (%r)"
+                        % (type(script).__name__, script))
     if mutated is None:
         mutated = mutated_file()
     if mutated is None:
         return True
-    subjects = SUBJECTS.get(os.path.basename(script))
-    if subjects is None:
-        # A gate with no recorded scope keeps its proof. Unknown is not the same as
-        # irrelevant, and guessing wrong here would silence a guard.
+    entry = gate_of(script)
+    if entry is None:
         return True
-    normalised = mutated.replace(os.sep, os.path.sep)
-    return any(normalised == s.replace(os.sep, os.path.sep) for s in subjects)
+    if mutated in entry.get("files", ()):
+        return True
+    return any(mutated == directory or mutated.startswith(directory.rstrip("/") + "/")
+               for directory in entry.get("dirs", ()))
 
 
-def missing_subjects():
-    """Scope entries that name a file the repository does not have."""
-    return ["%s -> %s" % (gate, subject) for gate, subjects in SUBJECTS.items()
-            for subject in subjects
-            if not os.path.isfile(os.path.join(ROOT, subject))]
+def skip_is_safe(script):
+    """Whether this aggregate run may excuse `script`'s self-proof.
+
+    The marker is the only authority, and that took two wrong attempts to see. The
+    first question asked whether this was a battery run by asking whether
+    `--no-battery` was absent, and the battery's own judging call passes that flag:
+    `AUDIT_GATE` in assertion-battery.py carries it precisely so the aggregate does
+    not recurse into the battery. So the flag says "do not run the battery", not
+    "the battery is running me", and a rule keyed on its absence skipped nothing at
+    all -- measured, a judging-shaped run with the marker set cost 103.6s against
+    107.5s without it, and printed no skip line. A mechanism that cannot fire is
+    worse than none, because it reads as a fix.
+
+    The battery writes ML_MUTATED_FILE around each judged mutation and clears it
+    otherwise, so a marker in the environment *is* the battery judging one
+    mutation, from whichever call shape it came. With no marker this is a plain run
+    -- a push, a merge request, or a developer's `local-gates.sh` -- and a plain run
+    excuses nothing.
+    """
+    return mutated_file() is not None and not is_about(script)
+
+
+def missing_subjects(path=SNAPSHOT_PATH):
+    """Snapshot entries naming a file or directory the repository does not have."""
+    findings = []
+    for gate, entry in sorted(load(path).items()):
+        for subject in entry.get("files", ()):
+            if not os.path.isfile(os.path.join(ROOT, subject)):
+                findings.append("%s -> %s" % (gate, subject))
+        for subject in entry.get("dirs", ()):
+            if not os.path.isdir(os.path.join(ROOT, subject)):
+                findings.append("%s -> %s/" % (gate, subject))
+    return findings
+
+
+def skipped_in_a_battery_run(gates=None):
+    """How many of a run's self-proofs the current marker would excuse, and their cost."""
+    if gates is None:
+        gates = load()
+    seconds = 0.0
+    names = []
+    for gate, entry in sorted(gates.items()):
+        if not is_about(gate):
+            seconds += entry.get("seconds", 0)
+            names.append(gate)
+    return names, seconds

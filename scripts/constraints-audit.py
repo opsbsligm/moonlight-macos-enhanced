@@ -81,7 +81,6 @@ flags = [a for a in sys.argv[1:] if a.startswith("--")]
 positional = [a for a in sys.argv[1:] if not a.startswith("--")]
 root = positional[0] if positional else "."
 run_battery = "--no-battery" not in flags
-mutated_file = battery_scope.mutated_file()
 failures = []
 
 def check(ok, message):
@@ -2550,6 +2549,16 @@ CI_ONLY = {
     # reasons are visible in the script: the toolchain call, and the skip line that
     # names the missing checkout instead of passing quietly.
     "unicode-dense-packing-tests.py": "clang_and_sdk",
+    # The scope probe re-measures what each self-proof gate opens by running the four
+    # measured gates under an audit hook -- about ninety seconds, every time, and
+    # `constraints-audit.py --no-battery` is itself the call the battery's referee makes
+    # per mutation, so running the probe from here would add ninety seconds to every
+    # judged mutation and undo the very trimming the snapshot enables. The verification
+    # is not lost: the source of truth runs the probe as its own line in `audit:python`,
+    # and the mirror runs it as its own step. The marker is the probe's re-measure
+    # switch, which is what ties its verdict to the host's toolchain and makes the
+    # snapshot a Mac-written artefact rather than a laptop-local one.
+    "battery-scope-probe.py": "--write",
 }
 gates_in_workflow = sorted(set(re.findall(r"python3 scripts/([\w.\-]+\.py)", pipeline))
                            - {"constraints-audit.py"})
@@ -2635,9 +2644,13 @@ for reader_shape, reader_arguments in (("its readings", []),
 # The other shape stays where it belongs: a real verdict needs an exported report and an
 # observer statement bound to that report's hash, so there is no fixture here to pass, and a
 # grader handed no report says so and exits 2 instead of grading nothing into a green sweep.
-if not (run_battery and not battery_scope.self_proof_is_about(
-        [sys.executable, os.path.join(scripts_dir, 'hardware-acceptance-check.py'), '--self-test'],
-        mutated_file)):
+# The skip below is the only way this aggregate finishes inside its job: the battery
+# judges 107 of its cases through this file, and the four red proofs excused there
+# are 86 seconds of this run's measured 106 (the snapshot sums their forms to 94s,
+# because there they are timed alone and here they share a warm process tree).
+# scripts/battery-self-proof-scope.py says when a proof cannot see the mutation, and
+# excuses nothing outside the battery.
+if not battery_scope.skip_is_safe('hardware-acceptance-check.py'):
     grader_run = subprocess.run(
         [sys.executable, os.path.join(scripts_dir, 'hardware-acceptance-check.py'), '--self-test'],
         capture_output=True, text=True, cwd=root)
@@ -2687,9 +2700,7 @@ for cadence_shape, cadence_arguments in (("its readings", []),
           % (cadence_shape, (cadence_run.stdout + cadence_run.stderr).strip().splitlines()[-1:]))
 
 # Presentation ordering is also pure C: replay pressure without an Apple GPU.
-if not (run_battery and not battery_scope.self_proof_is_about(
-        [sys.executable, os.path.join(scripts_dir, 'enhanced-presentation-tests.py')],
-        mutated_file)):
+if not battery_scope.skip_is_safe('enhanced-presentation-tests.py'):
     presentation_run = subprocess.run(
         [sys.executable, os.path.join(scripts_dir, 'enhanced-presentation-tests.py')],
         capture_output=True, text=True, cwd=root)
@@ -3538,21 +3549,24 @@ for coverage_shape, coverage_arguments in (("the two definitions reconcile", [])
 # makes it exactly the kind of gate the parity rule below refuses to let live on a runner
 # alone: the defect it looks for (the window shows one value, the stream uses another) is
 # invisible to every other check in this file, and Wave V shipped one. The judgement form
-# reads the tree; the self-test form mutates the source text and has to see each mutation,
-# including its negative twins, so a green self-test says the gate can still fail.
+# reads the tree and is therefore never excused -- it costs 1.4s and can see any
+# mutation in the tree; the self-test form mutates the source text and has to see each
+# mutation, including its negative twins, so a green self-test says the gate can still
+# fail. That red-proof form costs 40.3s, walks the same tree it just walked, and is what
+# the battery excuses when the file it moved is not one this gate opens.
 for defaults_shape, defaults_arguments in (("with both layers agreeing", []),
                                            ("its red proofs", ["--self-test"])):
-    if not (run_battery and not battery_scope.self_proof_is_about(
-            [sys.executable, os.path.join(root, 'scripts', 'defaults-consistency.py')]
-            + defaults_arguments, mutated_file)):
-        defaults_run = subprocess.run(
-            [sys.executable, os.path.join(root, 'scripts', 'defaults-consistency.py')]
-            + defaults_arguments, capture_output=True, text=True, cwd=root)
-        check(defaults_run.returncode == 0,
-          "the defaults audit passes %s" % defaults_shape
-          if defaults_run.returncode == 0 else
-          "the defaults audit failed %s:\n%s"
-          % (defaults_shape, (defaults_run.stdout + defaults_run.stderr)[-1200:]))
+    if defaults_arguments and battery_scope.skip_is_safe('defaults-consistency.py'):
+        print('skip self-proof  defaults audit red proofs (mutation out of scope)')
+        continue
+    defaults_run = subprocess.run(
+        [sys.executable, os.path.join(root, 'scripts', 'defaults-consistency.py')]
+        + defaults_arguments, capture_output=True, text=True, cwd=root)
+    check(defaults_run.returncode == 0,
+      "the defaults audit passes %s" % defaults_shape
+      if defaults_run.returncode == 0 else
+      "the defaults audit failed %s:\n%s"
+      % (defaults_shape, (defaults_run.stdout + defaults_run.stderr)[-1200:]))
 
 # The settings-usage audit judges which persisted keys nothing acts on, and its whole
 # subject is a shape no other gate in this file can see: a control that persists a value
@@ -3771,9 +3785,7 @@ check(rco_rules.returncode == 0,
 # watches (restore, then fail to die) is what makes a Ctrl+C look ignored until something
 # sends SIGKILL, and the fastest place to notice that is the command a developer runs
 # before pushing.
-if not (run_battery and not battery_scope.self_proof_is_about(
-        [sys.executable, os.path.join(root, 'scripts', 'battery-interrupt-tests.py'),
-         '--self-test'], mutated_file)):
+if not battery_scope.skip_is_safe('battery-interrupt-tests.py'):
     bip_rules = subprocess.run(
         [sys.executable, os.path.join(root, 'scripts', 'battery-interrupt-tests.py'),
          '--self-test'],

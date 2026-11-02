@@ -1,0 +1,64 @@
+{
+  "_about": "Which files a self-proof gate actually opens while it reaches its verdict. Derived by running each gate with an audit hook on open -- see scripts/battery-scope-probe.py, which regenerates and checks this file. The assertion battery plants one defect at a time and judges it through scripts/constraints-audit.py, which drives the gates listed here; when the file the battery moved is in none of a gate's subjects, that gate's red proof re-runs unchanged and says nothing about the mutation. Outside the battery nothing is skipped.",
+  "_measured_at": "2026-11-03",
+  "_measured_on": "Darwin arm64, python 3.15.2, seconds per form as measured",
+  "gates": {
+    "battery-interrupt-tests.py": {
+      "dirs": [],
+      "files": [
+        "scripts/assertion-battery.py",
+        "scripts/battery-interrupt-tests.py"
+      ],
+      "forms": [
+        "battery-interrupt-tests.py --self-test"
+      ],
+      "seconds": 15.1
+    },
+    "defaults-consistency.py": {
+      "dirs": [
+        "Limelight"
+      ],
+      "files": [
+        "scripts/defaults-consistency-baseline.json",
+        "scripts/defaults-consistency.py"
+      ],
+      "forms": [
+        "defaults-consistency.py",
+        "defaults-consistency.py --self-test"
+      ],
+      "seconds": 38.2
+    },
+    "enhanced-presentation-tests.py": {
+      "dirs": [],
+      "files": [
+        "Limelight/Stream/ActualPresentationMetrics.h",
+        "Limelight/Stream/EnhancedPresentationPolicy.h",
+        "Limelight/Stream/EnhancementProcessingPolicy.h",
+        "Limelight/Stream/VideoDecoderRenderer.m",
+        "Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m",
+        "scripts/apple_toolchain.py",
+        "scripts/assertion-battery.py",
+        "scripts/battery-self-proof-scope.py",
+        "scripts/enhanced-presentation-tests.py",
+        "scripts/fixtures/async-enhancement-lifecycle.m",
+        "scripts/fixtures/async-interpolation-lifecycle.m",
+        "scripts/fixtures/enhanced-queue-depth.m",
+        "scripts/vt-enhancement-probe.py"
+      ],
+      "forms": [
+        "enhanced-presentation-tests.py"
+      ],
+      "seconds": 30.9
+    },
+    "hardware-acceptance-check.py": {
+      "dirs": [],
+      "files": [
+        "scripts/hardware-acceptance-check.py"
+      ],
+      "forms": [
+        "hardware-acceptance-check.py --self-test"
+      ],
+      "seconds": 4.3
+    }
+  }
+}
