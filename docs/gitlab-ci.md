@@ -91,9 +91,17 @@ necessary regardless of queue order; serialization alone does not reject retries
   script.
 - Only `download-deps` reads/writes the framework cache. The build consumes that
   job's artifacts, not a mutable cache. No derived data is cached.
-- The Python audit job installs `pyyaml==6.0.2` in a temporary virtualenv.
-- The mutation battery installs the same `pyyaml==6.0.2` pin in its own
-  temporary virtualenv; the two jobs never share a venv.
+- The Python audit job and the mutation battery each build their own temporary
+  virtualenv through `scripts/ci/bootstrap-python.sh`, and never share one. Both
+  need `pyyaml==6.0.2`: every workflow audit imports it. The script
+  keeps pypi.org as the primary index and falls back to a second index only once
+  the primary has failed, then proves the result by importing the module rather
+  than trusting pip's exit code. That last part is the point: pipelines 1017 and
+  1020 both died with `SSLEOFError` against a pypi.org that was unreachable from
+  this network (measured from the runner: `github.com` and `bing.com` failed the
+  same handshake at the same moment, while `mirrors.aliyun.com` answered 200),
+  and the job reported only `exit status 1`. Set `PYPI_FALLBACK_INDEX` to
+  override the fallback.
 
 ## Single runner and concurrency
 
