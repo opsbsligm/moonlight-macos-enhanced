@@ -118,14 +118,36 @@ gate_entries() {
           if (!(script in named)) { named[script] = 1
             print "note    not a gate, excluded: " script > "/dev/stderr" }
           continue }
-        if (substr(line[i], 1, 1) == "T" && (script in mirrored)) continue
+        # The emitter asks for a list of gates, so its script name belongs to the auditor and
+        # its value is the class being asked for. Substituting the mirror call of the same
+        # script threw the request away, and with it every gate in that class: the sweep ran
+        # the auditor self-test twice and never once asked what the source of truth emits for
+        # the selftest class, which is where the report reader contract lives. An emitter
+        # therefore represents nothing but itself.
+        if (substr(line[i], 1, 1) == "T" && index(line[i], "--emit-commands") == 0 && (script in mirrored)) continue
         print line[i]
       }
     }'
 }
 
 gate_commands() {
-  gate_entries | sed 's/^[MT] //' | expand_emitters
+  # Deduplicated a second time, after the emitters have been expanded, and on the whole
+  # command line rather than the script name. The per-definition pass above cannot see this
+  # shape: a class request expands into commands the other definition already writes out,
+  # so `scaling-output-evidence-tests.py` -- a gate measured at two minutes -- ran twice in
+  # one sweep. Two identical command lines are one claim; two spellings of the same script
+  # (bare and `--self-test`) are two claims, and stay.
+  gate_entries | sed 's/^[MT] //' | expand_emitters | awk '
+    {
+      if ($0 in seen) {
+        if (!said[$0]++) {
+          print "note    duplicate command, run once: " $0 | "cat 1>&2"
+        }
+        next
+      }
+      seen[$0] = 1
+      print
+    }'
 }
 
 # One definition may ask a script for the gate list at run time instead of writing the
@@ -423,6 +445,12 @@ while IFS= read -r cmd; do
       echo "skip  $cmd (needs a value only CI computes)"; skipped=$((skipped+1)); continue;;
   esac
   case "$cmd" in
+    *render-probe.py\ --self-test*)
+      # No fall-through: this form judges the report reader and needs no build, measured at
+      # 0.15s end to end. It used to be swept up by the pattern below, which excused the script on
+      # the cost of its *other* form, so the judge's own contract ran on no laptop and no merge
+      # request -- only on the release path that never looked at it.
+      ;;
     *render-probe*)
       # Filing this one in with the gates that need a runner was a small lie with a
       # twenty-minute price: the script builds its own Debug binary and measures the page
