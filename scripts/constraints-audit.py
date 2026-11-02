@@ -3563,8 +3563,10 @@ for usage_shape, usage_arguments in (("with every exposed control accounted for"
 # assumed: this aggregate is the battery's judge for 32 mutations, so every second added to
 # it is paid thirty-two times, and the battery job on `e2334917` had already spent its whole
 # three-hour ceiling. The judgement reads the committed snapshot in 0.04s and stays. The
-# self-test form costs 6.3s -- it re-runs the audit once per planted weakening, eight times
-# -- so it is driven where a pass costs one: `local-gates.sh` runs it from the mirror's
+# self-test form costs 8.4s measured three times on 2026-11-02 (8.20, 8.41, 8.55) -- it
+# re-runs the audit once per planted weakening, nine times, and one of those runs drives
+# the `--collect` branch end to end --
+# so it is driven where a pass costs one: `local-gates.sh` runs it from the mirror's
 # command list, and both pipeline definitions run it as their own step.
 HOST_EXPECTED = ("host-identity=OK,xbox-360-emulation=OK,ds5-emulation=BLOCKED,"
                  "switch-emulation=BLOCKED,advertised-versus-host=BLOCKED")
