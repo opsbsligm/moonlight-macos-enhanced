@@ -3555,6 +3555,28 @@ for usage_shape, usage_arguments in (("with every exposed control accounted for"
           "the settings usage audit failed %s:\n%s"
           % (usage_shape, (usage_run.stdout + usage_run.stderr)[-1200:]))
 
+
+# The assembly audit asks the question one stage later than the settings audit above, and
+# the two are not redundant: a key can pass the audit over it -- exported row, accessor,
+# a renderer that acts on it -- and still reach the stream as a permanent zero, because
+# the line that copies the settings dictionary into `StreamConfiguration` was never
+# written. `shortQueueOnDoubledCadence` shipped exactly like that, which is why this one
+# runs here too rather than living on a runner. Only the judgement form: the self-test
+# costs 2.6s measured on 2026-11-02 (2.70, 2.51, 2.56) against the judgement's 0.4s
+# (0.42, 0.38, 0.41), and every second put here is paid once per mutation this aggregate
+# judges -- 107 of the battery's 153 entries name or inherit this gate, and the live trace
+# on `e2334917` counted 81 of them actually judging, so the self-test would add four to
+# eight minutes to a job that has already spent its whole three-hour ceiling. Both forms
+# stay in the two pipeline definitions, so `local-gates.sh` still sweeps the self-test.
+assembly_run = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "stream-config-assembly-audit.py")],
+    capture_output=True, text=True, cwd=root)
+check(assembly_run.returncode == 0,
+      "every StreamConfiguration field the stream reads is also written"
+      if assembly_run.returncode == 0 else
+      "the stream configuration assembly audit failed:\n%s"
+      % ((assembly_run.stdout + assembly_run.stderr)[-1200:],))
+
 # The host's half of the acceptance pairing, judged on the snapshot that was actually
 # collected from 192.0.2.1. It needs no toolchain and no artefact -- one json file and
 # one report -- so it has no excuse for living on a runner, and the shape it protects is the

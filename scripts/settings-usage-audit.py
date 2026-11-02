@@ -802,8 +802,14 @@ REQUIRED_STATES = (
     ("emulateGuide", "unwired-control"),
     ("enhancedAudioEQLayout", "unwired-control"),
     ("keyboardCompatibilityMode", "unwired-control"),
-    ("shortQueueOnDoubledCadence", "unwired-control"),
     ("swapABXYButtons", "unwired-control"),
+    # This one left the debt ledger because it stopped being debt: the switch, its
+    # persisted key, its exported row and a renderer that acts on it all shipped, and the
+    # hop from the settings dictionary into `StreamConfiguration` was never written, so
+    # the renderer always read `NO`. Pinned as `consumed` rather than dropped, so if that
+    # assembly line goes missing again this gate says so -- from the dictionary side,
+    # while `stream-config-assembly-audit.py` says it from the object side.
+    ("shortQueueOnDoubledCadence", "consumed"),
     ("absoluteMouseMode", "unreachable-field"),
     ("clipboardSyncMode", "unreachable-field"),
     ("coreHIDAutoEnabled", "unreachable-field"),

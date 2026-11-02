@@ -1,6 +1,59 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-02 十六次基点刷新：main=`9e914350`，Wave AA 主机侧证据审计）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-02 十七次基点刷新：Wave AB 装配层审计）
 
-## 0. Wave AA 目标模式（当前执行窗口，2026-11-02）
+## 0. Wave AB 目标模式（当前执行窗口，2026-11-02）
+
+> 本节是本轮唯一执行契约。Wave AA 已收口（MR 50 → `d16497a4`，合并者 `liguangming`，
+> `merged_at=2026-11-02T05:27:39Z`），其目标模式见 §0.A。
+
+**标的**：设置字典 → `StreamConfiguration` 对象**这一跳**从来没有任何审计看过，
+于是"面板有开关、持久化有键、导出字典有行、渲染器也真按它动作"四项全齐的字段，
+仍然可以永远读作零值。
+
+**已验证事实（本机实测，非估计）**：
+- `shortQueueOnDoubledCadence` 就是这一形状：`StreamConfiguration.h:90` 声明、
+  `SettingsVideoPane.swift:580` 有开关、`SettingsObjCBridge.swift:283` 导出该键、
+  `VideoDecoderRenderer.m:3028` 读取它并在 3146 按它少排一帧——
+  而 `StreamViewController.m` 的装配区**没有**赋值行，ObjC 零初始化使它恒为 `NO`。
+- 上一波的 `settings-usage-audit.py` 抓不到它，而且**不是缺陷**：该审计问"有没有人动作"，
+  渲染器确实动作了。断链在下一跳。补上装配行后该审计立即由绿转红
+  （`STALE shortQueueOnDoubledCadence`），这是它设计上的诚实反应，必须随之
+  退场账本条目并把钉死判据改钉 `consumed`——删除钉死项是错的，那会让装配行
+  再次丢失时无人报警。
+
+**完成边界（六条全绿才算完成，缺一不算）**：
+1. **判定来自源码文本**：对头文件声明的每个属性回答"有没有人赋值"，
+   当前 68/68 已装配、债务账 `stream-config-assembly-baseline.json` 为空。
+2. **接收者身份**：只认树里声明为 `StreamConfiguration *` 的标识符。
+   `Connection.m` 的 `_streamConfig` 是同名 C 结构体成员，算作写入就会让真空缺永久藏住；
+   `SCStreamConfiguration`（ScreenCaptureKit）靠词边界排除，不靠运气。
+3. **三类假信号必须被拒**：`==` 比较不算写入；注释里的点号路径不算；
+   日志格式串里的 `streamConfig.width` 不算。这三条都是第一版真踩过的坑。
+4. **self-test 五个变异各只移动它该移动的判据**（装配行删除、写错对象、
+   比较当写入、注释吃掉装配行、未使用字段误判为已读），另加头文件重命名的
+   负对照与三条钉死判据；良性基线必须同时成立。
+5. **接缝在事实源**：`.gitlab-ci.yml` 与镜像 workflow 各含判定 + self-test 两形态，
+   `constraints-audit.py` 内跑判定形态（实测 0.4s；self-test 2.6s，
+   电池 153 条变异中 107 条以本聚合为判读门，故 self-test 不入聚合），
+   `local-gates.sh` 并集发现到 135 条命令，`gate-coverage-audit` 报 41/95/95。
+6. **本次改动自身的红色必须清零**：装配行补上后，`settings-usage-audit.py`
+   裸审计与 self-test 两形态同时转绿，`constraints-audit.py --no-battery` 0 failures。
+
+**本波明确不做**：不改任何 `.swift`/`.m` 的运行时行为，除那一行装配；
+不改设置面板默认值与 `NSSegmentedControl role=.tabs` 外观；不解冻 USB 真重定向/
+公证/自动更新；`hardware_validated` 保持 `false`——装配行让开关**能够**生效，
+"拨动它真的改变画面"仍需真机取证。
+
+**已知非本波红色（如实记录，不计入通过）**：`audit:deep` 的 render-probe 在
+`d16497a4`（main 自己的流水线 #1041，job 6840）报"设置页渲染为平面：stddev 0.000，
+0 distinct colours"、多个 pane 截图缺失；本机 `leak-audit --growth` 同症状。
+已核对 `e2334917`（上一次 `audit:deep` 绿）到 `d16497a4` 之间**没有任何 `.m`/`.swift`/`.h`
+改动**，全部是脚本与文档，故这不是应用回归；`c73596cc` 只是把原本的 `TypeError` 崩溃
+改成说得清的一句话。承接方是本机 Mac runner（launchd `com.user.gitlab-runner`，实例 id 8），
+属 CI 环境故障，须单独修，不得为使其转绿而放松判据。
+
+---
+
+## 0.A Wave AA 目标模式（已完成并合并：MR 50 → `d16497a4`，合并者 `liguangming`；保留供追溯）
 
 > 本节是本轮唯一执行契约。Wave Z-3 已收口（MR 49 → `9e914350`，合并者 `liguangming`，
 > head pipeline #1010 success），其目标模式见 §0.0。这一波的标的不是又一处客户端缺陷，
@@ -693,9 +746,16 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-02，MR 1–49 全部合并，在途 MR = Wave AA）
+## 1. 当前基点（截至 2026-11-02，MR 1–50 全部合并，在途 MR = Wave AB）
 
-- 代码基点 main = `9e914350`（`Merge branch 'wave-z3-settings-usage-audit' into 'main'`，
+- 代码基点 main = `d16497a4`（`Merge branch 'wave-aa-host-side-evidence' into 'main'`，
+  MR 50，合并者 `liguangming`，`merged_at=2026-11-02T05:27:39Z`，合并流水线
+  **#1040 = success**（12 个 job 全绿，无 `allow_failure` 豁免项可记）。该合并**未触碰任何
+  `.m`/`.swift`/`.h`**，全部是脚本、fixtures 与文档，故 `hardware_validated` 的判断不受影响。
+  判读器本体在本机重跑复核：`--self-test` 报 9 个变异各自转红，快照＋真实报告形态
+  报 `host-identity=OK, xbox-360-emulation=OK, ds5/switch=BLOCKED, advertised-versus-host=BLOCKED`，
+  与 `--expect` 钉死的一致（evidence：`moonlight-ci-evidence/20261102-wave-aa-host-side-evidence/`）。
+- 上一基点 `9e914350`（`Merge branch 'wave-z3-settings-usage-audit' into 'main'`，
   MR 49，合并者 `liguangming`，`merged_at=2026-11-01T19:45:09Z`，head pipeline
   **#1010 = success**）。**合并后的 main 流水线未全绿，两条红色都是基础设施**：
   **#1017（`9e914350`）** `audit:python` 在 `pip install pyyaml==6.0.2` 上因
@@ -712,12 +772,15 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
   未计入通过前不得引用为绿。
 - 上一基点 `2012367a`（Wave Z-1：读取一层委托 helper 求默认值，并停止把"无法证明"
   当作"不存在"），MR 47，合并者 `liguangming`。
-- 在途：Wave Z-3（本波，分支 `wave-z3-settings-usage-audit`，基于 `e2334917`）——
+- 上一波 Wave Z-3（分支 `wave-z3-settings-usage-audit`，基于 `e2334917`）——
   新增 `scripts/settings-usage-audit.py`：把"面板里有开关、写进了持久化、运行时零消费者"
   变成门禁级红色。本机门禁实测 **118 passed / 0 failed / 13 skipped**（skip 逐项是
   需要构建产物或 CI 计算变量的项，加完整变异电池与 render-probe），
   `gate-coverage-audit --verify` 报 **source of truth 38 gates / mirror 92 gates /
   92 reachable**。
+  Wave AA 的装配缺口证明这一层问得没错、但问的不是最后一跳，见 §0。
+  同一轮的门禁计数在 Wave AB 后是 **事实源 41 / 镜像 95 / 可达 95**，
+  本地并集 **135 条命令**（旧数字保留是为了让"加了几条"可核对）。
 - 上一基点 `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
   MR 43，合并者 `liguangming`，head pipeline **#900 = success**）。其上是 Wave V
   `c1f0eeac`（MR 42，head pipeline **#897 = success**，12 个 job，
