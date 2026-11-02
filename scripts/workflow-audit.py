@@ -48,6 +48,7 @@ RULES = {
     "WF023": "a third-party action is floated on a moving tag instead of a pinned commit",
     "WF024": "`pull_request` names a branch that `push` does not, so pushing there runs no CI",
     "WF025": "one action is used at two versions in one file, so two jobs run different code for the same step",
+    "WF026": "a script that activates an environment into its caller's shell is executed, so the activation dies with the child",
 }
 
 # GitHub-owned actions are pinned by the platform. Anything else is owned by
@@ -76,6 +77,23 @@ ZSH_ONLY_SYNTAX = (
 # and the kernel reports the missing interpreter as the script itself being
 # absent, so the failure names the wrong file.
 RUNNER_INTERPRETERS = {"/bin/bash", "/bin/sh", "/usr/bin/env bash", "/usr/bin/env sh"}
+
+
+# A script that sources an activation file is a different animal from a script
+# that just runs: `activate` is a shell function that edits the *calling* shell,
+# so executing the file puts the virtualenv in a process that ends the moment the
+# file does. Pipeline 1025 paid for exactly this -- the parser installed, the
+# bootstrap said so, and the next line of the job said `python: command not
+# found`, because the activation had happened one process down and to the left.
+ACTIVATES_ENV = re.compile(r"(?:^|\n)[ \t]*(?:\.|source)[ \t]+[\"']?[^\s\"']*bin/activate")
+SOURCED = re.compile(r"^(?:\.|source)(?:[ \t]|$)")
+EXECUTED = re.compile(r"^(?:bash|sh|zsh|env|python3?|perl|ruby|node)(?:[ \t]|$)|^\./")
+# A command line inside a pipeline definition is usually wrapped in the key that
+# holds it -- `- run: bash x.sh` on the mirror, `- script: bash x.sh` as a GitLab
+# one-liner -- while a block scalar leaves the command bare. The dispatch has to
+# read the command, not the key, or every single-line form reads as prose.
+COMMAND_KEY = re.compile(r"^(?:-\s*)?(?:run|script|before_script|after_script|"
+                         r"entrypoint|command)[=:]\s*(.*)$")
 
 
 JOB_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
@@ -207,6 +225,52 @@ def audit_script_shebangs(root):
             interpreter = "%s %s" % (head.strip(), argument) if head else interpreter
         if interpreter not in RUNNER_INTERPRETERS:
             findings.append(("WF019", str(script.relative_to(root)), "shebang %r" % first))
+    return findings
+
+
+def audit_activation_calls(root):
+    """Report an activation harness that a pipeline definition executes.
+
+    The harness is any repository script that sources a `bin/activate`, and both
+    pipeline definitions are read -- the mirror workflow and the GitLab source of
+    truth -- because the same helper is called from each, and a rule that only
+    looked at the mirror would have let pipeline 1025 through.
+    """
+    findings = []
+    harnesses = set()
+    for script in sorted((root / "scripts").rglob("*.sh")):
+        text = script.read_text(errors="replace")
+        if ACTIVATES_ENV.search(strip_shell_comments(text)):
+            harnesses.add(str(script.relative_to(root)))
+    if not harnesses:
+        return findings
+    definitions = [root / ".gitlab-ci.yml"]
+    definitions.extend(sorted((root / ".github" / "workflows").glob("*.yml")))
+    definitions.extend(sorted((root / ".github" / "workflows").glob("*.yaml")))
+    for definition in definitions:
+        if not definition.is_file():
+            continue
+        where = str(definition.relative_to(root))
+        for number, line in enumerate(
+                strip_shell_comments(definition.read_text(errors="replace")).split("\n"), 1):
+            words = line.strip()
+            keyed = COMMAND_KEY.match(words)
+            if keyed:
+                words = keyed.group(1).strip()
+            matched = next((h for h in harnesses if re.search(
+                r"(?:^|[\s'\"(])" + re.escape(h) + r"(?:$|[\s'\"])", words)), None)
+            if not matched:
+                continue
+            if SOURCED.match(words):
+                continue
+            if EXECUTED.match(words):
+                findings.append(("WF026", "%s line %d" % (where, number),
+                                 "%s activates into the caller but is run as `%s`: the"
+                                 " job's own shell never sees the environment" %
+                                 (matched, words.split(matched)[0].strip() or "child shell")))
+            # Any other shape is a mention, not a call -- the file path in prose, a
+            # `cat`, a `grep`. Not a violation; the self-test pins that reading.
+            continue
     return findings
 
 
@@ -943,6 +1007,48 @@ def dialect_controls():
     return findings
 
 
+def activation_controls():
+    """The activation rule must forgive a sourced call, catch the executed one,
+    ignore a prose mention, and prove it reads the source of truth as well as the
+    mirror -- the two definitions have drifted before, and pipeline 1025 failed in
+    the one that a mirror-only rule would never have opened."""
+    findings = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "scripts" / "ci").mkdir(parents=True)
+        (root / ".github" / "workflows").mkdir(parents=True)
+        (root / "scripts" / "ci" / "harness.sh").write_text(
+            "#!/bin/bash\n. \"$venv_dir/bin/activate\"\necho ok\n", encoding="utf-8")
+        def source_of_truth(body):
+            (root / ".gitlab-ci.yml").write_text(body, encoding="utf-8")
+        source_of_truth("job:\n  script:\n    - |\n      . scripts/ci/harness.sh \"$v\"\n")
+        clean = audit_activation_calls(root)
+        if clean:
+            findings.append("the sourced-harness control reports %s" % (clean,))
+        source_of_truth("job:\n  script:\n    - |\n      bash scripts/ci/harness.sh \"$v\"\n")
+        found = audit_activation_calls(root)
+        if [code for code, _, _ in found] != ["WF026"]:
+            findings.append("the executed-harness control reports %s, expected one WF026" % (found,))
+        elif ".gitlab-ci.yml" not in found[0][1]:
+            findings.append("the executed-harness control names %s, expected the source of truth"
+                            % found[0][1])
+        elif "activates into the caller" not in found[0][2]:
+            findings.append("the executed-harness control says %r" % found[0][2])
+        source_of_truth("job:\n  script:\n    - cat scripts/ci/harness.sh\n")
+        mentioned = audit_activation_calls(root)
+        if mentioned:
+            findings.append("a prose mention of the harness reports %s" % (mentioned,))
+        source_of_truth("job:\n  script:\n    - |\n      . scripts/ci/harness.sh \"$v\"\n")
+        (root / ".github" / "workflows" / "build.yml").write_text(
+            "jobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n"
+            "      - name: bootstrap\n        run: bash scripts/ci/harness.sh \"$v\"\n",
+            encoding="utf-8")
+        mirrored = [f for f in audit_activation_calls(root) if f[1].startswith(".github")]
+        if [code for code, _, _ in mirrored] != ["WF026"]:
+            findings.append("the mirror-only violation reports %s, expected one WF026" % (mirrored,))
+    return findings
+
+
 def self_test():
     failures = []
     present = present_script_control()
@@ -953,6 +1059,7 @@ def self_test():
     failures.extend(version_drift_controls())
     failures.extend(shebang_controls())
     failures.extend(dialect_controls())
+    failures.extend(activation_controls())
     good = audit_document(load_yaml(GOOD), "good.yml")
     if good:
         failures.append("the good fixture reports %s" % (good,))
@@ -989,6 +1096,7 @@ def main(argv):
         problems.extend(audit_document(doc, path.name))
     problems.extend(audit_script_shebangs(ROOT))
     problems.extend(audit_shell_dialect(ROOT))
+    problems.extend(audit_activation_calls(ROOT))
     if problems:
         for code, where, detail in sorted(problems):
             print("%s: %s: %s  [%s]" % (code, where, detail, RULES[code]))
