@@ -102,8 +102,10 @@ audit:python:
       # The parser bootstrap lives in a script so both jobs that need it fail the
       # same loud way: pipelines 1017 and 1020 both died on a pip TLS failure against
       # a pypi.org that was unreachable from this network, and the job said only
-      # "exit status 1". See scripts/ci/bootstrap-python.sh.
-      bash scripts/ci/bootstrap-python.sh "$venv_dir"
+      # "exit status 1". Sourced, not run: pipeline 1025 called this with `bash`,
+      # the activation died in the child, and the next line could not find `python`.
+      # See scripts/ci/bootstrap-python.sh and the WF026 rule in workflow-audit.py.
+      . scripts/ci/bootstrap-python.sh "$venv_dir"
       python scripts/ci/test_pipeline.py
       bash scripts/local-gates.sh --self-test
       python scripts/project_identity.py --self-test
@@ -447,7 +449,7 @@ mutation-battery:
       # Same bootstrap as `audit:python`: the battery's judge imports the parser
       # through `constraints-audit.py`, so a parser that did not install would send
       # every mutation down a path that cannot judge it.
-      bash scripts/ci/bootstrap-python.sh "$venv_dir"
+      . scripts/ci/bootstrap-python.sh "$venv_dir"
       # The battery refuses a dirty checkout on its own, and the CI working
       # directory is a fresh clone, so no --allow-dirty is needed. Each gate it
       # invokes carries its own recursion flag internally.

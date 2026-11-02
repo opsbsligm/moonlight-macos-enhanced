@@ -18,14 +18,39 @@
 # primary has already failed, so a healthy network still resolves the pin from
 # the canonical index and the fallback is a route, not a preference.
 #
-# Usage: bash scripts/ci/bootstrap-python.sh <venv-dir>
+# Usage: . scripts/ci/bootstrap-python.sh <venv-dir>          -- note the dot
 # Exits non-zero, loudly, if the parser is not importable afterwards.
-
-set -uo pipefail
+#
+# Sourced, not run. Pipeline 1025 is why: the job called `bash` on this file, the
+# `activate` below ran inside that child process, and the job's own shell never
+# learned the virtualenv existed -- the very next line reported
+# `python: command not found` with the parser installed one directory away. That
+# is worse than the inline block this replaced, because it also gets to announce
+# that the pin installed first.
+#
+# No `set -e` / `set -u` here on purpose: this file is sourced into a job that
+# already chose its own options, and a helper that silently widens or narrows them
+# for the remaining 60 audit commands is its own class of surprise. Every failure
+# path below is an explicit `|| { ...; exit 1; }` for the same reason. `exit` in a
+# sourced file ends the job shell, which is exactly the intent.
+#
+# And it refuses to be executed, before it does any work. Without this the child
+# process activates perfectly well, prints its success line, and exits 0 -- so the
+# one call shape that cannot work is also the one shape that reports nothing wrong,
+# and the failure surfaces two commands later in someone else's job. Comparing
+# `$0` to `BASH_SOURCE` is the only way this file can tell the two apart from the
+# inside, and it has to be the first thing it does: after a thirteen-second install
+# the child still cannot know the caller is still stranded.
+if [ "${BASH_SOURCE:-}" = "$0" ]; then
+  echo "bootstrap-python: executed rather than sourced, so the virtualenv this file" >&2
+  echo "  builds dies with this process and the caller's shell is left with no parser." >&2
+  echo "  Call it as: . scripts/ci/bootstrap-python.sh <venv-dir>" >&2
+  exit 2
+fi
 
 venv_dir="${1:-}"
 if [ -z "$venv_dir" ]; then
-  echo "bootstrap-python: usage: $0 <venv-dir>" >&2
+  echo "bootstrap-python: usage: . scripts/ci/bootstrap-python.sh <venv-dir>" >&2
   exit 2
 fi
 
@@ -40,20 +65,39 @@ python3 -m venv "$venv_dir" || {
 . "$venv_dir/bin/activate"
 
 pip_args=(install --quiet --disable-pip-version-check)
-if python -m pip "${pip_args[@]}" "$PIN"; then
+if ! python -m pip "${pip_args[@]}" "$PIN"; then
+  if python -m pip "${pip_args[@]}" --retries 3 --extra-index-url "$MIRROR" "$PIN"; then
+    echo "bootstrap-python: $PIN from $MIRROR after the primary index failed"
+  else
+    # Not fatal on its own: the parser can already be importable (a preinstalled
+    # module, or an index that served a wheel on a later retry). The acceptance
+    # test is the import below, and it has to be the thing that decides.
+    echo "bootstrap-python: $PIN did not install from either index; continuing to" >&2
+    echo "  the import test, which is what actually decides this job." >&2
+  fi
+else
   echo "bootstrap-python: $PIN from the primary index"
-elif python -m pip "${pip_args[@]}" --retries 3 --extra-index-url "$MIRROR" "$PIN"; then
-  echo "bootstrap-python: $PIN from $MIRROR after the primary index failed"
 fi
 
-# The acceptance test is the import, not the installer's exit code. Everything
-# downstream -- workflow-audit, constraints-audit, the battery's judge -- fails
-# on `import yaml`, so a bootstrap that cannot say that word has nothing to
-# offer the rest of the job.
-if ! python -c "import yaml" 2>/dev/null; then
-  echo "bootstrap-python: $PIN is not importable in $venv_dir (neither the" >&2
-  echo "  primary index nor $MIRROR produced a usable parser). Every workflow" >&2
-  echo "  audit in this job would fail on 'import yaml', so the job stops here" >&2
-  echo "  rather than reporting a green run that checked nothing." >&2
-  exit 1
-fi
+# The acceptance test is the interpreter the job will really invoke, not pip's
+# exit code and not merely the module. Pipeline 1025 installed the pin and still
+# died on `python: command not found`: the virtualenv answers to `python`, the
+# caller's shell answered to neither name, and every command after the bootstrap
+# -- test_pipeline, the 60-odd audits, the battery's judge -- is reached through
+# one of those two spellings. A bootstrap that cannot name both has nothing to
+# report green about.
+for interpreter in python python3; do
+  if ! command -v "$interpreter" >/dev/null 2>&1; then
+    echo "bootstrap-python: $venv_dir/bin/$interpreter is missing, so the virtualenv" >&2
+    echo "  did not survive creation (a partial venv, or an activation file that does" >&2
+    echo "  not match the interpreter that built it)." >&2
+    exit 1
+  fi
+  if ! "$interpreter" -c "import yaml" 2>/dev/null; then
+    echo "bootstrap-python: $PIN is not importable by $interpreter in $venv_dir" >&2
+    echo "  (neither the primary index nor $MIRROR produced a usable parser). Every" >&2
+    echo "  workflow audit in this job would fail on 'import yaml', so the job stops" >&2
+    echo "  here rather than reporting a green run that checked nothing." >&2
+    exit 1
+  fi
+done
