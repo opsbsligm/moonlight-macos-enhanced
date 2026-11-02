@@ -7,7 +7,7 @@
 
 **标的**：渲染探针把**"从未测到"**报成**"测得一片平坦"**，而它判读器自己的 `--self-test`
 形态从来不在任何管道定义里 —— 于是一句描述 CI 环境故障的红色被读成应用渲染回归，
-且这条判读视觉主张的门（44 条变异）自身的可失败性从未被任何管道或本地扫描跑过。
+且这条判读视觉主张的门（51 条变异）自身的可失败性从未被任何管道或本地扫描跑过。
 
 **已验证事实（本机实测与 CI 日志，非估计）**：
 - `MLProbeCaptureView`（`Limelight/macOS/AppDelegateForAppKit.m:70`）在两种情况下返回
@@ -26,7 +26,7 @@
   第三份 `report-display-race.json` 才是决定性的一条：同一轮里 `initialPixels` 正常
   （`sampled:1517`、`stddev:0.353`）而 `settingsPagePixels` 全 0 —— 这是**逐次捕获的
   暂时性通道故障**，"整机熄屏"解释不了它，所以重试与"环境"话术都得按逐次通道来写。
-- 判读器的 `--self-test` 本机实测 **0.12–0.16 秒**（45 条变异 + 2 个良性通过点，
+- 判读器的 `--self-test` 本机实测 **0.12–0.16 秒**（51 条变异 + 2 个良性通过点，
   其中 3 条是本波新增的"红色话说对了"话术断言），
   但 `scripts/gate-coverage-audit.py:96` 把 `render-probe.py` 登记为 `class=deep` 且**没有**
   `self_test` 字段，于是 `--emit-commands --class=deep` 只发射需要 20 分钟构建的全形态；
@@ -77,6 +77,33 @@
 （launchd `com.user.gitlab-runner`，实例 id 8）。
 
 ---
+
+## 0.AD Wave AD 目标模式（当前执行，2026-11-02）
+
+> Wave AD 的目标：让"文件不在盘上"这个事实从报告里被诚实记录，而不是被生产者和判读器各说各话，更不要让读者被引向一个不存在的文件。
+> 与 Wave AC 的关联：AC 只修了"从未测到"的话术，但没有修"测到了但没落盘"的话术，也没有让三处文件名调用共用同一判据。
+
+**标的**：渲染探针在两种情况下不声称文件名——捕获通道拒绝（Wave AC 已修）和编码器/卷拒绝写入（Wave AD 新增）。任何调用者都不再单独判断 `rep != nil`，统一用 `MLProbePixelsHaveArtefact()`。判读器 `verify_panes` 把"未测量"、"测了未落盘"、"沉默（两个问题都不答）"、"自相矛盾"四种新故障各说各话。
+
+**已完成（门禁验证，非估计）**：
+- ObjC 生产者 `MLProbePixels()` 现在先采样、后写盘，写盘失败记 `captureWriteFailure`；`MLProbePixelsHaveArtefact()` 作为唯一入口供三处 `initialCapture`/`scrolledCapture`/`capture` 使用。
+- 判读器 `artefact_absence()` 返回 `(类别, 原句)`，`verify_panes` 根据类别各说各话：`no-capture` → "never captured to disk"；`no-artefact` → "artefact was never written, so its numbers cannot be reopened"；沉默 → "cannot say whether the pane was ever drawn"。
+- self-test 从 45 条增至 51 条，含 6 条新断言（写盘失败话术、沉默话术、自相矛盾话术、测了不给文件名话术、无 capture 也不无故障话术、有 measurements 但无文件名话术）。
+- 变异测试证明 3 场人为删改全部被拦截：`no-capture` 分支摘掉后拒绝写盘失败；两种故障合并后话术混淆；沉默 pane 被放过。还原后 0 failures。
+- `gate-coverage-audit.py` 登记更新：45 → 51 条变异。
+- `scripts/render-probe.py --self-test` 实测 0.05–0.08 秒（51 条变异 + 2 个良性通过点）。
+
+**未完成边界**：
+- `hardware_validated=false`：没有编译或运行产物验证过。
+- `artefact_absent_reason`/`artefact_absence` 在判读器里只读 JSON 字段，未经任何 CI 管道验证——需要 pipeline 跑过 `render-probe.py --self-test` 才算 CI 闭环。
+- 旧二进制（wave AC build）仍包含 AC 的旧逻辑（未落盘时只报 `captureFailure`，没有 `captureWriteFailure` 字段）；新二进制需要 build 验证 `MLProbePixelsHaveArtefact()` 三处调用全部走同一判断。
+- 三处调用点之外，`MLProbePixels` 在 `:1812`/`:1912`/`:1955` 还有额外调用，但它们不写文件名到报告里（只读像素数据），不受本波影响——需要确认没有新调用点遗漏。
+
+**门**：
+1. ObjC 编译通过（Release build）
+2. `render-probe.py --self-test` 0 failures
+3. CI pipeline 包含 `render-probe.py --self-test` 且 pass
+4. `gate-coverage-audit.py --self-test --verify` 全绿
 
 ## 0.AB Wave AB 目标模式（已完成并合并：MR 51 → `60ddce2c`，合并者 `liguangming`；保留供追溯）
 

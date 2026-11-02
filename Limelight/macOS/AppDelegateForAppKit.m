@@ -160,6 +160,12 @@ static NSUInteger MLProbeCountMatching(NSView *root, BOOL (^match)(NSView *)) {
 // what let an unavailable capture API be read as a rendering regression -- the display-off A/B
 // report left behind `sampled: 0, stddev: 0` and the verdict "the settings page rendered as
 // flat", and `sampled: 0` is itself a claim that pixels were looked at and found uniform.
+//
+// A report may only name an artefact this function actually put on disk, so the write happens
+// here, where the truth is known, rather than being inferred by every caller from `rep != nil`.
+// `writeToFile:atomically:` returns NO when the volume is full, the directory vanished, or the
+// attributes could not be read back, and each of those used to leave the caller naming a PNG
+// that no reader could open.
 static NSDictionary *MLProbePixels(NSString *path, NSBitmapImageRep *rep, NSString *failure) {
     if (rep == nil) {
         return @{ @"captureFailure": failure ?: @"the capture returned no image" };
@@ -187,14 +193,27 @@ static NSDictionary *MLProbePixels(NSString *path, NSBitmapImageRep *rep, NSStri
     }
     double mean = sampled ? sum / sampled : 0;
     double variance = sampled ? sumSquared / sampled - mean * mean : 0;
+    NSMutableDictionary *measurements = [@{ @"mean": @(mean),
+                                            @"stddev": @(sqrt(MAX(variance, 0))),
+                                            @"distinctColours": @(colours.count),
+                                            @"sampled": @(sampled) } mutableCopy];
     if (path) {
         NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-        [png writeToFile:path atomically:YES];
+        if (![png writeToFile:path atomically:YES]) {
+            measurements[@"captureWriteFailure"] =
+                [NSString stringWithFormat:@"the PNG could not be written to %@", path.lastPathComponent];
+        }
     }
-    return @{ @"mean": @(mean),
-              @"stddev": @(sqrt(MAX(variance, 0))),
-              @"distinctColours": @(colours.count),
-              @"sampled": @(sampled) };
+    return measurements;
+}
+
+// Whether a fold's PNG is really there to be opened. Two ways it is not: the capture channel
+// refused, and the encoder or the volume refused after a good capture. A report that names the
+// file in either case points a reader at a path that was never going to open, which is the same
+// class of lie as reporting zeroes for pixels never sampled -- so the name is withheld here, in
+// one place, rather than inferred by each caller from whether it happened to get an image.
+static BOOL MLProbePixelsHaveArtefact(NSDictionary *pixels) {
+    return !pixels[@"captureFailure"] && !pixels[@"captureWriteFailure"];
 }
 
 static NSImage *MLProbePatternImage(NSSize size) {
@@ -724,7 +743,12 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     NSString *initialPNG = [NSString stringWithFormat:@"09-%@-page-top.png", name];
     result[@"initialPixels"] = MLProbePixels([output stringByAppendingPathComponent:initialPNG],
                                              initialRep, initialFailure);
-    result[@"initialCapture"] = initialPNG;
+    // Name the artefact only when it is on disk. The unconditional line below used to leave a
+    // report claiming `initialCapture: "09-appPane-page-top.png"` beside a directory with no
+    // such file -- the same class of lie as reporting zeroes for unmeasured pixels.
+    if (MLProbePixelsHaveArtefact(result[@"initialPixels"])) {
+        result[@"initialCapture"] = initialPNG;
+    }
 
     // USB hubs are intentionally collapsed. Keep their initial screenshot above,
     // then prove the grouped rows can still be reached without altering permissions.
@@ -755,7 +779,11 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
         NSString *scrolledPNG = [NSString stringWithFormat:@"11-%@-page-bottom.png", name];
         result[@"scrolledPixels"] = MLProbePixels([output stringByAppendingPathComponent:scrolledPNG],
                                                   scrolledRep, scrolledFailure);
-        result[@"scrolledCapture"] = scrolledPNG;
+        // Same rule as the initial fold, and this one had no reader at all: nothing in
+        // `render-probe.py` ever asked whether `scrolledCapture` was on disk.
+        if (MLProbePixelsHaveArtefact(result[@"scrolledPixels"])) {
+            result[@"scrolledCapture"] = scrolledPNG;
+        }
         result[@"scrolledTravelPoints"] = @((NSInteger)MAX(travel, 0));
     }
 
@@ -779,7 +807,12 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     NSBitmapImageRep *rep = MLProbeCaptureView(overlay, &paneFailure);
     NSString *png = [NSString stringWithFormat:@"10-%@-page.png", name];
     result[@"pixels"] = MLProbePixels([output stringByAppendingPathComponent:png], rep, paneFailure);
-    result[@"capture"] = png;
+    // And again for the final fold. The judge caught this one only because it happens to
+    // stat the file while hashing digests; a reader that trusted the report alone would
+    // have been pointed at a filename that was never written.
+    if (MLProbePixelsHaveArtefact(result[@"pixels"])) {
+        result[@"capture"] = png;
+    }
     result[@"backdropIsStillBehindPage"] = @(backdrop.superview == content);
 
     [SettingsOverlayPresenter dismissSettingsFromWindow:window];
