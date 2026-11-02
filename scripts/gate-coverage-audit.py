@@ -97,7 +97,7 @@ NON_FAST = {
         "class": "selftest",
         "self_test": "--self-test",
         # The two forms of this gate answer different questions, and for four rounds only the
-        # expensive one was wired anywhere. The self-test is the judge's own contract -- 45
+        # expensive one was wired anywhere. The self-test is the judge's own contract -- 51
         # mutations and two benign passes against the report reader, measured at 0.15s end to
         # end -- and it was reachable only from a deep pass that runs on tags and main, so a
         # merge request could change what the reader accepts as "the page did not render"
