@@ -67,14 +67,24 @@ static void MLProbeSpin(NSTimeInterval seconds) {
     }
 }
 
-static NSBitmapImageRep *MLProbeCaptureView(NSView *view) {
+// `failureOut` exists because a missing capture and a flat capture are different claims.
+// Without it a caller could only see a nil bitmap and had to guess, and the guess shipped
+// as "the settings page rendered as flat" while the probe's own stderr said the capture
+// channel refused to start -- the message that sent a reader to diff an application change
+// that did not exist.
+static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut) {
+    if (failureOut) *failureOut = nil;
     NSWindow *window = view.window;
-    if (window == nil) return nil;
+    if (window == nil) {
+        if (failureOut) *failureOut = @"the view is not in a window, so there is nothing to capture";
+        return nil;
+    }
     [window displayIfNeeded];
     NSRect rect = [view convertRect:view.bounds toView:nil];
     NSInteger windowNumber = window.windowNumber;
     __block BOOL finished = NO;
     __block NSBitmapImageRep *result = nil;
+    __block NSString *failure = nil;
     // AppKit's cacheDisplay omits SwiftUI's composited layers. Capture only our
     // own window; currentProcess does not request access to other applications.
     [SCShareableContent getCurrentProcessShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
@@ -89,6 +99,8 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view) {
         if (target == nil) {
             fprintf(stderr, "[render-probe] own window capture unavailable: %s\n",
                     (error.localizedDescription ?: @"window not found").UTF8String);
+            failure = [NSString stringWithFormat:@"own window not offered for capture: %@",
+                       error.localizedDescription ?: @"window not found"];
             dispatch_async(dispatch_get_main_queue(), ^{ finished = YES; });
             return;
         }
@@ -116,6 +128,8 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view) {
             } else {
                 fprintf(stderr, "[render-probe] own window capture failed: %s\n",
                         (captureError.localizedDescription ?: @"no image").UTF8String);
+                failure = [NSString stringWithFormat:@"capture refused: %@",
+                           captureError.localizedDescription ?: @"no image"];
             }
             dispatch_async(dispatch_get_main_queue(), ^{
                 result = bitmap;
@@ -125,6 +139,10 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view) {
     }];
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
     while (!finished && deadline.timeIntervalSinceNow > 0) MLProbeSpin(0.02);
+    if (failureOut) {
+        *failureOut = failure ?: (result ? nil
+                : @"no image and no error came back before the capture deadline");
+    }
     return result;
 }
 
@@ -136,7 +154,16 @@ static NSUInteger MLProbeCountMatching(NSView *root, BOOL (^match)(NSView *)) {
     return found;
 }
 
-static NSDictionary *MLProbePixels(NSString *path, NSBitmapImageRep *rep) {
+// A capture that never happened carries no measurements at all: `mean`, `stddev`,
+// `distinctColours` and `sampled` are absent, and `captureFailure` holds the channel's own
+// words. Zeroes here would be indistinguishable from a page painted in one colour, which is
+// what let an unavailable capture API be read as a rendering regression -- the display-off A/B
+// report left behind `sampled: 0, stddev: 0` and the verdict "the settings page rendered as
+// flat", and `sampled: 0` is itself a claim that pixels were looked at and found uniform.
+static NSDictionary *MLProbePixels(NSString *path, NSBitmapImageRep *rep, NSString *failure) {
+    if (rep == nil) {
+        return @{ @"captureFailure": failure ?: @"the capture returned no image" };
+    }
     NSUInteger wide = rep.pixelsWide, high = rep.pixelsHigh;
     double sum = 0, sumSquared = 0;
     NSUInteger sampled = 0;
@@ -212,7 +239,16 @@ static NSDictionary<NSString *, NSNumber *> *MLProbeClassInventory(NSView *root)
     return tally;
 }
 
-static NSDictionary *MLProbeBlockAnalysis(NSBitmapImageRep *rep, NSRange xRange, NSRange yRange) {
+// Same rule as `MLProbePixels`, and for the same reason, with a worse failure mode: the range
+// here comes from the view's bounds and not from the image, so a nil image still walked every
+// block and `[nil redComponent]` returned 0. The report then carried `blocks: 1305, flat: 1305,
+// meanBlockStddev: 0` (`report-display-off.json`) -- a fully counted measurement of pixels that were never captured,
+// saying the whole page was flat. When there is no image, this reports that and nothing else.
+static NSDictionary *MLProbeBlockAnalysis(NSBitmapImageRep *rep, NSRange xRange, NSRange yRange,
+                                          NSString *failure) {
+    if (rep == nil) {
+        return @{ @"captureFailure": failure ?: @"the capture returned no image" };
+    }
     const NSInteger block = 24;
     NSUInteger blocks = 0, smoothed = 0, patterned = 0, flat = 0;
     double varianceSum = 0;
@@ -254,7 +290,20 @@ static NSDictionary *MLProbeBlockAnalysis(NSBitmapImageRep *rep, NSRange xRange,
 
 static NSDictionary *MLProbeTranslucentRegions(NSBitmapImageRep *patternRep,
                                                NSBitmapImageRep *solidRep,
-                                               NSString **descriptionOut) {
+                                               NSString **descriptionOut,
+                                               NSString *failure) {
+    // The fallback sentence below asserts a design conclusion ("expected while the page base
+    // is opaque"), which is a claim about pixels that were compared. With no image there was
+    // no comparison, so the sentence has to name the channel instead -- otherwise an unavailable
+    // capture API reads as a verified design property, and `consideredBlocks: 0` reads as
+    // "we looked and nothing was translucent".
+    if (patternRep == nil || solidRep == nil) {
+        if (descriptionOut) {
+            *descriptionOut = [NSString stringWithFormat:@"read-through was never measured, because %@",
+                               failure ?: @"the capture returned no image"];
+        }
+        return @{ @"captureFailure": failure ?: @"the capture returned no image" };
+    }
     const NSInteger block = 24;
     NSInteger wide = (NSInteger)patternRep.pixelsWide, high = (NSInteger)patternRep.pixelsHigh;
     NSUInteger changed = 0, considered = 0;
@@ -670,9 +719,11 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
 
     // Capture the initial fold independently: the final capture below is taken
     // after scrolling and cannot show whether the page header is readable.
-    NSBitmapImageRep *initialRep = MLProbeCaptureView(overlay);
+    NSString *initialFailure = nil;
+    NSBitmapImageRep *initialRep = MLProbeCaptureView(overlay, &initialFailure);
     NSString *initialPNG = [NSString stringWithFormat:@"09-%@-page-top.png", name];
-    result[@"initialPixels"] = MLProbePixels([output stringByAppendingPathComponent:initialPNG], initialRep);
+    result[@"initialPixels"] = MLProbePixels([output stringByAppendingPathComponent:initialPNG],
+                                             initialRep, initialFailure);
     result[@"initialCapture"] = initialPNG;
 
     // USB hubs are intentionally collapsed. Keep their initial screenshot above,
@@ -699,10 +750,11 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
         [scroller reflectScrolledClipView:scroller.contentView];
         MLProbeSpin(0.7);
         result[@"readableContentScrolled"] = MLProbeReadableNodes(overlay);
-        NSBitmapImageRep *scrolledRep = MLProbeCaptureView(overlay);
+        NSString *scrolledFailure = nil;
+        NSBitmapImageRep *scrolledRep = MLProbeCaptureView(overlay, &scrolledFailure);
         NSString *scrolledPNG = [NSString stringWithFormat:@"11-%@-page-bottom.png", name];
         result[@"scrolledPixels"] = MLProbePixels([output stringByAppendingPathComponent:scrolledPNG],
-                                                  scrolledRep);
+                                                  scrolledRep, scrolledFailure);
         result[@"scrolledCapture"] = scrolledPNG;
         result[@"scrolledTravelPoints"] = @((NSInteger)MAX(travel, 0));
     }
@@ -723,9 +775,10 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     }];
     result[@"materialLayers"] = materials;
 
-    NSBitmapImageRep *rep = MLProbeCaptureView(overlay);
+    NSString *paneFailure = nil;
+    NSBitmapImageRep *rep = MLProbeCaptureView(overlay, &paneFailure);
     NSString *png = [NSString stringWithFormat:@"10-%@-page.png", name];
-    result[@"pixels"] = MLProbePixels([output stringByAppendingPathComponent:png], rep);
+    result[@"pixels"] = MLProbePixels([output stringByAppendingPathComponent:png], rep, paneFailure);
     result[@"capture"] = png;
     result[@"backdropIsStillBehindPage"] = @(backdrop.superview == content);
 
@@ -1739,12 +1792,13 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
     [content addSubview:backdrop];
     MLProbeSpin(0.2);
 
-    NSBitmapImageRep *beforeRep = MLProbeCaptureView(content);
+    NSString *beforeFailure = nil;
+    NSBitmapImageRep *beforeRep = MLProbeCaptureView(content, &beforeFailure);
     report[@"beforePresent"] = MLProbePixels([output stringByAppendingPathComponent:@"01-window-before.png"],
-                                             beforeRep);
+                                             beforeRep, beforeFailure);
     report[@"backdropBlocksBeforePresent"] = MLProbeBlockAnalysis(
         beforeRep, NSMakeRange(0, (NSUInteger)content.bounds.size.width),
-        NSMakeRange(0, (NSUInteger)content.bounds.size.height));
+        NSMakeRange(0, (NSUInteger)content.bounds.size.height), beforeFailure);
 
     // Seeded before the page opens: the page is what reads the library, and a graph that
     // arrives after the first read is a graph the sweep never saw.
@@ -1838,12 +1892,13 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         }];
         report[@"glassBackings"] = glassBackings;
 
-        NSBitmapImageRep *compositeRep = MLProbeCaptureView(content);
+        NSString *compositeFailure = nil;
+        NSBitmapImageRep *compositeRep = MLProbeCaptureView(content, &compositeFailure);
         report[@"compositePixels"] = MLProbePixels([output stringByAppendingPathComponent:@"03-composite.png"],
-                                                   compositeRep);
+                                                   compositeRep, compositeFailure);
         report[@"behindPageBlocks"] = MLProbeBlockAnalysis(
             compositeRep, NSMakeRange(0, (NSUInteger)content.bounds.size.width),
-            NSMakeRange(0, (NSUInteger)content.bounds.size.height));
+            NSMakeRange(0, (NSUInteger)content.bounds.size.height), compositeFailure);
 
         // How much of the page lets the window backdrop through. Reported, not
         // asserted: the page deliberately sits on an opaque base, so its materials
@@ -1852,9 +1907,15 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         // exists at all is measured from the layer tree below.
         backdrop.image = MLProbeSolidImage(content.bounds.size, 0.95, 0.10, 0.10);
         MLProbeSpin(0.3);
-        NSBitmapImageRep *overSolid = MLProbeCaptureView(content);
+        NSString *overSolidFailure = nil;
+        NSBitmapImageRep *overSolid = MLProbeCaptureView(content, &overSolidFailure);
         NSString *where = nil;
-        NSDictionary *readThrough = MLProbeTranslucentRegions(compositeRep, overSolid, &where);
+        // The first image decides. If the composite capture failed the comparison has nothing
+        // to diff against even when this second capture succeeded, so the sentence names that
+        // capture rather than the one that happened to work.
+        NSDictionary *readThrough = MLProbeTranslucentRegions(
+            compositeRep, overSolid, &where,
+            compositeFailure ?: overSolidFailure ?: @"no image was captured for the read-through");
         report[@"readThroughPageBlocks"] = readThrough;
         report[@"readThroughPageWhere"] = where ?: @"no block changed when only the backdrop changed"
                                            " (expected while the page base is opaque)";
@@ -1874,19 +1935,29 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
                     (unsigned long)layers.count]);
         }
 
-        NSBitmapImageRep *rep = MLProbeCaptureView(overlay);
-        NSDictionary *pixels = MLProbePixels([output stringByAppendingPathComponent:@"02-settings-page.png"], rep);
+        NSString *pageFailure = nil;
+        NSBitmapImageRep *rep = MLProbeCaptureView(overlay, &pageFailure);
+        NSDictionary *pixels = MLProbePixels([output stringByAppendingPathComponent:@"02-settings-page.png"],
+                                             rep, pageFailure);
 
         report[@"settingsPagePixels"] = pixels;
+        // Say which of the two it is. A flat page is a rendering regression; a page that was
+        // never captured says nothing about rendering, and the sentence below is what stopped
+        // a CI capture-channel failure from being read as one.
         double stddev = [pixels[@"stddev"] doubleValue];
         NSUInteger distinct = [pixels[@"distinctColours"] unsignedIntegerValue];
-        // The floor is 0.02, not the 0.08 this gate was written with: the settings page is
-        // a light theme, so a fully drawn page measures 0.0702 here against 0.001 when flat.
-        // The old floor sat above the real number and refused a page that rendered properly.
-        // `render-probe.py --self-test` pins both ends of the line with fixtures.
-        if (stddev < 0.02 || distinct < 40) {
-            refuse([NSString stringWithFormat:@"the settings page rendered as flat: stddev %.3f, %lu distinct colours",
-                    stddev, (unsigned long)distinct]);
+        if (pixels[@"captureFailure"]) {
+            refuse([NSString stringWithFormat:@"the settings page was never captured, so nothing here "
+                   @"can say whether it drew: %@", pixels[@"captureFailure"]]);
+        } else {
+            // The floor is 0.02, not the 0.08 this gate was written with: the settings page is
+            // a light theme, so a fully drawn page measures 0.0702 here against 0.001 when flat.
+            // The old floor sat above the real number and refused a page that rendered properly.
+            // `render-probe.py --self-test` pins both ends of the line with fixtures.
+            if (stddev < 0.02 || distinct < 40) {
+                refuse([NSString stringWithFormat:@"the settings page rendered as flat: "
+                       @"stddev %.3f, %lu distinct colours", stddev, (unsigned long)distinct]);
+            }
         }
 
         // Asking the presenter to close proves the teardown works. It does not prove the

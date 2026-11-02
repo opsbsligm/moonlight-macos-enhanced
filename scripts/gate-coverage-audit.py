@@ -94,9 +94,23 @@ NON_FAST = {
                      "full form runs there and not in CI",
     },
     "render-probe.py": {
-        "class": "deep",
-        "reason": "it builds its own Debug product and measures the page inside the app; "
-                  "about twenty minutes from cold, sixty seconds once that build is warm",
+        "class": "selftest",
+        "self_test": "--self-test",
+        # The two forms of this gate answer different questions, and for four rounds only the
+        # expensive one was wired anywhere. The self-test is the judge's own contract -- 45
+        # mutations and two benign passes against the report reader, measured at 0.15s end to
+        # end -- and it was reachable only from a deep pass that runs on tags and main, so a
+        # merge request could change what the reader accepts as "the page did not render"
+        # without anything asking whether the
+        # reader still refuses a page that did not render. `also_deep` keeps the full form on
+        # the deep pass it has always run on; the class moves so the cheap form runs per MR.
+        "also_deep": True,
+        "reason": "its full form builds its own Debug product and measures the page inside the "
+                  "app; about twenty minutes from cold, sixty seconds once that build is warm. "
+                  "The self-test judges the report reader instead, and needs no build at all",
+        "full_form": "audit:deep emits the bare form on tags and main, and the mirror runs it "
+                     "there too; local-gates.sh runs the bare form only once its Debug product "
+                     "is on disk",
     },
     "scaling-output-evidence-tests.py": {
         "class": "deep",
@@ -163,6 +177,24 @@ def emitted_command(name):
     return "python3 scripts/%s" % name
 
 
+def in_class(name, class_name):
+    """Whether a gate belongs to one emitted class.
+
+    `selftest` plus `also_deep` is one gate with two claims, not a gate that moved: the
+    self-test asks whether the report reader still refuses a page that did not render, and
+    the full form asks whether the page renders at all. The first needs no build and belongs
+    in front of every merge request; the second builds a Debug configuration and belongs on
+    the release path. Filing the gate in only one class is what left the cheap claim running
+    nowhere -- the expensive form's cost is why nobody wired the gate per merge request, and
+    the cheap form inherited that absence.
+    """
+    entry = NON_FAST.get(name)
+    gate_class = entry["class"] if entry else "fast"
+    if gate_class == class_name:
+        return True
+    return class_name == "deep" and gate_class == "selftest" and entry.get("also_deep") is True
+
+
 def reconcile(source_text=None, mirror_text=None):
     """Compare the two definitions. Returns (violations, notes, covered)."""
     source_text = source_text if source_text is not None else read(SOURCE_OF_TRUTH)
@@ -225,11 +257,18 @@ def read(relative):
 
 def names_for(truth_names, mirror_names, class_name):
     """The mirrored-only gates of one class, without touching the working tree."""
-    return [n for n in sorted(mirror_names - truth_names) if klass(n) == class_name]
+    return [n for n in sorted(mirror_names - truth_names) if in_class(n, class_name)]
 
 
 def emit(class_name):
     for name in names_for(referenced(SOURCE_OF_TRUTH), referenced(MIRROR), class_name):
+        entry = NON_FAST.get(name)
+        # On the deep pass an `also_deep` gate runs the form that costs the build. Emitting its
+        # self-test there instead would double-count the cheap claim and silently retire the
+        # expensive one, which is the coverage loss this field exists to prevent.
+        if class_name == "deep" and entry and entry.get("also_deep"):
+            print("python3 scripts/%s" % name)
+            continue
         print(emitted_command(name))
     return 0
 
