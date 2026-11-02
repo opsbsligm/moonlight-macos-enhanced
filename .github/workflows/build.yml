@@ -1510,6 +1510,20 @@ jobs:
       run: |
         ./scripts/download-frameworks.sh
 
+    - name: Verify the battery's skip snapshot still covers what the gates read
+      # The battery excuses a self-proof gate's red proof when the file it mutated is in
+      # none of that gate's measured read surfaces, and those surfaces are the committed
+      # snapshot scripts/battery-self-proof-scope.json. A snapshot narrower than the truth
+      # silences a proof on exactly the mutation it exists to catch, and the run stays
+      # green -- so the snapshot is re-measured here against the live gates, and any read
+      # it does not declare fails this step. It sits on this macOS job rather than the
+      # ubuntu audit job because two of the four measured gates compile a harness: on a
+      # host without an Apple toolchain they print their skip line and open fewer files,
+      # and a measurement taken there would be the narrow kind. Same host class as the
+      # source of truth's `audit:python`, which runs the identical command.
+      # Verification only -- `--write` re-derives the file and stays a developer action.
+      run: python3 scripts/battery-scope-probe.py
+
     - name: Analyze the project sources
       # The analyzer sees the thing a reviewer cannot see in a diff: a CoreFoundation
       # reference created in one method and released in nobody's method. It found a

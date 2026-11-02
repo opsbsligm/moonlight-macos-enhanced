@@ -114,6 +114,16 @@ audit:python:
       python scripts/l10n-audit.py
       python scripts/source-membership-audit.py
       python scripts/constraints-audit.py --no-battery --history
+      # The battery excuses a self-proof gate's red proof when the mutated file is in
+      # none of that gate's read surfaces, and those surfaces are the committed snapshot
+      # scripts/battery-self-proof-scope.json. A snapshot narrower than the truth
+      # silences a proof on exactly the mutation it exists to catch, and the run stays
+      # green. This re-measures each gate with an audit hook on `open` and refuses any
+      # read the snapshot does not declare. It runs here, on the Mac, because the
+      # compile-harness gates shrink their read surface to nothing without an Apple
+      # toolchain, and a measurement taken where the harnesses cannot build would be
+      # the narrow kind. Verification only; `--write` is a developer action.
+      python scripts/battery-scope-probe.py
       python scripts/liquid-glass-audit.py --self-test
       python scripts/liquid-glass-audit.py
       python scripts/leak-audit.py --self-test
