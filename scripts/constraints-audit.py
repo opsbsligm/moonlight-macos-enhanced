@@ -2660,7 +2660,7 @@ if not battery_scope.skip_is_safe('hardware-acceptance-check.py'):
           'the hardware acceptance grader failed its red proofs: '
           + (grader_run.stdout + grader_run.stderr).strip().splitlines()[-1:])
 else:
-    print('skip self-proof  hardware acceptance grader (mutation out of scope)')
+    print(battery_scope.EXCUSED_LINE + '  hardware acceptance grader (mutation out of scope)')
 
 # The audit above proves no reader can invent a key from a field that means nothing on a mouse
 # event. It cannot say which side a player's next phantom-key report came from, and every
@@ -2709,7 +2709,7 @@ if not battery_scope.skip_is_safe('enhanced-presentation-tests.py'):
           if presentation_run.returncode == 0 else
           "enhanced presentation replay failed: " + (presentation_run.stdout + presentation_run.stderr)[-1200:])
 else:
-    print("skip self-proof  enhanced presentation (mutation out of scope)")
+    print(battery_scope.EXCUSED_LINE + "  enhanced presentation (mutation out of scope)")
 
 # The readout is judged by scripts/interpolation-readout-tests.py, which lifts the shipping
 # publisher out of VideoDecoderRenderer.m and runs it against a fake settings class. That is a
@@ -3557,7 +3557,7 @@ for coverage_shape, coverage_arguments in (("the two definitions reconcile", [])
 for defaults_shape, defaults_arguments in (("with both layers agreeing", []),
                                            ("its red proofs", ["--self-test"])):
     if defaults_arguments and battery_scope.skip_is_safe('defaults-consistency.py'):
-        print('skip self-proof  defaults audit red proofs (mutation out of scope)')
+        print(battery_scope.EXCUSED_LINE + '  defaults audit red proofs (mutation out of scope)')
         continue
     defaults_run = subprocess.run(
         [sys.executable, os.path.join(root, 'scripts', 'defaults-consistency.py')]
@@ -3796,7 +3796,7 @@ if not battery_scope.skip_is_safe('battery-interrupt-tests.py'):
           "the battery-interrupt self-test failed:\n"
           + (bip_rules.stdout + bip_rules.stderr)[-900:])
 else:
-    print("skip self-proof  battery interrupt self-test (mutation out of scope)")
+    print(battery_scope.EXCUSED_LINE + "  battery interrupt self-test (mutation out of scope)")
 
 # What a DMG has to be is a three-part rule, and until now the repository had none
 # of it: the packaging step fell back from create-dmg to a bare `hdiutil create`
