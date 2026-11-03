@@ -16,8 +16,12 @@ GitLab is the source of truth. Push development commits to the `gitlab` remote;
   That is deliberate: as a `needs: []` job in the test stage it competed with the
   release path for one 8-core runner and starved `audit:python` into a timeout
   (pipeline 647), which skipped every downstream gate. Measured at 71 minutes
-  (148 cases) on a clean local tree; the job ceiling is 180 minutes and a
-  `resource_group` keeps two batteries off the runner at the same time. A failed
+  (148 cases) on a clean local tree, and at 148.2 minutes for all 153 cases on
+  the shared runner with the release path already built in the same pipeline
+  (pipeline 1090, job 7281, SHA c0b74bc2); the job ceiling is 200 minutes --
+  set from that measured run plus headroom, and the job prints its own COST
+  line, so the ceiling follows the next measurement -- and a `resource_group`
+  keeps two batteries off the runner at the same time. A failed
   battery on a tag is still a release-blocker by construction, because `mirror`
   stays after `verify`; only the DMG artifact arrives early.
 - Push and web runs mirror after every applicable earlier stage succeeds.

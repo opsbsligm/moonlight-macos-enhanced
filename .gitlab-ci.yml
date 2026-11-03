@@ -460,17 +460,15 @@ mutation-battery:
   # measured 71 minutes, so the extra headroom only covers cross-pipeline
   # overlap on the shared runner; the resource_group below keeps two batteries
   # from overlapping each other.
-  # 240, not 180, for exactly one run, and the reason is measured rather than
-  # hopeful: the untrimmed baseline (pipeline 1075 job 7141, main) timed 56
-  # aggregate cases at a mean of 157.4s, and the self-proof trim saves a
-  # per-case 57.8s on average -- 19.4s for the six cases whose mutation lands in
-  # a file the defaults audit walks, 88.5s for the twenty-six that touch nothing
-  # any of the four read. That is 178 minutes if a saved second is an absolute
-  # second on a contended runner and 124 if contention scales the work instead,
-  # so 180 left between one and fifty-six minutes of margin on a three-hour job.
-  # The job now prints its own COST line, so the next commit sets this to what
-  # the measured run says, not to what the projection hoped.
-  timeout: 240 minutes
+  # 200, from the first measured post-trim main run rather than a projection:
+  # pipeline 1090 job 7281 (SHA c0b74bc2) finished 153/153 cases in 8893s
+  # (148.2 minutes) on the shared two-slot runner while the release path was
+  # already built in the same pipeline, so the number includes the contention
+  # the old ceiling was bought against. The job's own COST line is now the
+  # source: if a future run prints a mean that projects past 160 minutes, the
+  # ceiling and this comment change together. The pre-trim numbers stay on
+  # record in the commit history of this file.
+  timeout: 200 minutes
   resource_group: macos-battery
   dependencies: []
   rules:
