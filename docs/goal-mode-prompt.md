@@ -1,4 +1,48 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-03 二十次基点刷新：Wave AH 收口批）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-04 二十一次基点刷新：Wave AJ 收尾批）
+
+## 0. Wave AJ 目标模式（当前执行窗口，2026-11-04）
+
+> 本节是本轮唯一执行契约。Wave AI 已收口（MR 56，head `c4d8a95c`，合并提交
+> `dd21f09d`，合并者 `liguangming`，`merged_at=2026-11-03T17:46:32Z`）。本波
+> 只收尾巴，不开新能力。
+
+**标的**：五处未收口——(a) MR 56 合并触发的 main pipeline **#1157**（`dd21f09d`）
+终态未落；(b) GitHub 镜像 main 停在 `1efe4a37`（pipeline 1128 的 `publish-github`），
+等 #1157 的 publish 才会推进到 `dd21f09d`；(c) 分支卫生欠账：远端 21 个已合入
+源分支 + 悬分支 `update/round77-readme-audit`（其 MR 已不存在，Wave AH §0 已裁定
+"已被取代"）未删，本地已合入分支 `wave-ai-doc-refresh` 未删；(d) §1 基点停在
+`1efe4a37`，MR 56 未刷新；(e) 本机 build2097 用户启动确认 + 真机验收矩阵
+（用户项，不阻塞代码侧）。
+
+**完成边界（四条全绿才算完成，第五条是用户项）**：
+1. **#1157 终态 success**：16/16 job 全绿（2026-11-04 06:05 CST 落账）；
+   `mutation-battery` 153/153 全抓，`COST 10006.5s total | 107 aggregate cases
+   mean 93.1s | 46 light cases mean 1.0s`，self-proofs excused 336，200min
+   上限内；跨文件 SAST 2347s 通过；`publish-github` 输出 `mirrored /
+   pushed=true / updated_refs=[refs/heads/main] / verified_refs=58 /
+   full_source_equal=true`，主机侧 `6.last-success.json` 回读
+   `pipeline_id=1157` 一致，镜像 main SHA = `dd21f09d35`。
+2. **分支卫生**：远端删除上述 22 个分支后 `git ls-remote --heads` 只剩 `main`
+   （删除前每个分支都过 `git merge-base --is-ancestor` 确认已含入 main；
+   `update/round77-readme-audit` 按 Wave AH §0 第 2 条的裁定删除，不另立 MR）。
+   本地 `git branch -d wave-ai-doc-refresh`（ancestor 检查保安全）；
+   `docs-goal-mode-refresh-b65db5fb` 未合入，保留不删。
+3. **§1 基点刷新**：基点更新到 `dd21f09d35`（MR 56 合并记录 + #1157 终态 +
+   镜像回读证据），`docs/gitlab-ci.md` 若因 #1157 出现新的 battery COST 实测值
+   且与既有 200min 上限叙述冲突则同步；否则不动。
+4. **`hardware_validated=false` 保留**：本波 docs-only，不触碰
+   `.m`/`.swift`/`.h`；不动任何设置默认值；不解冻冻结项
+   （USB 真重定向 / Developer ID 公证 / 自动更新）。
+
+**不做**：不收 build2097 用户确认（用户项）；不跑完整 assertion battery
+（`--all`）；不把 #1157 的 `allow_failure` job 状态当绿色，点名豁免项；
+不替用户裁定 `docs-goal-mode-refresh-b65db5fb` 的去留。
+
+**审批执行细则（沿用 Wave AH）**：开发用 `pat`（codex），审查与合并用
+`review-pat`（user id=1 liguangming）；批准绑定精确 head SHA；合并后回读
+MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
+
+---
 
 ## 0. Wave AH 目标模式（当前执行窗口，2026-11-03）
 
@@ -972,9 +1016,13 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-03，MR 1–55 全部合并，在途 MR = 0）
+## 1. 当前基点（截至 2026-11-04，MR 1–56 全部合并，在途 MR = 0）
 
-- 代码基点 main = `1efe4a3720`（`Merge branch 'wave-ah-ai-doc-refresh' into 'main'`，
+- 代码基点 main = `dd21f09d35`（`Merge branch 'wave-ai-doc-refresh' into 'main'`，
+  MR 56，head `c4d8a95c`，合并者 `liguangming`，`merged_at=2026-11-03T17:46:32Z`；
+  合并为 docs-only 单文件，未触碰任何 `.m`/`.swift`/`.h`）。合并触发的
+  main pipeline **#1157** 终态见 Wave AJ 收口记录（§0）。上一基点
+  `1efe4a3720`（`Merge branch 'wave-ah-ai-doc-refresh' into 'main'`，
   MR 55，head `882bf14d`，合并者 `liguangming`，`merged_at=2026-11-03T12:41:19Z`，
   merge pipeline **#1123 = success**；合并为 docs-only 单文件，未触碰任何
   `.m`/`.swift`/`.h`）。合并触发的 main pipeline **#1128** 为完整 main push 链
