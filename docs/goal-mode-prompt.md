@@ -15,10 +15,13 @@
 （用户项，不阻塞代码侧）。
 
 **完成边界（四条全绿才算完成，第五条是用户项）**：
-1. **#1157 终态 success**：16 job 全绿；读 `publish-github` job 输出 JSON 的
-   `result` 字段确认不是 `superseded`，主机侧 `6.last-success.json` 回读
-   `pushed=true`、`pipeline_id=1157`、`updated_refs` 含 `refs/heads/main`、
-   `full_source_equal=true`；镜像 main SHA = `dd21f09d35`。
+1. **#1157 终态 success**：16/16 job 全绿（2026-11-04 06:05 CST 落账）；
+   `mutation-battery` 153/153 全抓，`COST 10006.5s total | 107 aggregate cases
+   mean 93.1s | 46 light cases mean 1.0s`，self-proofs excused 336，200min
+   上限内；跨文件 SAST 2347s 通过；`publish-github` 输出 `mirrored /
+   pushed=true / updated_refs=[refs/heads/main] / verified_refs=58 /
+   full_source_equal=true`，主机侧 `6.last-success.json` 回读
+   `pipeline_id=1157` 一致，镜像 main SHA = `dd21f09d35`。
 2. **分支卫生**：远端删除上述 22 个分支后 `git ls-remote --heads` 只剩 `main`
    （删除前每个分支都过 `git merge-base --is-ancestor` 确认已含入 main；
    `update/round77-readme-audit` 按 Wave AH §0 第 2 条的裁定删除，不另立 MR）。
