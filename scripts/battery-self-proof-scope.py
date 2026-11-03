@@ -51,6 +51,11 @@ SNAPSHOT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # relative path it just rewrote. Deliberately absent everywhere else.
 MUTATED_ENVIRONMENT_VARIABLE = "ML_MUTATED_FILE"
 
+# The one sentence the aggregate prints when it excuses a proof, and the handle the
+# battery counts to report how much it excused. Single-sourced so the counter cannot
+# drift away from the print and quietly report zero excuses forever.
+EXCUSED_LINE = "skip self-proof"
+
 
 def _relative(path):
     """A repository-relative path with forward slashes, or None if it is outside."""
