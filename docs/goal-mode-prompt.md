@@ -1,4 +1,46 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-03 十九次基点刷新：Wave AE 电池自证范围）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-03 二十次基点刷新：Wave AH 收口批）
+
+## 0. Wave AH 目标模式（当前执行窗口，2026-11-03）
+
+> 本节是本轮唯一执行契约。Wave AE 已收口（MR 53 → merge `c0b74bc2`，合并者
+> `liguangming`，main pipeline #1090 16/16 success，battery job 7281 实测
+> 8893s / 153/153 / 336 免证）；其目标模式顺延到 §0 之后的旧节，保留供追溯。
+
+**标的**：五处未收口，全部是"做完的尾巴"而非新能力——超时上限还停在投影值、
+README 债务分支悬着、合并后的源分支与本地 38 个陈旧分支没清、CHANGELOG 欠
+Wave Z-3 之后的批次账、可装产物停在 build2097。本波不收新功能、不动设置面板
+任何默认值、不解冻任何冻结项。
+
+**完成边界（五条全绿才算完成）**：
+1. **AG-2 上限落地**：`wave-ag-battery-ceiling-200`（head `9b3ea1c6`）经 MR 54
+   走 liguangming 审批合并；本次 SHA 的 pipeline 全绿（`mutation-battery` 不出现
+   于该 ref 的 pipeline 属规则使然，不视为缺口）。合并后远端源分支删除。
+2. **README 债务裁定**：`update/round77-readme-audit`（`38c96e1d`，10-18 旧工作，
+   author opsbsligm）逐文件对照 main 后裁定：README/README.en 重写已含入 main
+   更晚版本；`liquid-glass-audit.py` 的两条 segmented 规则已被 main 上更新的
+   `native_segments` 判定覆盖（main 版本是它的演进形态，不是缺失）；其余 183 文件
+   diff 是 main 向前推进的方向。裁定 = 已被取代，close 不合并，远端分支删除。
+   裁定证据写进本节，不另开文档。
+3. **分支卫生**：远端 `wave-ae-battery-meta-trim` 删除（已含入 main，head
+   `fc7bf2fe` ancestor of main 已验证）；本地 `git branch -d` 只删已合入项，
+   未合入的本地分支一律保留不删（`git branch -d` 的 ancestor 检查保证安全）。
+4. **CHANGELOG 补账**：`[Unreleased]` 补 Wave Z-3 / AC / AD / AE 四条门禁条目
+   （AA 与 AB 此前已有条目；每条写清做了什么、门控名、判据来源），放在既有
+   `### Added` 小节内；不重写既有 155 条历史。
+5. **文档与产物收尾**：§1 基点更新到 Wave AH 合并后的 main SHA；`docs/gitlab-ci.md`
+   的 battery 上限说明随 200min 同步；本机 build2097 待用户启动确认无回归
+   （用户项，不阻塞代码侧）；`hardware_validated=false` 继续保留。
+
+**审批执行细则（本波新增，后续波次沿用）**：开发用 `pat`（codex），审查与合并
+用 `review-pat`（已核验 user id=1 liguangming，2026-11-03）。批准必须绑定精确
+head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
+不再走 Rails 建临时 token（那次方案已被本次的常驻 review-pat 取代）。
+
+**不做**：不动 `342b106` 上游回吸（等真机窗口）；不触发完整 battery 再测
+（8893s 的 COST 行就是本波上限的来源）；不合并任何 settings 默认值改动；
+不替用户点 build2097 的"确认无回归"。
+
+---
 
 ## 0. Wave AE 目标模式（当前执行窗口，2026-11-03）
 
@@ -930,10 +972,13 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-02，MR 1–50 全部合并，在途 MR = Wave AB）
+## 1. 当前基点（截至 2026-11-03，MR 1–53 全部合并，在途 MR = Wave AH）
 
-- 代码基点 main = `d16497a4`（`Merge branch 'wave-aa-host-side-evidence' into 'main'`，
-  MR 50，合并者 `liguangming`，`merged_at=2026-11-02T05:27:39Z`，合并流水线
+- 代码基点 main = `c0b74bc2`（`Merge branch 'wave-ae-battery-meta-trim' into 'main'`，
+  MR 53，合并者 `liguangming`，`merged_at=2026-11-03T03:17:20Z`，main pipeline
+  **#1090 = success**（16 job 全绿；`mutation-battery` 首测 153/153 / 8893s /
+  336 免证，COST 行落进 trace）。上一基点 `d16497a4`（MR 50，
+  合并者 `liguangming`，`merged_at=2026-11-02T05:27:39Z`，合并流水线
   **#1040 = success**（12 个 job 全绿，无 `allow_failure` 豁免项可记）。该合并**未触碰任何
   `.m`/`.swift`/`.h`**，全部是脚本、fixtures 与文档，故 `hardware_validated` 的判断不受影响。
   判读器本体在本机重跑复核：`--self-test` 报 9 个变异各自转红，快照＋真实报告形态
@@ -941,7 +986,7 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
   与 `--expect` 钉死的一致（evidence：`moonlight-ci-evidence/20261102-wave-aa-host-side-evidence/`）。
 Wave AC+AD 是 MR 52（head `8b7f6b46`），合并进 main 的合并提交是 `18921771`，
 `merged_at=2026-11-02T18:59:45.861Z`，合并者 `liguangming`（MR 51 是 Wave AB）。
-Wave AE 在途：MR 53 → 分支 `wave-ae-battery-meta-trim`。
+Wave AE 已随 MR 53 收口（见本节首段）；Wave AH 收口批在途，见 §0。
 - 上一基点 `9e914350`（`Merge branch 'wave-z3-settings-usage-audit' into 'main'`，
   MR 49，合并者 `liguangming`，`merged_at=2026-11-01T19:45:09Z`，head pipeline
   **#1010 = success**）。**合并后的 main 流水线未全绿，两条红色都是基础设施**：
