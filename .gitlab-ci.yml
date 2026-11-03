@@ -114,6 +114,16 @@ audit:python:
       python scripts/l10n-audit.py
       python scripts/source-membership-audit.py
       python scripts/constraints-audit.py --no-battery --history
+      # The battery excuses a self-proof gate's red proof when the mutated file is in
+      # none of that gate's read surfaces, and those surfaces are the committed snapshot
+      # scripts/battery-self-proof-scope.json. A snapshot narrower than the truth
+      # silences a proof on exactly the mutation it exists to catch, and the run stays
+      # green. This re-measures each gate with an audit hook on `open` and refuses any
+      # read the snapshot does not declare. It runs here, on the Mac, because the
+      # compile-harness gates shrink their read surface to nothing without an Apple
+      # toolchain, and a measurement taken where the harnesses cannot build would be
+      # the narrow kind. Verification only; `--write` is a developer action.
+      python scripts/battery-scope-probe.py
       python scripts/liquid-glass-audit.py --self-test
       python scripts/liquid-glass-audit.py
       python scripts/leak-audit.py --self-test
@@ -350,6 +360,12 @@ audit:gates:
     - set -euo pipefail
     - python3 scripts/gate-coverage-audit.py --self-test
     - python3 scripts/gate-coverage-audit.py
+    # The battery's own cost report is a gate, not a log line to eyeball: the ceiling
+    # for the 240-minute job is about to be set from that number, and a total which only
+    # survives an orderly finish cannot be trusted by the run that needs it most. This
+    # runs the shipped restore path in a child, signals it, and requires the total to
+    # reach stdout before the child dies. Sub-second, so it belongs with the fast set.
+    - python3 scripts/battery-cost-report-tests.py
     # The list goes through a file rather than a command substitution. `local-gates.sh`
     # reads this definition too, and its discovery pattern cuts from the interpreter to
     # the end of the line, so `list="$(python3 ... --class=fast)"` would hand it a gate
@@ -444,7 +460,17 @@ mutation-battery:
   # measured 71 minutes, so the extra headroom only covers cross-pipeline
   # overlap on the shared runner; the resource_group below keeps two batteries
   # from overlapping each other.
-  timeout: 180 minutes
+  # 240, not 180, for exactly one run, and the reason is measured rather than
+  # hopeful: the untrimmed baseline (pipeline 1075 job 7141, main) timed 56
+  # aggregate cases at a mean of 157.4s, and the self-proof trim saves a
+  # per-case 57.8s on average -- 19.4s for the six cases whose mutation lands in
+  # a file the defaults audit walks, 88.5s for the twenty-six that touch nothing
+  # any of the four read. That is 178 minutes if a saved second is an absolute
+  # second on a contended runner and 124 if contention scales the work instead,
+  # so 180 left between one and fifty-six minutes of margin on a three-hour job.
+  # The job now prints its own COST line, so the next commit sets this to what
+  # the measured run says, not to what the projection hoped.
+  timeout: 240 minutes
   resource_group: macos-battery
   dependencies: []
   rules:

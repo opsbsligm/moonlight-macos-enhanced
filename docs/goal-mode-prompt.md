@@ -1,9 +1,88 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-02 十八次基点刷新：Wave AC 捕获真相）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-03 十九次基点刷新：Wave AE 电池自证范围）
 
-## 0. Wave AC 目标模式（当前执行窗口，2026-11-02）
+## 0. Wave AE 目标模式（当前执行窗口，2026-11-03）
 
-> 本节是本轮唯一执行契约。Wave AB 已收口（MR 51 → `60ddce2c`，合并者 `liguangming`，
-> head pipeline #1051 success），其目标模式见 §0.AB。
+> 本节是本轮唯一执行契约。Wave AC 与 Wave AD 已随 MR 52 一起收口（head
+> `8b7f6b46`，合并提交 `18921771`，`merged_at=2026-11-02T18:59:45.861Z`，合并者
+> `liguangming`），其目标模式与展开证据见 §0.AC 与 §0.AD；Wave AB 见 §0.AB。
+
+**标的（2026-11-03 实测重述）**：电池共 153 条变异，其中 107 条经聚合审计
+`constraints-audit.py`（77 条走默认 gate、30 条显式命名，按 `MUTATIONS` 表逐条载入
+核对）。聚合每次都跑四个自证门控，而它们的判定形态（读树那一半）本来就在同一进程
+里读完了同一棵树。CI 未优化基线（pipeline 1075 job 7141，正在跑的 main）实测
+**56 条聚合用例均值 157.4s**，跑到 147.4min 时完成 89/153，投影 315min，
+超 180min 上限——所以这个作业不是"再等等就能过"，是结构上跑不完；
+该 run 已在 147min 处取消（它给不出总耗时，只给得出散落的 TIME 行）。
+
+**净收益按快照逐条算，不折算**：四门控快照秒数合计 88.5s
+（defaults 38.2 + presentation 30.9 + interrupt 15.1 + hardware 4.3）。对 107 条
+聚合用例逐条判定可得档位分布 `{19.4s: 6, 42.5s: 1, 50.3s: 73, 57.6s: 1, 88.5s: 26}`，
+均值 **57.8s/条**——不是每条都省满 88.5s，defaults 门控 `os.walk(Limelight)`
+使 23 条 HIDSupport.m 变异只能省一部分。由此得两个投影：**178min**（省的秒数按
+绝对秒计）与 **124min**（争用按比例放大工作量），夹住 180min 上限，
+算术无法裁决——所以本波把 job 的 timeout 一次性抬到 240min 换真实数字，
+作业自己打印 `COST` 行（总耗时 + 聚合/轻用例两个均值 + 免证次数），
+下一提交按实测回落，而不是按投影许愿。
+
+**本机绝对耗时不可作为依据（本轮踩到）**：这台 Mac 就是 `macos` runner 本体，
+电池在跑时同机测速必然被污染——一次 `constraints-audit.py` 挂 34min 墙钟、
+只用 1.8s CPU，阻塞在 `dmg-audit.py --self-test` 派生的 `hdiutil create` 上。
+因此本节凡是"省了多少秒"的结论只取快照与变异表的算术，凡"总共跑多久"
+只取作业自己的 `COST` 行；旧的"本机 103.1s / 106.4s / 20.6s"三个数字
+是本机与 runner 争用时的读数，只能当量级参考。
+
+**设计原则**：跳过不等于删除，判定形态永不受影响；无标记（push / MR /
+`local-gates.sh`）时一项都不跳。读取面不再手写，由 `battery-scope-probe.py`
+用 `open` + `os.walk` + `subprocess.Popen` 三个 audit hook 实测生成快照
+`battery-self-proof-scope.json`——手写清单实测漏掉 222 个读取路径（defaults
+门控实际 `os.walk(Limelight)` 遍历整棵树），漏记即静默消音，是危险方向。
+探针在 Mac 上跑（GitLab `audit:python` + GitHub `analyze` 双端各一行），因为
+两个门控要编译 harness，无 Apple 工具链时读取面会缩到近乎为空。
+
+**完成边界（全绿才算完成）**：
+1. 探针双端各跑一次且 `0 problem(s)`：快照必须覆盖实测读取面（窄=失败），
+   并拒绝快照命名仓库里不存在的文件（`scope.missing_subjects()` 已接线，
+   2026-11-03 前它无任何调用方＝空头承诺）。
+2. 范围匹配时自证仍然执行：越界文件跳全部四项，落在 defaults 读取面内的文件
+   必须仍然跑 defaults 自证（按快照档位可判：19.4s 档只跳 hardware+presentation
+   +interrupt，省不掉 38.2s 那一项）。
+3. 本地 `local-gates.sh` 0 failures（裸跑不跳任何门控）。
+4. 本次 SHA 的 GitLab 流水线全绿，`mutation-battery` 在 240min 内跑完，
+   且作业打印的 `COST` 行给出总耗时与免证次数；拿到该数字后把 timeout
+   回落到实测值 + 一条收尾记录。硬件验证保持 false。
+5. `COST` 行必须在**被杀掉的运行**里也存在：作业超时是 SIGTERM，处理器
+   恢复工作树后以默认处置自杀，`atexit` 与循环后的摘要都不会执行——
+   只在摘要里打印的总耗时，恰恰是撞上限那次拿不到的那个。
+   `scripts/battery-cost-report-tests.py` 把真实 `restore_pending` 与
+   `restore_and_return` 注入子进程，弄脏文件后发 SIGTERM，同时要求
+   工作树复原**且**子进程 stdout 里出现总耗时；反向变异删掉恢复路径里
+   的 `if report: report_cost()` 后，子进程安静死去并被本门控拒绝。
+
+**已验证事实（2026-11-03）**：
+- 探针 4 门控全部 `0 uncovered read(s)`，`battery scope probe: 0 problem(s)`；
+  它打印的"每次聚合调用免掉约 83s"是**本机实时读数**（本轮 15/35/29/3s），
+  档位算术一律取已提交快照的 15.1+38.2+30.9+4.3=**88.5s**，两者差值是
+  本机争用，不作依据
+- 反向证明：把 hardware 快照清空 → 探针 FAIL 1 处；清空 defaults 的 dirs →
+  FAIL 222 处未声明读取；还原后 0 problems
+- `missing_subjects()` 双向有效：注入不存在路径 → 报 2 条；真实快照 → 空
+- `battery-cost-report-tests.py`：正向 1 项 ok，self-test 2 项 ok；
+  `gate-coverage-audit.py` 收录该门控（列 source-of-truth only），
+  `ci/test_pipeline.py` 18 tests OK
+- `local-gates.sh`：**126 passed / 0 failed / 16 skipped**（跳过项均为需构建产物、
+  需 Debug/CI 制品、完整电池 `--all`，或 render-probe 自建 Debug 二进制，
+  与本轮改动无关）
+- CI 未优化基线：job 7141 在 147.4min 完成 89/153，聚合 56 条均值 157.4s，
+  153 条投影 **280～315min**（视剩余用例轻重）
+- 免证这句话只有一个来源：`battery_scope.EXCUSED_LINE`，四处 print 与
+  电池计数共用它，计数不会与输出各自漂移
+
+---
+
+## 0.AC Wave AC 目标模式（已完成并合并：MR 52 → head `8b7f6b46` / merge `18921771`，合并者 `liguangming`；保留供追溯）
+
+> Wave AC 已随 MR 52 收口，本节保留完整证据供追溯。Wave AB 已收口（MR 51 →
+> `60ddce2c`，合并者 `liguangming`，head pipeline #1051 success），见 §0.AB。
 
 **标的**：渲染探针把**"从未测到"**报成**"测得一片平坦"**，而它判读器自己的 `--self-test`
 形态从来不在任何管道定义里 —— 于是一句描述 CI 环境故障的红色被读成应用渲染回归，
@@ -78,7 +157,7 @@
 
 ---
 
-## 0.AD Wave AD 目标模式（当前执行，2026-11-02）
+## 0.AD Wave AD 目标模式（已完成并合并：MR 52 → head `8b7f6b46` / merge `18921771`；保留供追溯）
 
 > Wave AD 的目标：让"文件不在盘上"这个事实从报告里被诚实记录，而不是被生产者和判读器各说各话，更不要让读者被引向一个不存在的文件。
 > 与 Wave AC 的关联：AC 只修了"从未测到"的话术，但没有修"测到了但没落盘"的话术，也没有让三处文件名调用共用同一判据。
@@ -860,6 +939,9 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
   判读器本体在本机重跑复核：`--self-test` 报 9 个变异各自转红，快照＋真实报告形态
   报 `host-identity=OK, xbox-360-emulation=OK, ds5/switch=BLOCKED, advertised-versus-host=BLOCKED`，
   与 `--expect` 钉死的一致（evidence：`moonlight-ci-evidence/20261102-wave-aa-host-side-evidence/`）。
+Wave AC+AD 是 MR 52（head `8b7f6b46`），合并进 main 的合并提交是 `18921771`，
+`merged_at=2026-11-02T18:59:45.861Z`，合并者 `liguangming`（MR 51 是 Wave AB）。
+Wave AE 在途：MR 53 → 分支 `wave-ae-battery-meta-trim`。
 - 上一基点 `9e914350`（`Merge branch 'wave-z3-settings-usage-audit' into 'main'`，
   MR 49，合并者 `liguangming`，`merged_at=2026-11-01T19:45:09Z`，head pipeline
   **#1010 = success**）。**合并后的 main 流水线未全绿，两条红色都是基础设施**：
@@ -1031,6 +1113,9 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 | 七行验收判据建立在导出字节上（Wave T） | `fd3557fd` → merge `bf055b23`（MR 40） | 代码完成 / CI 绿 | 验收矩阵不再全 `UNKNOWN` |
 | 对标来源矩阵自证（Wave U） | `7bf5e2c6` → merge `b7be1dec`（MR 41） | 代码完成 / CI 绿 | `source-matrix-audit.py`：规则三集合相等（13 codes）+ 14 变异逐条 caught + 断链报 SM001 不崩审计 |
 | 桥接默认值分叉修复（Wave V） | `f6b071fe` → merge `c1f0eeac`（MR 42，#897 success） | 代码完成 / CI 绿 | `ignoreAspectRatio` 三层默认值统一为 false；用户可见路径零变化 |
+| Wave AC 未捕获页声明缺口状态 | `cbaefdf3` → merge `18921771`（MR 52） | 代码完成 / CI 绿 / 真机待 | 未捕获渲染页不再 claim flat，判读器分得开「从未捕获」与「真的平坦」；`render-probe.py --self-test` 进事实源管道 |
+| Wave AD 仅在磁盘存在时命名 artifact | `8b7f6b46`（同 MR 52） | 代码完成 / CI 绿 / 真机待 | `MLProbePixelsHaveArtefact()` 统一三处调用；判读器把未测量/未落盘/沉默/自相矛盾各说各话 |
+| Wave AB 装配层审计 | `7721bcd6` → merge `60ddce2c`（MR 51） | 代码完成 / CI 绿（#1051）/ 真机待 | 设置字典 → `StreamConfiguration` 这一跳首次有审计覆盖 |
 
 ## 3. 待开工（按优先级，不依赖真机排期）
 
