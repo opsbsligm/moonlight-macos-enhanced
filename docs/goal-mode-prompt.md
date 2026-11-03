@@ -50,13 +50,25 @@
 4. 本次 SHA 的 GitLab 流水线全绿，`mutation-battery` 在 240min 内跑完，
    且作业打印的 `COST` 行给出总耗时与免证次数；拿到该数字后把 timeout
    回落到实测值 + 一条收尾记录。硬件验证保持 false。
+5. `COST` 行必须在**被杀掉的运行**里也存在：作业超时是 SIGTERM，处理器
+   恢复工作树后以默认处置自杀，`atexit` 与循环后的摘要都不会执行——
+   只在摘要里打印的总耗时，恰恰是撞上限那次拿不到的那个。
+   `scripts/battery-cost-report-tests.py` 把真实 `restore_pending` 与
+   `restore_and_return` 注入子进程，弄脏文件后发 SIGTERM，同时要求
+   工作树复原**且**子进程 stdout 里出现总耗时；反向变异删掉恢复路径里
+   的 `if report: report_cost()` 后，子进程安静死去并被本门控拒绝。
 
 **已验证事实（2026-11-03）**：
-- 探针 4 门控全部 `0 uncovered read(s)`，报告"一次完整电池运行在变异越界时
-  每次聚合调用免掉约 93s 自证"，`battery scope probe: 0 problem(s)`
+- 探针 4 门控全部 `0 uncovered read(s)`，`battery scope probe: 0 problem(s)`；
+  它打印的"每次聚合调用免掉约 83s"是**本机实时读数**（本轮 15/35/29/3s），
+  档位算术一律取已提交快照的 15.1+38.2+30.9+4.3=**88.5s**，两者差值是
+  本机争用，不作依据
 - 反向证明：把 hardware 快照清空 → 探针 FAIL 1 处；清空 defaults 的 dirs →
   FAIL 222 处未声明读取；还原后 0 problems
 - `missing_subjects()` 双向有效：注入不存在路径 → 报 2 条；真实快照 → 空
+- `battery-cost-report-tests.py`：正向 1 项 ok，self-test 2 项 ok；
+  `gate-coverage-audit.py` 收录该门控（列 source-of-truth only），
+  `ci/test_pipeline.py` 18 tests OK
 - `local-gates.sh`：**126 passed / 0 failed / 16 skipped**（跳过项均为需构建产物、
   需 Debug/CI 制品、完整电池 `--all`，或 render-probe 自建 Debug 二进制，
   与本轮改动无关）
