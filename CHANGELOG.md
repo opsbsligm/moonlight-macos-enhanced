@@ -49,6 +49,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NSTextInputClient` 承接本地 marked text，候选确认按整串 UTF-8 提交到主机，回退/退格只
   编辑本地草稿不打到主机；`imeLocalComposition` 贯穿 SettingsStore/SettingsModel/ObjC 桥与
   设置页 Input 面板（纯新增 ToggleCell，不动已验收控件）；诊断区新增 composition/commit 计数。
+- **设置接线审计（Wave Z-3）**：新增 `scripts/settings-usage-audit.py`，问"每个持久化设置键
+  有没有人真的按它动作"，把"面板有开关、代码从没读"的字段变成门禁级红色；债务账
+  `scripts/settings-usage-baseline.json` 随审计逐条销账（Wave AB 接通
+  `shortQueueOnDoubledCadence` 后该键由绿转红再转绿即为一次真实销账）。self-test 形态
+  2.6s 进本地聚合与电池判读路径，full 形态进 CI `audit:gates`。
+- **渲染探针捕获真值（Wave AC）**：`MLProbePixels` 的两种"没测到"不再伪装成"测得平坦"——
+  SCShareableContent 找不到窗口或 `captureImageWithFilter` 返回 nil 时，像素测量改携带
+  捕获失败的原始句子，`sampled:0`/全 0 均值不再进报告；`render-probe.py` 判读器把"捕获通道
+  不可用"与"页面真的画成纯色"分成两种红色，阈值 0.02/40 一分未动（真机亮屏 0.0730/275
+  colours 继续过，0.001/2 与 0.012/44 两个 fixture 继续被拒）。探针同时把 `MLProbeBlockAnalysis`
+  的视图-bounds 遍历与 `MLProbeTranslucentRegions` 的读透结论改为按图像可用性收口——
+  此前 nil 图像会被逐块数完并报出 1305 块全平的"测量"。判读器 51 条变异进 self-test，
+  selftest 形态入 registry 并退出 `local-gates.sh` 的一律 skip。
+- **渲染探针写盘真值（Wave AD）**：捕获成功但落盘失败（`hdiutil`/目录不可写等）此前只进
+  stderr，报告里 `settingsPagePixels` 缺字段、判读器读成 unknown；现在探针把写盘失败写成
+  `captureWriteFailure` 字段（含目标路径与 errno 句柄），判读器对"测到了却没给你文件"
+  与"根本没测到"各说一句不混淆的话；self-test 从 45 条增至 51 条含 6 条新断言
+  （写盘失败话术、沉默话术、自相矛盾话术、测了不给文件名话术、无 capture 也不无故障话术、
+  有 measurements 但无文件名话术），3 场人为删改的反向证明全部被拦截。
+- **电池自证范围与成本（Wave AE）**：`scripts/battery-scope-probe.py` 用三个 audit hook
+  实测四门控的读取面生成 `battery-self-proof-scope.json`（手写清单漏 222 条读取路径，
+  漏记方向是静默消音，故以探针为准）；变异落在读取面内时 `constraints-audit.py` 只跳过
+  不读该文件的自证项（`ML_MUTATED_FILE` 标记，无标记一项不跳），153 条变异判定形态不受
+  影响。CI 首测（pipeline 1090 job 7281）：153/153 全捕获、8893s（148.2min）、免证 336 次，
+  `mutation-battery` 作业打印 `COST` 行，上限按实测回落 240→200min（Wave AG）。
+  `battery-cost-report-tests.py` 保证 SIGTERM 杀死的那次运行也留下 COST 行。
 
 ### Fixed
 - 设置窗口卡片布局响应式：`.frame(maxWidth: .infinity)` + 弹性宽度范围（minWidth: 400, idealWidth: 680, maxWidth: 800）
