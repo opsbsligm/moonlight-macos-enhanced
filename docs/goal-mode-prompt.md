@@ -972,12 +972,15 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-03，MR 1–53 全部合并，在途 MR = Wave AH）
+## 1. 当前基点（截至 2026-11-03，MR 1–54 全部合并，在途 MR = 0）
 
-- 代码基点 main = `c0b74bc2`（`Merge branch 'wave-ae-battery-meta-trim' into 'main'`，
-  MR 53，合并者 `liguangming`，`merged_at=2026-11-03T03:17:20Z`，main pipeline
-  **#1090 = success**（16 job 全绿；`mutation-battery` 首测 153/153 / 8893s /
-  336 免证，COST 行落进 trace）。上一基点 `d16497a4`（MR 50，
+- 代码基点 main = `1ceea940`（`Merge branch 'wave-ag-battery-ceiling-200' into 'main'`，
+  MR 54，合并者 `liguangming`，`merged_at=2026-11-03T09:47:31Z`，head pipeline
+  **#1110 = success**；合并触发的 main pipeline **#1112** 为完整 main push 链，
+  含按实测 8893s 收紧到 200min 上限后的 `mutation-battery` 首跑）。上一基点
+  `c0b74bc2`（MR 53，合并者 `liguangming`，`merged_at=2026-11-03T03:17:20Z`，main
+  pipeline **#1090 = success**（16 job 全绿；`mutation-battery` 首测 153/153 /
+  8893s / 336 免证，COST 行落进 trace）。上一基点 `d16497a4`（MR 50，
   合并者 `liguangming`，`merged_at=2026-11-02T05:27:39Z`，合并流水线
   **#1040 = success**（12 个 job 全绿，无 `allow_failure` 豁免项可记）。该合并**未触碰任何
   `.m`/`.swift`/`.h`**，全部是脚本、fixtures 与文档，故 `hardware_validated` 的判断不受影响。
@@ -986,7 +989,9 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
   与 `--expect` 钉死的一致（evidence：`moonlight-ci-evidence/20261102-wave-aa-host-side-evidence/`）。
 Wave AC+AD 是 MR 52（head `8b7f6b46`），合并进 main 的合并提交是 `18921771`，
 `merged_at=2026-11-02T18:59:45.861Z`，合并者 `liguangming`（MR 51 是 Wave AB）。
-Wave AE 已随 MR 53 收口（见本节首段）；Wave AH 收口批在途，见 §0。
+Wave AE 已随 MR 53 收口（见本节首段）；Wave AH 收口批随 MR 54 收口（见 §0），
+五项完成边界中代码侧四项已落地，`mutation-battery` 200min 上限首跑与
+GitHub 镜像回读以 #1112 终态为准。
 - 上一基点 `9e914350`（`Merge branch 'wave-z3-settings-usage-audit' into 'main'`，
   MR 49，合并者 `liguangming`，`merged_at=2026-11-01T19:45:09Z`，head pipeline
   **#1010 = success**）。**合并后的 main 流水线未全绿，两条红色都是基础设施**：
