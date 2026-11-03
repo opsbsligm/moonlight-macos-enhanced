@@ -22,6 +22,13 @@ battery_scope = importlib.import_module("battery-self-proof-scope")
 from apple_toolchain import NO_TOOLCHAIN_MESSAGE, PROBE_BUILD_FAILED_MESSAGE
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# How many self-proofs the aggregate excused across this whole run. The battery is
+# the only thing that sets the marker, so this number is the trim's own evidence: a
+# run that reported zero either had nothing out of scope or the mechanism never
+# fired, and those two used to be indistinguishable from the job log.
+SELF_PROOFS_EXCUSED = 0
+
 HID = os.path.join(root, "Limelight", "Input", "HIDSupport.m")
 HID_INTERNAL = os.path.join(root, "Limelight", "Input", "HIDSupport_Internal.h")
 POINTER_FILE = os.path.join(root, "Limelight", "Input", "HIDSupport+Pointer.m")
@@ -2448,6 +2455,11 @@ def gate_failed(gate):
     proc = subprocess.run([sys.executable, script] + list(extra_args),
                           capture_output=True, text=True, cwd=root)
     outcome = proc.stdout + proc.stderr
+    # The aggregate says out loud which self-proofs it excused; the run says how
+    # many it heard. A trim that never fired would otherwise look identical to a
+    # trim that fired forty times, and the ceiling question turns on that count.
+    global SELF_PROOFS_EXCUSED
+    SELF_PROOFS_EXCUSED += outcome.count(battery_scope.EXCUSED_LINE)
     if proc.returncode != 0 and NO_TOOLCHAIN_MESSAGE in outcome:
         return None, [line for line in outcome.splitlines()
                       if NO_TOOLCHAIN_MESSAGE in line]
@@ -2537,6 +2549,13 @@ def main():
             pass
     atexit.register(restore_pending)
 
+    # The job has to report its own cost. Without this the only timing evidence
+    # is the per-case TIME lines, so a run that overran its timeout left nobody
+    # able to say how far over, and the next attempt guessed again.
+    run_started = time.monotonic()
+    aggregate_seconds = []
+    light_seconds = []
+
     try:
         for entry in MUTATIONS:
             name, path, mutate, note = entry[:4]
@@ -2579,7 +2598,15 @@ def main():
                 if text is not None:
                     with open(path, "w", encoding="utf-8") as handle:
                         handle.write(text)
-            print("TIME    %s %.2fs" % (name, time.monotonic() - started), flush=True)
+            elapsed = time.monotonic() - started
+            print("TIME    %s %.2fs" % (name, elapsed), flush=True)
+            # Sorted by the judge, not by the mutation's name, because the two
+            # halves of the battery have different cost shapes and a single mean
+            # over both hid which half the ceiling was actually being spent on.
+            if os.path.basename(gate[0]) == "constraints-audit.py":
+                aggregate_seconds.append(elapsed)
+            else:
+                light_seconds.append(elapsed)
             if failed is None:
                 # The gate reached for a compiler this host does not have. Counting that
                 # either way would be a lie -- as a proof, because nothing was tested, and
@@ -2607,6 +2634,17 @@ def main():
     print("\n%d/%d mutations caught"
           % (len(MUTATIONS) - len(missed) - len(unapplied) - len(unproved),
              len(MUTATIONS)))
+    # The cost of the run, split by the two shapes of judge, because the ceiling is
+    # a question about the aggregate half and a single mean over both hid that. The
+    # excuse count is here for the same reason: without it a trim that never fired
+    # and a trim that fired a hundred times print the same total.
+    total = time.monotonic() - run_started
+    def _mean(values):
+        return sum(values) / len(values) if values else 0.0
+    print("COST    %.1fs total | %d aggregate cases mean %.1fs | %d light cases mean %.1fs"
+          % (total, len(aggregate_seconds), _mean(aggregate_seconds),
+             len(light_seconds), _mean(light_seconds)))
+    print("COST    self-proofs excused: %d" % SELF_PROOFS_EXCUSED)
     if missed:
         print("assertions that a real regression would slip past: %s" % ", ".join(missed))
     if unapplied:

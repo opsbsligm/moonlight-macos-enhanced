@@ -7,11 +7,29 @@
 > `liguangming`），其目标模式与展开证据见 §0.AC 与 §0.AD；Wave AB 见 §0.AB。
 
 **标的（2026-11-03 实测重述）**：电池共 153 条变异，其中 107 条经聚合审计
-`constraints-audit.py`（77 条走默认 gate、30 条显式命名）。聚合每次都跑四个
-自证门控，而它们的判定形态（读树那一半）本来就在同一进程里读完了同一棵树。
-CI 未优化基线（pipeline 1075 job 7141，正在跑的 main）实测每条聚合用例
-**154.2s**，107 条即 16500s，超 180min 上限——所以这个作业不是"再等等就能过"，
-是结构上跑不完。本机同调用形态实测 103.1s，与 CI 差 1.45×（共享 runner 争用）。
+`constraints-audit.py`（77 条走默认 gate、30 条显式命名，按 `MUTATIONS` 表逐条载入
+核对）。聚合每次都跑四个自证门控，而它们的判定形态（读树那一半）本来就在同一进程
+里读完了同一棵树。CI 未优化基线（pipeline 1075 job 7141，正在跑的 main）实测
+**56 条聚合用例均值 157.4s**，跑到 147.4min 时完成 89/153，投影 315min，
+超 180min 上限——所以这个作业不是"再等等就能过"，是结构上跑不完；
+该 run 已在 147min 处取消（它给不出总耗时，只给得出散落的 TIME 行）。
+
+**净收益按快照逐条算，不折算**：四门控快照秒数合计 88.5s
+（defaults 38.2 + presentation 30.9 + interrupt 15.1 + hardware 4.3）。对 107 条
+聚合用例逐条判定可得档位分布 `{19.4s: 6, 42.5s: 1, 50.3s: 73, 57.6s: 1, 88.5s: 26}`，
+均值 **57.8s/条**——不是每条都省满 88.5s，defaults 门控 `os.walk(Limelight)`
+使 23 条 HIDSupport.m 变异只能省一部分。由此得两个投影：**178min**（省的秒数按
+绝对秒计）与 **124min**（争用按比例放大工作量），夹住 180min 上限，
+算术无法裁决——所以本波把 job 的 timeout 一次性抬到 240min 换真实数字，
+作业自己打印 `COST` 行（总耗时 + 聚合/轻用例两个均值 + 免证次数），
+下一提交按实测回落，而不是按投影许愿。
+
+**本机绝对耗时不可作为依据（本轮踩到）**：这台 Mac 就是 `macos` runner 本体，
+电池在跑时同机测速必然被污染——一次 `constraints-audit.py` 挂 34min 墙钟、
+只用 1.8s CPU，阻塞在 `dmg-audit.py --self-test` 派生的 `hdiutil create` 上。
+因此本节凡是"省了多少秒"的结论只取快照与变异表的算术，凡"总共跑多久"
+只取作业自己的 `COST` 行；旧的"本机 103.1s / 106.4s / 20.6s"三个数字
+是本机与 runner 争用时的读数，只能当量级参考。
 
 **设计原则**：跳过不等于删除，判定形态永不受影响；无标记（push / MR /
 `local-gates.sh`）时一项都不跳。读取面不再手写，由 `battery-scope-probe.py`
@@ -25,21 +43,27 @@ CI 未优化基线（pipeline 1075 job 7141，正在跑的 main）实测每条�
 1. 探针双端各跑一次且 `0 problem(s)`：快照必须覆盖实测读取面（窄=失败），
    并拒绝快照命名仓库里不存在的文件（`scope.missing_subjects()` 已接线，
    2026-11-03 前它无任何调用方＝空头承诺）。
-2. 范围匹配时自证仍然执行：`ML_MUTATED_FILE=SettingsModel.swift` → 只跳 3 项、
-   defaults 自证照跑（本机实测 51.2s / skips=3）；`README.md` → 跳 4 项（20.6s）。
+2. 范围匹配时自证仍然执行：越界文件跳全部四项，落在 defaults 读取面内的文件
+   必须仍然跑 defaults 自证（按快照档位可判：19.4s 档只跳 hardware+presentation
+   +interrupt，省不掉 38.2s 那一项）。
 3. 本地 `local-gates.sh` 0 failures（裸跑不跳任何门控）。
-4. 本次 SHA 的 GitLab 流水线全绿，且 mutation-battery 在 180min 内跑完；
-   投影：107 条聚合用例本机 81.7min → 按 CI/本地 1.45× 折算 ≈ 119min，
-   余量 34%。硬件验证保持 false。
+4. 本次 SHA 的 GitLab 流水线全绿，`mutation-battery` 在 240min 内跑完，
+   且作业打印的 `COST` 行给出总耗时与免证次数；拿到该数字后把 timeout
+   回落到实测值 + 一条收尾记录。硬件验证保持 false。
 
-**已验证事实（2026-11-03 本机，Darwin arm64 / Python 3.15.2）**：
-- 探针 4 门控全部 `0 uncovered read(s)`，越界时每聚合调用省下 ~94s
+**已验证事实（2026-11-03）**：
+- 探针 4 门控全部 `0 uncovered read(s)`，报告"一次完整电池运行在变异越界时
+  每次聚合调用免掉约 93s 自证"，`battery scope probe: 0 problem(s)`
 - 反向证明：把 hardware 快照清空 → 探针 FAIL 1 处；清空 defaults 的 dirs →
   FAIL 222 处未声明读取；还原后 0 problems
 - `missing_subjects()` 双向有效：注入不存在路径 → 报 2 条；真实快照 → 空
-- `local-gates.sh`：123 passed / 0 failed / 13 skipped（跳过项均为需构建产物、
-  需 Debug/CI 制品或完整电池 `--all`，与本轮改动无关）
-- 三态实测（电池真实调用形态）：无标记 106.4s / 越界 20.6s / 仅 defaults 51.2s
+- `local-gates.sh`：**126 passed / 0 failed / 16 skipped**（跳过项均为需构建产物、
+  需 Debug/CI 制品、完整电池 `--all`，或 render-probe 自建 Debug 二进制，
+  与本轮改动无关）
+- CI 未优化基线：job 7141 在 147.4min 完成 89/153，聚合 56 条均值 157.4s，
+  153 条投影 **280～315min**（视剩余用例轻重）
+- 免证这句话只有一个来源：`battery_scope.EXCUSED_LINE`，四处 print 与
+  电池计数共用它，计数不会与输出各自漂移
 
 ---
 
