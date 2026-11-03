@@ -972,12 +972,17 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-03，MR 1–54 全部合并，在途 MR = 0）
+## 1. 当前基点（截至 2026-11-03，MR 1–55 全部合并，在途 MR = 0）
 
-- 代码基点 main = `1ceea940`（`Merge branch 'wave-ag-battery-ceiling-200' into 'main'`，
+- 代码基点 main = `1efe4a3720`（`Merge branch 'wave-ah-ai-doc-refresh' into 'main'`，
+  MR 55，head `882bf14d`，合并者 `liguangming`，`merged_at=2026-11-03T12:41:19Z`，
+  merge pipeline **#1123 = success**；合并为 docs-only 单文件，未触碰任何
+  `.m`/`.swift`/`.h`）。合并触发的 main pipeline **#1128** 为完整 main push 链
+  （battery 200min 上限生效后的第二次全量首跑）。上一基点 `1ceea940`
+  （`Merge branch 'wave-ag-battery-ceiling-200' into 'main'`，
   MR 54，合并者 `liguangming`，`merged_at=2026-11-03T09:47:31Z`，head pipeline
   **#1110 = success**；合并触发的 main pipeline **#1112** 为完整 main push 链，
-  含按实测 8893s 收紧到 200min 上限后的 `mutation-battery` 首跑）。上一基点
+  含按实测 8893s 收紧到 200min 上限后的 `mutation-battery` 首跑）。再上一基点
   `c0b74bc2`（MR 53，合并者 `liguangming`，`merged_at=2026-11-03T03:17:20Z`，main
   pipeline **#1090 = success**（16 job 全绿；`mutation-battery` 首测 153/153 /
   8893s / 336 免证，COST 行落进 trace）。上一基点 `d16497a4`（MR 50，
