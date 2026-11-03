@@ -16,9 +16,62 @@ import signal
 import subprocess
 import sys
 import time
+
+import importlib
+battery_scope = importlib.import_module("battery-self-proof-scope")
 from apple_toolchain import NO_TOOLCHAIN_MESSAGE, PROBE_BUILD_FAILED_MESSAGE
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# How many self-proofs the aggregate excused across this whole run. The battery is
+# the only thing that sets the marker, so this number is the trim's own evidence: a
+# run that reported zero either had nothing out of scope or the mechanism never
+# fired, and those two used to be indistinguishable from the job log.
+SELF_PROOFS_EXCUSED = 0
+
+# The run's own cost, kept at module scope so the restore path can read it. The
+# restore path is not a convenience: a cancelled or timed-out job re-raises its own
+# signal with the default disposition, so the process dies there and neither the
+# summary nor `atexit` ever runs. A total printed after the loop is therefore a
+# total a long run cannot reach -- which is exactly the run whose number is wanted.
+RUN_STARTED = None
+AGGREGATE_SECONDS = []
+LIGHT_SECONDS = []
+UNAPPLIED_NAMES = []
+COST_REPORTED = False
+
+
+def report_cost():
+    """Say what this run cost, once, from whichever path happens to end it.
+
+    Idempotent because three paths can reach it -- the orderly summary, the signal
+    handler's restore, and `atexit` -- and two totals for one run would be a worse
+    report than none. Says whether the run finished rather than implying it from a
+    count, since a mutation whose anchor has gone stops timing itself and would
+    otherwise read as a run that stopped early.
+    """
+    global COST_REPORTED
+    if COST_REPORTED:
+        return
+    COST_REPORTED = True
+    done = len(AGGREGATE_SECONDS) + len(LIGHT_SECONDS)
+    settled = done + len(UNAPPLIED_NAMES)
+    total = (time.monotonic() - RUN_STARTED) if RUN_STARTED is not None else 0.0
+
+    def mean(values):
+        return sum(values) / len(values) if values else 0.0
+
+    print("COST    %.1fs total | %d aggregate cases mean %.1fs | %d light cases mean %.1fs"
+          % (total, len(AGGREGATE_SECONDS), mean(AGGREGATE_SECONDS),
+             len(LIGHT_SECONDS), mean(LIGHT_SECONDS)), flush=True)
+    print("COST    %d of %d cases reached a verdict (%s)"
+          % (done, len(MUTATIONS),
+             "the run got through all of them" if settled >= len(MUTATIONS) else
+             "the run ended with %d cases unjudged" % (len(MUTATIONS) - settled)),
+          flush=True)
+    print("COST    self-proofs excused: %d" % SELF_PROOFS_EXCUSED, flush=True)
+
+
 HID = os.path.join(root, "Limelight", "Input", "HIDSupport.m")
 HID_INTERNAL = os.path.join(root, "Limelight", "Input", "HIDSupport_Internal.h")
 POINTER_FILE = os.path.join(root, "Limelight", "Input", "HIDSupport+Pointer.m")
@@ -2445,6 +2498,11 @@ def gate_failed(gate):
     proc = subprocess.run([sys.executable, script] + list(extra_args),
                           capture_output=True, text=True, cwd=root)
     outcome = proc.stdout + proc.stderr
+    # The aggregate says out loud which self-proofs it excused; the run says how
+    # many it heard. A trim that never fired would otherwise look identical to a
+    # trim that fired forty times, and the ceiling question turns on that count.
+    global SELF_PROOFS_EXCUSED
+    SELF_PROOFS_EXCUSED += outcome.count(battery_scope.EXCUSED_LINE)
     if proc.returncode != 0 and NO_TOOLCHAIN_MESSAGE in outcome:
         return None, [line for line in outcome.splitlines()
                       if NO_TOOLCHAIN_MESSAGE in line]
@@ -2496,11 +2554,22 @@ def main():
     # whichever of the three paths takes it there.
     pending = {}
 
-    def restore_pending():
+    def restore_pending(report=True):
         while pending:
             path, text = pending.popitem()
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(text)
+        # The cost is reported here, and not only in the summary below, because the
+        # handler re-raises with the default disposition: a job that is cancelled or
+        # timed out dies on that signal and `atexit` never runs. Reporting only in the
+        # summary would make the total unreachable for exactly the long run whose total
+        # is the reason this job was changed. The gate that watches this handler runs
+        # the body against its own child with its own `restore_pending`, so adding the
+        # call here -- rather than to the handler -- keeps that harness unchanged.
+        # `report=False` is the orderly path, which prints its total after the verdict
+        # count instead of here; one run still gets exactly one total either way.
+        if report:
+            report_cost()
 
     def restore_and_return(signum, frame):
         # Block all three while the tree goes back. The failure this whole
@@ -2534,6 +2603,12 @@ def main():
             pass
     atexit.register(restore_pending)
 
+    # The job has to report its own cost. Without this the only timing evidence
+    # is the per-case TIME lines, so a run that overran its timeout left nobody
+    # able to say how far over, and the next attempt guessed again.
+    global RUN_STARTED
+    RUN_STARTED = time.monotonic()
+
     try:
         for entry in MUTATIONS:
             name, path, mutate, note = entry[:4]
@@ -2557,8 +2632,13 @@ def main():
                 # and go on proving the rest.
                 print("ANCHOR  %-18s %s" % (name, str(anchor).strip()))
                 unapplied.append(name)
+                # Kept in the module tally too, so a run that stops early can tell
+                # "anchor gone" apart from "never reached" instead of under-reporting
+                # the cases it did settle.
+                UNAPPLIED_NAMES.append(name)
                 continue
             pending[path] = original[path]
+            os.environ[battery_scope.MUTATED_ENVIRONMENT_VARIABLE] = os.path.relpath(path, root)
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(mutated)
             started = time.monotonic()
@@ -2575,7 +2655,15 @@ def main():
                 if text is not None:
                     with open(path, "w", encoding="utf-8") as handle:
                         handle.write(text)
-            print("TIME    %s %.2fs" % (name, time.monotonic() - started), flush=True)
+            elapsed = time.monotonic() - started
+            print("TIME    %s %.2fs" % (name, elapsed), flush=True)
+            # Sorted by the judge, not by the mutation's name, because the two
+            # halves of the battery have different cost shapes and a single mean
+            # over both hid which half the ceiling was actually being spent on.
+            if os.path.basename(gate[0]) == "constraints-audit.py":
+                AGGREGATE_SECONDS.append(elapsed)
+            else:
+                LIGHT_SECONDS.append(elapsed)
             if failed is None:
                 # The gate reached for a compiler this host does not have. Counting that
                 # either way would be a lie -- as a proof, because nothing was tested, and
@@ -2595,13 +2683,22 @@ def main():
             if not failed:
                 missed.append(name)
     finally:
-        restore_pending()
+        os.environ.pop(battery_scope.MUTATED_ENVIRONMENT_VARIABLE, None)
+        # The orderly path defers its own total to just after the verdict count.
+        restore_pending(False)
         for signum, handler in displaced.items():
             signal.signal(signum, handler)
 
     print("\n%d/%d mutations caught"
           % (len(MUTATIONS) - len(missed) - len(unapplied) - len(unproved),
              len(MUTATIONS)))
+    # The cost of the run, split by the two shapes of judge, because the ceiling is
+    # a question about the aggregate half and a single mean over both hid that. The
+    # excuse count is here for the same reason: without it a trim that never fired
+    # and a trim that fired a hundred times print the same total.
+    # One call, because the same function already fired from the restore path if the
+    # run was interrupted, and two totals for one run would be a worse report.
+    report_cost()
     if missed:
         print("assertions that a real regression would slip past: %s" % ", ".join(missed))
     if unapplied:

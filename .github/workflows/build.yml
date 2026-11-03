@@ -1014,6 +1014,20 @@ jobs:
         python3 scripts/battery-interrupt-tests.py
         python3 scripts/battery-interrupt-tests.py --self-test
 
+    - name: Verify the battery reports its cost when killed
+      # The ceiling for the battery job is about to be set from the total this job
+      # prints, and the run that needs the total most is the one that overruns it: a
+      # timed-out job gets SIGTERM, the handler restores the tree and re-raises with the
+      # default disposition, so the process dies before the summary or `atexit` runs. A
+      # total printed after the loop is therefore a total a long run cannot reach. The
+      # gate injects the shipped restore path and handler into a child, dirties a file
+      # the way a planted mutation does, signals it, and requires the total on the
+      # child's own stdout before it dies; its negative control deletes the call from
+      # the restore path and gets a child that dies quietly.
+      run: |
+        python3 scripts/battery-cost-report-tests.py
+        python3 scripts/battery-cost-report-tests.py --self-test
+
     - name: Verify the settings page renders embedded
       # Goals that are visual cannot be signed off by a compile, and the two
       # visual goals here were waiting on a human eye that was not available. The
@@ -1509,6 +1523,20 @@ jobs:
     - name: Prepare vendored dependencies
       run: |
         ./scripts/download-frameworks.sh
+
+    - name: Verify the battery's skip snapshot still covers what the gates read
+      # The battery excuses a self-proof gate's red proof when the file it mutated is in
+      # none of that gate's measured read surfaces, and those surfaces are the committed
+      # snapshot scripts/battery-self-proof-scope.json. A snapshot narrower than the truth
+      # silences a proof on exactly the mutation it exists to catch, and the run stays
+      # green -- so the snapshot is re-measured here against the live gates, and any read
+      # it does not declare fails this step. It sits on this macOS job rather than the
+      # ubuntu audit job because two of the four measured gates compile a harness: on a
+      # host without an Apple toolchain they print their skip line and open fewer files,
+      # and a measurement taken there would be the narrow kind. Same host class as the
+      # source of truth's `audit:python`, which runs the identical command.
+      # Verification only -- `--write` re-derives the file and stays a developer action.
+      run: python3 scripts/battery-scope-probe.py
 
     - name: Analyze the project sources
       # The analyzer sees the thing a reviewer cannot see in a diff: a CoreFoundation
