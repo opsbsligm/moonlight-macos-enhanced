@@ -3798,6 +3798,26 @@ if not battery_scope.skip_is_safe('battery-interrupt-tests.py'):
 else:
     print(battery_scope.EXCUSED_LINE + "  battery interrupt self-test (mutation out of scope)")
 
+# The battery's cost report, watched the same way its interrupt path is. The ceiling
+# for the 240-minute job is about to be set from the total the job prints, and a
+# cancelled or timed-out run dies inside its own signal handler -- after the restore,
+# before the summary, and before `atexit` -- so a total that only the summary carries
+# would be missing for exactly the run whose number decides the ceiling. This is driven
+# here rather than excused, and without a scope skip: the gate lifts the shipping
+# restore path and handler and runs them in a child, so it needs no toolchain, and its
+# self-test measured 0.05s, which is nothing beside the 88.5s of self-proof the trim
+# exists to save. It is also the one gate that reads `report_cost` itself, so when the
+# battery mutates its own file this reports the shape it found instead of staying quiet.
+bcr_rules = subprocess.run(
+    [sys.executable, os.path.join(root, 'scripts', 'battery-cost-report-tests.py'),
+     '--self-test'],
+    capture_output=True, text=True, cwd=root)
+check(bcr_rules.returncode == 0,
+      "the battery's cost report survives a killed run"
+      if bcr_rules.returncode == 0 else
+      "the battery-cost-report self-test failed:\n"
+      + (bcr_rules.stdout + bcr_rules.stderr)[-900:])
+
 # What a DMG has to be is a three-part rule, and until now the repository had none
 # of it: the packaging step fell back from create-dmg to a bare `hdiutil create`
 # with `||`, which succeeds and produces an image with no Applications drop target,

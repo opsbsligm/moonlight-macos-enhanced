@@ -1014,6 +1014,20 @@ jobs:
         python3 scripts/battery-interrupt-tests.py
         python3 scripts/battery-interrupt-tests.py --self-test
 
+    - name: Verify the battery reports its cost when killed
+      # The ceiling for the battery job is about to be set from the total this job
+      # prints, and the run that needs the total most is the one that overruns it: a
+      # timed-out job gets SIGTERM, the handler restores the tree and re-raises with the
+      # default disposition, so the process dies before the summary or `atexit` runs. A
+      # total printed after the loop is therefore a total a long run cannot reach. The
+      # gate injects the shipped restore path and handler into a child, dirties a file
+      # the way a planted mutation does, signals it, and requires the total on the
+      # child's own stdout before it dies; its negative control deletes the call from
+      # the restore path and gets a child that dies quietly.
+      run: |
+        python3 scripts/battery-cost-report-tests.py
+        python3 scripts/battery-cost-report-tests.py --self-test
+
     - name: Verify the settings page renders embedded
       # Goals that are visual cannot be signed off by a compile, and the two
       # visual goals here were waiting on a human eye that was not available. The

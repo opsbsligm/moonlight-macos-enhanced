@@ -360,6 +360,12 @@ audit:gates:
     - set -euo pipefail
     - python3 scripts/gate-coverage-audit.py --self-test
     - python3 scripts/gate-coverage-audit.py
+    # The battery's own cost report is a gate, not a log line to eyeball: the ceiling
+    # for the 240-minute job is about to be set from that number, and a total which only
+    # survives an orderly finish cannot be trusted by the run that needs it most. This
+    # runs the shipped restore path in a child, signals it, and requires the total to
+    # reach stdout before the child dies. Sub-second, so it belongs with the fast set.
+    - python3 scripts/battery-cost-report-tests.py
     # The list goes through a file rather than a command substitution. `local-gates.sh`
     # reads this definition too, and its discovery pattern cuts from the interpreter to
     # the end of the line, so `list="$(python3 ... --class=fast)"` would hand it a gate
