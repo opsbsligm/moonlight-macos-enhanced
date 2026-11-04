@@ -1711,6 +1711,39 @@ def settings_fields(tree):
     return {name: (name in optional) for name in declared - PRIVATE_FIELDS}
 
 
+def published_defaults_gap(model, fields, persistence, bridge, stream_view, loader):
+    """{profile field: [(layer, line)]} for the published fields a default never
+    reaches.
+
+    The key books above are built from what the layers *read*. A field that the
+    profile struct declares optional but no layer ever defaults is invisible to
+    them: `settings.x` is nil, the interface decodes the struct's zero, and the
+    stream runs with the C zero of its type, and both sides look quiet because
+    nothing states a value to disagree with. The gate here asks the other
+    question -- for every `@Published` optional the model carries, does at least
+    one audited layer state what "never stored" runs with -- and it is ratcheted:
+    the current tree has zero gaps, so a new field is a violation until a default
+    is written for it in the persistence layer, the bridge, an Objective-C
+    substitution, or the loader.
+    """
+    optional = re.findall(r"@Published\s+(?:var|let)\s+(\w+)\s*:\s*[^\n]*\?", model)
+    gap = {}
+    for name in optional:
+        if fields.get(name) is not True:
+            continue  # not a profile field: a UI state the profile never persists
+        stated = []
+        if name in persistence:
+            stated.append(("persistence", persistence[name][0][0]))
+        if name in bridge:
+            stated.append(("bridge", bridge[name][0][0]))
+        if name in stream_view:
+            stated.append(("stream", stream_view[name][0][0]))
+        if name in loader:
+            stated.append(("loader", loader[name][0][0]))
+        if not stated:
+            gap[name] = stated
+    return gap
+
 PRIVATE_FIELDS = frozenset(("cachedPersistedSettingsByProfileKey",))
 
 
@@ -2116,6 +2149,10 @@ def audit(tree=None):
     # candidate set looks identical to a key that got proven, and the debt ratchet
     # would retire its entry on a silence.
     dangling = dangling_accessor_calls(tree)
+    # What the loader writes for the all-defaults profile: the interface's answer
+    # for "nothing was ever stored", and the fourth default source the published
+    # field must be stated by.
+    loader = defaults_assignments(tree)
     candidates = sorted(set(bridge) | set(persistence) | set(stream_view)
                         | set(dangling)
                         | {key for entries in guarded_bridge.values()
@@ -2276,10 +2313,22 @@ def audit(tree=None):
             problems.append("ledger entry %s no longer names a compared key" % key)
         elif any(item["key"] == key for item in compared):
             problems.append("ledger entry %s is stale: the key now evaluates equal" % key)
+    # The candidate set is built from what the layers read, so a brand-new field
+    # that no layer has met yet never becomes a candidate and the books stay
+    # quiet. The gap question runs on the model's own declaration list instead:
+    # a published optional profile field with no default in any audited layer is
+    # a zero the two layers silently agree on by accident.
+    gap = published_defaults_gap(tree.read(MODEL), fields, persistence, bridge,
+                                 stream_view, loader)
+    for key in sorted(gap):
+        problems.append("published optional profile field %s has no default in "
+                        "persistence, the bridge, the stream, or the loader -- "
+                        "an unset profile runs on the zero of its type" % key)
     return {"candidates": candidates, "compared": compared, "divergences": divergences,
             "ledger": ledger, "unresolved": unresolved, "unread": unread,
             "problems": problems,
-            "read_by_objc": read_by_objc, "stream_view": stream_view}
+            "read_by_objc": read_by_objc, "stream_view": stream_view,
+            "published_defaults_gap": gap}
 
 
 def interface_value(key, tree, evaluator, persistence, wrapped, helper_defaults_found,
@@ -2949,6 +2998,36 @@ def self_test():
     checks.append(("two tables that disagree about the row leave it unproven",
                    conflict("Automatic", 1, [{"Automatic": 3},
                                              {"Automatic": 4}]) is None))
+
+    # 15. A published optional profile field whose default no layer states is a
+    #     ratcheted gap: the current tree has none, so a new field is a violation
+    #     until a default is written for it. The anchor is the loader's one line for
+    #     `customFps` -- the field's only stated default, in the one layer that
+    #     writes it, so deleting the line leaves the field with no answer for
+    #     "nothing was ever stored". The gate must name the field and land it in the
+    #     gap account the report prints.
+    result = relaunch([(PERSISTENCE,
+                        "    customFps = Self.defaultCustomFps\n",
+                        "")])
+    checks.append(("published field with no default in any layer is reported",
+                   any(p.startswith("published optional profile field customFps")
+                       for p in result["problems"])
+                   and result["published_defaults_gap"].get("customFps") == []))
+    # 15b. The paired negative control on the key's *second* default: `absoluteMouseMode`
+    #      is stated in the loader and in one persistence read, and deleting only the
+    #      persistence read must stay quiet. The loader still answers for the field,
+    #      and a gate that cried at the deletion would be counting *shapes* of
+    #      defaults instead of asking whether one still exists -- the same over-eager
+    #      trap the 4b control guards against on the two-layer books.
+    result = relaunch([(PERSISTENCE,
+                        "      absoluteMouseMode = settings.absoluteMouseMode "
+                        "?? Self.defaultAbsoluteMouseMode\n",
+                        "")])
+    checks.append(("published field that keeps a second default stays green",
+                   "absoluteMouseMode" not in result["published_defaults_gap"]
+                   and not any(p.startswith("published optional profile field "
+                                            "absoluteMouseMode")
+                                for p in result["problems"])))
 
     failed = 0
     for name, passed in checks:
