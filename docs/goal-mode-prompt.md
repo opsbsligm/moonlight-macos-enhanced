@@ -1,4 +1,42 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-04 二十二次基点刷新：Wave AL 棘轮门禁）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-04 二十三次基点刷新：Wave AM 收口波）
+
+## 0. Wave AM 目标模式（当前执行窗口，2026-11-04）
+
+> 本节是本轮唯一执行契约。Wave AL 已收口（MR 58，head `ba3252e9`，合并提交
+> `bbdf7741`，合并者 `liguangming`，`merged_at=2026-11-04T01:20:38Z`）。本波
+> 只收尾巴，不开新能力。
+
+**标的**：Wave AL 合并后的三处未收口——(a) #1176（main `bbdf7741`）的
+`mutation-battery` COST 实测值未落账；(b) GitHub 镜像 main 停在 `dd21f09d`
+（Wave AJ/AL 的 publish 均被后续 push superseded），等 #1176 的
+`publish-github` 推进；(c) §1 基点停在 `ab742ccc`，MR 58 未刷新。
+
+**完成边界（四条全绿才算完成）**：
+1. **#1176 终态 success**：16/16 job 全绿；`mutation-battery` 9310.8s /
+   153 of 153 reached a verdict / self-proofs excused 336 /
+   `COST 9310.8s total | 107 aggregate cases mean 86.6s | 46 light cases
+   mean 0.9s`；`publish-github` 输出 `result=mirrored / pushed=true /
+   updated_refs=[refs/heads/main] / verified_refs=57 /
+   full_source_equal=true`，snapshot_sha256=
+   `6aa1d958ab590d9baccc81564d341895dab1fabaee82138b544d89cd54b1e674`。
+2. **镜像回读对齐**：`git ls-remote` 双端 main = `bbdf7741d964967137379f99fe5b05467dcc24ad`
+   （GitHub `opsbsligm/moonlight-macos-enhanced` 与 GitLab `main` 一致）。
+3. **battery COST 校准落账（Wave AE 待办兑现）**：四次完整 main battery 实测
+   8893s（#1090）/ 9216.9s（#1112）/ 10516s（#1171）/ 9310.8s（#1176），
+   最大 175min < 200min 上限，上限合理偏紧，本波不改配置；
+   `docs/gitlab-ci.md` 上限叙述（200 minutes）与配置 line 471 一致，不动。
+4. **§1 基点刷新**：更新到 `bbdf7741`（MR 58 合并记录 + #1176 终态 +
+   镜像回读证据）。分支卫生复核：远端 `git ls-remote --heads` 只剩 `main`；
+   本地未合入分支 `docs-goal-mode-refresh-b65db5fb` 按 Wave AJ 裁定保留不删。
+
+**不做**：不收真机验收矩阵（用户项，`hardware_validated=false` 保留）；
+不跑完整 assertion battery（`--all`）；不动 `.m`/`.swift`/`.h`；不动任何
+设置默认值与 UI；不解冻冻结项（USB 真重定向 / Developer ID 公证 / 自动更新）；
+不替用户裁定对标来源矩阵补全的排期。
+
+**审批执行细则（沿用 Wave AJ）**：开发用 `pat`（codex），审查与合并用
+`review-pat`（user id=1 liguangming）；批准绑定精确 head SHA；合并后回读
+MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
 
 ## 0. Wave AL 目标模式（当前执行窗口，2026-11-04）
 
@@ -1050,14 +1088,22 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-04，MR 1–57 全部合并，在途 MR = 1：MR 58 Wave AL）
+## 1. 当前基点（截至 2026-11-04，MR 1–58 全部合并，在途 MR = 0）
 
-- 代码基点 main = `ab742ccc49`（`Merge branch 'wave-aj-closure-sweep' into 'main'`，
-  MR 57，head `c279fafb`，合并者 `liguangming`；#1157 终态与分支卫生收口记录见 Wave AJ
-  §0）。再上一基点 `dd21f09d35`（`Merge branch 'wave-ai-doc-refresh' into 'main'`，
-  MR 56，head `c4d8a95c`，合并者 `liguangming`，`merged_at=2026-11-03T17:46:32Z`；
-  合并为 docs-only 单文件，未触碰任何 `.m`/`.swift`/`.h`）。合并触发的
-  main pipeline **#1157** 终态见 Wave AJ 收口记录（§0）。上一基点
+- 代码基点 main = `bbdf7741d9`（`Merge branch 'wave-al-ak-rule-reland' into
+  'main'`，MR 58，head `ba3252e9`，合并者 `liguangming`，
+  `merged_at=2026-11-04T01:20:38Z`；合并为 `scripts/defaults-consistency.py`
+  单文件 +80/-1，未触碰任何 `.m`/`.swift`/`.h`）。合并触发的 main pipeline
+  **#1176** 16/16 success（`mutation-battery` 9310.8s / 153 of 153 /
+  336 免证；`publish-github` `result=mirrored` / verified_refs=57 /
+  full_source_equal=true）；GitHub 镜像 main 回读 = `bbdf7741d9`，与
+  GitLab 一致（详见 Wave AM §0）。再上一基点 `ab742ccc49`（`Merge branch
+  'wave-aj-closure-sweep' into 'main'`，MR 57，head `c279fafb`，合并者
+  `liguangming`；#1157 终态与分支卫生收口记录见 Wave AJ §0）。上一基点
+  `dd21f09d35`（`Merge branch 'wave-ai-doc-refresh' into 'main'`，MR 56，
+  head `c4d8a95c`，合并者 `liguangming`，`merged_at=2026-11-03T17:46:32Z`；
+  合并为 docs-only 单文件，未触碰任何 `.m`/`.swift`/`.h`）；其 #1157 终态
+  见 Wave AJ 收口记录（§0）。上一基点
   `1efe4a3720`（`Merge branch 'wave-ah-ai-doc-refresh' into 'main'`，
   MR 55，head `882bf14d`，合并者 `liguangming`，`merged_at=2026-11-03T12:41:19Z`，
   merge pipeline **#1123 = success**；合并为 docs-only 单文件，未触碰任何
