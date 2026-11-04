@@ -1,10 +1,35 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-04 二十三次基点刷新：Wave AM 收口波）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-04 二十四次基点刷新：Wave AM 已收口）
 
-## 0. Wave AM 目标模式（当前执行窗口，2026-11-04）
+## 0. Wave AM 目标模式（已完成并收口：MR 59 → `303d2187`，合并者 `liguangming`；#1179 16/16 全绿；保留供追溯）
 
 > 本节是本轮唯一执行契约。Wave AL 已收口（MR 58，head `ba3252e9`，合并提交
 > `bbdf7741`，合并者 `liguangming`，`merged_at=2026-11-04T01:20:38Z`）。本波
 > 只收尾巴，不开新能力。
+
+**收口落账（2026-11-04 20:05 CST，全部 API/只读回读验证）**：
+- MR 59（head `29733a1d`）已合并：`merged_at=2026-11-04T06:18:22Z`，合并提交
+  `303d2187`（`Merge branch 'wave-am-closure-sweep' into 'main'`），merged_by
+  `liguangming`；in-flight MR = 0。
+- main pipeline **#1179**（`303d2187`）终态 **success，16/16 job**；
+  `mutation-battery`（job 8104）8730.0s / 153 cases 全判定 / 200min 上限内
+  ——第五次完整 main battery 实测（8893/9216.9/10516/9310.8/8730s），上限
+  继续合理偏紧，`docs/gitlab-ci.md` 叙述不动。
+- `publish-github` 尾巴闭环：首发 8105 与首次重试 8199 均因 GitHub 侧间歇
+  503/10min 超时失败（8199 的 push 实际已把 main 推到 `303d2187`，死在
+  收尾校验）。二次重试（job **8252**，以 liguangming 临时 PAT id=50 走
+  API retry，已吊销）输出 `result=already_equal / verified_refs=57 /
+  full_source_equal=true / updated_refs=[] / deleted_refs=[]`，
+  snapshot_sha256=`73f2155a43640ddd4d720a2812cc8751435304dac6efe957c8484c96f307c56b`。
+- 镜像终态（双端 `git ls-remote --refs --heads --tags` 对账）：GitLab 与
+  GitHub（`opsbsligm/moonlight-macos-enhanced`）各 57 个有效 ref，
+  **逐条 SHA 全一致**，main 双端 = `303d2187f0`；源分支
+  `wave-am-closure-sweep` 双端均清（GitLab 侧多出的 49 条 `^{}` 为 peeled
+  输出格式差异，非 ref 差异）。
+- 产物：`Moonlight-1.6.0-build2112.dmg`（arm64，CFBundleVersion 2112，
+  SHA256 `cfc3376a26bd8e31cc5428d4eae67b7bb799fdd647aded54e35d95f030c97ccf`，
+  hdiutil VALID + codesign --deep --strict 通过）已装本机
+  `/Applications/MoonlightEnhanced.app`，旧 2097 备份为 `.app.b2097`。
+  evidence：`moonlight-ci-evidence/20261104-wave-am-publish-close/`。
 
 **标的**：Wave AL 合并后的三处未收口——(a) #1176（main `bbdf7741`）的
 `mutation-battery` COST 实测值未落账；(b) GitHub 镜像 main 停在 `dd21f09d`
@@ -28,6 +53,8 @@
 4. **§1 基点刷新**：更新到 `bbdf7741`（MR 58 合并记录 + #1176 终态 +
    镜像回读证据）。分支卫生复核：远端 `git ls-remote --heads` 只剩 `main`；
    本地未合入分支 `docs-goal-mode-refresh-b65db5fb` 按 Wave AJ 裁定保留不删。
+   （收口注：本条当时落账的是 MR 59 头 `29733a1d` → 合并提交 `303d2187`，
+   见上方"收口落账"与 §1。）
 
 **不做**：不收真机验收矩阵（用户项，`hardware_validated=false` 保留）；
 不跑完整 assertion battery（`--all`）；不动 `.m`/`.swift`/`.h`；不动任何
@@ -1088,16 +1115,20 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-04，MR 1–58 全部合并，在途 MR = 0）
+## 1. 当前基点（截至 2026-11-04，MR 1–59 全部合并，在途 MR = 0）
 
-- 代码基点 main = `bbdf7741d9`（`Merge branch 'wave-al-ak-rule-reland' into
-  'main'`，MR 58，head `ba3252e9`，合并者 `liguangming`，
-  `merged_at=2026-11-04T01:20:38Z`；合并为 `scripts/defaults-consistency.py`
-  单文件 +80/-1，未触碰任何 `.m`/`.swift`/`.h`）。合并触发的 main pipeline
-  **#1176** 16/16 success（`mutation-battery` 9310.8s / 153 of 153 /
-  336 免证；`publish-github` `result=mirrored` / verified_refs=57 /
-  full_source_equal=true）；GitHub 镜像 main 回读 = `bbdf7741d9`，与
-  GitLab 一致（详见 Wave AM §0）。再上一基点 `ab742ccc49`（`Merge branch
+- 代码基点 main = `303d2187f0`（`Merge branch 'wave-am-closure-sweep' into
+  'main'`，MR 59，head `29733a1d`，合并者 `liguangming`，
+  `merged_at=2026-11-04T06:18:22Z`；合并为 docs-only，未触碰任何
+  `.m`/`.swift`/`.h`）。合并触发的 main pipeline **#1179** 16/16 success
+  （`mutation-battery` 8730.0s / 153 cases 全判定；跨文件 SAST 1849.8s
+  `allow_failure=true` 豁免并通过；`publish-github` 二次重试 job 8252
+  `result=already_equal` / verified_refs=57 / full_source_equal=true）；
+  GitHub 镜像 main 回读 = `303d2187f0`，双端 57 个有效 ref 逐条 SHA 一致
+  （详见 Wave AM §0 收口落账）。上一基点 `bbdf7741d9`（`Merge branch
+  'wave-al-ak-rule-reland' into 'main'`，MR 58，head `ba3252e9`；#1176
+  16/16 success，battery COST 9310.8s / verified_refs=57）保留供追溯。
+  再上一基点 `ab742ccc49`（`Merge branch
   'wave-aj-closure-sweep' into 'main'`，MR 57，head `c279fafb`，合并者
   `liguangming`；#1157 终态与分支卫生收口记录见 Wave AJ §0）。上一基点
   `dd21f09d35`（`Merge branch 'wave-ai-doc-refresh' into 'main'`，MR 56，
