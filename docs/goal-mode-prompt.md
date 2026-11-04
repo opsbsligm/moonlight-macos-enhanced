@@ -1,4 +1,38 @@
-# Moonlight macOS Enhanced — 目标模式提示词（2026-11-04 二十一次基点刷新：Wave AJ 收尾批）
+# Moonlight macOS Enhanced — 目标模式提示词（2026-11-04 二十二次基点刷新：Wave AL 棘轮门禁）
+
+## 0. Wave AL 目标模式（当前执行窗口，2026-11-04）
+
+> 本节是本轮唯一执行契约。Wave AJ 已收口（MR 57，head `c279fafb`，合并提交
+> `ab742ccc`，合并者 `liguangming`）。本波只补门禁，不开新能力。
+
+**标的**：上一会话的 Wave AK 规则（`@Published` Optional 字段必须有默认值声明的
+棘轮防护）因对话中断丢失（main 中无相关代码、无悬空 commit），按原契约重落地：
+`scripts/defaults-consistency.py` 新增 `published_defaults_gap` 审计层——候选表
+由各层**读取**行为构建，全新字段无人读就无人比，两层对类型零值"默契一致"；
+本规则改从模型自己的声明清单出发，对每个 `@Published` optional 档案字段问
+「至少一个受审计层（Persistence `??` / Bridge / ObjC 替换 / Loader
+`loadDefaultSettings`）是否声明了它的默认」，棘轮：当前树零缺口，新字段未写
+默认即红。
+
+**完成边界（四条全绿才算完成）**：
+1. **自测双向证明**：`--self-test` 37 项全绿，含新增两项——移除某字段
+   （`absoluteMouseMode`）的全部默认源转红（阳性突变）；只移除双默认源中的
+   一个保持绿（阴性控制，防规则过急）。
+2. **当前树零缺口**：主审计 `published_defaults_gap` 为空，debt 基线 6/0/0
+   不变，无新问题。
+3. **本地门禁 + CI**：`bash scripts/local-gates.sh` 0 failed；本次 SHA
+   （`c7809346`，MR 58）的 pipeline 终态全绿（`allow_failure` job 只算豁免并
+   点名）。
+4. **不越界**：单文件 `scripts/defaults-consistency.py` +80/-1，不触碰
+   `.m`/`.swift`/`.h`；不动任何设置默认值与 UI；`hardware_validated=false`
+   保留；冻结项不解冻。
+
+**不做**：不把 65 个合规字段逐一举名（零缺口即全合规）；不跑完整 assertion
+battery（`--all`）；不替用户裁定 §4 真机验收矩阵的排期。
+
+**审批执行细则（沿用 Wave AJ）**：开发用 `pat`（codex），审查与合并用
+`review-pat`（user id=1 liguangming）；批准绑定精确 head SHA；合并后回读
+MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
 
 ## 0. Wave AJ 目标模式（当前执行窗口，2026-11-04）
 
@@ -1016,9 +1050,11 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 
 > 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
-## 1. 当前基点（截至 2026-11-04，MR 1–56 全部合并，在途 MR = 0）
+## 1. 当前基点（截至 2026-11-04，MR 1–57 全部合并，在途 MR = 1：MR 58 Wave AL）
 
-- 代码基点 main = `dd21f09d35`（`Merge branch 'wave-ai-doc-refresh' into 'main'`，
+- 代码基点 main = `ab742ccc49`（`Merge branch 'wave-aj-closure-sweep' into 'main'`，
+  MR 57，head `c279fafb`，合并者 `liguangming`；#1157 终态与分支卫生收口记录见 Wave AJ
+  §0）。再上一基点 `dd21f09d35`（`Merge branch 'wave-ai-doc-refresh' into 'main'`，
   MR 56，head `c4d8a95c`，合并者 `liguangming`，`merged_at=2026-11-03T17:46:32Z`；
   合并为 docs-only 单文件，未触碰任何 `.m`/`.swift`/`.h`）。合并触发的
   main pipeline **#1157** 终态见 Wave AJ 收口记录（§0）。上一基点
@@ -1299,9 +1335,9 @@ GitHub 镜像回读以 #1112 终态为准。
 | `448b2c6` / `421bd74` | 相对鼠标 delta 先 latch 到局部变量再分包，避免输入线程被高速相对鼠标独占 | **已在 main**：子模块 `f740e75`（merge `abe83b8`）→ 主仓 bump `43c6e835` → merge `32421c28`（MR 26）。取证：holder 字段 `src/InputStream.c:74` 起、latch `:794`、button 事件结束批次 `:1367` | 无需动作。fork 侧网络 I/O 本就不在锁内，未重复搬"释放锁"的 hunk |
 | `970b072` | 修复 queued controller packet 的 use-after-free（队列满 / 连接终止两条路径） | fork 侧**不存在** `currentQueuedControllerPacket`（input edge queue 重写已移除该全局缓存，`sendControllerEventInternal` 直接入队不复用 holder） | **不适用**：不硬套补丁，只在 drift 文档记录"上游修的风险面我们已不存在" |
 | `41cedb8` | `ignoreDisconnectIntercept` 只对发给本 peer 的 ENet DISCONNECT 生效 | `src/ControlStream.c` 已含 peerID/sessionID/地址三重校验（Wave E-B `f65f5b3` 已吸） | **已在 main**，无需动作 |
-| `62e0663` | 只在 RFI 真正启用时才上报 speculative 丢帧（否则等于对主机撒谎） | **已在子模块 master**（main 尚未取用，pin 仍 `abe83b8`）：子模块 fork `5340b26`（merge `093098f5`）→ 主仓 bump `6e1aa0b1`（MR 32 在途）。取证（子模块 `093098f5` 内）：`src/RtpVideoQueue.c:230` 预判分支已被 `isReferenceFrameInvalidationEnabled() &&` 收口 | 待 MR 32 合并。真机收益（弱网下不再向主机发无效 RFI）待 §4 取证 |
-| `d85371c` | multi-block 帧损后必须复位 `reportedLostFrame`，且用实际包 `frameIndex` 而不是 `currentFrameNumber` 上报 | **已在子模块 master**：fork `c759034`（同一 merge `093098f5`）。取证（同上）：`src/RtpVideoQueue.c:672` 已用 `nvPacket->frameIndex`、`:677-681` 起带 NB 注释复位为 `false` | 待 MR 32 合并。弱网连续丢帧的 RFI 范围正确性待真机取证 |
-| `be43885` | 丢掉「部分已处理的 IDR 帧」时必须重新要求 IDR，不能降级成 RFI | **已在子模块 master**：fork `49cfe3a`（同一 merge `093098f5`）。取证（同上）：`src/VideoDepacketizer.c:156` `dropFrameState()` 条件已含 `(nalChainHead && ctx->frameType == FRAME_TYPE_IDR)` | 待 MR 32 合并。IDR 半包丢弃后的花屏恢复路径待真机取证 |
+| `62e0663` | 只在 RFI 真正启用时才上报 speculative 丢帧（否则等于对主机撒谎） | **已在 main**：子模块 fork `5340b26`（merge `093098f5`）→ 主仓 bump `6e1aa0b1`（MR 32 已合入 main）；main 的 submodule pin 已推进至 `093098f`。取证（子模块 `093098f5` 内）：`src/RtpVideoQueue.c:230` 预判分支已被 `isReferenceFrameInvalidationEnabled() &&` 收口 | 无需动作。真机收益（弱网下不再向主机发无效 RFI）待 §4 取证 |
+| `d85371c` | multi-block 帧损后必须复位 `reportedLostFrame`，且用实际包 `frameIndex` 而不是 `currentFrameNumber` 上报 | **已在 main**（submodule pin `093098f`）：fork `c759034`（同一 merge `093098f5`）。取证（同上）：`src/RtpVideoQueue.c:672` 已用 `nvPacket->frameIndex`、`:677-681` 起带 NB 注释复位为 `false` | 无需动作。弱网连续丢帧的 RFI 范围正确性待真机取证 |
+| `be43885` | 丢掉「部分已处理的 IDR 帧」时必须重新要求 IDR，不能降级成 RFI | **已在 main**（submodule pin `093098f`）：fork `49cfe3a`（同一 merge `093098f5`）。取证（同上）：`src/VideoDepacketizer.c:156` `dropFrameState()` 条件已含 `(nalChainHead && ctx->frameType == FRAME_TYPE_IDR)` | 无需动作。IDR 半包丢弃后的花屏恢复路径待真机取证 |
 
 等价性取证方式（G-3 按此执行，记为可复核事实）：`git cherry-pick` 法因冲突污染结构不可用；
 改用提取上游与 fork 两侧 diff 的 `-/+` 文本流、归一化 fork 适配点
