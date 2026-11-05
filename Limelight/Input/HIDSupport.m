@@ -644,7 +644,7 @@ static void HIDDispatchSyntheticRemoteModifierTap(HIDSupport *support,
 // "no button ever arrived" for a session that had hundreds of them. That is how the 2026-09-26
 // capture read mouse-button as zero lines while [clickdiag] recorded 32 right clicks in the same
 // window: the counter was empty, the mouse was not. The sequence number stays shared so a button
-// line still lines up with the motion lines around it. docs/memory-ownership.md S36.
+// line still lines up with the motion lines around it. docs/history/incidents/memory-ownership.md S36.
 - (BOOL)reserveMouseButtonEdgeDiagnosticsLogSequence:(NSUInteger *)sequence {
     if (!self.inputDiagnosticsEnabled) {
         return NO;

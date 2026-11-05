@@ -20,11 +20,6 @@
 |:---|:---|:---|
 | [`contributing.md`](contributing.md) | 准备改代码、提 PR 的人 | 构建要求、质量门控清单与它们各自守住什么、项目结构、贡献流程与 Commit 规范、版本与 tag 约定 |
 | [`input-mapping-design.md`](input-mapping-design.md) | 改输入路径之前必读的人 | 键盘映射表与其四条设计原则、「双击鼠标触发开始菜单」的根因与修复方式 |
-| [`edge-sidebar-locked-entry-2026-09-28.md`](edge-sidebar-locked-entry-2026-09-28.md) | 动边缘控制栏、悬停感应或输入所有权之前必读的人 | 锁定模式为什么没有可悬停的光标、控制栏入口由谁拥有指针、`already-open` 静默拒绝怎么造成「第一次有效后续失效」，以及 30/30 的真机取证与尚未验收清单 |
-| [`release-1720-2026-09-29.md`](release-1720-2026-09-29.md) | 想知道 1720 到底装了什么、验到哪一步、怎么回滚的人 | 发布前后基线与 CI 事实、从配置 blob 实测出的 ⌃⌥C / ⇧⌥ 与全屏锁定路径、把手常量表、4256 项运行时检查与 36 个变异对照、已安装哈希与回滚位置，以及逐项标出的尚未验收 |
-| [`edge-live-acceptance-tool-2026-09-29.md`](edge-live-acceptance-tool-2026-09-29.md) | 要对边缘把手做实机验收、或想知道「尚未验收」怎么变成可核对结果的人 | 一键验收工具的判据（14/30 pt 连续近白列、合成图 3/3 自测）、注入与硬件的边界声明、锁定模式只走 ⌃⌥C 的原因，以及它为什么不进 CI |
-| [`host-connection-incident-2026-09-30.md`](host-connection-incident-2026-09-30.md) | 连不上 HOME-PC、或想知道「客户端还是远端坏了」怎么判的人 | 每个探针的实测结果、Sunshine 半死与配对重置的分层结论、四步恢复路径与恢复判据，以及 1716 回滚包失效的更正 |
-| [`memory-ownership.md`](memory-ownership.md) | 动对象所有权或内存之前必读的人 | 第一次把 `leaks` 跑在设置页路径上的实测：一手代码里的循环引用、它为什么每求值一次就累积一次、为什么不能顺手改 `weak`、做这个改动前必须先有的那条证据，以及 `leak-audit.py` 这道上限门禁的基线口径与「读不到泄漏=绿」的红证 |
 | [`input-mapping-benchmark.md`](input-mapping-benchmark.md) | 想验证「竞争力」这个说法的人 | 键盘/鼠标映射逐项对标 Parsec、UU 远程、Citrix、moonlight-qt 的结论与取证纪律（英文） |
 
 ## 设备重定向与主机契约
@@ -40,15 +35,17 @@
 | 文档 | 读者 | 目的 |
 |:---|:---|:---|
 | [`history/rounds.md`](history/rounds.md) | 追溯某个行为来源的人 | 从 `README.md` 归档出来的版本性小节，以及 2026-09-24 文档重构的搬移对照表 |
-| [`history/waves/goal-mode-prompt.md`](history/waves/goal-mode-prompt.md) | 续接对标作战的开发会话 | 目标模式提示词：当前波次的执行契约、已完成波次追溯、真机验收矩阵。日常使用者不需要读 |
-| [`history/waves/campaign-plan-2026-10-20.md`](history/waves/campaign-plan-2026-10-20.md) | 同上 | 作战计划：P0/P1/P2 转成波次的交付顺序 |
-| [`history/waves/baseline-2026-10-22.md`](history/waves/baseline-2026-10-22.md) | 同上 | 不可撼动基线：已验收控件、手感常量、验证纪律、冻结项 |
-| [`history/waves/competitive-polish-roadmap-2026-10-20.md`](history/waves/competitive-polish-roadmap-2026-10-20.md) | 同上 | 对标路线图：Parsec / Citrix / 网易UU 等打磨项清单 |
+| [`history/incidents/`](history/incidents/) | 追溯某段早期行为来源的人 | 2026-09-27 至 2026-10-31 的历史工作文档与故障记录（点击 C 事故、输入审查、VT/插帧压测、USB 侧栏等），结论已被后续文档与 CHANGELOG 吸收，路径随本目录搬移更新 |
+| [`history/design/`](history/design/) | 评审对象存储与用户记忆设计的人 | 设计评审稿与 `spikes/` 复现物（2026-10 从仓库根搬入，结论已归档，不充当现行事实源） |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | 所有需要逐轮流水的人 | 逐版本变更与每条修复的根因——**逐轮记录的唯一真相源**，其它文档不复制它 |
 
-> `history/waves/` 是开发波次的工作文档（2026-10-20 起对标作战四件套）。它们描述的是**当时**的波次契约与证据，
-> 会随合并过期，不作为当前功能的事实源；当前状态以 `main` 的 CI 与 `hardware-acceptance-checklist.md` 为准。
-> 地址类信息（GitLab 域名 / 端口 / 邮箱）已脱敏，见根 `AGENTS.md`。
+> 开发波次的工作文档（2026-10-20 起对标作战四件套：目标模式提示词、作战计划、基线、
+> 对标路线图）描述的是**当时**的波次契约与证据，会随合并过期，不作为当前功能的事实源；
+> 当前状态以 `main` 的 CI 与 `hardware-acceptance-checklist.md` 为准。Wave AO 起它们
+> 只保存在开发机本地（路径见根 `AGENTS.md`），不再入库——镜像是公开的，波次文档带着
+> 本机主机名与账号；公开读者需要知道"我们对照了谁、证据层级是什么"，那部分留在
+> [`source-matrix-2026-10-25.md`](source-matrix-2026-10-25.md) 与
+> [`input-mapping-benchmark.md`](input-mapping-benchmark.md)，由 `source-matrix-audit.py` 把守。
 
 ## 三份文档的职责边界
 

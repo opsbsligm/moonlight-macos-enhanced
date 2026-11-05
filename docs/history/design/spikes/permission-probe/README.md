@@ -6,7 +6,7 @@
 clang -fobjc-arc -Wall -Werror=incompatible-pointer-types \
       -isysroot "$(xcrun --sdk macosx --show-sdk-path)" \
       -framework AppKit -framework ApplicationServices \
-      -o /tmp/probe2.bin spikes/permission-probe/probe2.m && /tmp/probe2.bin
+      -o /tmp/probe2.bin docs/history/design/spikes/permission-probe/probe2.m && /tmp/probe2.bin
 ```
 
 ## 它证明了什么（macOS 27.2 / 26B5091g，本机）

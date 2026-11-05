@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Who keeps a host alive, and what that costs. Judged from what the objects report.
 
-``docs/memory-ownership.md`` section 5 wants ``TemporaryApp.host`` turned into a ``weak``
+``docs/history/incidents/memory-ownership.md`` section 5 wants ``TemporaryApp.host`` turned into a ``weak``
 back-pointer and has refused to do it without evidence: the cycle is measured, the danger of
 the fix is argued from ``StreamViewController`` holding an app and no host, and nobody has
 ever been able to *see* either fact. Both are claims about who holds what, and who holds what
