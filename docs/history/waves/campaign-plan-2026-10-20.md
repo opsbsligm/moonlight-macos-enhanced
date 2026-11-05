@@ -1,8 +1,8 @@
 # 作战计划（2026-10-20 起）：控制器协议面 → 键盘 → 边缘栏 → 对等补齐
 
- 本计划把 `docs/competitive-polish-roadmap-2026-10-20.md` 的 P0/P1/P2 转成可依次交付的波次。
+ 本计划把 `docs/history/waves/competitive-polish-roadmap-2026-10-20.md` 的 P0/P1/P2 转成可依次交付的波次。
  不可撼动基线（已验收控件、手感常量、协议诚实、验证纪律、冻结项）独立固化在
- `docs/baseline-2026-10-22.md`，任何波次冲突时先读那份文档。
+ `docs/history/waves/baseline-2026-10-22.md`，任何波次冲突时先读那份文档。
 每波都定义了**完成边界**（做到哪一步才算完）、**验收方法**、**回滚**。凡未真机确认的条目，
 状态只允许写到 `hardware_validated=false`，不得写成已完成。
 
@@ -134,7 +134,7 @@ M1 未落地前不要碰 M2/M3/M4——能力没通告，主机不会发 `rumble
 ```sh
 bash scripts/local-gates.sh         # 门禁清单取自 workflow，新增门禁会被自动带上
 xcodebuild build                    # BUILD SUCCEEDED
-git -c user.email="codex-agent@homelab.local" -c user.name="Codex Agent" commit
+git -c user.email="codex-agent commit identity email address (see AGENTS.md)" -c user.name="Codex Agent" commit
 git push gitlab main                # 推 GitLab，GitHub 由 publish-github 镜像
 # 等 30s 以上再查 project 6 pipeline，立刻查会拿到旧 pipeline 误判
 ```

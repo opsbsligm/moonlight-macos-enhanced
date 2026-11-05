@@ -585,7 +585,7 @@ jobs:
 
     - name: Verify the host's own answer still outranks the client's claim
       # The grader above only ever sees what this client says. This is the other half: the
-      # host's own snapshot of 192.0.2.1, captured 2026-11-02, judged against the client
+      # host's own snapshot (LAN address in AGENTS.md, captured 2026-11-02), judged against the client
       # report it is paired with. A DS5 pad the client advertised and the host refuses is the
       # failure that cannot be seen from the client at all -- the pad appears to work, and the
       # player finds out which side gave up when a game asks for a feature the host never
@@ -594,6 +594,15 @@ jobs:
       run: |
         python3 scripts/host-side-evidence-audit.py --self-test
         python3 scripts/host-side-evidence-audit.py --snapshot scripts/fixtures/home-pc-host-snapshot.json --report scripts/fixtures/home-pc-claim-report.txt --expect host-identity=OK,xbox-360-emulation=OK,ds5-emulation=BLOCKED,switch-emulation=BLOCKED,advertised-versus-host=BLOCKED
+
+    - name: Keep the private LAN out of the public mirror
+      # The mirror of this repository is a public GitHub repository and copies
+      # whole refs at git level, so a LAN address in a document, comment or
+      # fixture reaches the public web. AGENTS.md is the one allowed home for
+      # the real values; the gate and its red team prove the rule still bites.
+      run: |
+        python3 scripts/infra-leak-audit.py --self-test
+        python3 scripts/infra-leak-audit.py
 
     - name: Verify the stream's panels get real glass
       # Seven overlays drew the pre-glass HUD-window vibrancy, so the surfaces a player

@@ -2,7 +2,7 @@
 
 这份文件把人要做的动作和 `scripts/hardware-acceptance-check.py` 的判据一一对起来。
 判读规则的唯一来源是报告末尾的 `machine` 区块，键名契约见
-[`goal-mode-prompt.md`](goal-mode-prompt.md) §4.1；这份文件只回答"做哪一步能让某一行变成
+[`goal-mode-prompt.md`](history/waves/goal-mode-prompt.md) §4.1；这份文件只回答"做哪一步能让某一行变成
 PASS"，不替代契约本身。
 
 ## 0. 一轮验收的固定三步
