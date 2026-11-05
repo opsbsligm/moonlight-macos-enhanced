@@ -218,7 +218,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 @property (nonatomic) NSUInteger keyboardRemoteModifierMask;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
-// The heal loop's companion state (docs/memory-ownership.md S32): when each press above went out,
+// The heal loop's companion state (docs/history/incidents/memory-ownership.md S32): when each press above went out,
 // and the source that asks the HID layer whether anybody still holds it. Declared so a probe that
 // compiles HIDSupport.m sees the same class the shipped one is; the loop itself is pinned by
 // key-state-heal-tests.py, and a probe that never spins a runloop never starts it.
