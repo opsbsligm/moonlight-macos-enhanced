@@ -144,7 +144,7 @@ DECLARATIONS = r"""
 @property (nonatomic) BOOL shouldSendInputEvents;
 @property (nonatomic) BOOL keyboardHeldKeyReleaseInProgress;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
-// The heal loop's companion state (docs/memory-ownership.md S32): when each press went out, and the
+// The heal loop's companion state (docs/history/incidents/memory-ownership.md S32): when each press went out, and the
 // source that asks the HID layer whether anybody still holds it. The loop is pinned by
 // key-state-heal-tests.py; this harness only has to compile against the class as it ships.
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownAtMs;

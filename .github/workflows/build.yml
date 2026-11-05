@@ -186,7 +186,7 @@ jobs:
       run: python3 scripts/leak-audit.py --log scripts/leak-sample.txt --red-team
 
     - name: Verify the ownership experiment's own rules
-      # Section 5 of docs/memory-ownership.md is a fix waiting for evidence, and the evidence is
+      # Section 5 of docs/history/incidents/memory-ownership.md is a fix waiting for evidence, and the evidence is
       # now measured rather than argued: the Debug probe holds a TemporaryApp with no host and
       # reports what survives. The measuring needs a macOS runner and a built app; what needs
       # neither is whether the reader still refuses what it must. Its controls are the fragile
@@ -1101,7 +1101,7 @@ jobs:
       # if the only thing in the process holding an app is the app, is its host still alive? That
       # is the exact state `prepareForSegue:` leaves a stream in (`AppsViewController.m:613`
       # assigns `streamVC.app` and no host), and it is the state section 5 of
-      # docs/memory-ownership.md refused to change ownership without seeing. No stream session is
+      # docs/history/incidents/memory-ownership.md refused to change ownership without seeing. No stream session is
       # needed to look at it, and no LAN either -- the probe seeds one host through the production
       # `DataManager` if the machine has none -- which is why this runs on every push for the cost
       # of starting the app. It answers for the object graph and nothing else: the stream's own

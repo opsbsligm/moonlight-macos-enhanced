@@ -129,7 +129,7 @@
    461,
    499
   ],
-  "growth_measured_on": "2026-09-24, one Debug probe build, one laptop, 6 visits per growth run against a 1-visit sweep, library of 2 hosts: our objects went from 7,296-8,064 bytes over 19-21 leaked graphs to 9,600-11,904 over 25-31, and the bytes per leaked graph stayed 384 in every run -- the growth is more whole graphs, not fatter ones. The page does not reclaim them on close: that is the rate section 5 of docs/memory-ownership.md has to move before the growth ceiling can be lowered",
+  "growth_measured_on": "2026-09-24, one Debug probe build, one laptop, 6 visits per growth run against a 1-visit sweep, library of 2 hosts: our objects went from 7,296-8,064 bytes over 19-21 leaked graphs to 9,600-11,904 over 25-31, and the bytes per leaked graph stayed 384 in every run -- the growth is more whole graphs, not fatter ones. The page does not reclaim them on close: that is the rate section 5 of docs/history/incidents/memory-ownership.md has to move before the growth ceiling can be lowered",
   "hosts_seen": [
    4,
    5,

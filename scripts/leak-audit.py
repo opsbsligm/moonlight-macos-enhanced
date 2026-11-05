@@ -4,7 +4,7 @@
 The first run of this over the settings path found a retain cycle of our own making
 (``TemporaryHost.appList`` retains its ``TemporaryApp`s`` and ``TemporaryApp.host``
 retains the host back), and the interesting part was not the cycle -- it is written
-down in ``docs/memory-ownership.md`` with the fix and the evidence that fix still
+down in ``docs/history/incidents/memory-ownership.md`` with the fix and the evidence that fix still
 needs. The interesting part is that nobody had ever looked, and nothing would have
 looked the next time. So this gate exists to keep looking: it drives the Debug probe
 build through ``leaks``, reads every leaked block (not just the few stacks ``leaks``

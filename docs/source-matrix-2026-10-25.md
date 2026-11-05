@@ -1,7 +1,7 @@
 # 对标来源矩阵（source matrix）
 
 > 日期：2026-10-25（Asia/Shanghai）
-> 目的：把 `docs/history/waves/competitive-polish-roadmap-2026-10-20.md` §1 的"证据纪律"落到每个对比对象上，逐格列出**来源 / 平台 / 版本 / 验证日期 / 证据层级 / 未知项**。
+> 目的：把 `competitive-polish-roadmap-2026-10-20.md` §1 的"证据纪律"落到每个对比对象上，逐格列出**来源 / 平台 / 版本 / 验证日期 / 证据层级 / 未知项**。
 > 规则：本矩阵只记录"我们对它的知识从哪里来、能复核到什么程度"，**不新增能力结论**；能力结论仍归 roadmap 与 input-mapping 系列文档。
 > 证据四级沿用 `docs/input-mapping-benchmark.md` §1：本仓库可复核 / 上游已验证 / 仅宣传 / 无证据。
 
@@ -36,6 +36,6 @@
 
 ## 4. 与旧矩阵的关系
 
-- `docs/history/waves/competitive-polish-roadmap-2026-10-20.md` §2.5 的竞品段落保留为历史能力结论；本文件是其**来源侧**补全，两者冲突时以本文件的来源证据为准重判等级。
+- `competitive-polish-roadmap-2026-10-20.md` §2.5 的竞品段落保留为历史能力结论（Wave AO 起 roadmap 迁出仓内，保存在开发机本地 `~/Documents/ChatGPT/moonlight/infra-baseline/`）；本文件是其**来源侧**补全，两者冲突时以本文件的来源证据为准重判等级。
 - `docs/input-mapping-benchmark.md` 的 §2 Sources 表仍是输入面结论的权威来源；本文件不重复其结论。
 

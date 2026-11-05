@@ -220,7 +220,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ahead of its type gate, was renamed, was raised to `LOG_I`, lost its clause in `Logger.m`, or prints a
   dispatched code through `%x` of a short -- 12 wiring checks, and 7 planted defects that all come back red.
   Section 31 of
-  `docs/memory-ownership.md` keeps the measurements and the boundary of the instruments that could
+  `docs/history/incidents/memory-ownership.md` keeps the measurements and the boundary of the instruments that could
   not see this.
 
 - **The settings page now says what the frames actually did, and which frame rate this display
@@ -248,7 +248,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stated plainly: no real stream produced these numbers. What a 180 Hz panel *actually* measures
   during a 魔兽 session -- and therefore whether the advice names 120 or 90, since a measured
   179.8x Hz genuinely fails `refresh >= 1.5 x 120` -- needs one real run with this row on screen.
-  Section 30 of `docs/memory-ownership.md` keeps the details, including the super-resolution
+  Section 30 of `docs/history/incidents/memory-ownership.md` keeps the details, including the super-resolution
   description that is still outstanding.
 
 - **Whether a display can carry frame interpolation is now one answer, not two copies.**
@@ -275,7 +275,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changed in the settings list alone. The script is a step in the workflow and
   `constraints-audit.py` runs both halves. This commit changes no player-visible sentence yet: it
   is the ground the runtime readings, the pre-stream warning and the rewritten interpolation and
-  super-resolution copy stand on, and section 29 of `docs/memory-ownership.md` says so.
+  super-resolution copy stand on, and section 29 of `docs/history/incidents/memory-ownership.md` says so.
 
 - **Every function that reads an event's `keyCode` now asks what event it is holding.**
   A user report reopened an old case here: a fast double-click of the left button sending C at
@@ -299,7 +299,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the driver, and the old leniency let a same-named view method cover for a stripped gate).
   Measured here: 13 readers, 13 gates, 0 findings, and its `--self-test` goes red on all three
   mistakes it can plant. The script is a step in the workflow and `constraints-audit.py` runs both
-  it and its red proofs. Section 28 of `docs/memory-ownership.md` records what was checked, states
+  it and its red proofs. Section 28 of `docs/history/incidents/memory-ownership.md` records what was checked, states
   plainly that the reported symptom was not reproduced, and lists what is still owed: which build
   the player is running, whether the C appears on the host or on this Mac, and one diagnostics
   export.
@@ -330,7 +330,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Not measured: the thing the player actually asked for. Whether Mission Control really stops on a
   180 Hz session, and whether Spotlight and input switching really come back afterwards, needs a
   real stream, and the private call is a Developer ID and notarisation question section 27 of
-  `docs/memory-ownership.md` files as open. Keys that arrive as
+  `docs/history/incidents/memory-ownership.md` files as open. Keys that arrive as
   `NSEventTypeSystemDefined` because the keyboard is set to media-key behaviour are also not
   normalised yet: their event fields are undocumented, so the mapping waits for a reading taken
   from real hardware rather than a guess at a keycode.
@@ -362,10 +362,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a step in the workflow, and `constraints-audit.py` runs both it and its red proofs, so the
   verdict is a laptop's and not only a runner's. Not measured: the numbers themselves. 150 ms
   and 30 pt come from how a hold and a sweep differ along the edge normal, not from a stream,
-  and section 26 of `docs/memory-ownership.md` files them as unmeasured until a real 180 Hz session says
+  and section 26 of `docs/history/incidents/memory-ownership.md` files them as unmeasured until a real 180 Hz session says
   a hold arrives and a sweep does not.
 - **Whether a holder that is *given* its host keeps it is now a reading, not an inference.** Section
-  5 of `docs/memory-ownership.md` asks for two things before `app.host` can turn weak: every holder
+  5 of `docs/history/incidents/memory-ownership.md` asks for two things before `app.host` can turn weak: every holder
   that today reaches its host through the strong back-pointer has to be handed a host of its own, and
   the pairing has to be worth the change. The first half has been watched from the source since
   round 74 -- `ownership-audit.py` refuses a site that takes an app and no host -- but the second
@@ -423,7 +423,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   doubling. Seven red-team injections over a real report each refuse for their own stated reason,
   and the record itself passes clean. What this deliberately does not do is merge the stream pane's
   three reads into one: that changes when a page sees a fresh library, which is a behaviour decision
-  and not a measuring one, so it is recorded in `docs/memory-ownership.md` section 13 -- alongside
+  and not a measuring one, so it is recorded in `docs/history/incidents/memory-ownership.md` section 13 -- alongside
   the corrected call-site count, sixteen in production code rather than the seventeen an earlier
   section estimated -- and the gate there will turn red first and demand the reason.
 
@@ -506,7 +506,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The thing section 5 was waiting for is now measured instead of argued: the app asks its own
   objects who is holding whom, and a fix cannot change ownership without predicting it first.**
-  `docs/memory-ownership.md` refused to turn `TemporaryApp.host` into a `weak` back-pointer
+  `docs/history/incidents/memory-ownership.md` refused to turn `TemporaryApp.host` into a `weak` back-pointer
   because the danger of doing so -- a stream that holds an app and no host -- had never been
   *seen*, only read out of `StreamViewController.h`. Seeing it does not need a stream session,
   because the question is only who holds what. `ML_OWNERSHIP_PROBE` builds the pair three ways and
@@ -538,7 +538,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under a weak back-pointer and refused as a *new* entry today, while the strong one still hides
   it. That found the holders precisely: `prepareForSegue:` gives a stream its app and nothing
   else, `configureItem:` gives an `AppCell` its app while `AppCell.m:129` reads
-  `self.app.host.uuid`, and `AppAssetRetriever` -- which `docs/memory-ownership.md` section 4 had
+  `self.app.host.uuid`, and `AppAssetRetriever` -- which `docs/history/incidents/memory-ownership.md` section 4 had
   recorded as holding no host -- turns out to declare one at `AppAssetRetriever.h:15` and get it
   assigned beside the app at `AppAssetManager.m:59`. Section 5 step 3 is already done for the box
   art path; the two holders above are all that steps 2 and 3 still owe.
@@ -566,7 +566,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The ceiling is therefore a doubling sentinel at 1100 bytes -- one and two graphs per visit per
   host pass, three are refused -- and the pass at two is written into the fixtures rather than a
   comment, because a spread of 192-499 on untouched code means any tighter ceiling goes red on
-  the shipped page. Section 9 of ``docs/memory-ownership.md`` adds the thing this measurement was
+  the shipped page. Section 9 of ``docs/history/incidents/memory-ownership.md`` adds the thing this measurement was
   really for: the retain cycle in section 5 now has a target it can be tested against -- after a
   fix, this rate has to fall, not merely get thinner per graph.
 
@@ -602,7 +602,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a machine's noise -- which the old ceiling refused and the new one passes, with a
   matching pair in the red team, growing one of our blocks refused and growing a `CFString`
   passed. ``observed.ci_runner`` now holds four runs, two without a graph and two with, and
-  Section 8 of ``docs/memory-ownership.md`` records what is still unseen: the 128-byte floor
+  Section 8 of ``docs/history/incidents/memory-ownership.md`` records what is still unseen: the 128-byte floor
   has never been measured, a runner seeding into a library that already has hosts cannot be
   built at all (a runner has no LAN to disagree with), and the 80% of leaked bytes belonging
   to classes we do not declare stays unwatched.
@@ -626,7 +626,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discovered no GameStream host, no first-party class leaked, and the run said so -- 287 and
   288 system blocks, 18,720 and 18,816 bytes, byte budget explicitly unjudged. So CI's green
   means one thing and the baseline now records it as measured rather than inferred: no new
-  first-party class started leaking. The cycle in section 5 of ``docs/memory-ownership.md``
+  first-party class started leaking. The cycle in section 5 of ``docs/history/incidents/memory-ownership.md``
   is not reproduced there, and closing that gap means seeding a host in the Debug probe so
   the graph exists on a runner -- a Debug-only change with its own round, and its own
   baseline edit, rather than a claim made now.
@@ -690,7 +690,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report itself counts and refuses either way, including the other direction, so a report
   format that changes under the reader turns the gate red instead of turning it blind.
   `--list` on the same build reads 106 blocks against 106 counted, in 8 classes, which also
-  retires the "96 leaks unattributed" line in `docs/memory-ownership.md`: that gap was the
+  retires the "96 leaks unattributed" line in `docs/history/incidents/memory-ownership.md`: that gap was the
   tree's, not the app's.
 
   What this does not claim: the ownership fix that file §5 lays out is still blocked on the
@@ -1132,7 +1132,7 @@ tton-edge diagnostic no longer shares its log credit with mouse motion, so a ses
   release a registration the centre keyed by selector. The cost was not cosmetic.
   `handleHostLatencyUpdate:` calls `-syncHostStateFromDatabase`, which reads the whole library
   through `-[DataManager getHosts]` -- the per-row `TemporaryHost`/`TemporaryApp` construction that
-  sections 9 and 13 of `docs/memory-ownership.md` count bytes for -- so a third visit turned every
+  sections 9 and 13 of `docs/history/incidents/memory-ownership.md` count bytes for -- so a third visit turned every
   latency update into three library reads, three window relabels and three re-offers of app
   discovery, and every `NSUserDefaultsDidChange` into three relabels. The registrations are now
   withdrawn by name before being taken again, which is the narrowest repair available: `
@@ -1285,7 +1285,7 @@ tton-edge diagnostic no longer shares its log credit with mouse motion, so a ses
   readings themselves stand: the three shapes agreed word for word across both arches and still do,
   and `appList 3` is `appList 3` whoever wrote the host. What was wrong was the claim about where the
   graph came from, which is the one thing that section was written to keep straight, so the record
-  now says so in the file it sits in and `docs/memory-ownership.md` section 10 carries the correction
+  now says so in the file it sits in and `docs/history/incidents/memory-ownership.md` section 10 carries the correction
   next to the numbers it describes.
 
 - **A re-shown stream window no longer answers one event twice.**
@@ -1559,7 +1559,7 @@ leaks` run on the settings path found a first-party retain
   call sites, so every evaluation pins the graph it just made. Measured over a
   Debug probe run: 105 leaks for 10,896 bytes, six `ROOT CYCLE:
   <TemporaryApp>` stacks, each tree 17 objects at 1.91K shared between them.
-  `docs/memory-ownership.md` writes down the command, the two ways the tool
+  `docs/history/incidents/memory-ownership.md` writes down the command, the two ways the tool
   misleads (its exit 1 means `leaks found leaks`; the shipped `strings` answer
   lives in the debug dylib, not the 38KB stub), the owners that hold an app
   and no host -- `StreamViewController` reads `self.app.host` twenty-one times
