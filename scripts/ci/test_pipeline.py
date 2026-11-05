@@ -280,24 +280,43 @@ class PipelineTests(Sandbox):
 
     def test_submodule_auth_is_runtime_only_and_preserves_runner_config(self):
         executable(self.bin / "git", "#!" + sys.executable + "\n"
-                   "import json, os\n"
+                   "import json, os, sys\n"
+                   "if sys.argv[1:] == ['config', '--local', '--get', 'remote.origin.url']:\n"
+                   "    print('http://172.16.0.1/moonlight/moonlight-macos-enhanced.git')\n"
+                   "    raise SystemExit(0)\n"
                    "with open(os.environ['CAPTURE'], 'a') as stream:\n"
                    "    stream.write(json.dumps({k:v for k,v in os.environ.items() "
                    "if k.startswith('GIT_CONFIG_')}) + '\\n')\n")
         capture = self.root / "git-env"
+        # The fetch script derives the auth URL from the tree it runs in, so the
+        # test owns that tree and runs it there: the absolute URL is used as-is,
+        # and the relative one (the shape this repository ships) is expanded
+        # against the origin URL the stub serves.
+        tab = chr(9)
         self.env.update(GRP_CI_JOB_TOKEN="fixture-value",
                         GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.autocrlf",
                         GIT_CONFIG_VALUE_0="false", CAPTURE=str(capture))
-        run("bash", str(ROOT / "scripts/ci/fetch-submodules.sh"), env=self.env)
-        entries = [json.loads(line) for line in capture.read_text().splitlines()]
-        self.assertEqual(len(entries), 2)
-        for entry in entries:
-            self.assertEqual(entry["GIT_CONFIG_COUNT"], "2")
-            self.assertEqual(entry["GIT_CONFIG_VALUE_0"], "false")
-            self.assertEqual(entry["GIT_CONFIG_KEY_1"],
-                             "http.http://192.0.2.1/moonlight/moonlight-common-c.git.extraHeader")
-            self.assertEqual(entry["GIT_CONFIG_VALUE_1"], "Authorization: Basic " +
-                             base64.b64encode(b"oauth2:fixture-value").decode())
+        for url in ("http://172.16.0.1/moonlight/moonlight-common-c.git",
+                    "../moonlight-common-c.git"):
+            (self.root / ".gitmodules").write_text(
+                "[submodule \"moonlight-common/moonlight-common-c\"]\n"
+                + tab + "path = moonlight-common/moonlight-common-c\n"
+                + tab + "url = " + url + "\n",
+                encoding="utf-8")
+            capture.write_text("")
+            run("bash", str(ROOT / "scripts/ci/fetch-submodules.sh"),
+                env=self.env, cwd=str(self.root))
+            entries = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(len(entries), 2,
+                             "exactly the two submodule fetches expected, got %d" % len(entries))
+            for entry in entries:
+                self.assertEqual(entry["GIT_CONFIG_COUNT"], "2")
+                self.assertEqual(entry["GIT_CONFIG_VALUE_0"], "false")
+                self.assertEqual(entry["GIT_CONFIG_KEY_1"],
+                                 "http.http://172.16.0.1/moonlight/moonlight-common-c.git.extraHeader")
+                # the base is derived from .gitmodules / origin, not hard-coded
+                self.assertEqual(entry["GIT_CONFIG_VALUE_1"], "Authorization: Basic " +
+                                 base64.b64encode(b"oauth2:fixture-value").decode())
         self.assertFalse((self.home / ".gitconfig").exists())
 
     def test_every_submodule_reader_fetches_the_submodule(self):
