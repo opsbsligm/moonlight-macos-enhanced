@@ -144,13 +144,18 @@ audit:python:
       python scripts/stream-config-assembly-audit.py --self-test
       python scripts/stream-config-assembly-audit.py
       # The host's own half of the acceptance pairing. `--expect` states the reviewed verdicts
-      # of the real host (192.0.2.1, captured 2026-11-02) so the judgement runs on a
+      # of the real host (LAN address in AGENTS.md, captured 2026-11-02) so the judgement runs on a
       # committed snapshot instead of a live machine: a BLOCKED row here is a fact about that
       # host, not a failure, and what would be a failure is the audit no longer reaching it.
       # One line per command: inside a `|` block a bare continuation line is its own shell
       # word, so the audit would run with no --snapshot and report "nothing to judge".
       python scripts/host-side-evidence-audit.py --self-test
       python scripts/host-side-evidence-audit.py --snapshot scripts/fixtures/home-pc-host-snapshot.json --report scripts/fixtures/home-pc-claim-report.txt --expect host-identity=OK,xbox-360-emulation=OK,ds5-emulation=BLOCKED,switch-emulation=BLOCKED,advertised-versus-host=BLOCKED
+      # The public mirror copies whole refs, so a private-network address in a
+      # comment or fixture ships to the web. One allowlisted file (AGENTS.md)
+      # carries the real values; anything else is refused.
+      python scripts/infra-leak-audit.py --self-test
+      python scripts/infra-leak-audit.py
       python scripts/workflow-audit.py --self-test
       python scripts/workflow-audit.py
       for script in scripts/*.sh scripts/ci/*.sh; do bash -n "$script"; done
