@@ -1113,7 +1113,7 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 **边界**：不改历史（不 filter-branch、不 force push）；不碰 §5 冻结项；
 不顺手改设置页控件与已验收默认值；真机验收仍按 §4 独立保留。
 
-> 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/baseline-2026-10-22.md`、`docs/campaign-plan-2026-10-20.md`、本文件和 `docs/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
+> 用途：续跑本仓库对标作战的"目标模式"提示词。所有续接会话先读 AGENTS.md、`docs/history/waves/baseline-2026-10-22.md`、`docs/history/waves/campaign-plan-2026-10-20.md`、本文件和 `docs/history/waves/competitive-polish-roadmap-2026-10-20.md`，再核对 Git、源码、准确 SHA 的流水线。
 
 ## 1. 当前基点（截至 2026-11-04，MR 1–59 全部合并，在途 MR = 0）
 
@@ -1497,7 +1497,7 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 1. 改代码 → `bash scripts/local-gates.sh`（默认快速，完整变异电池仅 `--all`）→ 0 failed，skip 逐项列名
 2. 新行为 → 新增门控脚本（必须含 self-test，证明自己会失败）并接入 CI
-3. `git -c user.email="codex-agent@homelab.local" -c user.name="Codex Agent" commit`
+3. `git -c user.email="codex-agent commit identity email address (see AGENTS.md)" -c user.name="Codex Agent" commit`
 4. `git push gitlab <branch>`，创建指向受保护 main 的 MR；push 后等 30s+ 再查准确 SHA 对应 pipeline，全绿才算通过；失败修复后重推，不绕过
 5. GitHub（opsbsligm）由 `publish-github` job 单向镜像，只读，不手推
 6. 每波写一份 `moonlight-ci-evidence/<日期>-<主题>/release-verification.json`，记录 commit / pipeline / DMG / SHA256 / `hardware_validated` / mirror refs
@@ -1529,10 +1529,10 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 | 镜像端补充审计 | `.github/workflows/build.yml` |
 | 边缘栏手感常量 | `Limelight/macOS/ViewControllers/StreamViewController_Internal.h:100-162` |
 
-## 9. 不可撬动的底层（与 `docs/baseline-2026-10-22.md` §1–§7 对齐）
+## 9. 不可撬动的底层（与 `docs/history/waves/baseline-2026-10-22.md` §1–§7 对齐）
 
-- 唯一事实源 GitLab `https://gitlab.example.com:8445`（源站 `192.0.2.1`，API `https://192.0.2.1:8445`），project id 6。
-- 提交身份固定 Codex Agent / codex-agent@homelab.local；不绕门禁。
+- 唯一事实源 GitLab `family GitLab public address (see AGENTS.md for domain and port)`（源站 `172.16.130.x (GitLab origin station LAN IP, see AGENTS.md)`，API `family GitLab API address (see AGENTS.md for IP and port)`），project id 6。
+- 提交身份固定 Codex Agent / codex-agent commit identity email address (see AGENTS.md)；不绕门禁。
 - 设置页原生 `NSSegmentedControl` + `role=.tabs`（commit `00315f0f`）。
 - 全屏侧边栏手感默认值：感应带 12pt / 驻留 0.12s / 收起 0.45s / 召唤宽限 2.5s / 甩动 700pt-0.25s / 把手 14-30-48pt / 点击余量 2pt；E1 只参数化其中三项，默认值 = 现常量。
 - 协议诚实：未实现的能力不向主机通告；type-map ≠ 已通告；报告/UI 必须区分两者。
@@ -1542,8 +1542,8 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 ## 10. 历史计划（保留追溯；当前基点以上文 §1–§9 为准）
 
-- 作战计划原文：`docs/campaign-plan-2026-10-20.md`
-- 对标矩阵原文：`docs/competitive-polish-roadmap-2026-10-20.md`
+- 作战计划原文：`docs/history/waves/campaign-plan-2026-10-20.md`
+- 对标矩阵原文：`docs/history/waves/competitive-polish-roadmap-2026-10-20.md`
 - 输入映射证据：`docs/input-mapping-benchmark.md`、`docs/input-mapping-design.md`、`docs/input-mapping-review.md`
 
 ## 11. 下一步执行
