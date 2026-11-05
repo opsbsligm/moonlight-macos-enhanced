@@ -7,7 +7,7 @@
 ## 一、CI #290 的 5 项失败（确切标签）
 
 此前只知道"5 constraint failures"，GitHub MCP 的 job log 被截断。改用
-`gh run view 36353108829 --log`（本地 gh 已登录 opsbsligm）取全量日志后，
+`gh run view 36353108829 --log`（本地 gh 已登录公开镜像账号）取全量日志后，
 标签是确定的：
 
 1. `FAIL the edge summon gate failed its readings`

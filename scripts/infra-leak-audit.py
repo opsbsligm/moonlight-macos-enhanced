@@ -48,10 +48,26 @@ RULES = [
     ("commit-identity",
      re.compile(r"codex-agent@homelab[.]local"),
      ["AGENTS.md"]),
+    # The streamer's personal account name is not network infrastructure, but the
+    # mirror publishes it the same way. It may state the approval rule once, in the
+    # file the audience expects to read; a wave document naming the approver on every
+    # line is the shape that leaked.
+    ("personal-username",
+     re.compile(r"ligu[a]ngming"),
+     ["AGENTS.md"]),
+    # The mirror account is public by design: badges, download links, the About box
+    # and the publish script all need the real name to work. It stays out of prose.
+    ("mirror-account",
+     re.compile(r"opsb[s]ligm"),
+     ["AGENTS.md", "README.md", "README.en.md", "CHANGELOG.md",
+      "Limelight/macOS/ViewControllers/AboutViewController.m",
+      "Limelight/macOS/ViewControllers/SettingsHostingController.swift",
+      "scripts/ci/publish-github.sh", "scripts/ci/test_pipeline.py",
+      "scripts/constraints-audit.py", ".github/scripts/build_release_body.py"]),
 ]
 
 SKIP_DIRS = {".git", "build", "build-analyze", "build-header-check", "build-probe",
-             "derivedData", "evidence", "node_modules", ".build"}
+             "build-render-probe", "derivedData", "evidence", "node_modules", ".build"}
 
 PLACEHOLDER = "192.0.2."  # TEST-NET-1: the replacement, not a leak
 
@@ -106,8 +122,12 @@ def self_test():
         for i, (name, pattern, _) in enumerate(RULES):
             # the samples are assembled at run time so that a scan of this file
             # sees two halves, not an address
-            sample = "see 172.16" + ".130.6 ok\n" if i == 0 else (
-                "ping 192.168" + ".3.110\n" if i == 1 else "git -c user.email=codex-agent@homelab" + ".local\n")
+            samples = ("see 172.16" + ".130.6 ok\n",
+                       "ping 192.168" + ".3.110\n",
+                       "git -c user.email=codex-agent@homelab" + ".local\n",
+                       "merged by liguan" + "gming\n",
+                       "mirror at opsb" + "sli" + "gm/moonlight\n")
+            sample = samples[i]
             with tempfile.TemporaryDirectory() as bad:
                 plant(bad, "AGENTS.md", "clean\n")
                 plant(bad, "docs/%d.md" % i, sample)
@@ -117,7 +137,7 @@ def self_test():
         # 3. the same pattern in the allowed place passes
         with tempfile.TemporaryDirectory() as ok2:
             plant(ok2, "AGENTS.md",
-                  "172.16" + ".130.6 / 192.168" + ".3.110 / codex-agent@homelab" + ".local\n")
+                  "172.16" + ".130.6 / 192.168" + ".3.110 / codex-agent@homelab" + ".local / liguan" + "gming / opsb" + "sli" + "gm\n")
             if audit(ok2):
                 failures.append("the allowed place was refused")
         # 4. a placeholder line does not count

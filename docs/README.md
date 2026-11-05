@@ -40,6 +40,8 @@
 | 文档 | 读者 | 目的 |
 |:---|:---|:---|
 | [`history/rounds.md`](history/rounds.md) | 追溯某个行为来源的人 | 从 `README.md` 归档出来的版本性小节，以及 2026-09-24 文档重构的搬移对照表 |
+| [`history/incidents/`](history/incidents/) | 追溯某段早期行为来源的人 | 2026-09-27 至 2026-10-31 的历史工作文档与故障记录（点击 C 事故、输入审查、VT/插帧压测、USB 侧栏等），结论已被后续文档与 CHANGELOG 吸收，路径随本目录搬移更新 |
+| [`history/design/`](history/design/) | 评审对象存储与用户记忆设计的人 | 设计评审稿与 `spikes/` 复现物（2026-10 从仓库根搬入，结论已归档，不充当现行事实源） |
 | [`history/waves/goal-mode-prompt.md`](history/waves/goal-mode-prompt.md) | 续接对标作战的开发会话 | 目标模式提示词：当前波次的执行契约、已完成波次追溯、真机验收矩阵。日常使用者不需要读 |
 | [`history/waves/campaign-plan-2026-10-20.md`](history/waves/campaign-plan-2026-10-20.md) | 同上 | 作战计划：P0/P1/P2 转成波次的交付顺序 |
 | [`history/waves/baseline-2026-10-22.md`](history/waves/baseline-2026-10-22.md) | 同上 | 不可撼动基线：已验收控件、手感常量、验证纪律、冻结项 |

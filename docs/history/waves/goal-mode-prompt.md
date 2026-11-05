@@ -21,7 +21,7 @@
   full_source_equal=true / updated_refs=[] / deleted_refs=[]`，
   snapshot_sha256=`73f2155a43640ddd4d720a2812cc8751435304dac6efe957c8484c96f307c56b`。
 - 镜像终态（双端 `git ls-remote --refs --heads --tags` 对账）：GitLab 与
-  GitHub（`opsbsligm/moonlight-macos-enhanced`）各 57 个有效 ref，
+  GitHub（`公开镜像账号/moonlight-macos-enhanced`）各 57 个有效 ref，
   **逐条 SHA 全一致**，main 双端 = `303d2187f0`；源分支
   `wave-am-closure-sweep` 双端均清（GitLab 侧多出的 49 条 `^{}` 为 peeled
   输出格式差异，非 ref 差异）。
@@ -45,7 +45,7 @@
    full_source_equal=true`，snapshot_sha256=
    `6aa1d958ab590d9baccc81564d341895dab1fabaee82138b544d89cd54b1e674`。
 2. **镜像回读对齐**：`git ls-remote` 双端 main = `bbdf7741d964967137379f99fe5b05467dcc24ad`
-   （GitHub `opsbsligm/moonlight-macos-enhanced` 与 GitLab `main` 一致）。
+   （GitHub `公开镜像账号/moonlight-macos-enhanced` 与 GitLab `main` 一致）。
 3. **battery COST 校准落账（Wave AE 待办兑现）**：四次完整 main battery 实测
    8893s（#1090）/ 9216.9s（#1112）/ 10516s（#1171）/ 9310.8s（#1176），
    最大 175min < 200min 上限，上限合理偏紧，本波不改配置；
@@ -159,7 +159,7 @@ Wave Z-3 之后的批次账、可装产物停在 build2097。本波不收新功�
    走 owner 审批合并；本次 SHA 的 pipeline 全绿（`mutation-battery` 不出现
    于该 ref 的 pipeline 属规则使然，不视为缺口）。合并后远端源分支删除。
 2. **README 债务裁定**：`update/round77-readme-audit`（`38c96e1d`，10-18 旧工作，
-   author opsbsligm）逐文件对照 main 后裁定：README/README.en 重写已含入 main
+   author 公开镜像账号）逐文件对照 main 后裁定：README/README.en 重写已含入 main
    更晚版本；`liquid-glass-audit.py` 的两条 segmented 规则已被 main 上更新的
    `native_segments` 判定覆盖（main 版本是它的演进形态，不是缺失）；其余 183 文件
    diff 是 main 向前推进的方向。裁定 = 已被取代，close 不合并，远端分支删除。
@@ -820,7 +820,7 @@ Wave W 把"界面显示什么、串流就用什么"变成机器可证的性质�
 
 **修复**：`?? true` → `?? false`（一个词）。**用户可见路径零变化** —— 改之前运行时就是不锁，
 改之后仍是不锁；改的是"模型/ObjC/Bridge 三层说法一致"这件事本身。审计文档
-`docs/wave-v-settings-bridge-audit-2026-10-31.md` 同时记录其余分叉：
+`docs/history/incidents/wave-v-settings-bridge-audit-2026-10-31.md` 同时记录其余分叉：
 `autoAdjustBitrate`（Bridge/Model 同为 true，ObjC 缺省 NO 不触发）、
 `edgeSensorSummon`、`edgeSensorSummonOnArrival`（三层一致）—— 均无行为影响，未改。
 
@@ -1404,7 +1404,7 @@ GitHub 镜像回读以 #1112 终态为准。
 > 本节 2026-10-28 首次核实时把 G-1/G-2 记为"待移植"，那是 submodule 仍在 `ff18621` 时的快照。
 > 之后两项均已移植并合入，main 的 submodule pin 已推进到 `abe83b8`。以下 fork 侧行号
 > 全部在 `moonlight-common/moonlight-common-c`（pin `abe83b8`）内 `grep -n` 复核，
-> 不是照抄 `docs/common-c-drift-2026-10-26.md` 的旧建议，也不是沿用上一版本节的旧结论。
+> 不是照抄 `docs/history/incidents/common-c-drift-2026-10-26.md` 的旧建议，也不是沿用上一版本节的旧结论。
 
 | 上游 commit | 内容 | fork 侧现状（已核实） | 处置 |
 | --- | --- | --- | --- |
@@ -1499,7 +1499,7 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 2. 新行为 → 新增门控脚本（必须含 self-test，证明自己会失败）并接入 CI
 3. `git -c user.email="codex-agent commit identity email address (see AGENTS.md)" -c user.name="Codex Agent" commit`
 4. `git push gitlab <branch>`，创建指向受保护 main 的 MR；push 后等 30s+ 再查准确 SHA 对应 pipeline，全绿才算通过；失败修复后重推，不绕过
-5. GitHub（opsbsligm）由 `publish-github` job 单向镜像，只读，不手推
+5. GitHub（公开镜像账号）由 `publish-github` job 单向镜像，只读，不手推
 6. 每波写一份 `moonlight-ci-evidence/<日期>-<主题>/release-verification.json`，记录 commit / pipeline / DMG / SHA256 / `hardware_validated` / mirror refs
 
 ## 7. 对标范围（持续维护，不缩水）
@@ -1544,13 +1544,13 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 - 作战计划原文：`docs/history/waves/campaign-plan-2026-10-20.md`
 - 对标矩阵原文：`docs/history/waves/competitive-polish-roadmap-2026-10-20.md`
-- 输入映射证据：`docs/input-mapping-benchmark.md`、`docs/input-mapping-design.md`、`docs/input-mapping-review.md`
+- 输入映射证据：`docs/input-mapping-benchmark.md`、`docs/input-mapping-design.md`、`docs/history/incidents/input-mapping-review.md`
 
 ## 11. 下一步执行
 
 （2026-11-01 六次刷新）**代码层里程碑 0.1→P2 + K1.1/K1.2 + Wave B/C/D/E/H/I/K/Q/R/S/T/U/V/W
 已全部在 main**；MR 1–44 全合并，**在途 MR = MR 45（Wave X）**，main 基点 `1031a42a`。
-`docs/common-c-drift-2026-10-26.md` 的"未取待定"四类中，RFI 修复族已随 G-3（MR 32）处置完，
+`docs/history/incidents/common-c-drift-2026-10-26.md` 的"未取待定"四类中，RFI 修复族已随 G-3（MR 32）处置完，
 剩下的 `342b106`（control stream 就地加密）、`f1cca2d`（pen event 批处理）、
 `7022b33`/`1fddbcb`（BSD socket 错误重构 / rswrapper 头泄漏）仍未评估，
 不是遗漏就是待定，不得当作已完成。
@@ -1570,7 +1570,7 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 3. **对标来源矩阵**：Wave U 之后每一格的证据层级由 `scripts/source-matrix-audit.py` 复算，
    但**门禁只能证明"写的和仓库里的一致"，不能把宣传级升成源码级**。Parsec / UU / Horizon /
    Citrix / 深信服 / 锐捷在拿到机制级来源前继续锁"仅宣传"，不升级证据等级。
-4. **上游按 commit 回吸**：`docs/common-c-drift-2026-10-26.md` 列 fork 点 `62687809` 之后的漂移与
+4. **上游按 commit 回吸**：`docs/history/incidents/common-c-drift-2026-10-26.md` 列 fork 点 `62687809` 之后的漂移与
    17 个交集文件冲突面；逐 commit 判断吸收/拒绝，不整支 rebase。
 5. 每波开发分支、MR、准确 SHA CI、`owner` 凭据审批合并；`PUT /merge` 必须带 `sha=<head sha>`；
    审核未完成保留 MR，不得用 codex 凭据提权代批。
