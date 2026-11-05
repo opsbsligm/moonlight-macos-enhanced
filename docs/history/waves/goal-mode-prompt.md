@@ -437,7 +437,7 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
 问题。这与 Wave S 修掉的 P1 是同一形状：生产者与消费者从未相连，只是那一次连的是本仓两侧，
 这一次要连的是**网络对面的另一台机器**。
 
-**已量化事实（2026-11-02 WinRM 实采 `192.0.2.1`，非估计）**：
+**已量化事实（2026-11-02 WinRM 实采 `192.0.2.1`（占位，真实值见根 AGENTS.md），非估计）**：
 - 主机是 Sunshine `v2026.925.152547.杂鱼`（版本串含非 ASCII，采集器必须原样保存，
   转码即丢失真机身份）；ViGEmBus `Running`（`ViGEmBus.sys`）→ Xbox 360 仿真可用。
 - `gamepads.ds5_manifest = true` 而 `ds5_sidecar_installed = false`；主机日志原话：
@@ -1531,7 +1531,7 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 ## 9. 不可撬动的底层（与 `docs/history/waves/baseline-2026-10-22.md` §1–§7 对齐）
 
-- 唯一事实源 GitLab `family GitLab public address (see AGENTS.md for domain and port)`（源站 `172.16.130.x (GitLab origin station LAN IP, see AGENTS.md)`，API `family GitLab API address (see AGENTS.md for IP and port)`），project id 6。
+- 唯一事实源 GitLab family GitLab public address（源站 LAN IP 与 API 地址见 AGENTS.md），project id 6。
 - 提交身份固定 Codex Agent / codex-agent commit identity email address (see AGENTS.md)；不绕门禁。
 - 设置页原生 `NSSegmentedControl` + `role=.tabs`（commit `00315f0f`）。
 - 全屏侧边栏手感默认值：感应带 12pt / 驻留 0.12s / 收起 0.45s / 召唤宽限 2.5s / 甩动 700pt-0.25s / 把手 14-30-48pt / 点击余量 2pt；E1 只参数化其中三项，默认值 = 现常量。

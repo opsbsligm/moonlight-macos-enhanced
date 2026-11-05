@@ -18,5 +18,7 @@
   源站 LAN IP `192.0.2.1`，VM 内网 `192.0.2.1:8445`；开发 PAT `~/.config/gitlab-1306/pat`，
   审查 PAT `~/.config/gitlab-1306/review-pat`（均 mode 600，不入库、不出日志）。
 - **GitHub 镜像**：`opsbsligm/moonlight-macos-enhanced`，由 `publish-github` job 单向推送，只读，不手推。
+- **串流主机（HOME-PC）**：LAN 地址 `192.0.2.1`（Sunshine 47990/4801 等端口见各文档）。
+  仓内文档与 fixture 一律使用 RFC 5737 占位符 `192.0.2.1`，真实值只在本节。
 - **提交身份**：`Codex Agent / codex-agent@homelab.local`；审查、批准、合并用 `liguangming` 账号。
 - **runner**：本机 Mac M2（实例级共享 runner，tag `macos`）承接全部 macos job；不可迁移。

@@ -1,3 +1,4 @@
+# 原始抓取件；文中 192.0.2.1（RFC 5737 TEST-NET-1）为 HOME-PC 真实 LAN 地址的占位替换，真实值见根 AGENTS.md
 AXWindow|设置 – 手动 (192.0.2.1 (1ms))@625,30 1100x895
   AXSplitGroup@625,62 1100x863
     AXGroup@625,62 236x863

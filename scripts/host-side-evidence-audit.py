@@ -864,8 +864,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--snapshot", help="a collected host snapshot to judge")
     parser.add_argument("--collect", action="store_true", help="read the host over WinRM")
+    # RFC 5737 TEST-NET-1 placeholder; the public mirror republishes this file,
+    # and the real value lives in AGENTS.md.
     parser.add_argument("--host", default="192.0.2.1")
-    parser.add_argument("--user", default="administrator@homelab.local")
+    parser.add_argument("--user", default="administrator@lan.example")
     parser.add_argument("--password-file",
                         default=os.path.expanduser("~/.config/weknora/legacy-host-ssh-password"))
     parser.add_argument("--parse-capture", help="a saved WinRM transcript to parse into a snapshot")
