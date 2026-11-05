@@ -122,7 +122,7 @@ UU 只有宣传页，只列"对方宣称有"，不作为设计依据。Parsec �
 4. **电池 + 触摸板 + 设备面扩容**：IOHID `BatteryPercent`/`BatteryLocation` 属性 → `LiSendControllerBatteryEvent`；
    PS4/PS5 触摸板 HID 元素 → `LiSendControllerTouchEvent`；isNintendo 补 057E:2006/2007（单只 Joy-Con），
    能力含 `LI_CCAP_TOUCHPAD|LI_CCAP_BATTERY_STATE|LI_CCAP_RGB_LED`（按型号裁剪）。
-   顺带评估把 common-c fork 与上游对齐 `LI_CTYPE_STEAM`/`LI_CCAP_DUAL_TOUCHPAD`/`TouchEvent2`（上游已验证存在；回吸范围与冲突面见 `docs/common-c-drift-2026-10-26.md`）。
+   顺带评估把 common-c fork 与上游对齐 `LI_CTYPE_STEAM`/`LI_CCAP_DUAL_TOUCHPAD`/`TouchEvent2`（上游已验证存在；回吸范围与冲突面见 `docs/history/incidents/common-c-drift-2026-10-26.md`）。
 
 设置页对应增量（遵守 UI 外观规则，纯新增行）：控制器行内展开"原生能力"状态芯片（类型/陀螺仪/触摸板/电池 已通告与否），
 让用户能看到握手结果而不是猜。

@@ -1,27 +1,27 @@
 # Moonlight macOS Enhanced — 目标模式提示词（2026-11-04 二十四次基点刷新：Wave AM 已收口）
 
-## 0. Wave AM 目标模式（已完成并收口：MR 59 → `303d2187`，合并者 `liguangming`；#1179 16/16 全绿；保留供追溯）
+## 0. Wave AM 目标模式（已完成并收口：MR 59 → `303d2187`，合并者 `owner`；#1179 16/16 全绿；保留供追溯）
 
 > 本节是本轮唯一执行契约。Wave AL 已收口（MR 58，head `ba3252e9`，合并提交
-> `bbdf7741`，合并者 `liguangming`，`merged_at=2026-11-04T01:20:38Z`）。本波
+> `bbdf7741`，合并者 `owner`，`merged_at=2026-11-04T01:20:38Z`）。本波
 > 只收尾巴，不开新能力。
 
 **收口落账（2026-11-04 20:05 CST，全部 API/只读回读验证）**：
 - MR 59（head `29733a1d`）已合并：`merged_at=2026-11-04T06:18:22Z`，合并提交
   `303d2187`（`Merge branch 'wave-am-closure-sweep' into 'main'`），merged_by
-  `liguangming`；in-flight MR = 0。
+  `owner`；in-flight MR = 0。
 - main pipeline **#1179**（`303d2187`）终态 **success，16/16 job**；
   `mutation-battery`（job 8104）8730.0s / 153 cases 全判定 / 200min 上限内
   ——第五次完整 main battery 实测（8893/9216.9/10516/9310.8/8730s），上限
   继续合理偏紧，`docs/gitlab-ci.md` 叙述不动。
 - `publish-github` 尾巴闭环：首发 8105 与首次重试 8199 均因 GitHub 侧间歇
   503/10min 超时失败（8199 的 push 实际已把 main 推到 `303d2187`，死在
-  收尾校验）。二次重试（job **8252**，以 liguangming 临时 PAT id=50 走
+  收尾校验）。二次重试（job **8252**，以 owner 临时 PAT id=50 走
   API retry，已吊销）输出 `result=already_equal / verified_refs=57 /
   full_source_equal=true / updated_refs=[] / deleted_refs=[]`，
   snapshot_sha256=`73f2155a43640ddd4d720a2812cc8751435304dac6efe957c8484c96f307c56b`。
 - 镜像终态（双端 `git ls-remote --refs --heads --tags` 对账）：GitLab 与
-  GitHub（`opsbsligm/moonlight-macos-enhanced`）各 57 个有效 ref，
+  GitHub（`公开镜像账号/moonlight-macos-enhanced`）各 57 个有效 ref，
   **逐条 SHA 全一致**，main 双端 = `303d2187f0`；源分支
   `wave-am-closure-sweep` 双端均清（GitLab 侧多出的 49 条 `^{}` 为 peeled
   输出格式差异，非 ref 差异）。
@@ -45,7 +45,7 @@
    full_source_equal=true`，snapshot_sha256=
    `6aa1d958ab590d9baccc81564d341895dab1fabaee82138b544d89cd54b1e674`。
 2. **镜像回读对齐**：`git ls-remote` 双端 main = `bbdf7741d964967137379f99fe5b05467dcc24ad`
-   （GitHub `opsbsligm/moonlight-macos-enhanced` 与 GitLab `main` 一致）。
+   （GitHub `公开镜像账号/moonlight-macos-enhanced` 与 GitLab `main` 一致）。
 3. **battery COST 校准落账（Wave AE 待办兑现）**：四次完整 main battery 实测
    8893s（#1090）/ 9216.9s（#1112）/ 10516s（#1171）/ 9310.8s（#1176），
    最大 175min < 200min 上限，上限合理偏紧，本波不改配置；
@@ -62,13 +62,13 @@
 不替用户裁定对标来源矩阵补全的排期。
 
 **审批执行细则（沿用 Wave AJ）**：开发用 `pat`（codex），审查与合并用
-`review-pat`（user id=1 liguangming）；批准绑定精确 head SHA；合并后回读
+`review-pat`（user id=1 owner）；批准绑定精确 head SHA；合并后回读
 MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
 
 ## 0. Wave AL 目标模式（当前执行窗口，2026-11-04）
 
 > 本节是本轮唯一执行契约。Wave AJ 已收口（MR 57，head `c279fafb`，合并提交
-> `ab742ccc`，合并者 `liguangming`）。本波只补门禁，不开新能力。
+> `ab742ccc`，合并者 `owner`）。本波只补门禁，不开新能力。
 
 **标的**：上一会话的 Wave AK 规则（`@Published` Optional 字段必须有默认值声明的
 棘轮防护）因对话中断丢失（main 中无相关代码、无悬空 commit），按原契约重落地：
@@ -96,13 +96,13 @@ MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
 battery（`--all`）；不替用户裁定 §4 真机验收矩阵的排期。
 
 **审批执行细则（沿用 Wave AJ）**：开发用 `pat`（codex），审查与合并用
-`review-pat`（user id=1 liguangming）；批准绑定精确 head SHA；合并后回读
+`review-pat`（user id=1 owner）；批准绑定精确 head SHA；合并后回读
 MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
 
 ## 0. Wave AJ 目标模式（当前执行窗口，2026-11-04）
 
 > 本节是本轮唯一执行契约。Wave AI 已收口（MR 56，head `c4d8a95c`，合并提交
-> `dd21f09d`，合并者 `liguangming`，`merged_at=2026-11-03T17:46:32Z`）。本波
+> `dd21f09d`，合并者 `owner`，`merged_at=2026-11-03T17:46:32Z`）。本波
 > 只收尾巴，不开新能力。
 
 **标的**：五处未收口——(a) MR 56 合并触发的 main pipeline **#1157**（`dd21f09d`）
@@ -138,7 +138,7 @@ MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
 不替用户裁定 `docs-goal-mode-refresh-b65db5fb` 的去留。
 
 **审批执行细则（沿用 Wave AH）**：开发用 `pat`（codex），审查与合并用
-`review-pat`（user id=1 liguangming）；批准绑定精确 head SHA；合并后回读
+`review-pat`（user id=1 owner）；批准绑定精确 head SHA；合并后回读
 MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
 
 ---
@@ -146,7 +146,7 @@ MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
 ## 0. Wave AH 目标模式（当前执行窗口，2026-11-03）
 
 > 本节是本轮唯一执行契约。Wave AE 已收口（MR 53 → merge `c0b74bc2`，合并者
-> `liguangming`，main pipeline #1090 16/16 success，battery job 7281 实测
+> `owner`，main pipeline #1090 16/16 success，battery job 7281 实测
 > 8893s / 153/153 / 336 免证）；其目标模式顺延到 §0 之后的旧节，保留供追溯。
 
 **标的**：五处未收口，全部是"做完的尾巴"而非新能力——超时上限还停在投影值、
@@ -156,10 +156,10 @@ Wave Z-3 之后的批次账、可装产物停在 build2097。本波不收新功�
 
 **完成边界（五条全绿才算完成）**：
 1. **AG-2 上限落地**：`wave-ag-battery-ceiling-200`（head `9b3ea1c6`）经 MR 54
-   走 liguangming 审批合并；本次 SHA 的 pipeline 全绿（`mutation-battery` 不出现
+   走 owner 审批合并；本次 SHA 的 pipeline 全绿（`mutation-battery` 不出现
    于该 ref 的 pipeline 属规则使然，不视为缺口）。合并后远端源分支删除。
 2. **README 债务裁定**：`update/round77-readme-audit`（`38c96e1d`，10-18 旧工作，
-   author opsbsligm）逐文件对照 main 后裁定：README/README.en 重写已含入 main
+   author 公开镜像账号）逐文件对照 main 后裁定：README/README.en 重写已含入 main
    更晚版本；`liquid-glass-audit.py` 的两条 segmented 规则已被 main 上更新的
    `native_segments` 判定覆盖（main 版本是它的演进形态，不是缺失）；其余 183 文件
    diff 是 main 向前推进的方向。裁定 = 已被取代，close 不合并，远端分支删除。
@@ -175,7 +175,7 @@ Wave Z-3 之后的批次账、可装产物停在 build2097。本波不收新功�
    （用户项，不阻塞代码侧）；`hardware_validated=false` 继续保留。
 
 **审批执行细则（本波新增，后续波次沿用）**：开发用 `pat`（codex），审查与合并
-用 `review-pat`（已核验 user id=1 liguangming，2026-11-03）。批准必须绑定精确
+用 `review-pat`（已核验 user id=1 owner，2026-11-03）。批准必须绑定精确
 head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 pipeline 终态。
 不再走 Rails 建临时 token（那次方案已被本次的常驻 review-pat 取代）。
 
@@ -189,7 +189,7 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
 
 > 本节是本轮唯一执行契约。Wave AC 与 Wave AD 已随 MR 52 一起收口（head
 > `8b7f6b46`，合并提交 `18921771`，`merged_at=2026-11-02T18:59:45.861Z`，合并者
-> `liguangming`），其目标模式与展开证据见 §0.AC 与 §0.AD；Wave AB 见 §0.AB。
+> `owner`），其目标模式与展开证据见 §0.AC 与 §0.AD；Wave AB 见 §0.AB。
 
 **标的（2026-11-03 实测重述）**：电池共 153 条变异，其中 107 条经聚合审计
 `constraints-audit.py`（77 条走默认 gate、30 条显式命名，按 `MUTATIONS` 表逐条载入
@@ -264,10 +264,10 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
 
 ---
 
-## 0.AC Wave AC 目标模式（已完成并合并：MR 52 → head `8b7f6b46` / merge `18921771`，合并者 `liguangming`；保留供追溯）
+## 0.AC Wave AC 目标模式（已完成并合并：MR 52 → head `8b7f6b46` / merge `18921771`，合并者 `owner`；保留供追溯）
 
 > Wave AC 已随 MR 52 收口，本节保留完整证据供追溯。Wave AB 已收口（MR 51 →
-> `60ddce2c`，合并者 `liguangming`，head pipeline #1051 success），见 §0.AB。
+> `60ddce2c`，合并者 `owner`，head pipeline #1051 success），见 §0.AB。
 
 **标的**：渲染探针把**"从未测到"**报成**"测得一片平坦"**，而它判读器自己的 `--self-test`
 形态从来不在任何管道定义里 —— 于是一句描述 CI 环境故障的红色被读成应用渲染回归，
@@ -369,9 +369,9 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
 3. CI pipeline 包含 `render-probe.py --self-test` 且 pass
 4. `gate-coverage-audit.py --self-test --verify` 全绿
 
-## 0.AB Wave AB 目标模式（已完成并合并：MR 51 → `60ddce2c`，合并者 `liguangming`；保留供追溯）
+## 0.AB Wave AB 目标模式（已完成并合并：MR 51 → `60ddce2c`，合并者 `owner`；保留供追溯）
 
-> Wave AA 已收口（MR 50 → `d16497a4`，合并者 `liguangming`，
+> Wave AA 已收口（MR 50 → `d16497a4`，合并者 `owner`，
 > `merged_at=2026-11-02T05:27:39Z`），其目标模式见 §0.A。
 
 **标的**：设置字典 → `StreamConfiguration` 对象**这一跳**从来没有任何审计看过，
@@ -422,9 +422,9 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
 
 ---
 
-## 0.A Wave AA 目标模式（已完成并合并：MR 50 → `d16497a4`，合并者 `liguangming`；保留供追溯）
+## 0.A Wave AA 目标模式（已完成并合并：MR 50 → `d16497a4`，合并者 `owner`；保留供追溯）
 
-> 本节是本轮唯一执行契约。Wave Z-3 已收口（MR 49 → `9e914350`，合并者 `liguangming`，
+> 本节是本轮唯一执行契约。Wave Z-3 已收口（MR 49 → `9e914350`，合并者 `owner`，
 > head pipeline #1010 success），其目标模式见 §0.0。这一波的标的不是又一处客户端缺陷，
 > 而是**验收的另外一半从来没有人看过**：`hardware-acceptance-check.py` 判的是"报告与观测者
 > 声明是否同意同一场会话"，两半都出自本仓，主机从没被问过。
@@ -484,7 +484,7 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
    **source of truth 40 gates / mirror 94 gates / 94 reachable**、exit 0，不再出现
    `host-side-evidence-audit.py: source-of-truth only` 那条 note。
 
-## 0.0 Wave Z 目标模式（已完成并合并：MR 49 → `9e914350`，合并者 `liguangming`，head pipeline #1010 success）
+## 0.0 Wave Z 目标模式（已完成并合并：MR 49 → `9e914350`，合并者 `owner`，head pipeline #1010 success）
 
 > 本节已收口。Wave Y/Z-1/Z-2 在其之前收口（§0.2）。这一波不在默认值尺子上，
 > 而是那把尺子的结论**被误读**所掩盖的另一类缺陷：审计对一个键写
@@ -546,7 +546,7 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
    （skip 逐项列名）。
 6. **接缝在事实源**：新门禁同时进 `.gitlab-ci.yml`、镜像 workflow 与
    `constraints-audit.py`（本地门禁）三处，并由 `gate-coverage-audit` 证明三处都在；
-   `liguangming` 对精确 SHA 审批合并后回读 MR 状态/合并者/main 新 SHA/流水线终态。
+   `owner` 对精确 SHA 审批合并后回读 MR 状态/合并者/main 新 SHA/流水线终态。
    `跨文件静态安全扫描` 在本环境 `allow_failure=true`，只记「已豁免」不计入通过。
 
 **处置须 owner 决策（本波不动手，只登记）**：`captureSystemShortcuts` 是接上
@@ -579,9 +579,9 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
    `constraints-audit.py`（本地门禁）各加判定形态 + self-test 形态；
    `gate-coverage-audit.py --verify` = **92/92 reachable**、exit 0。
 
-## 0.2 Wave Y 目标模式（已完成并合并：MR 46 → `3a4f47f1`，合并者 liguangming，head pipeline 988 success）
+## 0.2 Wave Y 目标模式（已完成并合并：MR 46 → `3a4f47f1`，合并者 owner，head pipeline 988 success）
 
-> 本节已收口。Wave Z-1（MR 47 → `2012367a`，合并者 liguangming）继续跨过了
+> 本节已收口。Wave Z-1（MR 47 → `2012367a`，合并者 owner）继续跨过了
 > 它登记的"私有 helper 委托不跨函数求值"那一层。
 
 > 本节是本轮唯一执行契约。Wave X 已收口（§0.1），本波修的是同一把尺子上**另一个**
@@ -647,7 +647,7 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
    `background-gamepad-tests.py` 仍 0 failures；字典侧 87 键的 compared 数、5 项已受理
    债务不得因本波减少（新增未证明键须进基线，`0 new / 0 stale`）。
 6. **接缝在事实源 + 本地门禁 0 failed + 本次 SHA 流水线到终态**：
-   `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；`liguangming` 审批合并后
+   `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；`owner` 审批合并后
    回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
    `跨文件静态安全扫描` 在本环境 `allow_failure=true`，只记「已豁免」不计入通过。
 
@@ -665,7 +665,7 @@ head SHA；合并后回读 MR state、merged_by、目标分支新 SHA 与合并 
 并且 `rumble` 等键**出现在账上**（`compared` 或 `unresolved`，不再是缺席）；
 `bash scripts/local-gates.sh` 0 failed；本次 SHA 流水线到终态。
 
-## 0.1 Wave X 目标模式（已完成并合并：MR 45 → `515dfcf9`，合并者 liguangming，head pipeline 968 success，main pipeline 973 success）
+## 0.1 Wave X 目标模式（已完成并合并：MR 45 → `515dfcf9`，合并者 owner，head pipeline 968 success，main pipeline 973 success）
 
 > 本节已收口：五条完成边界全部落地（归属按消费路径、导出面写死可见默认值、
 > self-test 含"这把尺子会红"的正负对照、两个下游门禁升级、事实源接缝 + 本地门禁）。
@@ -720,7 +720,7 @@ Wave W 把"界面显示什么、串流就用什么"变成机器可证的性质�
    并各自用植入裸 Optional 的反向证明确实会红（已实测各抓 1 条 FAIL）。
 5. **接缝在事实源 + 本地门禁 0 failed + 本次 SHA 流水线到终态**：
    `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；
-   `liguangming` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
+   `owner` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
    `跨文件静态安全扫描` 在本环境 `allow_failure=true`，只记「已豁免」不计入通过。
 
 **边界**：不改设置面板任何默认值与标签栏 `NSSegmentedControl` role=`.tabs` 外观
@@ -737,7 +737,7 @@ Wave W 把"界面显示什么、串流就用什么"变成机器可证的性质�
 `python3 scripts/background-gamepad-tests.py` 0 failures；`bash scripts/local-gates.sh`
 0 failed；本次 SHA 流水线到终态。
 
-## 0.1 Wave W 目标模式（已完成并合并：MR 44 → `1031a42a`，合并者 liguangming，head pipeline 952 success）
+## 0.1 Wave W 目标模式（已完成并合并：MR 44 → `1031a42a`，合并者 owner，head pipeline 952 success）
 
 > 本节已收口：五条完成边界全部落地（`defaults-consistency.py` 求值判等、带可证伪条件的
 > 债务账、改源码文本的 self-test、两处真分叉修复、接缝进事实源）。它给出的尺子在
@@ -794,7 +794,7 @@ Wave W 把"界面显示什么、串流就用什么"变成机器可证的性质�
    `gate-coverage-audit.py --emit-commands --class=fast` 下发，由
    `.gitlab-ci.yml:344` 的 `bash -eo pipefail -x < gates-fast.txt` 真实执行，
    镜像侧同步调用；`bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；
-   `liguangming` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
+   `owner` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
 
 **边界**：不改设置面板任何默认值与标签栏外观（本波改的是"未写入时读到什么"，
 不是"界面默认选了什么"）；不解冻 USB 真重定向 / Developer ID 公证 / 自动更新；
@@ -809,7 +809,7 @@ Wave W 把"界面显示什么、串流就用什么"变成机器可证的性质�
 `python3 scripts/gate-coverage-audit.py` = 0 violation；`bash scripts/local-gates.sh`
 0 failed；本次 SHA 流水线到终态。
 
-## 0.1 Wave V 目标模式（已完成并合并：MR 42 → `c1f0eeac`，合并者 liguangming）
+## 0.1 Wave V 目标模式（已完成并合并：MR 42 → `c1f0eeac`，合并者 owner）
 
 **发现（源码级，非推测）**：`SettingsObjCBridge.swift:115` 写的是
 `settings.ignoreAspectRatio ?? true`，而模型默认
@@ -820,17 +820,17 @@ Wave W 把"界面显示什么、串流就用什么"变成机器可证的性质�
 
 **修复**：`?? true` → `?? false`（一个词）。**用户可见路径零变化** —— 改之前运行时就是不锁，
 改之后仍是不锁；改的是"模型/ObjC/Bridge 三层说法一致"这件事本身。审计文档
-`docs/wave-v-settings-bridge-audit-2026-10-31.md` 同时记录其余分叉：
+`docs/history/incidents/wave-v-settings-bridge-audit-2026-10-31.md` 同时记录其余分叉：
 `autoAdjustBitrate`（Bridge/Model 同为 true，ObjC 缺省 NO 不触发）、
 `edgeSensorSummon`、`edgeSensorSummonOnArrival`（三层一致）—— 均无行为影响，未改。
 
 **验证**：MR 42 的 head pipeline **#897 = success**（`lint:toolchain`/`audit:python`/
 `download-deps`/`build-app`/`test-app`/`audit:sources`/`audit:gates` + 4 项必跑安全扫描
 success；`跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）。
-合并由 `liguangming` 完成，`PUT /merge` 带精确 `sha=f6b071fe…`，main 新 SHA `c1f0eeac`。
+合并由 `owner` 完成，`PUT /merge` 带精确 `sha=f6b071fe…`，main 新 SHA `c1f0eeac`。
 `hardware_validated=false` 维持：无行为改动，不需要真机验收，但也不因此宣称任何真机结论。
 
-## 0.2 Wave U 目标模式（已完成并合并：MR 41 → `b7be1dec`，合并者 liguangming；保留供追溯）
+## 0.2 Wave U 目标模式（已完成并合并：MR 41 → `b7be1dec`，合并者 owner；保留供追溯）
 
 > 本节已收口。完成判据的回读结果见下，Wave V（桥接默认值分叉修复）另见 §0.1。
 
@@ -847,7 +847,7 @@ success；`跨文件静态安全扫描` `allow_failure=true` → **已豁免**�
   `--emit-commands --class=fast` 下发，`.gitlab-ci.yml` 的
   `bash -eo pipefail -x < gates-fast.txt` 真实执行；镜像侧 `build.yml` 同时跑
   `--self-test` 与 verify。
-- MR 41：`state=merged`，`merged_by=liguangming`，merge commit `b7be1dec`，
+- MR 41：`state=merged`，`merged_by=owner`，merge commit `b7be1dec`，
   合并后 main 的 pipeline #895 除 `mutation-battery`（verify stage，长任务）外全部
   success，其中 `跨文件静态安全扫描` `allow_failure=true` → 只记**已豁免**，不计入通过。
 
@@ -897,7 +897,7 @@ Wave S 把"报告生产者"和"判读消费者"连上了；同一类缺陷在对
 `python3 scripts/source-matrix-audit.py` = 0 violation；
 `python3 scripts/constraints-audit.py --no-battery` = 0 constraint failures；
 `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；本次 SHA 流水线到终态；
-`liguangming` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
+`owner` 审批合并后回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
 
 ## 0.3 Wave T 目标模式（已完成并合并：MR 40 → `bf055b23`；保留供追溯）
 
@@ -1000,7 +1000,7 @@ Python 侧用 `importlib` 载入真实判读器判读**那份文件**，SHA 做"
 **验收判据**：`python3 scripts/diagnostics-report-tests.py` 0 failures 且日志里能看到
 三条端到端变异各自 `the checker stops accepting the export when …`；
 `bash scripts/local-gates.sh` 0 failed（skip 逐项列名）；本次 SHA 流水线到 success，
-`publish-github` 核对本 ref 双端 SHA；MR 由 `liguangming` 审批合并后回读
+`publish-github` 核对本 ref 双端 SHA；MR 由 `owner` 审批合并后回读
 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
 
 **边界**：不把 `hardware_validated` 改成 true —— 本波只把"报告能不能被判读"变成机器可证，
@@ -1118,7 +1118,7 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
 ## 1. 当前基点（截至 2026-11-04，MR 1–59 全部合并，在途 MR = 0）
 
 - 代码基点 main = `303d2187f0`（`Merge branch 'wave-am-closure-sweep' into
-  'main'`，MR 59，head `29733a1d`，合并者 `liguangming`，
+  'main'`，MR 59，head `29733a1d`，合并者 `owner`，
   `merged_at=2026-11-04T06:18:22Z`；合并为 docs-only，未触碰任何
   `.m`/`.swift`/`.h`）。合并触发的 main pipeline **#1179** 16/16 success
   （`mutation-battery` 8730.0s / 153 cases 全判定；跨文件 SAST 1849.8s
@@ -1130,36 +1130,36 @@ Stripe/PEM/`api_key =`），对 Objective-C 里
   16/16 success，battery COST 9310.8s / verified_refs=57）保留供追溯。
   再上一基点 `ab742ccc49`（`Merge branch
   'wave-aj-closure-sweep' into 'main'`，MR 57，head `c279fafb`，合并者
-  `liguangming`；#1157 终态与分支卫生收口记录见 Wave AJ §0）。上一基点
+  `owner`；#1157 终态与分支卫生收口记录见 Wave AJ §0）。上一基点
   `dd21f09d35`（`Merge branch 'wave-ai-doc-refresh' into 'main'`，MR 56，
-  head `c4d8a95c`，合并者 `liguangming`，`merged_at=2026-11-03T17:46:32Z`；
+  head `c4d8a95c`，合并者 `owner`，`merged_at=2026-11-03T17:46:32Z`；
   合并为 docs-only 单文件，未触碰任何 `.m`/`.swift`/`.h`）；其 #1157 终态
   见 Wave AJ 收口记录（§0）。上一基点
   `1efe4a3720`（`Merge branch 'wave-ah-ai-doc-refresh' into 'main'`，
-  MR 55，head `882bf14d`，合并者 `liguangming`，`merged_at=2026-11-03T12:41:19Z`，
+  MR 55，head `882bf14d`，合并者 `owner`，`merged_at=2026-11-03T12:41:19Z`，
   merge pipeline **#1123 = success**；合并为 docs-only 单文件，未触碰任何
   `.m`/`.swift`/`.h`）。合并触发的 main pipeline **#1128** 为完整 main push 链
   （battery 200min 上限生效后的第二次全量首跑）。上一基点 `1ceea940`
   （`Merge branch 'wave-ag-battery-ceiling-200' into 'main'`，
-  MR 54，合并者 `liguangming`，`merged_at=2026-11-03T09:47:31Z`，head pipeline
+  MR 54，合并者 `owner`，`merged_at=2026-11-03T09:47:31Z`，head pipeline
   **#1110 = success**；合并触发的 main pipeline **#1112** 为完整 main push 链，
   含按实测 8893s 收紧到 200min 上限后的 `mutation-battery` 首跑）。再上一基点
-  `c0b74bc2`（MR 53，合并者 `liguangming`，`merged_at=2026-11-03T03:17:20Z`，main
+  `c0b74bc2`（MR 53，合并者 `owner`，`merged_at=2026-11-03T03:17:20Z`，main
   pipeline **#1090 = success**（16 job 全绿；`mutation-battery` 首测 153/153 /
   8893s / 336 免证，COST 行落进 trace）。上一基点 `d16497a4`（MR 50，
-  合并者 `liguangming`，`merged_at=2026-11-02T05:27:39Z`，合并流水线
+  合并者 `owner`，`merged_at=2026-11-02T05:27:39Z`，合并流水线
   **#1040 = success**（12 个 job 全绿，无 `allow_failure` 豁免项可记）。该合并**未触碰任何
   `.m`/`.swift`/`.h`**，全部是脚本、fixtures 与文档，故 `hardware_validated` 的判断不受影响。
   判读器本体在本机重跑复核：`--self-test` 报 9 个变异各自转红，快照＋真实报告形态
   报 `host-identity=OK, xbox-360-emulation=OK, ds5/switch=BLOCKED, advertised-versus-host=BLOCKED`，
   与 `--expect` 钉死的一致（evidence：`moonlight-ci-evidence/20261102-wave-aa-host-side-evidence/`）。
 Wave AC+AD 是 MR 52（head `8b7f6b46`），合并进 main 的合并提交是 `18921771`，
-`merged_at=2026-11-02T18:59:45.861Z`，合并者 `liguangming`（MR 51 是 Wave AB）。
+`merged_at=2026-11-02T18:59:45.861Z`，合并者 `owner`（MR 51 是 Wave AB）。
 Wave AE 已随 MR 53 收口（见本节首段）；Wave AH 收口批随 MR 54 收口（见 §0），
 五项完成边界中代码侧四项已落地，`mutation-battery` 200min 上限首跑与
 GitHub 镜像回读以 #1112 终态为准。
 - 上一基点 `9e914350`（`Merge branch 'wave-z3-settings-usage-audit' into 'main'`，
-  MR 49，合并者 `liguangming`，`merged_at=2026-11-01T19:45:09Z`，head pipeline
+  MR 49，合并者 `owner`，`merged_at=2026-11-01T19:45:09Z`，head pipeline
   **#1010 = success**）。**合并后的 main 流水线未全绿，两条红色都是基础设施**：
   **#1017（`9e914350`）** `audit:python` 在 `pip install pyyaml==6.0.2` 上因
   `SSLEOFError` 五次重试全败（job 6623，无一条门禁跑到）；
@@ -1174,7 +1174,7 @@ GitHub 镜像回读以 #1112 终态为准。
   定义与 `local-gates.sh`，聚合里只留实测 0.04s 的判定形态。retry 后须回读终态，
   未计入通过前不得引用为绿。
 - 上一基点 `2012367a`（Wave Z-1：读取一层委托 helper 求默认值，并停止把"无法证明"
-  当作"不存在"），MR 47，合并者 `liguangming`。
+  当作"不存在"），MR 47，合并者 `owner`。
 - 上一波 Wave Z-3（分支 `wave-z3-settings-usage-audit`，基于 `e2334917`）——
   新增 `scripts/settings-usage-audit.py`：把"面板里有开关、写进了持久化、运行时零消费者"
   变成门禁级红色。本机门禁实测 **118 passed / 0 failed / 13 skipped**（skip 逐项是
@@ -1185,7 +1185,7 @@ GitHub 镜像回读以 #1112 终态为准。
   同一轮的门禁计数在 Wave AB 后是 **事实源 41 / 镜像 95 / 可达 95**，
   本地并集 **135 条命令**（旧数字保留是为了让"加了几条"可核对）。
 - 上一基点 `0fc2faa2`（`Merge branch 'docs/goal-mode-refresh-c1f0eeac' into 'main'`，
-  MR 43，合并者 `liguangming`，head pipeline **#900 = success**）。其上是 Wave V
+  MR 43，合并者 `owner`，head pipeline **#900 = success**）。其上是 Wave V
   `c1f0eeac`（MR 42，head pipeline **#897 = success**，12 个 job，
   `跨文件静态安全扫描` `allow_failure=true` → **已豁免**，不计入通过）。
 - 上一基点 `b7be1dec`（MR 41，Wave U 对标矩阵自证）对应 main 流水线 **#895**：
@@ -1230,7 +1230,7 @@ GitHub 镜像回读以 #1112 终态为准。
   - 在途：MR 32 `6e1aa0b1`（submodule pin `abe83b8` → `093098f5`，Wave G-3 RFI
     丢帧诚实性）。`detailed_merge_status=security_policy_violations` 是 merge-preview
     未跑完的瞬时状态（MR 23 已实证过一次），等 #820 预览管线到终态再判，不要先改安全策略。
-  审批与合并均由 owner（`liguangming`，user id 1）凭据完成，
+  审批与合并均由 owner（`owner`，user id 1）凭据完成，
   `PUT /merge` 必须带精确 `sha=`，否则 GitLab 19.5 拒绝。
   上一轮新增：MR 22（诊断功能生效态 `25a374c5` → `127b4eb2`）、
   MR 23（本文档基点刷新 `68f1b3e8` → `a8412222`）。
@@ -1273,7 +1273,7 @@ GitHub 镜像回读以 #1112 终态为准。
     configuration 折叠、`constraints-audit.py` 报告门禁 CI-only 豁免两处可信度问题）：
     `25a374c5` → `127b4eb2`（MR 22）。
 - 审批边界（不变）：开发分支 → MR → 准确 SHA 的 CI → 实际审核者审批；
-  开发用 codex 凭据，审批/合并只用 owner（liguangming）凭据，禁止为 403 提权、
+  开发用 codex 凭据，审批/合并只用 owner（owner）凭据，禁止为 403 提权、
   禁止借 VM root 或 Rails 代替他人审批。
 - 镜像由 `publish-github` job 单向发布；只核对本 ref 的双端 SHA，
   不凭发布成功宣称全仓一致。
@@ -1404,7 +1404,7 @@ GitHub 镜像回读以 #1112 终态为准。
 > 本节 2026-10-28 首次核实时把 G-1/G-2 记为"待移植"，那是 submodule 仍在 `ff18621` 时的快照。
 > 之后两项均已移植并合入，main 的 submodule pin 已推进到 `abe83b8`。以下 fork 侧行号
 > 全部在 `moonlight-common/moonlight-common-c`（pin `abe83b8`）内 `grep -n` 复核，
-> 不是照抄 `docs/common-c-drift-2026-10-26.md` 的旧建议，也不是沿用上一版本节的旧结论。
+> 不是照抄 `docs/history/incidents/common-c-drift-2026-10-26.md` 的旧建议，也不是沿用上一版本节的旧结论。
 
 | 上游 commit | 内容 | fork 侧现状（已核实） | 处置 |
 | --- | --- | --- | --- |
@@ -1499,7 +1499,7 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 2. 新行为 → 新增门控脚本（必须含 self-test，证明自己会失败）并接入 CI
 3. `git -c user.email="codex-agent commit identity email address (see AGENTS.md)" -c user.name="Codex Agent" commit`
 4. `git push gitlab <branch>`，创建指向受保护 main 的 MR；push 后等 30s+ 再查准确 SHA 对应 pipeline，全绿才算通过；失败修复后重推，不绕过
-5. GitHub（opsbsligm）由 `publish-github` job 单向镜像，只读，不手推
+5. GitHub（公开镜像账号）由 `publish-github` job 单向镜像，只读，不手推
 6. 每波写一份 `moonlight-ci-evidence/<日期>-<主题>/release-verification.json`，记录 commit / pipeline / DMG / SHA256 / `hardware_validated` / mirror refs
 
 ## 7. 对标范围（持续维护，不缩水）
@@ -1544,18 +1544,18 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 
 - 作战计划原文：`docs/history/waves/campaign-plan-2026-10-20.md`
 - 对标矩阵原文：`docs/history/waves/competitive-polish-roadmap-2026-10-20.md`
-- 输入映射证据：`docs/input-mapping-benchmark.md`、`docs/input-mapping-design.md`、`docs/input-mapping-review.md`
+- 输入映射证据：`docs/input-mapping-benchmark.md`、`docs/input-mapping-design.md`、`docs/history/incidents/input-mapping-review.md`
 
 ## 11. 下一步执行
 
 （2026-11-01 六次刷新）**代码层里程碑 0.1→P2 + K1.1/K1.2 + Wave B/C/D/E/H/I/K/Q/R/S/T/U/V/W
 已全部在 main**；MR 1–44 全合并，**在途 MR = MR 45（Wave X）**，main 基点 `1031a42a`。
-`docs/common-c-drift-2026-10-26.md` 的"未取待定"四类中，RFI 修复族已随 G-3（MR 32）处置完，
+`docs/history/incidents/common-c-drift-2026-10-26.md` 的"未取待定"四类中，RFI 修复族已随 G-3（MR 32）处置完，
 剩下的 `342b106`（control stream 就地加密）、`f1cca2d`（pen event 批处理）、
 `7022b33`/`1fddbcb`（BSD socket 错误重构 / rswrapper 头泄漏）仍未评估，
 不是遗漏就是待定，不得当作已完成。
 
-1. **本文档自身的收口**：本 docs 分支 → 准确 SHA CI 到终态 → `liguangming` 审批合并 →
+1. **本文档自身的收口**：本 docs 分支 → 准确 SHA CI 到终态 → `owner` 审批合并 →
    回读 MR 状态 / 合并者 / main 新 SHA / 合并 pipeline 终态。
    `跨文件静态安全扫描` 在本环境 `allow_failure=true`，只能记为「已豁免」，不得计入通过。
 2. **真机验收矩阵（当前唯一的真实缺口）**：`hardware_validated` 自项目开始就是 `false`，
@@ -1570,9 +1570,9 @@ fork 侧 `notifyFrameLost()`（`src/VideoDepacketizer.c:1244`）保留为取全�
 3. **对标来源矩阵**：Wave U 之后每一格的证据层级由 `scripts/source-matrix-audit.py` 复算，
    但**门禁只能证明"写的和仓库里的一致"，不能把宣传级升成源码级**。Parsec / UU / Horizon /
    Citrix / 深信服 / 锐捷在拿到机制级来源前继续锁"仅宣传"，不升级证据等级。
-4. **上游按 commit 回吸**：`docs/common-c-drift-2026-10-26.md` 列 fork 点 `62687809` 之后的漂移与
+4. **上游按 commit 回吸**：`docs/history/incidents/common-c-drift-2026-10-26.md` 列 fork 点 `62687809` 之后的漂移与
    17 个交集文件冲突面；逐 commit 判断吸收/拒绝，不整支 rebase。
-5. 每波开发分支、MR、准确 SHA CI、`liguangming` 凭据审批合并；`PUT /merge` 必须带 `sha=<head sha>`；
+5. 每波开发分支、MR、准确 SHA CI、`owner` 凭据审批合并；`PUT /merge` 必须带 `sha=<head sha>`；
    审核未完成保留 MR，不得用 codex 凭据提权代批。
 6. CI 排队已知事实：Mac runner 全局 `concurrent = 1`，多 pipeline 并发时 Mac job 会长时间
    `created/running`，属自愈排队，不是失败；不改 runner 配置、不绕门禁。

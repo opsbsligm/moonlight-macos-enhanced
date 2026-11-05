@@ -1,7 +1,7 @@
 # 跨会话用户记忆 / 偏好系统 —— 设计（评审稿）
 
-范围：只做设计。本文件与 `spikes/user-memory/README.md` 是本次唯一的两处新增，未改动任何既有文件。
-spike 源码与复现命令在 `spikes/user-memory/`（已入库，本文附录的输出就是它跑出来的），本文引用的全部输出都是该机实测结果。第 10 节的输出在评审时被当前源码重算过一遍：`spike_migration.m` 现为 29 条断言，早先粘贴的 26 条版本已被替换。
+范围：只做设计。本文件与 `docs/history/design/spikes/user-memory/README.md` 是本次唯一的两处新增，未改动任何既有文件。
+spike 源码与复现命令在 `docs/history/design/spikes/user-memory/`（已入库，本文附录的输出就是它跑出来的），本文引用的全部输出都是该机实测结果。第 10 节的输出在评审时被当前源码重算过一遍：`spike_migration.m` 现为 29 条断言，早先粘贴的 26 条版本已被替换。
 
 ## 0. 阅读约定
 
@@ -292,7 +292,7 @@ let pane: MLSetting<String> = store.setting(.uiSelectedSettingsPane, fallback: "
 `MLPreferenceKeys.m` + `MLPreferenceStore.m` 编成独立 harness、不链 IOKit、注入临时 suite，
 `MIN_STORE_CHECKS` 作为 harness 自报 case 数的地板。
 
-15 个植入缺陷已在 spike 上跑过（`spikes/user-memory/run_mutants.py`，结果见第 10 节）：
+15 个植入缺陷已在 spike 上跑过（`docs/history/design/spikes/user-memory/run_mutants.py`，结果见第 10 节）：
 **14 个被抓，1 个无法区分**。表内"失败表现"就是实测输出的首条 FAIL：
 
 | # | 植入的缺陷 | 失败表现（实测） |
@@ -393,7 +393,7 @@ let pane: MLSetting<String> = store.setting(.uiSelectedSettingsPane, fallback: "
 
 ## 10. 附录：spike 原始输出（原样粘贴，未删行）
 
-复现：`spikes/user-memory/README.md` 给出脚本位置与命令。环境同第 0 节。
+复现：`docs/history/design/spikes/user-memory/README.md` 给出脚本位置与命令。环境同第 0 节。
 
 ### 10.1 spike 1 —— schema 版本迁移 + 未知版本按不利处理（29 checks 全绿）
 
@@ -519,7 +519,7 @@ signal: SIGABRT
 ```
 $ printf 'this is not a plist at all {{{ >>' > ~/Library/Preferences/usermem.corrupt.328.plist
 $ plutil -lint ~/Library/Preferences/usermem.corrupt.328.plist
-/Users/liguangming/Library/Preferences/usermem.corrupt.328.plist: (Unexpected character t at line 1)
+/Users/<username>/Library/Preferences/usermem.corrupt.328.plist: (Unexpected character t at line 1)
 $ defaults read usermem.corrupt.328.plist
 Error: Domain 'usermem.corrupt.328' not found.
 $ ./corrupt_probe.bin usermem.corrupt.328
@@ -530,7 +530,7 @@ persistentDomainForName -> (nil)
 
 （另一形态：把合法 plist 截断一半）
 $ plutil -lint ~/Library/Preferences/usermem.trunc.10475.plist
-/Users/liguangming/Library/Preferences/usermem.trunc.10475.plist: (Malformed data byte group at line 1; invalid hex)
+/Users/<username>/Library/Preferences/usermem.trunc.10475.plist: (Malformed data byte group at line 1; invalid hex)
 $ ./corrupt_probe.bin usermem.trunc.10475
 stringForKey -> (nil)
 objectForKey -> (nil)
@@ -543,7 +543,7 @@ $ defaults read usermem.concurrency.81413 | grep -c '='
 $ python3 -c "import plistlib,os;d=plistlib.load(open(os.path.expanduser('~/Library/Preferences/usermem.concurrency.81413.plist'),'rb'));print('keys:',len(d))"
 keys: 22
 $ plutil -lint ~/Library/Preferences/usermem.concurrency.81413.plist
-/Users/liguangming/Library/Preferences/usermem.concurrency.81413.plist: OK
+/Users/<username>/Library/Preferences/usermem.concurrency.81413.plist: OK
 $ defaults synchronize usermem.concurrency.81413      # 打印用法并退出：macOS 27.2 无此子命令
 ```
 
