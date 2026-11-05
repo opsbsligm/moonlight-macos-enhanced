@@ -40,7 +40,15 @@
 | 文档 | 读者 | 目的 |
 |:---|:---|:---|
 | [`history/rounds.md`](history/rounds.md) | 追溯某个行为来源的人 | 从 `README.md` 归档出来的版本性小节，以及 2026-09-24 文档重构的搬移对照表 |
+| [`history/waves/goal-mode-prompt.md`](history/waves/goal-mode-prompt.md) | 续接对标作战的开发会话 | 目标模式提示词：当前波次的执行契约、已完成波次追溯、真机验收矩阵。日常使用者不需要读 |
+| [`history/waves/campaign-plan-2026-10-20.md`](history/waves/campaign-plan-2026-10-20.md) | 同上 | 作战计划：P0/P1/P2 转成波次的交付顺序 |
+| [`history/waves/baseline-2026-10-22.md`](history/waves/baseline-2026-10-22.md) | 同上 | 不可撼动基线：已验收控件、手感常量、验证纪律、冻结项 |
+| [`history/waves/competitive-polish-roadmap-2026-10-20.md`](history/waves/competitive-polish-roadmap-2026-10-20.md) | 同上 | 对标路线图：Parsec / Citrix / 网易UU 等打磨项清单 |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | 所有需要逐轮流水的人 | 逐版本变更与每条修复的根因——**逐轮记录的唯一真相源**，其它文档不复制它 |
+
+> `history/waves/` 是开发波次的工作文档（2026-10-20 起对标作战四件套）。它们描述的是**当时**的波次契约与证据，
+> 会随合并过期，不作为当前功能的事实源；当前状态以 `main` 的 CI 与 `hardware-acceptance-checklist.md` 为准。
+> 地址类信息（GitLab 域名 / 端口 / 邮箱）已脱敏，见根 `AGENTS.md`。
 
 ## 三份文档的职责边界
 

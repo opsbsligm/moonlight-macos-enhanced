@@ -3,7 +3,7 @@
 
 What this file is about
 -----------------------
-Seven acceptance items in `docs/goal-mode-prompt.md` section 4 have carried
+Seven acceptance items in `docs/history/waves/goal-mode-prompt.md` section 4 have carried
 `hardware_validated=false` for weeks. What was missing was not a feature: it was a way
 to say "this row was actually evidenced" without a human reading a report and
 remembering what they saw. The app now exports a `machine` block (one `key=value` per
