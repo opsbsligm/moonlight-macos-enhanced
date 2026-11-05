@@ -1,15 +1,15 @@
 # user-memory spike（源码在仓库内，结论在设计文档）
 
-本目录是 `docs/Design/user-memory.md` 第 10 节附录的**复现物**：附录里粘贴的每一段输出
+本目录是 `docs/history/design/user-memory.md` 第 10 节附录的**复现物**：附录里粘贴的每一段输出
 都由这里的源码在同一台机器上产出。源码入库是为了让那些输出能被别人重算；
 编译产物（`*.bin`）与被写坏的 `~/Library/Preferences/usermem.*.plist` 都不入库。
 
-设计正文：`docs/Design/user-memory.md`（全中文）。
+设计正文：`docs/history/design/user-memory.md`（全中文）。
 
 ## 复现
 
 ```sh
-cd spikes/user-memory
+cd docs/history/design/spikes/user-memory
 ./run_spike.sh spike_migration     # 期望 RUN PASSED (29 checks, 0 failures)
 ./run_spike.sh spike_concurrency   # 期望 RUN PASSED (16 checks, 0 failures)，并打印 suite 名
 python3 run_mutants.py             # 期望 14 caught, 1 missed（见下：脚本因此以 1 退出）

@@ -20,7 +20,7 @@
 > （`Limelight.h:832-840`：*“Key codes are Win32 Virtual Key (VK) codes and interpreted as keys
 > on a US English layout.”*）：我们把 macOS 的**物理位置**查成 US 布局上的 VK，宿主拿到之后自己
 > 反查 scancode。整张 `keys[]` 表的值域已被审计钉在 Microsoft 官方定义的 VK 上
-> （`scripts/mac_keycodes.py`、`docs/input-mapping-review.md` §2–§3）。
+> （`scripts/mac_keycodes.py`、`docs/history/incidents/input-mapping-review.md` §2–§3）。
 
 - **零延迟**：修饰键按下即发送，无 120ms 延迟判定
 - **零耦合**：鼠标事件不会影响键盘修饰键状态（修复了「双击鼠标触发开始菜单」的根因）

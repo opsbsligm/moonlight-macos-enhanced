@@ -94,8 +94,7 @@ Moonlight-macOS/
 │       ├── Views/             # 自定义视图
 │       └── Helpers/           # 工具类
 ├── moonlight-common/          # ENet 协议库（GPLv3 子模块）
-├── docs/                     # 文档（本页、诊断报告、输入映射设计、轮次历史）
-├── spikes/                   # 设计阶段的复现物：结论的证据，不进产品也不进 CI
+├── docs/                     # 文档：根为现役文档；history/incidents 历史工作文档、history/design 设计评审稿与复现物、history/waves 波次文档
 ├── staging/                  # 尚未获得签名授权的实现（驱动扩展），刻意留在产品之外
 ├── scripts/                  # 构建与 CI/CD 脚本
 ├── Artwork/                  # 图标素材（Sketch）
