@@ -1209,7 +1209,7 @@ static void MLSeedHostsForMemorySweep(NSMutableDictionary *report, void (^refuse
 
 // The ownership experiment: who keeps a host alive while a stream holds only its app.
 //
-// Section 5 of docs/memory-ownership.md wants to make `TemporaryApp.host` weak, and it is
+// Section 5 of docs/history/incidents/memory-ownership.md wants to make `TemporaryApp.host` weak, and it is
 // blocked on an honest reason rather than on courage: no stream session runs here, so nobody
 // can claim from a live session that `app.host` would not go nil underneath the stream. That
 // question does not need a session. It asks only who holds what, and who holds what can be
@@ -1516,7 +1516,7 @@ static void MLProbeMissingHostNameIfRequested(NSMutableDictionary *report, void 
 // clears the uuid that identified it.
 //
 // What turns that from a bad row into lost work is the deletion rule measured in section 12 of
-// `docs/memory-ownership.md`: `Host.appList` is `Cascade`, so a host that disappears takes the app
+// `docs/history/incidents/memory-ownership.md`: `Host.appList` is `Cascade`, so a host that disappears takes the app
 // records under it with it -- the applications somebody added. The read path also deletes:
 // `SettingsModel.hosts` calls `removeHostsWithEmptyUuid` before it reads a single row, and so does
 // the device sidebar, so the row is not left to be repaired by the next good response. Looking at
@@ -2391,7 +2391,7 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
     MLFinishRenderProbeIfArmed();
 #endif
 #ifdef DEBUG
-    // [prov] Input-provenance diagnostics (docs/memory-ownership.md §31): when
+    // [prov] Input-provenance diagnostics (docs/history/incidents/memory-ownership.md §31): when
     // `defaults write std.skyhua.MoonlightMac2 MLOutputSourceDiagnostics -bool YES`
     // is set, mirror every key/mouse event through two independent channels and
     // log which hardware device reports keyboard usage. Inert otherwise.
@@ -2589,7 +2589,7 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
             // again for the value -- elsewhere in this repository that question is asked with
             // `respondsToSelector:`, which does not cost anything. The cost here is not negligible:
             // `-[DataManager getHosts]` builds a `TemporaryHost` and its `TemporaryApp`s for every
-            // row on every call -- the graph docs/memory-ownership.md section 13 counts bytes
+            // row on every call -- the graph docs/history/incidents/memory-ownership.md section 13 counts bytes
             // for, so the guard doubled the work of a launch path and guarded nothing -- `getHosts`
             // is a compile-time message on a class this method already messages directly two lines
             // below, and `allHosts.count` reads 0 whether the array is nil or empty, which is the
@@ -3020,7 +3020,7 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
 @end
 
 
-// ==== [prov] input-provenance diagnostics (docs/memory-ownership.md §31) ====
+// ==== [prov] input-provenance diagnostics (docs/history/incidents/memory-ownership.md §31) ====
 // Two independent listeners answering one question: when the user double-clicks
 // the mouse and "C" appears, WHICH hardware interface reported the keyboard
 // usage. Channel A (IOHIDManager) sees reports at the device level, tagged with

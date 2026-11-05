@@ -84,7 +84,7 @@ static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, 
     [gHostEvents addObject:[NSString stringWithFormat:@"%04X%c",
                             (unsigned)(keyCode & 0xFFFF), action == KEY_ACTION_DOWN ? 'D' : 'U']];
 }
-// The heal loop reads the clock, so the probe owns one (docs/memory-ownership.md S32).
+// The heal loop reads the clock, so the probe owns one (docs/history/incidents/memory-ownership.md S32).
 static uint64_t gMLProbeNowMs = 0;
 static uint64_t LiGetMillis(void) { return gMLProbeNowMs; }
 static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
@@ -109,7 +109,7 @@ static BOOL HIDIsModifierKeyCode(unsigned short kc) { return kc == 54 || kc == 5
 @property (nonatomic) BOOL keyboardHeldKeyReleaseInProgress;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *keyboardForwardedKeyDownKeyCodes;
-// The heal loop's companion state (docs/memory-ownership.md S32): when each press above went out,
+// The heal loop's companion state (docs/history/incidents/memory-ownership.md S32): when each press above went out,
 // and the source that asks the HID layer whether anybody still holds it. Declared so a probe that
 // compiles HIDSupport.m sees the same class the shipped one is; the loop itself is pinned by
 // key-state-heal-tests.py, and a probe that never spins a runloop never starts it.

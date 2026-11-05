@@ -30,7 +30,7 @@
 ### 🎯 画质增强
 - **MetalFX 超分辨率** — 在解码后画面放大时使用 GPU 重建细节，支持画质/性能档位
 - **VideoToolbox 低延迟插帧** — 显示器刷新率高于串流帧率时自动启用
-- **强制插帧开关** — 允许 180Hz 屏跑 120FPS 串流时也挂载插帧，详见 [`docs/force-interpolation-2026-10-01.md`](docs/force-interpolation-2026-10-01.md)
+- **强制插帧开关** — 允许 180Hz 屏跑 120FPS 串流时也挂载插帧，详见 [`docs/history/incidents/force-interpolation-2026-10-01.md`](docs/history/incidents/force-interpolation-2026-10-01.md)
 - **运行时状态监控** — 实时显示渲染路径、实际缩放引擎、实际插帧引擎及帧率数据
 
 ### ⌨️ 输入系统（核心差异化）
@@ -166,7 +166,7 @@ audit → build_arch(both slices) → build_universal → verify
 | [`docs/input-mapping-design.md`](docs/input-mapping-design.md) | 键盘/鼠标映射设计原则与已修复问题 |
 | [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md) | Parsec/UU/Steam 对标结论 |
 | [`docs/edge-sidebar-locked-entry-2026-09-28.md`](docs/edge-sidebar-locked-entry-2026-09-28.md) | 串流控制栏边缘把手设计 |
-| [`docs/force-interpolation-2026-10-01.md`](docs/force-interpolation-2026-10-01.md) | 强制插帧开关设计与限制 |
+| [`docs/history/incidents/force-interpolation-2026-10-01.md`](docs/history/incidents/force-interpolation-2026-10-01.md) | 强制插帧开关设计与限制 |
 | [`docs/diagnostics-report.md`](docs/diagnostics-report.md) | 诊断报告字段说明 |
 | [`docs/contributing.md`](docs/contributing.md) | 贡献指南与质量门控清单 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 逐轮变更记录 |

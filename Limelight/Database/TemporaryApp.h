@@ -19,7 +19,7 @@
 @property (nonatomic)                   BOOL pinned;
 // Weak back-pointer: the owning TemporaryHost.appList is the single strong
 // holder. A weak back-edge breaks the host<->app retain cycle so a removed
-// host graph can actually be deallocated (see docs/memory-ownership.md §9).
+// host graph can actually be deallocated (see docs/history/incidents/memory-ownership.md §9).
 @property (nullable, nonatomic, weak) TemporaryHost *host;
 
 NS_ASSUME_NONNULL_BEGIN
