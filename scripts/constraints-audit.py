@@ -2595,6 +2595,24 @@ for leak_shape, leak_answer in (("--self-test", "its fixtures"),
           "the leak reader failed %s: %s"
           % (leak_answer, (leak_run.stdout + leak_run.stderr).strip().splitlines()[-1:]))
 
+# The mirror republishes this repository to the public web, so a private-network
+# address in a comment or fixture ships with it. AGENTS.md is the one allowed
+# home for the real values; the reader and its red team both run here because
+# they need nothing but the tree, and the same gate that stays out of a runner
+# would have stayed out of a laptop too.
+for infra_shape, infra_answer in (("--self-test", "its fixtures"),
+                                  ("the working tree", "a scan of this tree")):
+    infra_arguments = ["--self-test"] if "self" in infra_shape else []
+    infra_run = subprocess.run([sys.executable,
+                                os.path.join(scripts_dir, "infra-leak-audit.py")]
+                               + infra_arguments,
+                               capture_output=True, text=True, cwd=root)
+    check(infra_run.returncode == 0,
+          "the infra leak reader passes %s" % infra_answer
+          if infra_run.returncode == 0 else
+          "the infra leak reader failed %s: %s"
+          % (infra_answer, (infra_run.stdout + infra_run.stderr).strip().splitlines()[-1:]))
+
 # The edge summon band is judged by scripts/edge-sensor-summon-tests.py, which compiles the
 # shipped helpers out of MouseCapture.m and runs them, red proofs included. It is excused above
 # rather than run here, because a host with no compiler cannot tell a band that works from one
@@ -3610,7 +3628,7 @@ check(assembly_run.returncode == 0,
       % ((assembly_run.stdout + assembly_run.stderr)[-1200:],))
 
 # The host's half of the acceptance pairing, judged on the snapshot that was actually
-# collected from 192.0.2.1. It needs no toolchain and no artefact -- one json file and
+# collected from the home-pc snapshot (address in AGENTS.md). It needs no toolchain and no artefact -- one json file and
 # one report -- so it has no excuse for living on a runner, and the shape it protects is the
 # one no client-side check can see: a pad this client advertises and the host silently
 # refuses. Only the judgement form runs here, and that choice is measured rather than
