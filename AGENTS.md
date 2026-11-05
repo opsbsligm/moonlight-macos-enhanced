@@ -22,10 +22,11 @@ Wave AO 起，真实基础设施值从本文件迁出到**仓外本地文档**
   徽章 / 下载链接 / About 框依赖真实名），由 `publish-github` job 单向推送，只读，不手推。
 - **串流主机（HOME-PC）**：真实 LAN 地址见本地基线文档；仓内文档与 fixture
   一律使用 RFC 5737 占位符 `192.0.2.1`。
-- **目标文档（波次四件套 + 对标来源矩阵）**：已迁出仓外，
-  `~/Documents/ChatGPT/moonlight/infra-baseline/`（`goal-mode-prompt.md` 等 5 份）。
-  `source-matrix-audit.py` 用环境变量 `SOURCE_MATRIX` 指到该目录的
-  `source-matrix-2026-10-25.md`（本地门禁与 `docs/README.md` 已注明）。
+- **目标文档（波次四件套）**：已迁出仓外，
+  `~/Documents/ChatGPT/moonlight/infra-baseline/`（`goal-mode-prompt.md` 等）。
+  对标来源矩阵 `docs/source-matrix-2026-10-25.md` 留在仓内（公开证据层级文档），
+  `scripts/source-matrix-audit.py` 硬编码该仓内路径，仅由 GitHub 镜像 CI 把守
+  （GitLab 事实源与 `local-gates.sh` 不跑它）。
 - **提交身份**：`Codex Agent / codex-agent@homelab.local`；审查、批准、合并用 owner 账号
   （真实账号名见本地基线文档）。
 - **runner**：本机 Mac M2（实例级共享 runner，tag `macos`）承接全部 macos job；不可迁移。
