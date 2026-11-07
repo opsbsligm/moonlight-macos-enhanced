@@ -86,13 +86,12 @@ necessary regardless of queue order; serialization alone does not reject retries
 
 ## Credentials and dependencies
 
-- `GH_DEPLOY_KEY`: GitLab project **file** variable, write access to this mirror.
-- `GRP_CI_JOB_TOKEN`: GitLab group **env_var**, used for the private common-c
-  submodule. `fetch-submodules.sh` adds a URL-scoped Basic header through
-  `GIT_CONFIG_COUNT` only for its child Git processes, including recursive clones.
-  It preserves runner-provided runtime config and writes no credential to Git
-  config. Existing credentials left by older pipelines are not scrubbed by this
-  script.
+- GitHub credentials stay on the mirror host. The publishing job uses its
+  short-lived `CI_JOB_TOKEN` to request the existing mirror service.
+- The protocol library is tracked in this repository. Only public ENet and
+  SIMDe dependencies remain submodules; `fetch-submodules.sh` needs no private
+  group token and adds no HTTP authentication header. Existing group variables
+  remain available to historical pipelines; this migration does not delete them.
 - Only `download-deps` reads/writes the framework cache. The build consumes that
   job's artifacts, not a mutable cache. No derived data is cached.
 - The Python audit job and the mutation battery each build their own temporary
