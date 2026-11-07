@@ -1,0 +1,23 @@
+{
+  "source_repository": "../moonlight-common-c.git",
+  "source_commit": "093098f5f8caa8177598bb9fe3016eab70df845b",
+  "upstream_repository": "https://github.com/moonlight-stream/moonlight-common-c",
+  "excluded_repository_files": [
+    ".github/dependabot.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/codeql.yml",
+    ".gitlab-ci.yml",
+    ".gitmodules",
+    "scripts/ci/publish-github.py"
+  ],
+  "dependencies": {
+    "enet": {
+      "commit": "c7353c059373f8d3fc83d451f8f1a477be3dc94e",
+      "url": "https://github.com/cgutman/enet.git"
+    },
+    "nanors/deps/simde": {
+      "commit": "595b743dcebc05756244a66dcd78e9d64c07b3b7",
+      "url": "https://github.com/simd-everywhere/simde-no-tests.git"
+    }
+  }
+}

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Exercise CI failure propagation and mirroring with disposable Git repos."""
 
-import base64
 import json
 import os
 import plistlib
@@ -278,29 +277,22 @@ class PipelineTests(Sandbox):
         self.env.update(CONFIGURATION="Release", DERIVED_DATA_PATH="build/derivedData")
         self.assertEqual(self.job("test-app").returncode, 31)
 
-    def test_submodule_auth_is_runtime_only_and_preserves_runner_config(self):
+    def test_public_dependencies_need_no_token_and_preserve_runner_config(self):
         executable(self.bin / "git", "#!" + sys.executable + "\n"
                    "import json, os, sys\n"
-                   "if sys.argv[1:] == ['config', '--local', '--get', 'remote.origin.url']:\n"
-                   "    print('http://172.16.0.1/moonlight/moonlight-macos-enhanced.git')\n"
-                   "    raise SystemExit(0)\n"
                    "with open(os.environ['CAPTURE'], 'a') as stream:\n"
                    "    stream.write(json.dumps({k:v for k,v in os.environ.items() "
                    "if k.startswith('GIT_CONFIG_')}) + '\\n')\n")
         capture = self.root / "git-env"
-        # The fetch script derives the auth URL from the tree it runs in, so the
-        # test owns that tree and runs it there: the absolute URL is used as-is,
-        # and the relative one (the shape this repository ships) is expanded
-        # against the origin URL the stub serves.
         tab = chr(9)
-        self.env.update(GRP_CI_JOB_TOKEN="fixture-value",
-                        GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.autocrlf",
+        self.env.pop("GRP_CI_JOB_TOKEN", None)
+        self.env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.autocrlf",
                         GIT_CONFIG_VALUE_0="false", CAPTURE=str(capture))
-        for url in ("http://172.16.0.1/moonlight/moonlight-common-c.git",
-                    "../moonlight-common-c.git"):
+        for url in ("https://github.com/cgutman/enet.git",
+                    "https://github.com/simd-everywhere/simde-no-tests.git"):
             (self.root / ".gitmodules").write_text(
-                "[submodule \"moonlight-common/moonlight-common-c\"]\n"
-                + tab + "path = moonlight-common/moonlight-common-c\n"
+                "[submodule \"public-dependency\"]\n"
+                + tab + "path = public-dependency\n"
                 + tab + "url = " + url + "\n",
                 encoding="utf-8")
             capture.write_text("")
@@ -310,14 +302,47 @@ class PipelineTests(Sandbox):
             self.assertEqual(len(entries), 2,
                              "exactly the two submodule fetches expected, got %d" % len(entries))
             for entry in entries:
-                self.assertEqual(entry["GIT_CONFIG_COUNT"], "2")
+                self.assertEqual(entry["GIT_CONFIG_COUNT"], "1")
                 self.assertEqual(entry["GIT_CONFIG_VALUE_0"], "false")
-                self.assertEqual(entry["GIT_CONFIG_KEY_1"],
-                                 "http.http://172.16.0.1/moonlight/moonlight-common-c.git.extraHeader")
-                # the base is derived from .gitmodules / origin, not hard-coded
-                self.assertEqual(entry["GIT_CONFIG_VALUE_1"], "Authorization: Basic " +
-                                 base64.b64encode(b"oauth2:fixture-value").decode())
+                self.assertEqual(entry["GIT_CONFIG_KEY_0"], "core.autocrlf")
+                self.assertNotIn("GIT_CONFIG_KEY_1", entry)
         self.assertFalse((self.home / ".gitconfig").exists())
+
+    def test_old_submodule_pointer_is_preserved_without_hiding_tracked_sources(self):
+        library = self.root / "moonlight-common/moonlight-common-c"
+        library.mkdir(parents=True)
+        pointer = "gitdir: ../../.git/modules/legacy-protocol\n"
+        (library / ".git").write_text(pointer)
+        (library / "source.c").write_text("unchanged source\n")
+        metadata = self.root / ".git/protocol-migration"
+        executable(self.bin / "git", "#!" + sys.executable + "\n"
+                   "import sys\n"
+                   "if sys.argv[1:] == ['rev-parse', '--git-path', 'protocol-migration']:\n"
+                   "    print(" + repr(str(metadata)) + ")\n")
+        run("bash", str(ROOT / "scripts/ci/fetch-submodules.sh"),
+            env=self.env, cwd=self.root)
+        self.assertFalse((library / ".git").exists())
+        self.assertEqual((library / "source.c").read_text(), "unchanged source\n")
+        self.assertEqual([p.read_text() for p in metadata.iterdir()], [pointer])
+
+    def test_protocol_sources_are_tracked_and_public_dependency_pins_match(self):
+        prefix = "moonlight-common/moonlight-common-c"
+        provenance = json.loads((ROOT / prefix / "UPSTREAM.json").read_text())
+        source = run("git", "ls-files", "--stage", prefix + "/src/Limelight.h",
+                     cwd=ROOT).stdout.strip()
+        self.assertTrue(source.startswith("100644 "), source)
+        library = run("git", "ls-files", "--stage", prefix, cwd=ROOT).stdout
+        self.assertNotIn("\t" + prefix + "\n", library)
+        modules = run("git", "config", "--file", ".gitmodules", "--get-regexp",
+                      r"submodule\..*\.url", cwd=ROOT).stdout.splitlines()
+        self.assertEqual(len(modules), len(provenance["dependencies"]))
+        for name, dependency in provenance["dependencies"].items():
+            path = prefix + "/" + name
+            pin = run("git", "ls-files", "--stage", path, cwd=ROOT).stdout.strip()
+            self.assertEqual(pin, "160000 " + dependency["commit"] + " 0\t" + path)
+            url = run("git", "config", "--file", ".gitmodules", "--get",
+                      "submodule." + path + ".url", cwd=ROOT).stdout.strip()
+            self.assertEqual(url, dependency["url"])
 
     def test_every_submodule_reader_fetches_the_submodule(self):
         offenders = jobs_missing_submodule_fetch(CI)
