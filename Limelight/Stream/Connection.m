@@ -18,6 +18,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <VideoToolbox/VideoToolbox.h>
 #import <os/lock.h>
+#import <mach/mach_time.h>
 
 #import <arpa/inet.h>
 #include <netinet/in.h>
@@ -198,6 +199,11 @@ typedef NS_ENUM(NSInteger, MLAudioRendererBackend) {
     BOOL _enhancedUsesCoreAudioDownmix;
     uint64_t _enhancedDownmixFailureCount;
     uint64_t _audioUnderrunCount;
+    // P1 audio triage: remember when ArInit armed the renderer and whether the
+    // host ever sent a sample, so a silent host can be named at 30s instead of
+    // letting the underrun warning loop masquerade as the root cause.
+    BOOL _audioEverReceivedTraffic;
+    uint64_t _audioTrafficArmedTime;
     BOOL _audioDecodeThreadPriorityRaised;
     uint64_t _audioDecodeSampleCount;
     uint64_t _audioDecodeFailureCount;
@@ -714,6 +720,10 @@ int ArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION originalOpusC
     // Initialize the circular buffer
     conn->_audioBufferWriteIndex = conn->_audioBufferReadIndex = 0;
     conn->_audioBufferReadFrameOffset = 0;
+    // P1 audio triage: a fresh session starts silent-unknown; the first sample
+    // flips the flag, the 30s check below names a host that never sends any.
+    conn->_audioEverReceivedTraffic = NO;
+    conn->_audioTrafficArmedTime = (uint64_t)dispatch_time(DISPATCH_TIME_NOW, 0);
     conn->_audioSamplesPerFrame = opusConfig.samplesPerFrame;
     conn->_audioBufferStride = opusConfig.channelCount * opusConfig.samplesPerFrame;
     // M5 fix: validate opus config to prevent zero-stride heap overflow.
@@ -956,6 +966,20 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
         return;
     }
 
+    // P1 audio triage: the first real sample flips the flag. If 30s of silence
+    // preceded it (muted device, output unplugged, host restarted), say so once --
+    // every underrun warning before this moment was derived from that silence.
+    if (!conn->_audioEverReceivedTraffic) {
+        conn->_audioEverReceivedTraffic = YES;
+        uint64_t elapsedNs = (uint64_t)dispatch_time(DISPATCH_TIME_NOW, 0) - conn->_audioTrafficArmedTime;
+        if (elapsedNs >= 30ull * NSEC_PER_SEC) {
+            Log(LOG_I, @"Host audio traffic arrived after %llds of silence (backend=%d): "
+                @"the earlier underrun warnings were host-side silence, not a client fault",
+                (long long)(elapsedNs / NSEC_PER_SEC),
+                (int)conn->_audioRendererBackend);
+        }
+    }
+
     int decodeLen;
 
     if (!conn->_audioDecodeThreadPriorityRaised) {
@@ -1157,6 +1181,18 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
                 (unsigned int)frameCount,
                 (unsigned int)copiedFrames,
                 _audioBufferEntries);
+        }
+        // P1 audio triage: a host that never sends a sample makes every underrun
+        // read as a client buffer fault. Once 30s in, name the host side instead,
+        // about every 10s (800 underruns at the 12.5ms render cadence).
+        if (copiedFrames == 0 && !_audioEverReceivedTraffic) {
+            uint64_t elapsedNs = (uint64_t)dispatch_time(DISPATCH_TIME_NOW, 0) - _audioTrafficArmedTime;
+            if (elapsedNs >= 30ull * NSEC_PER_SEC && (_audioUnderrunCount % 800) == 1) {
+                Log(LOG_W, @"No host audio traffic after %llds (backend=%d): check the host "
+                    @"audio output device or mute; the underrun warnings are derived from "
+                    @"this silence, not a client buffer fault",
+                    (long long)(elapsedNs / NSEC_PER_SEC), (int)_audioRendererBackend);
+            }
         }
     }
 }
