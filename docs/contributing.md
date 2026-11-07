@@ -93,7 +93,7 @@ Moonlight-macOS/
 │       ├── ViewControllers/   # MVC 控制器
 │       ├── Views/             # 自定义视图
 │       └── Helpers/           # 工具类
-├── moonlight-common/          # ENet 协议库（GPLv3 子模块）
+├── moonlight-common/          # 随主仓维护的协议源码（ENet / SIMDe 仍按提交固定）
 ├── docs/                     # 文档：根为现役文档；history/incidents 历史工作文档、history/design 设计评审稿与复现物、history/waves 波次文档
 ├── staging/                  # 尚未获得签名授权的实现（驱动扩展），刻意留在产品之外
 ├── scripts/                  # 构建与 CI/CD 脚本
