@@ -3770,6 +3770,20 @@ check(mof_rules.returncode == 0,
       "the mute-on-focus-loss self-test failed:\n"
       + (mof_rules.stdout + mof_rules.stderr)[-900:])
 
+# P1 audio triage: same parity shape as the mute-on-focus-loss gate.
+# Workflow lists it, local-gates.sh runs it, the parity rule needs to see
+# the local half actually run the same self-test that CI runs -- a silent
+# host misnamed as a buffer fault is otherwise only caught on a runner.
+antr_rules = subprocess.run(
+    [sys.executable, os.path.join(root, "scripts", "audio-no-traffic-hint-tests.py"),
+     "--self-test"],
+    capture_output=True, text=True, cwd=root)
+check(antr_rules.returncode == 0,
+      "the audio no-traffic hint self-test stays green"
+      if antr_rules.returncode == 0 else
+      "the audio no-traffic hint self-test failed:\n"
+      + (antr_rules.stdout + antr_rules.stderr)[-900:])
+
 # P2-3b backgroundGamepad: same parity shape as the mute-on-focus-loss gate.
 # Workflow lists it, local-gates.sh runs it, the parity rule needs to see
 # the local half actually run the same self-test that CI runs.
