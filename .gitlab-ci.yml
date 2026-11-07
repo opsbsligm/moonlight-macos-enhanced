@@ -217,6 +217,13 @@ build-app:
     - GIT_SHA_RESOLVED="$(sh Limelight/build-number.sh --print-sha)"
     - export GIT_SHA_RESOLVED
     - echo "resolved ML_GIT_SHA=${GIT_SHA_RESOLVED:-unknown}"
+    # libs/ is gitignored and is not an artifact of download-deps: a build in a
+    # fresh slot would otherwise compile moonlight-common with no openssl header
+    # path at all (job 10544, pipeline 1449, died on <openssl/evp.h>). The shared
+    # script is the single preparation entry point -- every bundle already exists
+    # from the artifacts, so this run only rebuilds the two header symlinks and
+    # verifies evp.h opens through both spellings.
+    - zsh scripts/download-frameworks.sh
     - xcodebuild
         -project "$XCODE_PROJECT"
         -scheme "$XCODE_SCHEME"
