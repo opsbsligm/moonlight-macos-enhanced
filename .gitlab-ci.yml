@@ -15,8 +15,7 @@
 # The Docker-based GitLab security templates are not enabled on shell runners.
 # Signing/notarization needs Developer ID credentials and remains a separate gate.
 
-# GRP_CI_JOB_TOKEN is an env_var. Limit its HTTP header to the private
-# submodule URL and the lifetime of the recursive Git processes.
+# Fetch the two pinned public dependencies of the integrated protocol library.
 .fetch_submodules: &fetch_submodules
   - bash scripts/ci/fetch-submodules.sh
 
@@ -33,8 +32,8 @@ stages:
 variables:
   LANG: en_US.UTF-8
   LC_ALL: en_US.UTF-8
-  # moonlight-common-c is a submodule that carries submodules of its own
-  # (enet, nanors). GitLab does not initialize any of them by default, and
+  # The protocol sources are tracked here; ENet and SIMDe remain submodules.
+  # GitLab does not initialize them by default, and
   # the build then fails on the first enet include. Verified locally by
   # building with an uninitialized tree: Limelight-internal.h cannot find
   # ../enet/include/enet/enet.h.
@@ -218,6 +217,13 @@ build-app:
     - GIT_SHA_RESOLVED="$(sh Limelight/build-number.sh --print-sha)"
     - export GIT_SHA_RESOLVED
     - echo "resolved ML_GIT_SHA=${GIT_SHA_RESOLVED:-unknown}"
+    # libs/ is gitignored and is not an artifact of download-deps: a build in a
+    # fresh slot would otherwise compile moonlight-common with no openssl header
+    # path at all (job 10544, pipeline 1449, died on <openssl/evp.h>). The shared
+    # script is the single preparation entry point -- every bundle already exists
+    # from the artifacts, so this run only rebuilds the two header symlinks and
+    # verifies evp.h opens through both spellings.
+    - zsh scripts/download-frameworks.sh
     - xcodebuild
         -project "$XCODE_PROJECT"
         -scheme "$XCODE_SCHEME"

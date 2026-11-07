@@ -19,6 +19,7 @@
 | 文档 | 读者 | 目的 |
 |:---|:---|:---|
 | [`contributing.md`](contributing.md) | 准备改代码、提 PR 的人 | 构建要求、质量门控清单与它们各自守住什么、项目结构、贡献流程与 Commit 规范、版本与 tag 约定 |
+| [`repository-layout.md`](repository-layout.md) | 维护协议与客户端的人 | 单仓结构、依赖版本、历史仓用途与修改流程 |
 | [`input-mapping-design.md`](input-mapping-design.md) | 改输入路径之前必读的人 | 键盘映射表与其四条设计原则、「双击鼠标触发开始菜单」的根因与修复方式 |
 | [`input-mapping-benchmark.md`](input-mapping-benchmark.md) | 想验证「竞争力」这个说法的人 | 键盘/鼠标映射逐项对标 Parsec、UU 远程、Citrix、moonlight-qt 的结论与取证纪律（英文） |
 
