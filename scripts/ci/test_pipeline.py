@@ -5,6 +5,7 @@ import json
 import os
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -254,6 +255,13 @@ class PipelineTests(Sandbox):
         executable(self.bin / "xcodebuild",
                    '#!/bin/sh\nprintf "%%s\\n" "$@" > build-arguments\nexit %d\n' % code)
         executable(self.bin / "xcpretty", "#!/bin/sh\ncat\n")
+        # The build step re-runs the dependency script to rebuild the gitignored
+        # libs/ header links; the stub stands in for the real download and only
+        # proves the step ran and produced a readable evp.h.
+        executable(self.root / "scripts/download-frameworks.sh",
+                   "#!/bin/sh\nmkdir -p libs/openssl\n"
+                   "printf 'stub evp\n' > libs/openssl/evp.h\n"
+                   "printf 'header links rebuilt\n' > libs-rebuilt\n")
         self.env.update(XCODE_PROJECT="Fixture.xcodeproj", XCODE_SCHEME="Fixture",
                         CONFIGURATION="Release", DERIVED_DATA_PATH="build/derivedData")
 
@@ -266,6 +274,30 @@ class PipelineTests(Sandbox):
     def test_successful_build_passes(self):
         self.build_fixture()
         self.assertEqual(self.job("build-app").returncode, 0)
+
+    def test_build_app_rebuilds_the_gitignored_header_links(self):
+        # Pipeline 1449 (job 10544): download-deps uploads xcframeworks/ and
+        # Packages/ but libs/ is gitignored, so a fresh build slot compiled
+        # moonlight-common with no openssl header path and died on evp.h. The
+        # build must therefore re-run the shared preparation script, which is
+        # idempotent when every bundle is already present.
+        self.build_fixture()
+        self.assertEqual(self.job("build-app").returncode, 0)
+        self.assertTrue((self.root / "libs-rebuilt").exists(),
+                        "build-app did not rebuild the libs/ header links")
+        self.assertTrue((self.root / "libs/openssl/evp.h").exists())
+        # A checker that cannot fail checks nothing: without the step the
+        # stub never runs and the marker never appears again.
+        saved = CI["build-app"]["script"]
+        try:
+            shutil.rmtree(self.root / "libs", ignore_errors=True)
+            (self.root / "libs-rebuilt").unlink()
+            CI["build-app"]["script"] = [step for step in saved
+                                         if "download-frameworks" not in str(step)]
+            self.assertEqual(self.job("build-app").returncode, 0)
+            self.assertFalse((self.root / "libs-rebuilt").exists())
+        finally:
+            CI["build-app"]["script"] = saved
 
     def test_build_number_failure_stops_before_build(self):
         self.build_fixture(version_code=19)
