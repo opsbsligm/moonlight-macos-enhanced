@@ -53,10 +53,10 @@ public struct LiquidGlassTabBar: NSViewRepresentable {
     control.font = .systemFont(ofSize: 13)
     control.segmentDistribution = .fit
     control.borderShape = .capsule
-    // Not merely version-guarded: the macOS 26 SDK has no `role` symbol at all, so `#available`
-    // alone fails to compile there. ML_APPKIT_TABS_ROLE is declared by the project only when the
-    // SDK in use declares the property; #available still guards the run on older systems.
-    // Dropping the assignment instead would change the accepted Activity-Monitor-style tabs look.
+    // The macOS 26 SDK has no `role` symbol at all, so `#available` alone cannot compile it
+    // in a 26-SDK build. ML_APPKIT_TABS_ROLE is declared by the project only when the SDK in
+    // use declares the property. Since the deployment target is 27.0 the guard is belt and
+    // braces; dropping the assignment would change the accepted macOS 27 native tabs look.
 #if ML_APPKIT_TABS_ROLE
     if #available(macOS 27.0, *) {
       control.role = .tabs

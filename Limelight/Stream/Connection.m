@@ -1944,9 +1944,14 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
         [_enhancedAudioEngine attachNode:_enhancedAudioReverb];
         [_enhancedAudioEngine attachNode:_enhancedAudioEQ];
 
-        [_enhancedAudioEngine connect:_enhancedAudioSourceNode to:_enhancedAudioReverb format:sourceFormat];
-        [_enhancedAudioEngine connect:_enhancedAudioReverb to:_enhancedAudioEQ format:renderFormat];
-        [_enhancedAudioEngine connect:_enhancedAudioEQ to:_enhancedAudioEngine.mainMixerNode format:renderFormat];
+        NSError *connectionError = nil;
+        if (![_enhancedAudioEngine connect:_enhancedAudioSourceNode to:_enhancedAudioReverb format:sourceFormat error:&connectionError] ||
+            ![_enhancedAudioEngine connect:_enhancedAudioReverb to:_enhancedAudioEQ format:renderFormat error:&connectionError] ||
+            ![_enhancedAudioEngine connect:_enhancedAudioEQ to:_enhancedAudioEngine.mainMixerNode format:renderFormat error:&connectionError]) {
+            Log(LOG_W, @"Failed to connect enhanced audio graph: %@", connectionError.localizedDescription);
+            [self cleanupSelectedAudioRenderer];
+            return NO;
+        }
         [self configureEnhancedAudioUnits];
 
         [_enhancedAudioEngine prepare];
@@ -3282,7 +3287,11 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
 
     @try {
         // Pass nil format to receive audio in the hardware's native format.
-        [input installTapOnBus:0 bufferSize:(AVAudioFrameCount)(micFrameSize * (hwFormat.sampleRate / micSampleRate + 1)) format:nil block:^(AVAudioPCMBuffer* buffer, AVAudioTime* when) {
+        // macOS 27 deprecates the no-error tap in favour of the error:
+        // variant, which reports a failed install instead of raising; keep
+        // the @try for the other exception shapes the old guard covered.
+        NSError* tapError = nil;
+        BOOL tapInstalled = [input installTapOnBus:0 bufferSize:(AVAudioFrameCount)(micFrameSize * (hwFormat.sampleRate / micSampleRate + 1)) format:nil error:&tapError block:^(AVAudioPCMBuffer* buffer, AVAudioTime* when) {
             __strong typeof(self) strongSelf = weakSelf;
             if (strongSelf == nil || !strongSelf->_streamConfig.enableMic) {
                 return;
@@ -3376,6 +3385,12 @@ void ClClipboardItemReceived(const LI_CLIPBOARD_ITEM *item)
                 [strongSelf drainMicPcmAndSend];
             });
         }];
+        if (!tapInstalled) {
+            Log(LOG_W, @"Failed to install microphone tap: %@", tapError.localizedDescription);
+            self.micAudioEngine = nil;
+            self.micConverter = nil;
+            return;
+        }
     } @catch (NSException* exception) {
         Log(LOG_W, @"Failed to install microphone tap: %@ - %@", exception.name, exception.reason);
         self.micAudioEngine = nil;
