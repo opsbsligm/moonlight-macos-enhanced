@@ -97,7 +97,7 @@ Moonlight-macOS-Enhanced-{arm64,x86_64,universal}.dmg
 ## 🔧 从源码构建
 
 ### 前置要求
-- macOS 26.0+
+- macOS 27.0+（设置页标签栏原生 tabs 外观需要部署目标 27.0）
 - Xcode 27 beta（macOS 27 SDK）
 - 命令行工具：`xcode-select --install`
 
