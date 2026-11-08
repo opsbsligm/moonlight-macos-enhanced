@@ -1944,9 +1944,14 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
         [_enhancedAudioEngine attachNode:_enhancedAudioReverb];
         [_enhancedAudioEngine attachNode:_enhancedAudioEQ];
 
-        [_enhancedAudioEngine connect:_enhancedAudioSourceNode to:_enhancedAudioReverb format:sourceFormat];
-        [_enhancedAudioEngine connect:_enhancedAudioReverb to:_enhancedAudioEQ format:renderFormat];
-        [_enhancedAudioEngine connect:_enhancedAudioEQ to:_enhancedAudioEngine.mainMixerNode format:renderFormat];
+        NSError *connectionError = nil;
+        if (![_enhancedAudioEngine connect:_enhancedAudioSourceNode to:_enhancedAudioReverb format:sourceFormat error:&connectionError] ||
+            ![_enhancedAudioEngine connect:_enhancedAudioReverb to:_enhancedAudioEQ format:renderFormat error:&connectionError] ||
+            ![_enhancedAudioEngine connect:_enhancedAudioEQ to:_enhancedAudioEngine.mainMixerNode format:renderFormat error:&connectionError]) {
+            Log(LOG_W, @"Failed to connect enhanced audio graph: %@", connectionError.localizedDescription);
+            [self cleanupSelectedAudioRenderer];
+            return NO;
+        }
         [self configureEnhancedAudioUnits];
 
         [_enhancedAudioEngine prepare];
