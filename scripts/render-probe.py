@@ -40,7 +40,7 @@ reported and not asserted -- zero is the designed behaviour there.
 
 Usage: render-probe.py [--app path] [--out dir] [--self-test] [--timeout N]
 """
-import argparse, hashlib, json, os, shutil, subprocess, sys, tempfile
+import argparse, hashlib, json, os, shutil, subprocess, sys, tempfile, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -103,6 +103,64 @@ def paired_control(nodes, title):
 # with 53 distinct colours on a light-theme display, and above a flat fixture's 0.001.
 PIXEL_STDDEV_MIN = 0.02
 PIXEL_DISTINCT_MIN = 40
+
+# ScreenCaptureKit refuses to start a stream (error -3811, "cannot start stream playback")
+# when the machine has no active display, and a headless CI mini sleeps its panel between
+# jobs. Measured on the mini on 2026-11-09: `CGGetActiveDisplayList` returned 0 with the
+# panel asleep, and `caffeinate -u` brought it back to 1 active display in 1.1 s. So the
+# probe wakes the panel and waits for the display list to answer before it asks for pixels;
+# without this, every pane in the report says "capture refused" and reads like a rendering
+# regression when it is a sleeping monitor.
+DISPLAY_WAKE_SECONDS = 10
+DISPLAY_WAIT_SECONDS = 20
+
+
+def active_display_count():
+    """How many displays macOS considers active, without compiling anything.
+
+    CoreGraphics is reachable through ctypes, so this runs on a runner with no toolchain
+    in play and leaves no build artefact behind. A failure to load the framework returns
+    None, which means "no idea" and must not be read as "zero displays".
+    """
+    try:
+        import ctypes
+        core_graphics = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        count = ctypes.c_uint32(0)
+        if core_graphics.CGGetActiveDisplayList(8, None, ctypes.byref(count)) != 0:
+            return None
+        return int(count.value)
+    except Exception:
+        return None
+
+
+def ensure_display(timeout=DISPLAY_WAIT_SECONDS):
+    """Return a sentence about the display, waking the panel if nothing is active.
+
+    This is a runtime prerequisite, not a judgement: the probe cannot tell a page that did
+    not render from a machine that had nothing to render onto, so it removes the second
+    cause instead of reporting it. A machine that stays display-less is reported in the
+    same sentence, so a reader sees the environment before blaming the build.
+    """
+    count = active_display_count()
+    if count is None:
+        return "display state unknown (CoreGraphics could not be queried)"
+    if count > 0:
+        return "%d active display(s)" % count
+    try:
+        subprocess.run(["caffeinate", "-u", "-t", str(DISPLAY_WAKE_SECONDS)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=DISPLAY_WAKE_SECONDS + 10)
+    except Exception as error:
+        return "the panel could not be woken (%s), so ScreenCaptureKit will refuse to start" % error
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        count = active_display_count()
+        if count:
+            return "woke the panel: %d active display(s)" % count
+        time.sleep(0.5)
+    return ("the panel stayed asleep with no active display, so every capture in this run "
+            "will be refused by the capture channel")
 
 
 def artefact_absence(pixels):
@@ -540,17 +598,41 @@ def run(app, out, timeout):
     if not os.path.exists(binary):
         print("FAIL no executable at %s" % binary)
         return None
-    env = dict(os.environ, HOME=home, ML_RENDER_PROBE="1", ML_RENDER_PROBE_OUTPUT=out)
+    # The panel has to be awake before ScreenCaptureKit is asked for pixels, or every pane
+    # reports a refused capture that reads exactly like a page which never rendered.
+    print("[render-probe] display: %s" % ensure_display())
+    # LaunchServices, not a direct exec. A directly exec'd binary is attributed by macOS to
+    # the calling lineage -- the shell, then the runner -- so the ScreenCaptureKit grant for
+    # the bundle id is never consulted and every capture answers -3801 whatever TCC says
+    # (docs/history/incidents/tcc-reset-recovery-2026-11-08.md). `open` attributes the
+    # process to the bundle, which is the attribution the grant is written against.
+    #
+    # Two consequences of `open` measured on the mini on 2026-11-09, both load-bearing here:
+    #   * `--env NAME=VALUE` does reach the app (verified for ML_RENDER_PROBE_OUTPUT), and
+    #     `--stderr` captures what the app writes, so the diagnostics survive the launch;
+    #   * `open -W` waits but does NOT propagate the app's exit status -- a bundle that
+    #     exits 1 makes `open` exit 0. So this function never quotes a return code as a
+    #     verdict: `report.json` is the verdict, and a missing report says the entry point
+    #     never ran whatever `open` claimed.
+    stderr_path = os.path.join(out, "probe-stderr.txt")
+    command = ["open", "-n", "-W", "--stderr", stderr_path,
+               "--env", "HOME=" + home, "--env", "ML_RENDER_PROBE=1",
+               "--env", "ML_RENDER_PROBE_OUTPUT=" + out, app]
     try:
-        proc = subprocess.run([binary], capture_output=True, text=True, env=env, timeout=timeout)
+        subprocess.run(command, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
+        # `open` going away does not take the app with it, and an app still holding the probe
+        # window would keep the next run's window discovery honest-by-accident.
+        subprocess.run(["pkill", "-f", binary], capture_output=True, text=True)
         print("FAIL the probe did not exit within %d s, so it never reached a verdict" % timeout)
         return None
-    print(proc.stderr.strip()[-500:])
+    if os.path.exists(stderr_path):
+        with open(stderr_path, encoding="utf-8", errors="replace") as handle:
+            print(handle.read().strip()[-500:])
     path = os.path.join(out, "report.json")
     if not os.path.exists(path):
-        print("FAIL the probe wrote no report: the Debug entry point did not run (exit %d)"
-              % proc.returncode)
+        print("FAIL the probe wrote no report: the Debug entry point did not run "
+              "(see %s above)" % os.path.basename(stderr_path))
         return None
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
