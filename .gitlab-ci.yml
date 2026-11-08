@@ -452,6 +452,12 @@ audit:deep:
     # Single-quoted for the same reason audit:gates is: a plain scalar holding `: ` reads
     # as a mapping, and the step arrives at the runner as a hash instead of a command.
     - 'echo "deep gates: $(wc -l < gates-deep.txt)"'
+    # The render probe's Debug build links moonlight-common, which needs the openssl
+    # header path. libs/ is gitignored and is not an artifact of download-deps, so a
+    # fresh slot must rebuild the two header symlinks first -- the same preparation
+    # build-app runs (538a23be fixed the Release path; pipeline 1534 job 11240 died
+    # on <openssl/evp.h> here).
+    - zsh scripts/download-frameworks.sh
     - bash -eo pipefail -x < gates-deep.txt
 
 # The full assertion battery: every guard we rely on is broken on purpose and
