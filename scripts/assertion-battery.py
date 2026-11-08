@@ -2041,8 +2041,13 @@ def drop_the_image_audit(text):
     The job keeps its checksum self-test, so the pipeline still reports a packaging
     step that ran something and passed.
     """
-    once(text, "scripts/dmg-audit.py", "the image audit step")
-    return text.replace("scripts/dmg-audit.py", "scripts/none.py", 1)
+    # The checksum self-test in the gates job is the first occurrence; the image
+    # audit this mutation must reach is the second one, in package-dmg. The
+    # first is kept on purpose: that is the "something still ran" the docstring
+    # names. Pipeline 1534 proved the old single-occurrence anchor: MR 67 added
+    # the self-test line and the battery reported the anchor twice.
+    return replace_nth(text, "scripts/dmg-audit.py", "scripts/none.py",
+                       2, "the image audit step")
 
 
 def audit_the_image_against_itself(text):
