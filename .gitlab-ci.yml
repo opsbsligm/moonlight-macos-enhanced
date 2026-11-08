@@ -126,6 +126,12 @@ audit:python:
       python scripts/liquid-glass-audit.py --self-test
       python scripts/liquid-glass-audit.py
       python scripts/leak-audit.py --self-test
+      # The image audit mounts the DMG read-only. Pipeline 1493 lost package-dmg
+      # twice to an EPERM from `hdiutil attach` because the runner's TMPDIR sits on
+      # the external DATA disk, whose mount options carry nodev. The self-test builds
+      # real images and drives the mount path here, on the Mac, where the failure
+      # lives; the checksum-only self-test runs on ubuntu and sees none of it.
+      python scripts/dmg-audit.py --self-test
       python scripts/leak-audit.py --log scripts/leak-sample.txt --red-team
       python scripts/ownership-audit.py --self-test
       python scripts/ownership-audit.py --red-team

@@ -173,16 +173,37 @@ class Mounted:
         self.point = None
 
     def __enter__(self):
-        holder = tempfile.mkdtemp(prefix="dmg-audit-")
-        self.point = os.path.join(holder, "mnt")  # hdiutil wants it not to exist yet
-        result = subprocess.run([HDIUTIL, "attach", "-readonly", "-nobrowse",
-                                 "-mountpoint", self.point, self.image],
-                                capture_output=True, text=True)
-        if result.returncode != 0:
+        # The mount point must sit on a volume that allows APFS mounts. macOS only
+        # checks nodev on the mount point's directory, so an image that verifies and
+        # unmounts cleanly can still refuse to attach when TMPDIR points at a
+        # noowners/nodev volume -- the Mac mini runner sets TMPDIR to its external
+        # DATA disk, and pipeline 1493 lost package-dmg twice to exactly this.
+        # Fall back to the system-filesystem temp dir before calling it a failure.
+        attempts = [(tempfile.mkdtemp(prefix="dmg-audit-"),
+                     "the runner's TMPDIR")]
+        # The fallback must not follow TMPDIR, or a nodev TMPDIR makes the fallback
+        # land on the same refusing volume. /var/tmp lives on the system volume.
+        system_temp = "/var/tmp" if os.path.isdir("/var/tmp") else tempfile.gettempdir()
+        attempts.append((tempfile.mkdtemp(dir=system_temp,
+                                          prefix="dmg-audit-sys-"),
+                         "the system temp dir"))
+        for holder, where in attempts:
+            self.point = os.path.join(holder, "mnt")  # hdiutil wants it not to exist yet
+            result = subprocess.run([HDIUTIL, "attach", "-readonly", "-nobrowse",
+                                     "-mountpoint", self.point, self.image],
+                                    capture_output=True, text=True)
+            if result.returncode == 0:
+                if holder != attempts[0][0]:
+                    print("note image mounted from %s after %s refused it"
+                          % (where, attempts[0][1]))
+                return self.point
             detail = (result.stdout + result.stderr).strip().splitlines()
-            raise SystemExit("error: %s could not be mounted: %s"
-                             % (self.image, detail[-1] if detail else "no reason given"))
-        return self.point
+            reason = detail[-1] if detail else "no reason given"
+            # a failed attach leaves the mount point gone or half made; tolerate both
+            shutil.rmtree(self.point, ignore_errors=True)
+            shutil.rmtree(holder, ignore_errors=True)
+        raise SystemExit("error: %s could not be mounted from %s or %s: %s"
+                         % (self.image, attempts[0][1], attempts[1][1], reason))
 
     def __exit__(self, *_):
         subprocess.run([HDIUTIL, "detach", "-force", self.point],
@@ -449,9 +470,109 @@ def self_test():
                          lambda: hdiutil_verify(good))
         expect_rejection("an image whose bytes changed after it was hashed",
                          lambda: verify_checksums([sidecar], [workspace]))
+
+        # The mount point's volume can refuse APFS mounts (nodev) while the image
+        # itself is fine. The fallback to the system temp dir has to catch that, and
+        # a mount that still fails after the fallback has to name both locations.
+        self_test_mount_fallback(good)
+
         print("self-test passed")
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
+
+
+def self_test_mount_fallback(image):
+    """Drive the attach failure the runner's nodev TMPDIR produces, with a shim.
+
+    The shim refuses `hdiutil attach` whose mount point sits under a prefix, the
+    same question macOS answers with nodev. Case 1 proves the fallback mounts on
+    the system volume; case 2 proves the error names both locations when even
+    the fallback refuses.
+    """
+    # Mounted.__exit__ rmtrees the volume that held its mount point, so the image
+    # lives next to the volumes the test creates. Build it here rather than reusing
+    # the caller's fixture: by the time this runs, self_test has deliberately
+    # corrupted that image to exercise the checksum gate, and a broken UDZO fails
+    # to attach for a different reason than the nodev refusal this case is about.
+    holder = tempfile.mkdtemp(prefix="dmg-audit-mnt-fallback-")
+    image = os.path.join(holder, "image.dmg")
+    build_image(os.path.join(holder, "staged"), image, with_link=True)
+    try:
+        def make_shim(name, refuse_prefix):
+            d = os.path.join(holder, name)
+            os.makedirs(d)
+            shim = os.path.join(d, "hdiutil")
+            with open(shim, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "#!/bin/sh\n"
+                    "refuse=\n"
+                    'for arg in "$@"; do\n'
+                    '  case "$arg" in "$REFUSE_PREFIX"*) refuse=1 ;; esac\n'
+                    "done\n"
+                    'if [ "$1" = "attach" ] && [ -n "$refuse" ]; then\n'
+                    '  echo "hdiutil: attach failed - Operation not permitted" >&2\n'
+                    "  exit 1\n"
+                    "fi\n"
+                    'exec /usr/bin/hdiutil "$@"\n')
+            os.chmod(shim, 0o755)
+            return d
+
+        driver = (
+            "import importlib.util, os, sys\n"
+            "sys.path.insert(0, os.path.dirname(sys.argv[1]))\n"
+            "spec = importlib.util.spec_from_file_location(\n"
+            "    'dmg_audit_mod', sys.argv[1])\n"
+            "mod = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(mod)\n"
+            "print('SHIM_IN_USE=' + str(mod.HDIUTIL.startswith(sys.argv[2])))\n"
+            "with mod.Mounted(sys.argv[3]) as point:\n"
+            "    print('MOUNTED_AT=' + point)\n")
+        driver_path = os.path.join(holder, "driver.py")
+        with open(driver_path, "w", encoding="utf-8") as handle:
+            handle.write(driver)
+        nonroot = os.path.join(holder, "nonroot")
+        os.makedirs(nonroot)
+        base_env = dict(os.environ)
+
+        # 1. A refusing mount point under the TMPDIR volume still mounts, from /var/tmp.
+        shim_dir = make_shim("shim", nonroot)
+        proc = subprocess.run(
+            [sys.executable, driver_path, os.path.abspath(__file__), shim_dir, image],
+            capture_output=True, text=True,
+            env=dict(base_env, PATH=shim_dir + os.pathsep + base_env["PATH"],
+                     TMPDIR=nonroot, REFUSE_PREFIX=nonroot),
+            cwd="/")
+        out = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0 or "SHIM_IN_USE=True" not in out:
+            raise AssertionError(
+                "the fallback case did not run the refusing shim:\n" + out)
+        if "MOUNTED_AT=/var/tmp/" not in out:
+            raise AssertionError(
+                "the fallback did not mount on the system temp dir:\n" + out)
+        if "MOUNTED_AT=" + nonroot in out:
+            raise AssertionError(
+                "the fallback still used the refusing volume:\n" + out)
+
+        # 2. Refuse every attach and the error must name both locations.
+        shim_all = make_shim("shim-all", os.sep)
+        proc2 = subprocess.run(
+            [sys.executable, driver_path, os.path.abspath(__file__), shim_all, image],
+            capture_output=True, text=True,
+            env=dict(base_env, PATH=shim_all + os.pathsep + base_env["PATH"],
+                     TMPDIR=nonroot, REFUSE_PREFIX=os.sep),
+            cwd="/")
+        out2 = (proc2.stdout or "") + (proc2.stderr or "")
+        if proc2.returncode == 0:
+            raise AssertionError(
+                "the double failure mounted when it should have "
+                "reported both locations:\n" + out2)
+        if "could not be mounted" not in out2 or "TMPDIR" not in out2 or "system temp dir" not in out2:
+            raise AssertionError(
+                "the double failure did not name both mount "
+                "point locations:\n" + out2)
+        print("rejects a mount point whose volume refuses APFS, with a named fallback")
+    finally:
+        shutil.rmtree(holder, ignore_errors=True)
 
 
 def self_test_checksums():
