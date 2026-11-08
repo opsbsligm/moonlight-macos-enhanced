@@ -20,6 +20,16 @@ struct MicrophoneDevice: Identifiable, Hashable {
     let name: String
 }
 
+// A weak reference that the macOS 27 tap provider (a @Sendable closure) may
+// capture without tripping concurrency checks; the tap lifetime is bounded by
+// the test session, so no retention cycle is possible.
+private final class WeakBox: @unchecked Sendable {
+    weak var value: MicrophoneManager?
+    init(_ value: MicrophoneManager?) {
+        self.value = value
+    }
+}
+
 class MicrophoneManager: ObservableObject {
     static let shared = MicrophoneManager()
 
@@ -197,18 +207,25 @@ class MicrophoneManager: ObservableObject {
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else { return }
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
-            guard let data = buffer.floatChannelData else { return }
-            let count = Int(buffer.frameLength)
-            var maxVal: Float = 0
-            for i in 0..<count {
-                let abs = Swift.abs(data[0][i])
-                if abs > maxVal { maxVal = abs }
+        // macOS 27 replaced installTap(onBus:bufferSize:format:block:) with
+        // installAudioTap, whose provider is @Sendable and receives a
+        // read-only buffer; weak self crosses the boundary through WeakBox.
+        let levelBox = WeakBox(self)
+        do {
+            try input.installAudioTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
+                guard case .float(let span) = buffer.channelData(0) else { return }
+                var maxVal: Float = 0
+                for sample in span {
+                    let v = Swift.abs(sample)
+                    if v > maxVal { maxVal = v }
+                }
+                DispatchQueue.main.async {
+                    // Smooth the level a bit
+                    levelBox.value?.inputLevel = max(maxVal, (levelBox.value?.inputLevel ?? 0) * 0.7)
+                }
             }
-            DispatchQueue.main.async {
-                // Smooth the level a bit
-                self?.inputLevel = max(maxVal, (self?.inputLevel ?? 0) * 0.7)
-            }
+        } catch {
+            NSLog("Mic test failed to install tap: %@", error.localizedDescription)
         }
 
         do {
@@ -246,15 +263,17 @@ class MicrophoneManager: ObservableObject {
 
     private func setAudioUnitDevice(_ inputNode: AVAudioInputNode, deviceID: AudioDeviceID) {
         var deviceID = deviceID
-        let audioUnit = inputNode.audioUnit!
-        AudioUnitSetProperty(
-            audioUnit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &deviceID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
+        inputNode.withAudioUnit { audioUnit in
+            guard let audioUnit else { return }
+            AudioUnitSetProperty(
+                audioUnit,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                0,
+                &deviceID,
+                UInt32(MemoryLayout<AudioDeviceID>.size)
+            )
+        }
     }
 }
 
