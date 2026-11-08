@@ -13,6 +13,12 @@
 > as a direct subprocess, so macOS attributes the capture to the runner
 > lineage rather than the granted bundle id, and ScreenCaptureKit still
 > returns -3801. The grant is necessary; on its own it is not sufficient.
+>
+> Update, same day: the attribution cause is fixed in the probe (it launches
+> through `open` now), and a second, unrelated cause was found underneath it
+> -- a panel that fell asleep leaves ScreenCaptureKit with no active display
+> and every capture answers -3811. Both are described in "Still open" and
+> neither is certified green until the pipeline for the fix commit says so.
 
 ## What happened
 
@@ -65,32 +71,67 @@ reports `capture refused`, error -3801. So "the row is present" is not the
 same as "capture works". The functional difference between the passing and
 failing case is *how the process starts*:
 
-- A binary `exec`'d directly (an SSH command, or `subprocess.run([binary])`
-  the way `render-probe.py` launches the Debug app) is attributed by the
-  OS to the calling process lineage -- the shell/runner -- not to the app
-  bundle, so the `std.skyhua.MoonlightMac` grant is never consulted. A
-  directly-exec'd probe refuses no matter what TCC says.
+- A binary `exec`'d directly (an SSH command, or the `subprocess.run([binary])`
+  `render-probe.py` used for the Debug app) is attributed by the OS to the
+  calling process lineage -- the shell/runner -- not to the app bundle, so the
+  `std.skyhua.MoonlightMac` grant is never consulted. A directly-exec'd probe
+  refuses no matter what TCC says.
 - The same bundle started through LaunchServices (`open`) is attributed to
   the app, enters the ScreenCaptureKit callback, and is no longer an instant
   refusal.
 
-That is why the pipeline stays red: the probe's own code path is the direct
+That is why the pipeline stayed red: the probe's own code path was the direct
 exec one. The durable fix is not more TCC rows -- it is making the probe
-capture through a path macOS attributes to a granted process (launch via
-LaunchServices, or drop ScreenCaptureKit for a current-process API that does
-not need the grant). Until one of those lands, `audit:deep` on the mini is
-**not green**, and the grant should be treated as accepted configuration
-that is necessary but unproven to be sufficient.
+capture through a path macOS attributes to a granted process.
+
+## The second cause, and what shipped
+
+Launching through LaunchServices is necessary but was not the whole story.
+Comparing a working capture against a refused one on the mini found a second
+environment cause with the same symptom: with the panel asleep
+`CGGetActiveDisplayList` returns zero displays, and ScreenCaptureKit answers
+`-3811` ("cannot start stream playback") rather than -3801. `caffeinate -u`
+brought the count back to one in about a second. Both causes are invisible to
+the reader of the report -- each pane says `capture refused` and the report
+still shows the page mounted and every readable row matching the model, so an
+environment fault is indistinguishable from the rendering defect the job
+exists to catch.
+
+`render-probe.py` now does both, as runtime preconditions rather than
+verdicts: it wakes the panel and waits for an active display before asking for
+pixels, and it launches the Debug bundle with `open -n -W --stderr ... --env
+...` so the capture is attributed to the bundle the grant names. Two
+consequences of `open` were measured on the mini and are load-bearing:
+`--env` does reach the app and `--stderr` keeps the diagnostics; `open -W`
+waits but does **not** propagate the app's exit status -- a bundle that exits
+1 makes `open` exit 0 -- so `report.json` is the verdict and no exit code is
+quoted as one. `constraints-audit.py` pins all four properties so a later edit
+that reintroduces the direct exec, drops the env carry-over, drops the display
+wake, or trusts `open`'s exit status fails the gate with the symptom spelled
+out.
+
+**Status: not yet certified green.** The self-test and the constraint audit
+pass locally; `audit:deep` on the mini is only believed fixed until the
+pipeline for `1330b040` reports its own result, because this job's history is
+exactly a series of plausible causes. Until then the grant stays accepted
+configuration that is necessary but unproven to be sufficient.
+
+Verification has one awkward property worth naming: `audit:deep` runs on the
+default branch and on tags only, so no MR pipeline can ever show this fix
+working. The first honest reading is the main-branch pipeline after the merge,
+and nothing before it counts as evidence.
 
 ## Durability (still open)
 
 What is verified is that the row reads back as `auth_value=2`. What is not
 verified is that the grant does anything useful in CI, because the direct
 -exec attribution problem above means the grant is never consulted on the
-path that runs (see "Still open"). Survival across a reboot / `tccd` reload
-is likewise unproven. Treat the rows as accepted configuration, not as a
-green `audit:deep`. Any macOS security update or another TCC reset can wipe
-them again.
+path that used to run (see "Still open" and "The second cause"). Now that the
+probe launches through LaunchServices the grant is at least consulted, so a
+green run would be the first evidence the rows do anything -- and it would
+still not prove they survive a reboot or a `tccd` reload. Treat the rows as
+accepted configuration, not as a green `audit:deep`. Any macOS security update
+or another TCC reset can wipe them again.
 
 ## Runner hygiene notes
 
