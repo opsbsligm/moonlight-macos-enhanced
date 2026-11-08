@@ -8,8 +8,8 @@
 
 **构建要求：**
 - 任何带 macOS SDK 26+ 的 Xcode。本仓库 CI 与本机的实测环境是 Xcode 27.0（27A266a）+ `MacOSX27.0.sdk`，`scripts/compile-audit.py` 按「同一厂商的 clang 与 SDK 成对取」探测工具链，不硬编码版本号
-- 运行时 macOS 26.0+：`MACOSX_DEPLOYMENT_TARGET = 26.0`，Liquid Glass 窗口层依赖该版本
-- 如需支持 macOS 15/12（upstream Issue #26），必须调低 deployment target 并改造依赖 26.x API 的窗口层代码
+- 运行时 macOS 27.0+：`MACOSX_DEPLOYMENT_TARGET = 27.0`，Liquid Glass 窗口层依赖 macOS 26 API，设置页标签栏 `NSSegmentedControl.role = .tabs` 在部署目标 27.0 才按系统原生 tabs 样式渲染
+- 如需支持 macOS 15/12（upstream Issue #26），必须调低 deployment target 并改造依赖 26.x API 的窗口层代码与标签栏 role 守卫
 
 > 说明：`scripts/download-frameworks.sh` 会把 OpenSSL 头文件链接到 `libs/`，
 > `moonlight-common.xcodeproj` 通过 `HEADER_SEARCH_PATHS = ../libs/**` 解析它们。
