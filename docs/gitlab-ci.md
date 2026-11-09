@@ -175,6 +175,9 @@ checkout, and an audit that needs a venv is an audit that does not run.
   gates: `render-probe.py` and `scaling-output-evidence-tests.py`. No `needs:`,
   so the stage barrier keeps its xcodebuild off the release path -- the pipeline
   647 starvation again otherwise -- and it shares the battery's `resource_group`.
+  Its render probe depends on a system TCC row for ScreenCaptureKit on the
+  mini; the 2026-11-08 reset and the csreq recovery procedure are recorded in
+  `docs/history/incidents/tcc-reset-recovery-2026-11-08.md`.
 - The mirror's form of a command wins inside `local-gates.sh`, because that file
   rewrites artefact paths for a laptop while the source of truth spells them in
   CI variables (`$app`, `$DERIVED_DATA_PATH`) that resolve to nothing locally. A
