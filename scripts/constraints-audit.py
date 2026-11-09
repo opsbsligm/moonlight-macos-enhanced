@@ -1510,6 +1510,31 @@ check('os.path.exists(path)' in render_probe and "% proc.returncode" not in rend
       else "render-probe.py reports an exit code it cannot trust again: `open -W` returns 0 "
            "for a bundle that exited 1 (measured on the mini 2026-11-09), so report.json has "
            "to be the verdict")
+# ScreenCaptureKit refuses to start a stream (-3811) on the runner session while the same
+# window captures fine through the window-list API, so the probe needs the fallback on the
+# runtime side and a reader that trusts it. Pinned separately: deleting the dlsym call
+# brings the SCK-only outage back, and deleting the stamp lets a fallback capture pass
+# as if the primary channel had drawn it.
+check('dlsym(RTLD_DEFAULT, "CGWindowListCreateImage")' in probe_app
+      and "kCGWindowImageBoundsIgnoreFraming" in probe_app
+      and 'MLProbeCGFallbackCapture(windowNumber, rect' in probe_app,
+      "the probe falls back to the window-list capture when ScreenCaptureKit refuses "
+      "the stream, resolved by name because the SDK header marks it unavailable on 15.0+"
+      if 'dlsym(RTLD_DEFAULT, "CGWindowListCreateImage")' in probe_app
+      and "kCGWindowImageBoundsIgnoreFraming" in probe_app
+      and 'MLProbeCGFallbackCapture(windowNumber, rect' in probe_app
+      else "AppDelegateForAppKit.m lost the CGWindowListCreateImage fallback: ScreenCaptureKit "
+           "refusing to start a stream (-3811, pipeline 1626) would red the build again while "
+           "the window renders fine, and the dlsym form cannot be replaced by a direct call "
+           "because the header marks the symbol unavailable on macOS 15+")
+check('measurements[@"captureChannel"]' in probe_app
+      and '"captureChannel"' in render_probe,
+      "the probe stamps which capture channel drew each measurement, and the reader checks "
+      "the stamp on every pane it measures"
+      if 'measurements[@"captureChannel"]' in probe_app and '"captureChannel"' in render_probe
+      else "the captureChannel stamp is gone from the producer or the reader: a window-list "
+           "fallback capture would then pass through as if ScreenCaptureKit had drawn it, "
+           "which is exactly how the -3811 outage read as a rendering regression")
 probe_key = re.search(r'MLProbeAdvancedSectionCollapsedKey\s*\n?\s*= @"([^"]+)"', probe_app)
 check(bool(probe_key) and probe_key.group(1) in app_pane,
       "the probe forces the same preference the app page stores the section state under"
