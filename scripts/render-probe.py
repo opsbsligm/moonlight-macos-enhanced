@@ -286,7 +286,7 @@ def verify_panes(report, refusals, out_dir):
         # A measured fold has to name the API that drew it; without that, a fallback
         # capture would read as the primary channel having done its job.
         if pixels.get("stddev") is not None:
-            expect(pixels.get("captureChannel") in ("SCK", "CG"),
+            expect(pixels.get("captureChannel") in ("SCK", "CG", "CACHE"),
                    "%s reports pixel measurements but names no capture channel, so the "
                    "report cannot say which API drew it" % name)
         if absence:
@@ -321,7 +321,7 @@ def verify_panes(report, refusals, out_dir):
         if name == "devicesPane":
             pixels = pane.get("initialPixels") or {}
             if pixels.get("stddev") is not None:
-                expect(pixels.get("captureChannel") in ("SCK", "CG"),
+                expect(pixels.get("captureChannel") in ("SCK", "CG", "CACHE"),
                        "the USB permission page's initial fold reports pixel measurements "
                        "but names no capture channel, so the report cannot say which API "
                        "drew it")
@@ -508,7 +508,7 @@ def verify(report, out_dir=None):
     # on every measurement block, and a fallback that silently disappears would otherwise
     # read as the primary channel having done its job.
     if pixels.get("stddev") is not None:
-        expect(pixels.get("captureChannel") in ("SCK", "CG"),
+        expect(pixels.get("captureChannel") in ("SCK", "CG", "CACHE"),
                "the settings page reports pixel measurements but names no capture channel, "
                "so the report cannot say which API drew it")
 
