@@ -97,10 +97,15 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
             }
         }
         if (target == nil) {
-            fprintf(stderr, "[render-probe] own window capture unavailable: %s\n",
-                    (error.localizedDescription ?: @"window not found").UTF8String);
-            failure = [NSString stringWithFormat:@"own window not offered for capture: %@",
-                       error.localizedDescription ?: @"window not found"];
+            // The localized words cannot separate a TCC refusal (-3801) from a dead panel
+            // (-3811): both print as "audio/video capture failed, cannot start stream
+            // playback", and pipeline 1596 stayed red with the panel awake and the TCC row
+            // allowed. The channel's own number is the one field that tells the two apart.
+            fprintf(stderr, "[render-probe] own window capture unavailable: %s (osStatus %ld)\n",
+                    (error.localizedDescription ?: @"window not found").UTF8String,
+                    (long)error.code);
+            failure = [NSString stringWithFormat:@"own window not offered for capture: %@ (osStatus %ld)",
+                       error.localizedDescription ?: @"window not found", (long)error.code];
             dispatch_async(dispatch_get_main_queue(), ^{ finished = YES; });
             return;
         }
@@ -126,10 +131,12 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
                     CGImageRelease(cropped);
                 }
             } else {
-                fprintf(stderr, "[render-probe] own window capture failed: %s\n",
-                        (captureError.localizedDescription ?: @"no image").UTF8String);
-                failure = [NSString stringWithFormat:@"capture refused: %@",
-                           captureError.localizedDescription ?: @"no image"];
+                fprintf(stderr, "[render-probe] own window capture failed: %s (osStatus %ld)\n",
+                        (captureError.localizedDescription ?: @"no image").UTF8String,
+                        (long)captureError.code);
+                failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld)",
+                           captureError.localizedDescription ?: @"no image",
+                           (long)captureError.code];
             }
             dispatch_async(dispatch_get_main_queue(), ^{
                 result = bitmap;

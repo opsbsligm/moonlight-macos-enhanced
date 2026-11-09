@@ -144,3 +144,30 @@ or another TCC reset can wipe them again.
   `~/ScProbe.app` on the mini) were cleared after the fix; this page
   is the canonical record of the recovery procedure.
 
+
+## 2026-11-09: pipeline 1596, the panel awake but the capture still refused
+
+The next red run (pipeline 1596, job 11907) removed both known causes and
+still refused every capture. The trace says `display: woke the panel:
+1 active display(s)` and the TCC database read back both rows at
+`auth_value=2` (the bundle id and the runner path), yet all five panes
+report the same localized refusal. Two honest conclusions from that:
+
+1. The failure sentence could not tell the causes apart. -3801 (TCC
+   refused) and -3811 (no active display) share one localized sentence,
+   "audio/video capture failed, cannot start stream playback", and the
+   report stored no number. The probe failure sentence now carries the
+   channel's own `osStatus`, so the next red run names which of the two
+   it was instead of guessing.
+2. "Awake at launch" is not "awake for the run". The wake path only ran
+   `caffeinate -u -t 10`, and a panel that was already awake took an
+   early-return path that woke nothing at all. The probe now starts a
+   keep-awake `caffeinate` covering the whole run plus margin on **both**
+   entries into the awake state, and stops it when the run ends.
+
+Whether 1596's refusal was the panel dropping out mid-run, the ad-hoc
+signed Debug bundle failing the TCC requirement in practice even though
+the row reads back allowed, or something else is not decided until the
+pipeline for the fix commit reports its own result -- and if it is red,
+the osStatus in the trace decides between those causes without another
+guessing round.
