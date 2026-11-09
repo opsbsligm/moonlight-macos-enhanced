@@ -25,6 +25,7 @@
 #import "DataManager.h"
 #import <objc/runtime.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <dlfcn.h>
 
 typedef enum : NSUInteger {
     SystemTheme,
@@ -67,6 +68,71 @@ static void MLProbeSpin(NSTimeInterval seconds) {
     }
 }
 
+// The channel the last successful capture actually used: @"SCK" or @"CG".
+// `MLProbePixels` stamps it into every measurement block so a report can name which
+// path drew the pixels -- the CG fallback exists because ScreenCaptureKit refuses to
+// start a stream (-3811) on the runner session while the same window captures fine
+// through the window-list API.
+static NSString *MLProbeLastCaptureChannel = nil;
+
+// One place to turn a full-window capture into the crop of the view under test, so the
+// ScreenCaptureKit and window-list channels cannot drift apart on the coordinate math.
+// Returns the crop, or nil and the channel's own words in *errorOut when the image was
+// nil or the crop came back empty.
+static NSBitmapImageRep *MLProbeCroppedBitmap(CGImageRef image, NSRect rect,
+                                              CGFloat contentHeight, NSString **errorOut) {
+    if (errorOut) *errorOut = nil;
+    NSBitmapImageRep *bitmap = nil;
+    if (image != NULL) {
+        CGFloat widthPts = rect.size.width;
+        CGFloat sxScale = (widthPts > 0) ? CGImageGetWidth(image) / widthPts : 1;
+        CGFloat syScale = (contentHeight > 0) ? CGImageGetHeight(image) / contentHeight : 1;
+        CGRect crop = CGRectMake(rect.origin.x * sxScale,
+            (contentHeight - NSMaxY(rect)) * syScale,
+            rect.size.width * sxScale, rect.size.height * syScale);
+        CGImageRef cropped = CGImageCreateWithImageInRect(image, crop);
+        if (cropped != NULL) {
+            bitmap = [[NSBitmapImageRep alloc] initWithCGImage:cropped];
+            CGImageRelease(cropped);
+        }
+    }
+    if (bitmap == nil && errorOut) {
+        *errorOut = @"the capture image was empty";
+    }
+    return bitmap;
+}
+
+// ScreenCaptureKit can refuse to start a stream (-3811) on a runner session even with
+// the TCC row granted, and the view renders fine underneath the refusal. The window-list
+// API captures the same window without the stream, so it is the fallback channel. The
+// SDK header marks it unavailable on 15.0+, which is why it is resolved by name at
+// runtime instead of linked: the symbol has kept working, and a dlsym that returns
+// NULL degrades to the old behaviour (SCK only) rather than a link failure.
+static NSBitmapImageRep *MLProbeCGFallbackCapture(NSInteger windowNumber, NSRect rect,
+                                                  NSString **errorOut) {
+    if (errorOut) *errorOut = nil;
+    typedef CGImageRef (*MLProbeCGCaptureFunction)(CGRect, CGWindowListOption,
+                                                   CGWindowID, CGWindowImageOption);
+    MLProbeCGCaptureFunction capture = (MLProbeCGCaptureFunction)
+        dlsym(RTLD_DEFAULT, "CGWindowListCreateImage");
+    if (capture == NULL) {
+        if (errorOut) *errorOut = @"CGWindowListCreateImage did not resolve";
+        return nil;
+    }
+    CGImageRef image = capture(CGRectNull, kCGWindowListOptionIncludingWindow,
+                               (CGWindowID)windowNumber,
+                               kCGWindowImageBoundsIgnoreFraming);
+    if (image == NULL) {
+        if (errorOut) *errorOut = @"the window-list capture returned no image";
+        return nil;
+    }
+    NSBitmapImageRep *bitmap =
+        MLProbeCroppedBitmap(image, rect, (CGFloat)CGImageGetHeight(image), errorOut);
+    CGImageRelease(image);
+    return bitmap;
+}
+
+
 // `failureOut` exists because a missing capture and a flat capture are different claims.
 // Without it a caller could only see a nil bitmap and had to guess, and the guess shipped
 // as "the settings page rendered as flat" while the probe's own stderr said the capture
@@ -85,6 +151,9 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
     __block BOOL finished = NO;
     __block NSBitmapImageRep *result = nil;
     __block NSString *failure = nil;
+    // Which channel drew the last successful capture. Set on success, cleared when
+    // both channels fail, and read back by `MLProbePixels` to stamp the report.
+    __block NSString *channel = nil;
     // AppKit's cacheDisplay omits SwiftUI's composited layers. Capture only our
     // own window; currentProcess does not request access to other applications.
     [SCShareableContent getCurrentProcessShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
@@ -129,23 +198,47 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
                 if (cropped != NULL) {
                     bitmap = [[NSBitmapImageRep alloc] initWithCGImage:cropped];
                     CGImageRelease(cropped);
+                    channel = @"SCK";
                 }
             } else {
-                fprintf(stderr, "[render-probe] own window capture failed: %s (osStatus %ld)\n",
-                        (captureError.localizedDescription ?: @"no image").UTF8String,
-                        (long)captureError.code);
-                failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld)",
-                           captureError.localizedDescription ?: @"no image",
-                           (long)captureError.code];
+                // The window is offered and the filter was built, but the stream still
+                // refused to start (measured -3811 on the runner session with the TCC row
+                // granted and the panel awake). The view renders fine underneath, so the
+                // window-list channel gets one attempt before the refusal is final.
+                NSString *fallbackError = nil;
+                NSBitmapImageRep *fallback = MLProbeCGFallbackCapture(windowNumber, rect, &fallbackError);
+                if (fallback != nil) {
+                    bitmap = fallback;
+                    channel = @"CG";
+                    fprintf(stderr,
+                            "[render-probe] SCK refused the stream (%s, osStatus %ld); "
+                            "window-list fallback captured the pane\n",
+                            (captureError.localizedDescription ?: @"no image").UTF8String,
+                            (long)captureError.code);
+                } else {
+                    fprintf(stderr,
+                            "[render-probe] SCK refused the stream (%s, osStatus %ld) and the "
+                            "window-list fallback said %s\n",
+                            (captureError.localizedDescription ?: @"no image").UTF8String,
+                            (long)captureError.code,
+                            (fallbackError ?: @"no image").UTF8String);
+                    failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld), "
+                           "window-list fallback: %@",
+                               captureError.localizedDescription ?: @"no image",
+                               (long)captureError.code,
+                               fallbackError ?: @"no image"];
+                }
             }
             dispatch_async(dispatch_get_main_queue(), ^{
                 result = bitmap;
                 finished = YES;
+                MLProbeLastCaptureChannel = channel;
             });
         }];
     }];
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
     while (!finished && deadline.timeIntervalSinceNow > 0) MLProbeSpin(0.02);
+    if (result == nil) MLProbeLastCaptureChannel = nil;
     if (failureOut) {
         *failureOut = failure ?: (result ? nil
                 : @"no image and no error came back before the capture deadline");
@@ -204,6 +297,13 @@ static NSDictionary *MLProbePixels(NSString *path, NSBitmapImageRep *rep, NSStri
                                             @"stddev": @(sqrt(MAX(variance, 0))),
                                             @"distinctColours": @(colours.count),
                                             @"sampled": @(sampled) } mutableCopy];
+    // Name which channel drew these pixels. The reader treats a CG-captured pane the same
+    // as an SCK one (both are full-fidelity captures of the same window), but a report that
+    // cannot say which API it used would hide the SCK outage that the fallback is there
+    // for, the way -3811 was hidden as "the page never drew" in pipeline 1596.
+    if (MLProbeLastCaptureChannel != nil) {
+        measurements[@"captureChannel"] = MLProbeLastCaptureChannel;
+    }
     if (path) {
         NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
         if (![png writeToFile:path atomically:YES]) {
