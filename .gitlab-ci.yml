@@ -342,6 +342,12 @@ audit:sources:
     # send paths apart on the wire rather than in the text of the source.
     - python3 scripts/unicode-dense-packing-tests.py
     - python3 scripts/edge-sensor-e1-clamp-tests.py --self-test
+    # Wave AP: the allocation criterion for the encrypted control sender is held on
+    # the wire, not in the source text -- 0 staging mallocs under the 256-byte
+    # buffer, 1 malloc + 1 copy per message at/over it. The self-test plants five
+    # defects and requires the probe verdict to flip for each of them.
+    - python3 scripts/control-stream-alloc-tests.py
+    - python3 scripts/control-stream-alloc-tests.py --self-test
   rules: *pipeline_rules
 
 # Gate parity between the two pipeline definitions.
