@@ -2583,6 +2583,12 @@ CI_ONLY = {
     # reasons are visible in the script: the toolchain call, and the skip line that
     # names the missing checkout instead of passing quietly.
     "unicode-dense-packing-tests.py": "clang_and_sdk",
+    # Wave AP: the allocation criterion of the encrypted control sender is judged
+    # by compiling sendMessageEnet() out of the shipping ControlStream.c with
+    # Apple's clang -- the harness stubs every ENet and crypto symbol itself, so
+    # the toolchain call is the only host requirement, and the probe's verdict
+    # flips on planted defects only when that exact code path is compiled.
+    "control-stream-alloc-tests.py": "clang_and_sdk",
     # The scope probe re-measures what each self-proof gate opens by running the four
     # measured gates under an audit hook -- about ninety seconds, every time, and
     # `constraints-audit.py --no-battery` is itself the call the battery's referee makes
