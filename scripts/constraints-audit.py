@@ -1475,6 +1475,35 @@ check('"caffeinate", "-u"' in render_probe and "def ensure_display(" in render_p
       else "render-probe.py stopped ensuring an active display: with the panel asleep "
            "ScreenCaptureKit refuses to start a stream and every pane reports a capture "
            "refusal that reads like a page that never drew")
+# Pipeline 1596 stayed red with the panel reported awake *at launch time* and the TCC
+# grant read back as allowed, so the panel can still fall asleep (or drop out) while the
+# probe is running, and the refusal then reads like the page never drew. The hold must
+# exist on BOTH entries into the awake state, or the already-awake path skips it.
+check("hold_seconds=None" in render_probe and "def _hold_display(" in render_probe
+      and "hold_seconds=hold_seconds" in render_probe,
+      "the probe holds the panel awake for the whole run, on both entries into the awake state"
+      if "hold_seconds=None" in render_probe and "def _hold_display(" in render_probe
+      and "hold_seconds=hold_seconds" in render_probe
+      else "render-probe.py only wakes the panel before the run again: a panel that is "
+           "asleep by the time ScreenCaptureKit is asked answers the same refusal a page "
+           "that never drew would give (pipeline 1596: awake at launch, TCC allowed, every "
+           "capture still refused)")
+check("hold_seconds=min(args.timeout, 300) + 30" in render_probe,
+      "the keep-awake horizon covers the run timeout plus margin, so the last second of a "
+      "run to its limit is not captured after the hold lapsed"
+      if "hold_seconds=min(args.timeout, 300) + 30" in render_probe
+      else "render-probe.py's keep-awake horizon no longer covers the run timeout: the "
+           "hold can lapse while the probe is still capturing")
+# The failure sentence must carry the channel's own number, or -3801 (TCC) and -3811
+# (panel asleep) keep printing as the identical localized words and the next red run is
+# diagnosed the same way 1596 was: by guessing.
+check("captureError.code" in probe_app and "(osStatus %ld)" in probe_app,
+      "the probe failure sentence carries the capture error's osStatus, so a TCC refusal "
+      "and a dead panel are distinguishable in the log"
+      if "captureError.code" in probe_app and "(osStatus %ld)" in probe_app
+      else "AppDelegateForAppKit.m dropped the osStatus from the probe failure sentence: "
+           "ScreenCaptureKit's -3801 and -3811 share one localized sentence, so the log "
+           "cannot say which of the two refused the capture")
 check('os.path.exists(path)' in render_probe and "% proc.returncode" not in render_probe,
       "the probe reads its verdict from report.json rather than from `open`'s exit status"
       if 'os.path.exists(path)' in render_probe and "% proc.returncode" not in render_probe
