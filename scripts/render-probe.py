@@ -134,30 +134,65 @@ def active_display_count():
         return None
 
 
-def ensure_display(timeout=DISPLAY_WAIT_SECONDS):
+def ensure_display(timeout=DISPLAY_WAIT_SECONDS, hold_seconds=None):
     """Return a sentence about the display, waking the panel if nothing is active.
 
     This is a runtime prerequisite, not a judgement: the probe cannot tell a page that did
     not render from a machine that had nothing to render onto, so it removes the second
     cause instead of reporting it. A machine that stays display-less is reported in the
     same sentence, so a reader sees the environment before blaming the build.
+
+    Waking the panel once is not enough: the panel can fall asleep again while the probe
+    app is still running, and the refusal that follows reads exactly like the page never
+    drew. When `hold_seconds` is given, a second `caffeinate` keeps the panel awake for
+    that long after the wake, and this function returns its handle so the caller can stop
+    it once the run is done. Pipeline 1596 refused every capture with the panel reported
+    awake *at launch time* and the TCC grant read back as allowed -- the only remaining
+    environment variable between those two facts and the pixels is the panel staying up
+    for the whole run, so the probe removes it the same honest way.
     """
     count = active_display_count()
     if count is None:
-        return "display state unknown (CoreGraphics could not be queried)"
+        return "display state unknown (CoreGraphics could not be queried)", None
     if count > 0:
-        return "%d active display(s)" % count
+        awake = "%d active display(s)" % count
+        return _hold_display(awake, hold_seconds), None
     try:
         subprocess.run(["caffeinate", "-u", "-t", str(DISPLAY_WAKE_SECONDS)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=DISPLAY_WAKE_SECONDS + 10)
     except Exception as error:
-        return "the panel could not be woken (%s), so ScreenCaptureKit will refuse to start" % error
+        return ("the panel could not be woken (%s), so ScreenCaptureKit will refuse to start"
+                % error), None
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         count = active_display_count()
         if count:
-            return "woke the panel: %d active display(s)" % count
+            break
+    else:
+        return ("the panel stayed asleep with no active display, so every capture in this run "
+                "will be refused by the capture channel"), None
+    return _hold_display("woke the panel: %d active display(s)" % count, hold_seconds)
+
+
+def _hold_display(sentinel, hold_seconds):
+    """Pair an awake panel with a keep-awake process for the whole probe run.
+
+    The keep-awake path must exist on *both* entries into the awake state: a panel that
+    was already awake when the probe started never went through the wake code, and
+    pipeline 1596 refused every capture with exactly that entry -- reported awake at
+    launch, TCC allowed, and the display nevertheless gone by the time ScreenCaptureKit
+    was asked for pixels. The returned handle is the caller's responsibility to stop.
+    """
+    if not hold_seconds:
+        return sentinel, None
+    try:
+        hold = subprocess.Popen(["caffeinate", "-u", "-t", str(int(hold_seconds))],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return "%s; holding it awake for %ds" % (sentinel, hold_seconds), hold
+    except Exception as error:
+        return ("%s, but the hold-awake process could not start (%s), so the panel can "
+                "still fall asleep mid-run" % (sentinel, error)), None
         time.sleep(0.5)
     return ("the panel stayed asleep with no active display, so every capture in this run "
             "will be refused by the capture channel")
@@ -589,7 +624,7 @@ def env_developer_dir():
     return probe.stdout.strip() or "/Applications/Xcode.app/Contents/Developer"
 
 
-def run(app, out, timeout):
+def run(app, out, timeout, hold_seconds=None):
     home = os.path.join(out, "home")
     shutil.rmtree(home, ignore_errors=True)
     os.makedirs(home)
@@ -600,7 +635,8 @@ def run(app, out, timeout):
         return None
     # The panel has to be awake before ScreenCaptureKit is asked for pixels, or every pane
     # reports a refused capture that reads exactly like a page which never rendered.
-    print("[render-probe] display: %s" % ensure_display())
+    display_sentence, hold = ensure_display(hold_seconds=hold_seconds)
+    print("[render-probe] display: %s" % display_sentence)
     # LaunchServices, not a direct exec. A directly exec'd binary is attributed by macOS to
     # the calling lineage -- the shell, then the runner -- so the ScreenCaptureKit grant for
     # the bundle id is never consulted and every capture answers -3801 whatever TCC says
@@ -626,6 +662,16 @@ def run(app, out, timeout):
         subprocess.run(["pkill", "-f", binary], capture_output=True, text=True)
         print("FAIL the probe did not exit within %d s, so it never reached a verdict" % timeout)
         return None
+    finally:
+        if hold is not None:
+            try:
+                hold.terminate()
+                hold.wait(timeout=5)
+            except Exception:
+                try:
+                    hold.kill()
+                except Exception:
+                    pass
     if os.path.exists(stderr_path):
         with open(stderr_path, encoding="utf-8", errors="replace") as handle:
             print(handle.read().strip()[-500:])
@@ -974,7 +1020,11 @@ def main():
     app = args.app or build(args.timeout)
     if app is None:
         return 1
-    report = run(app, out, min(args.timeout, 300))
+    # The panel must stay awake for the whole run, not just at launch: pass the run
+    # timeout straight through as the keep-awake horizon (plus a margin so a probe that
+    # runs exactly to its limit is not captured in the last second of a lapsed hold).
+    report = run(app, out, min(args.timeout, 300),
+                 hold_seconds=min(args.timeout, 300) + 30)
     if report is None:
         return 1
 
