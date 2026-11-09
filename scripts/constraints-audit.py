@@ -1447,6 +1447,40 @@ PROBE_APP = os.path.join(root, "Limelight", "macOS", "AppDelegateForAppKit.m")
 probe_app = open(PROBE_APP, encoding="utf-8").read()
 RENDER_PROBE = os.path.join(root, "scripts", "render-probe.py")
 render_probe = open(RENDER_PROBE, encoding="utf-8").read()
+# How the probe starts the Debug app is a functional requirement, not a style choice. A
+# directly exec'd binary is attributed by macOS to the calling lineage instead of the app
+# bundle, so the ScreenCaptureKit grant for the bundle id is never consulted and every
+# capture answers -3801 (incident 2026-11-08). A panel that fell asleep between jobs leaves
+# ScreenCaptureKit with no active display and every capture answers -3811. Both failures
+# reach the reader as "the page never rendered", which is the worst possible way for an
+# environment problem to look: it is indistinguishable from the defect this gate exists to
+# catch. So the two runtime preconditions are pinned to the words that implement them.
+check('subprocess.run([binary]' not in render_probe,
+      "the probe starts its Debug bundle through LaunchServices, so macOS attributes the "
+      "capture to the granted bundle id"
+      if 'subprocess.run([binary]' not in render_probe
+      else "render-probe.py execs the app binary directly again: macOS would attribute the "
+           "capture to the runner lineage, the ScreenCaptureKit grant would never be "
+           "consulted, and every pane would report a refused capture that reads like a "
+           "rendering regression (see docs/history/incidents/tcc-reset-recovery-2026-11-08.md)")
+check('"open", "-n", "-W"' in render_probe and '"--env", "ML_RENDER_PROBE_OUTPUT="' in render_probe,
+      "the probe launches through `open -n -W` and still delivers its own output directory"
+      if '"open", "-n", "-W"' in render_probe and '"--env", "ML_RENDER_PROBE_OUTPUT="' in render_probe
+      else "render-probe.py no longer launches the app with `open -n -W` carrying "
+           "ML_RENDER_PROBE_OUTPUT, so either the attribution fix is gone or the report can "
+           "no longer be found after the launch")
+check('"caffeinate", "-u"' in render_probe and "def ensure_display(" in render_probe,
+      "the probe wakes the panel and waits for an active display before capturing"
+      if '"caffeinate", "-u"' in render_probe and "def ensure_display(" in render_probe
+      else "render-probe.py stopped ensuring an active display: with the panel asleep "
+           "ScreenCaptureKit refuses to start a stream and every pane reports a capture "
+           "refusal that reads like a page that never drew")
+check('os.path.exists(path)' in render_probe and "% proc.returncode" not in render_probe,
+      "the probe reads its verdict from report.json rather than from `open`'s exit status"
+      if 'os.path.exists(path)' in render_probe and "% proc.returncode" not in render_probe
+      else "render-probe.py reports an exit code it cannot trust again: `open -W` returns 0 "
+           "for a bundle that exited 1 (measured on the mini 2026-11-09), so report.json has "
+           "to be the verdict")
 probe_key = re.search(r'MLProbeAdvancedSectionCollapsedKey\s*\n?\s*= @"([^"]+)"', probe_app)
 check(bool(probe_key) and probe_key.group(1) in app_pane,
       "the probe forces the same preference the app page stores the section state under"
