@@ -283,6 +283,12 @@ def verify_panes(report, refusals, out_dir):
         # defect. Remembering the refusal lets the reader keep the two sentences apart.
         pixels = pane.get("pixels") or {}
         absence, absence_reason = artefact_absence(pixels)
+        # A measured fold has to name the API that drew it; without that, a fallback
+        # capture would read as the primary channel having done its job.
+        if pixels.get("stddev") is not None:
+            expect(pixels.get("captureChannel") in ("SCK", "CG"),
+                   "%s reports pixel measurements but names no capture channel, so the "
+                   "report cannot say which API drew it" % name)
         if absence:
             uncaptured[name] = (absence, absence_reason)
         if pane.get("capture"):
@@ -314,6 +320,11 @@ def verify_panes(report, refusals, out_dir):
 
         if name == "devicesPane":
             pixels = pane.get("initialPixels") or {}
+            if pixels.get("stddev") is not None:
+                expect(pixels.get("captureChannel") in ("SCK", "CG"),
+                       "the USB permission page's initial fold reports pixel measurements "
+                       "but names no capture channel, so the report cannot say which API "
+                       "drew it")
             refusal = pixel_refusal(pixels, "the USB permission page's initial fold",
                                     require_distinct=False)
             if not artefact_absence(pixels)[0]:
@@ -493,6 +504,13 @@ def verify(report, out_dir=None):
     # of that sentence.
     expect(pixel_refusal(pixels, "the settings page") is None,
            pixel_refusal(pixels, "the settings page"))
+    # A measured page has to say which API drew it: the producer stamps `captureChannel`
+    # on every measurement block, and a fallback that silently disappears would otherwise
+    # read as the primary channel having done its job.
+    if pixels.get("stddev") is not None:
+        expect(pixels.get("captureChannel") in ("SCK", "CG"),
+               "the settings page reports pixel measurements but names no capture channel, "
+               "so the report cannot say which API drew it")
 
     materials = report.get("materialLayers") or []
     expect(len(materials) > 0, "no backdrop or material layer in the page: no Liquid Glass is composited")
@@ -727,7 +745,12 @@ def sample_panes():
                 # report the verifier refused, and every refusal after that looked like the
                 # fixture's fault rather than the run's.
                 "hostReadsDuringPresent": reads,
-                "hostReadsDuringDismiss": 0}
+                "hostReadsDuringDismiss": 0,
+                # The producer stamps the API that drew the pane on every measurement
+                # block; the fixture answers with the primary channel, and the mutation
+                # cases below prove the reader refuses a measurement without it.
+                "pixels": {"stddev": 0.21, "distinctColours": 77, "sampled": 4000,
+                            "mean": 0.9, "captureChannel": "SCK"}}
         report.update(extra)
         return report
 
@@ -763,7 +786,8 @@ def sample_panes():
              "deviceHubsSectionDetail": "hubs remain reachable", "devicePermissionStrings":
              ["USB permissions", "permission only", "USB switch", "local devices", "refresh"]},
             SAMPLE_CAPTURES[3], initialCapture=SAMPLE_CAPTURES[3],
-            initialPixels={"stddev": 0.21, "distinctColours": 77}, hubDisclosuresPressed=1,
+            initialPixels={"stddev": 0.21, "distinctColours": 77, "captureChannel": "SCK"},
+            hubDisclosuresPressed=1,
             readableContentExpanded=[{"role": "AXStaticText", "text": "hubs remain reachable"}]),
         "streamPane": pane(0, stream_nodes, stream_expectation, SAMPLE_CAPTURES[0]),
         "videoPane": pane(1, video_nodes, video_expectation, SAMPLE_CAPTURES[1]),
@@ -803,7 +827,8 @@ def self_test():
                     "presentedAfterBackControl": False, "mountedAfterBackControl": False,
                     "focusOnPageAfterBackControl": False, "probeWindowIsKeyWindow": False,
                     "titleAfterBackControl": "Moonlight",
-                    "settingsPagePixels": {"stddev": 0.21, "distinctColours": 77},
+                    "settingsPagePixels": {"stddev": 0.21, "distinctColours": 77,
+                                            "captureChannel": "SCK"},
                     "materialLayers": ["CABackdropLayer x4"]}
             good.update(sample_panes())
             good["memoryCycles"] = {
@@ -850,7 +875,13 @@ def self_test():
                 ("the page keeps the keyboard in a window that can hold one", lambda report: report.update(
                     {"probeWindowIsKeyWindow": True, "focusOnPageAfterBackControl": True})),
                 ("nothing was drawn", lambda report: report.update(
-                    {"settingsPagePixels": {"stddev": 0.001, "distinctColours": 2}})),
+                    {"settingsPagePixels": {"stddev": 0.001, "distinctColours": 2}})),                ("a drawn page that never says which API drew it", lambda report: report.update(
+                    {"settingsPagePixels": {"stddev": 0.0702, "distinctColours": 53}})),
+                ("a pane fold with measurements but no capture channel", lambda report: report["videoPane"].update(
+                    {"pixels": {"stddev": 0.31, "distinctColours": 88, "sampled": 4000, "mean": 0.9}})),
+                ("the USB initial fold with measurements but no capture channel", lambda report: report["devicesPane"].update(
+                    {"initialPixels": {"stddev": 0.21, "distinctColours": 77}})),
+
                 ("a flat colour lifted only by antialiasing noise", lambda report: report.update(
                     {"settingsPagePixels": {"stddev": 0.012, "distinctColours": 44}})),
                 ("no material is composited", lambda report: report.update({"materialLayers": []})),
@@ -922,12 +953,34 @@ def self_test():
             # stddev 0.0702, 53 distinct colours). A threshold that refuses them refuses the
             # build, so the passing case is pinned here too and not only in a comment.
             lit = json.loads(json.dumps(good))
-            lit.update({"settingsPagePixels": {"stddev": 0.0702, "distinctColours": 53}})
+            lit.update({"settingsPagePixels": {"stddev": 0.0702, "distinctColours": 53,
+                                               "captureChannel": "SCK"}})
             accepted = verify(lit, out)
             print("%-4s the page drawn on a real light-theme display still passes"
                   % ("ok" if not accepted else "FAIL"))
             if accepted:
                 print("     the verifier refused numbers a real page produces")
+                failures += 1
+            # The CG window-list fallback is a first-class capture path: when ScreenCaptureKit
+            # refuses the stream on the runner session, the report still passes -- it names
+            # the channel it used instead of pretending SCK drew the pixels.
+            cgrun = json.loads(json.dumps(good))
+            for key in ("settingsPagePixels",) + tuple(
+                    name for name in ("streamPane", "videoPane", "appPane", "devicesPane")):
+                block = cgrun.get(key)
+                if isinstance(block, dict) and block.get("stddev") is not None:
+                    block["captureChannel"] = "CG"
+                elif isinstance(block, dict):
+                    for sub in ("pixels", "initialPixels"):
+                        inner = block.get(sub)
+                        if isinstance(inner, dict) and inner.get("stddev") is not None:
+                            inner["captureChannel"] = "CG"
+            cgaccepted = verify(cgrun, out)
+            print("%-4s a report captured through the window-list fallback still passes"
+                  % ("ok" if not cgaccepted else "FAIL"))
+            if cgaccepted:
+                print("     the verifier refused the fallback channel: %s"
+                      % "; ".join(cgaccepted)[:200])
                 failures += 1
 
             # Which sentence a red earns is the claim of this wave, so a check that only asked
@@ -965,7 +1018,7 @@ def self_test():
                       "capture": None}),
                  "no artefact behind them", ["never captured", "no variation"]),
                 ("a pane that answers neither question is named, not counted as a capture",
-                 lambda report: report["videoPane"].update({"capture": None}),
+                 lambda report: report["videoPane"].update({"capture": None, "pixels": None}),
                  "cannot say whether the pane was ever drawn", ["no variation"]),
                 # A report that does both is the exact defect this wave removes on the producer
                 # side; the reader has to refuse it too, or an older binary keeps passing.
