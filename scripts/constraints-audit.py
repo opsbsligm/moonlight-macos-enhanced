@@ -1527,6 +1527,21 @@ check('dlsym(RTLD_DEFAULT, "CGWindowListCreateImage")' in probe_app
            "refusing to start a stream (-3811, pipeline 1626) would red the build again while "
            "the window renders fine, and the dlsym form cannot be replaced by a direct call "
            "because the header marks the symbol unavailable on macOS 15+")
+# Pipeline 1656 measured the window-list image as fully black on the headless runner
+# session after SCK refused (-3811): the offscreen window had not reached a synthesized
+# surface the window-list API reads. The view-local cacheDisplay channel is the last
+# resort, and the reader must trust its stamp the way it trusts the window-list one.
+check('MLProbeCacheDisplayCapture(view, &cacheError)' in probe_app
+      and 'channel = @"CACHE"' in probe_app
+      and '"CACHE"' in render_probe,
+      "the probe tries a view-local cacheDisplay capture after both window-scoped "
+      "channels are dark, and the reader accepts that stamp"
+      if 'MLProbeCacheDisplayCapture(view, &cacheError)' in probe_app
+      and 'channel = @"CACHE"' in probe_app and '"CACHE"' in render_probe
+      else "the render probe lost its cacheDisplay last resort: on a headless runner "
+           "session the window-list capture can come back pure black (pipeline 1656) and "
+           "without this channel a correctly drawn settings page would red the build "
+           "while rendering fine")
 check('measurements[@"captureChannel"]' in probe_app
       and '"captureChannel"' in render_probe,
       "the probe stamps which capture channel drew each measurement, and the reader checks "
