@@ -109,6 +109,7 @@ static NSBitmapImageRep *MLProbeCroppedBitmap(CGImageRef image, NSRect rect,
 // runtime instead of linked: the symbol has kept working, and a dlsym that returns
 // NULL degrades to the old behaviour (SCK only) rather than a link failure.
 static NSBitmapImageRep *MLProbeCGFallbackCapture(NSInteger windowNumber, NSRect rect,
+                                                   CGFloat backingScale,
                                                   NSString **errorOut) {
     if (errorOut) *errorOut = nil;
     typedef CGImageRef (*MLProbeCGCaptureFunction)(CGRect, CGWindowListOption,
@@ -126,12 +127,36 @@ static NSBitmapImageRep *MLProbeCGFallbackCapture(NSInteger windowNumber, NSRect
         if (errorOut) *errorOut = @"the window-list capture returned no image";
         return nil;
     }
+    // The window-list image is the window at its backing scale, so the crop divides by the
+    // point size, not the pixel size: passing the image height here made syScale 1 on a 2x
+    // display and kept only the bottom half of the window (pipeline 1656).
+    CGFloat contentPoints = backingScale > 0
+        ? CGImageGetHeight(image) / backingScale
+        : (CGFloat)CGImageGetHeight(image);
     NSBitmapImageRep *bitmap =
-        MLProbeCroppedBitmap(image, rect, (CGFloat)CGImageGetHeight(image), errorOut);
+        MLProbeCroppedBitmap(image, rect, contentPoints, errorOut);
     CGImageRelease(image);
     return bitmap;
 }
 
+// Third capture channel for headless runner sessions: pipeline 1656 measured the
+// window-list image as fully black after ScreenCaptureKit refused the stream (-3811),
+// which says the compositor had not synthesized the offscreen window into a surface
+// the window-list API reads. cacheDisplay draws the view hierarchy into a bitmap
+// without that surface, and the channel comparison on the mini and this Mac showed
+// it answers for both AppKit content and the SwiftUI hosting view the settings page
+// uses. The result is view-local by construction, so no window geometry is involved.
+static NSBitmapImageRep *MLProbeCacheDisplayCapture(NSView *view, NSString **errorOut) {
+    if (errorOut) *errorOut = nil;
+    NSBitmapImageRep *bitmap = [view bitmapImageRepForCachingDisplayInRect:view.bounds];
+    if (bitmap == nil) {
+        if (errorOut) *errorOut = @"no bitmap rep for the view bounds";
+        return nil;
+    }
+    [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
+    if (errorOut) *errorOut = nil;
+    return bitmap;
+}
 
 // `failureOut` exists because a missing capture and a flat capture are different claims.
 // Without it a caller could only see a nil bitmap and had to guess, and the guess shipped
@@ -206,7 +231,9 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
                 // granted and the panel awake). The view renders fine underneath, so the
                 // window-list channel gets one attempt before the refusal is final.
                 NSString *fallbackError = nil;
-                NSBitmapImageRep *fallback = MLProbeCGFallbackCapture(windowNumber, rect, &fallbackError);
+                NSBitmapImageRep *fallback = MLProbeCGFallbackCapture(windowNumber, rect,
+                                                                      [window backingScaleFactor],
+                                                                      &fallbackError);
                 if (fallback != nil) {
                     bitmap = fallback;
                     channel = @"CG";
@@ -216,17 +243,38 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
                             (captureError.localizedDescription ?: @"no image").UTF8String,
                             (long)captureError.code);
                 } else {
+                    // Both window-scoped channels are dark on a headless runner session
+                    // (pipeline 1656: SCK -3811, then the window-list image measured pure
+                    // black because the offscreen window never reached a synthesized
+                    // surface). The view still owns its pixels, so the view-local channel
+                    // gets one attempt before the refusal is final.
+                    NSString *cacheError = nil;
+                    NSBitmapImageRep *cache = MLProbeCacheDisplayCapture(view, &cacheError);
+                    if (cache != nil) {
+                        bitmap = cache;
+                        channel = @"CACHE";
+                        fprintf(stderr,
+                                "[render-probe] SCK refused the stream (%s, osStatus %ld), "
+                                "the window-list capture said %s; view-local cacheDisplay "
+                                "captured the pane\n",
+                                (captureError.localizedDescription ?: @"no image").UTF8String,
+                                (long)captureError.code,
+                                (fallbackError ?: @"no image").UTF8String);
+                    } else {
                     fprintf(stderr,
                             "[render-probe] SCK refused the stream (%s, osStatus %ld) and the "
-                            "window-list fallback said %s\n",
+                            "window-list fallback said %s; cacheDisplay said %s\n",
                             (captureError.localizedDescription ?: @"no image").UTF8String,
                             (long)captureError.code,
-                            (fallbackError ?: @"no image").UTF8String);
+                            (fallbackError ?: @"no image").UTF8String,
+                            (cacheError ?: @"no image").UTF8String);
                     failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld), "
-                           "window-list fallback: %@",
+                           "window-list fallback: %@, cacheDisplay: %@",
                                captureError.localizedDescription ?: @"no image",
                                (long)captureError.code,
-                               fallbackError ?: @"no image"];
+                               fallbackError ?: @"no image",
+                               cacheError ?: @"no image"];
+                    }
                 }
             }
             dispatch_async(dispatch_get_main_queue(), ^{
