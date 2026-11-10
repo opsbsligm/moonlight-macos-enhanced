@@ -181,112 +181,124 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
     __block NSString *channel = nil;
     // AppKit's cacheDisplay omits SwiftUI's composited layers. Capture only our
     // own window; currentProcess does not request access to other applications.
-    [SCShareableContent getCurrentProcessShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
-        SCWindow *target = nil;
-        for (SCWindow *candidate in content.windows) {
-            if (candidate.windowID == windowNumber &&
-                candidate.owningApplication.processID == NSProcessInfo.processInfo.processIdentifier) {
-                target = candidate;
-                break;
-            }
-        }
-        if (target == nil) {
-            // The localized words cannot separate a TCC refusal (-3801) from a dead panel
-            // (-3811): both print as "audio/video capture failed, cannot start stream
-            // playback", and pipeline 1596 stayed red with the panel awake and the TCC row
-            // allowed. The channel's own number is the one field that tells the two apart.
-            fprintf(stderr, "[render-probe] own window capture unavailable: %s (osStatus %ld)\n",
-                    (error.localizedDescription ?: @"window not found").UTF8String,
-                    (long)error.code);
-            failure = [NSString stringWithFormat:@"own window not offered for capture: %@ (osStatus %ld)",
-                       error.localizedDescription ?: @"window not found", (long)error.code];
-            dispatch_async(dispatch_get_main_queue(), ^{ finished = YES; });
-            return;
-        }
-        SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
-        SCStreamConfiguration *configuration = [SCStreamConfiguration new];
-        configuration.width = (size_t)ceil(filter.contentRect.size.width);
-        configuration.height = (size_t)ceil(filter.contentRect.size.height);
-        configuration.ignoreShadowsSingleWindow = YES;
-        configuration.includeChildWindows = NO;
-        configuration.showsCursor = NO;
-        [SCScreenshotManager captureImageWithFilter:filter configuration:configuration
-                                 completionHandler:^(CGImageRef image, NSError *captureError) {
-            NSBitmapImageRep *bitmap = nil;
-            if (image != NULL) {
-                CGFloat sx = CGImageGetWidth(image) / filter.contentRect.size.width;
-                CGFloat sy = CGImageGetHeight(image) / filter.contentRect.size.height;
-                CGRect crop = CGRectMake(rect.origin.x * sx,
-                    (filter.contentRect.size.height - NSMaxY(rect)) * sy,
-                    rect.size.width * sx, rect.size.height * sy);
-                CGImageRef cropped = CGImageCreateWithImageInRect(image, crop);
-                if (cropped != NULL) {
-                    bitmap = [[NSBitmapImageRep alloc] initWithCGImage:cropped];
-                    CGImageRelease(cropped);
-                    channel = @"SCK";
+    @try {
+        [SCShareableContent getCurrentProcessShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *error) {
+            SCWindow *target = nil;
+            for (SCWindow *candidate in content.windows) {
+                if (candidate.windowID == windowNumber &&
+                    candidate.owningApplication.processID == NSProcessInfo.processInfo.processIdentifier) {
+                    target = candidate;
+                    break;
                 }
-            } else {
-                // The window is offered and the filter was built, but the stream still
-                // refused to start (measured -3811 on the runner session with the TCC row
-                // granted and the panel awake). Pipeline 1668 showed the window-list API
-                // can answer a refusal with a stale frame of the same window: all four
-                // pane captures came back as one pixel hash while the accessibility tree
-                // proved the page underneath had already switched, so a non-nil CG image
-                // is no proof it drew the fold that is up. The view-local cacheDisplay
-                // channel draws the hierarchy as it stands now and is tried first; the
-                // window-list capture remains the last resort for a session where the
-                // view-local drawing is dark too (pipeline 1656 measured pure black there,
-                // which is why the ordering exists in both directions at all).
-                    NSString *cacheError = nil;
-                    NSBitmapImageRep *cache = MLProbeCacheDisplayCapture(view, &cacheError);
-                    if (cache != nil) {
-                        bitmap = cache;
-                        channel = @"CACHE";
-                        fprintf(stderr,
-                                "[render-probe] SCK refused the stream (%s, osStatus %ld); "
-                                "view-local cacheDisplay captured the pane\n",
-                                (captureError.localizedDescription ?: @"no image").UTF8String,
-                                (long)captureError.code);
-                    } else {
-                        NSString *fallbackError = nil;
-                        NSBitmapImageRep *fallback = MLProbeCGFallbackCapture(windowNumber, rect,
-                                                                              [window backingScaleFactor],
-                                                                              &fallbackError);
-                        if (fallback != nil) {
-                            bitmap = fallback;
-                            channel = @"CG";
+            }
+            if (target == nil) {
+                // The localized words cannot separate a TCC refusal (-3801) from a dead panel
+                // (-3811): both print as "audio/video capture failed, cannot start stream
+                // playback", and pipeline 1596 stayed red with the panel awake and the TCC row
+                // allowed. The channel's own number is the one field that tells the two apart.
+                fprintf(stderr, "[render-probe] own window capture unavailable: %s (osStatus %ld)\n",
+                        (error.localizedDescription ?: @"window not found").UTF8String,
+                        (long)error.code);
+                failure = [NSString stringWithFormat:@"own window not offered for capture: %@ (osStatus %ld)",
+                           error.localizedDescription ?: @"window not found", (long)error.code];
+                dispatch_async(dispatch_get_main_queue(), ^{ finished = YES; });
+                return;
+            }
+            SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
+            SCStreamConfiguration *configuration = [SCStreamConfiguration new];
+            configuration.width = (size_t)ceil(filter.contentRect.size.width);
+            configuration.height = (size_t)ceil(filter.contentRect.size.height);
+            configuration.ignoreShadowsSingleWindow = YES;
+            configuration.includeChildWindows = NO;
+            configuration.showsCursor = NO;
+            [SCScreenshotManager captureImageWithFilter:filter configuration:configuration
+                                     completionHandler:^(CGImageRef image, NSError *captureError) {
+                NSBitmapImageRep *bitmap = nil;
+                if (image != NULL) {
+                    CGFloat sx = CGImageGetWidth(image) / filter.contentRect.size.width;
+                    CGFloat sy = CGImageGetHeight(image) / filter.contentRect.size.height;
+                    CGRect crop = CGRectMake(rect.origin.x * sx,
+                        (filter.contentRect.size.height - NSMaxY(rect)) * sy,
+                        rect.size.width * sx, rect.size.height * sy);
+                    CGImageRef cropped = CGImageCreateWithImageInRect(image, crop);
+                    if (cropped != NULL) {
+                        bitmap = [[NSBitmapImageRep alloc] initWithCGImage:cropped];
+                        CGImageRelease(cropped);
+                        channel = @"SCK";
+                    }
+                } else {
+                    // The window is offered and the filter was built, but the stream still
+                    // refused to start (measured -3811 on the runner session with the TCC row
+                    // granted and the panel awake). Pipeline 1668 showed the window-list API
+                    // can answer a refusal with a stale frame of the same window: all four
+                    // pane captures came back as one pixel hash while the accessibility tree
+                    // proved the page underneath had already switched, so a non-nil CG image
+                    // is no proof it drew the fold that is up. The view-local cacheDisplay
+                    // channel draws the hierarchy as it stands now and is tried first; the
+                    // window-list capture remains the last resort for a session where the
+                    // view-local drawing is dark too (pipeline 1656 measured pure black there,
+                    // which is why the ordering exists in both directions at all).
+                        NSString *cacheError = nil;
+                        NSBitmapImageRep *cache = MLProbeCacheDisplayCapture(view, &cacheError);
+                        if (cache != nil) {
+                            bitmap = cache;
+                            channel = @"CACHE";
                             fprintf(stderr,
-                                    "[render-probe] SCK refused the stream (%s, osStatus %ld), "
-                                    "view-local cacheDisplay said %s; window-list fallback "
-                                    "captured the pane\n",
+                                    "[render-probe] SCK refused the stream (%s, osStatus %ld); "
+                                    "view-local cacheDisplay captured the pane\n",
                                     (captureError.localizedDescription ?: @"no image").UTF8String,
-                                    (long)captureError.code,
-                                    (cacheError ?: @"no image").UTF8String);
+                                    (long)captureError.code);
                         } else {
-                    fprintf(stderr,
-                            "[render-probe] SCK refused the stream (%s, osStatus %ld), "
-                            "view-local cacheDisplay said %s; window-list fallback "
-                            "said %s\n",
-                            (captureError.localizedDescription ?: @"no image").UTF8String,
-                            (long)captureError.code,
-                            (cacheError ?: @"no image").UTF8String,
-                            (fallbackError ?: @"no image").UTF8String);
-                             failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld), "
-                                   "view-local cacheDisplay: %@, window-list fallback: %@",
-                                       captureError.localizedDescription ?: @"no image",
-                                       (long)captureError.code,
-                                       cacheError ?: @"no image",
-                                       fallbackError ?: @"no image"];
+                            NSString *fallbackError = nil;
+                            NSBitmapImageRep *fallback = MLProbeCGFallbackCapture(windowNumber, rect,
+                                                                                  [window backingScaleFactor],
+                                                                                  &fallbackError);
+                            if (fallback != nil) {
+                                bitmap = fallback;
+                                channel = @"CG";
+                                fprintf(stderr,
+                                        "[render-probe] SCK refused the stream (%s, osStatus %ld), "
+                                        "view-local cacheDisplay said %s; window-list fallback "
+                                        "captured the pane\n",
+                                        (captureError.localizedDescription ?: @"no image").UTF8String,
+                                        (long)captureError.code,
+                                        (cacheError ?: @"no image").UTF8String);
+                            } else {
+                        fprintf(stderr,
+                                "[render-probe] SCK refused the stream (%s, osStatus %ld), "
+                                "view-local cacheDisplay said %s; window-list fallback "
+                                "said %s\n",
+                                (captureError.localizedDescription ?: @"no image").UTF8String,
+                                (long)captureError.code,
+                                (cacheError ?: @"no image").UTF8String,
+                                (fallbackError ?: @"no image").UTF8String);
+                                 failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld), "
+                                       "view-local cacheDisplay: %@, window-list fallback: %@",
+                                           captureError.localizedDescription ?: @"no image",
+                                           (long)captureError.code,
+                                           cacheError ?: @"no image",
+                                           fallbackError ?: @"no image"];
+                            }
                         }
                     }
-                }
-            dispatch_async(dispatch_get_main_queue(), ^{
-                result = bitmap;
-                finished = YES;
-                MLProbeLastCaptureChannel = channel;
-            });
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    result = bitmap;
+                    finished = YES;
+                    MLProbeLastCaptureChannel = channel;
+                });
         }];
     }];
+    } @catch (NSException *exception) {
+        // ScreenCaptureKit's reply arrives over NSXPC and can be an uncaught
+        // NSException on a background queue (measured on the mini 2026-11-10,
+        // pipeline 1687: the process died with no report written). The exception
+        // is treated as a channel failure, the spin loop below owns the timeout.
+        fprintf(stderr, "[render-probe] SCK threw %s: %s; falling through to the capture deadline\n",
+                (exception.name?.description ?: @"NSException").UTF8String,
+                (exception.reason ?: @"no reason").UTF8String);
+        if (failureOut) *failureOut = [NSString stringWithFormat:@"SCK channel threw: %@ %@",
+                                        exception.name ?: @"NSException", exception.reason ?: @"no reason"];
+    }
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
     while (!finished && deadline.timeIntervalSinceNow > 0) MLProbeSpin(0.02);
     if (result == nil) MLProbeLastCaptureChannel = nil;
@@ -1804,617 +1816,639 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
     if (getenv("ML_OWNERSHIP_PROBE") == NULL) {
         return;
     }
+    @try {
 
-    NSString *output = NSProcessInfo.processInfo.environment[@"ML_RENDER_PROBE_OUTPUT"]
-                       ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ownership-probe"];
-    [[NSFileManager defaultManager] createDirectoryAtPath:output
-                             withIntermediateDirectories:YES
-                                              attributes:nil
-                                                   error:nil];
+        NSString *output = NSProcessInfo.processInfo.environment[@"ML_RENDER_PROBE_OUTPUT"]
+                           ?: [NSHomeDirectory() stringByAppendingPathComponent:@"ownership-probe"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:output
+                                 withIntermediateDirectories:YES
+                                                  attributes:nil
+                                                       error:nil];
 
-    NSMutableDictionary *ownership = [NSMutableDictionary dictionary];
-    NSMutableArray<NSString *> *failures = [NSMutableArray array];
-    void (^refuse)(NSString *) = ^(NSString *problem) {
-        [failures addObject:problem];
-    };
-    // The premise every number below rests on: the holder is the app and nothing else. Named in
-    // the report so the audit reads the premise instead of assuming it from this file.
-    ownership[@"holder"] = @"app-only";
+        NSMutableDictionary *ownership = [NSMutableDictionary dictionary];
+        NSMutableArray<NSString *> *failures = [NSMutableArray array];
+        void (^refuse)(NSString *) = ^(NSString *problem) {
+            [failures addObject:problem];
+        };
+        // The premise every number below rests on: the holder is the app and nothing else. Named in
+        // the report so the audit reads the premise instead of assuming it from this file.
+        ownership[@"holder"] = @"app-only";
 
-    // Reap before seeding. Without this the ownership probe on a CI runner measures the graph
-    // the memory sweep left in the same database one step earlier -- the same shape, the same
-    // three apps, and a `seed status` of existing-hosts rather than seeded, which is the only
-    // clue that the room was not clean. A person's own library is left exactly as it was.
-    // Before the reap, so a host this measurement removed is not also blamed on the reap, and a
-    // host it left behind still gets swept by the flag that exists for that job.
-    MLProbePartialHostInfoIfRequested(ownership, refuse);
-    MLProbeMissingHostNameIfRequested(ownership, refuse);
-    MLReapProbeOwnedHostsIfRequested(ownership, refuse);
+        // Reap before seeding. Without this the ownership probe on a CI runner measures the graph
+        // the memory sweep left in the same database one step earlier -- the same shape, the same
+        // three apps, and a `seed status` of existing-hosts rather than seeded, which is the only
+        // clue that the room was not clean. A person's own library is left exactly as it was.
+        // Before the reap, so a host this measurement removed is not also blamed on the reap, and a
+        // host it left behind still gets swept by the flag that exists for that job.
+        MLProbePartialHostInfoIfRequested(ownership, refuse);
+        MLProbeMissingHostNameIfRequested(ownership, refuse);
+        MLReapProbeOwnedHostsIfRequested(ownership, refuse);
 
-    // One host through the production write path, exactly as the memory sweep seeds one. A
-    // machine with a library of its own is left alone and its library is what gets measured.
-    MLSeedHostsIntoLibrary(ownership, refuse, 1);
+        // One host through the production write path, exactly as the memory sweep seeds one. A
+        // machine with a library of its own is left alone and its library is what gets measured.
+        MLSeedHostsIntoLibrary(ownership, refuse, 1);
 
-    NSMutableDictionary *shapes = [NSMutableDictionary dictionary];
-    ownership[@"shapes"] = shapes;
+        NSMutableDictionary *shapes = [NSMutableDictionary dictionary];
+        ownership[@"shapes"] = shapes;
 
-    // Picked inside its own pool, and only the two objects of interest leave it. The array
-    // `getHosts` returns, and the `allObjects` array of each host, are autoreleased, and an
-    // array that outlives the handover is a second pair of hands on the graph: the measurement
-    // would then be watching its own harness and reporting the harness's retain as the app's
-    // leak. Nothing else is still held when the first observation is taken.
-    NSUInteger libraryHostCount = 0;
-    NSUInteger libraryProbeOwned = 0;
-    __block TemporaryHost *libraryHost = nil;
-    __block TemporaryApp *libraryApp = nil;
-    __block NSUInteger libraryAppListCount = 0;
-    @autoreleasepool {
-        DataManager *store = [[DataManager alloc] init];
-        NSArray<TemporaryHost *> *library = [store getHosts];
-        libraryHostCount = library.count;
-        for (TemporaryHost *candidate in library) {
-            // Counted over the whole library, before anything picks a host out of it. The first
-            // version of this counted inside the loop below and stopped where that loop stopped,
-            // and a real library caught it: two probe hosts, one picked, and a report that said
-            // the library held none -- a count of the search, presented as a count of the
-            // library. The reap above counts the same library a second way, and the audit now
-            // refuses the two answers whenever they differ.
-            if ([candidate.uuid hasPrefix:MLProbeHostUuidPrefix]) {
-                libraryProbeOwned++;
+        // Picked inside its own pool, and only the two objects of interest leave it. The array
+        // `getHosts` returns, and the `allObjects` array of each host, are autoreleased, and an
+        // array that outlives the handover is a second pair of hands on the graph: the measurement
+        // would then be watching its own harness and reporting the harness's retain as the app's
+        // leak. Nothing else is still held when the first observation is taken.
+        NSUInteger libraryHostCount = 0;
+        NSUInteger libraryProbeOwned = 0;
+        __block TemporaryHost *libraryHost = nil;
+        __block TemporaryApp *libraryApp = nil;
+        __block NSUInteger libraryAppListCount = 0;
+        @autoreleasepool {
+            DataManager *store = [[DataManager alloc] init];
+            NSArray<TemporaryHost *> *library = [store getHosts];
+            libraryHostCount = library.count;
+            for (TemporaryHost *candidate in library) {
+                // Counted over the whole library, before anything picks a host out of it. The first
+                // version of this counted inside the loop below and stopped where that loop stopped,
+                // and a real library caught it: two probe hosts, one picked, and a report that said
+                // the library held none -- a count of the search, presented as a count of the
+                // library. The reap above counts the same library a second way, and the audit now
+                // refuses the two answers whenever they differ.
+                if ([candidate.uuid hasPrefix:MLProbeHostUuidPrefix]) {
+                    libraryProbeOwned++;
+                }
+            }
+            for (TemporaryHost *candidate in library) {
+                NSArray<TemporaryApp *> *apps = candidate.appList.allObjects;
+                if (apps.count > 0) {
+                    libraryHost = candidate;
+                    libraryApp = apps.firstObject;
+                    libraryAppListCount = candidate.appList.count;
+                    break;
+                }
+            }
+            if (libraryHost != nil) {
+                ownership[@"productionHostUuid"] = libraryHost.uuid ?: @"";
             }
         }
-        for (TemporaryHost *candidate in library) {
-            NSArray<TemporaryApp *> *apps = candidate.appList.allObjects;
-            if (apps.count > 0) {
-                libraryHost = candidate;
-                libraryApp = apps.firstObject;
-                libraryAppListCount = candidate.appList.count;
-                break;
-            }
+        ownership[@"libraryHosts"] = @(libraryHostCount);
+        ownership[@"probeOwnedHosts"] = @(libraryProbeOwned);
+        if (libraryApp == nil) {
+            // Not a skip: a library with no app behind any host means there is no production graph
+            // to hold, which is the whole subject, so the run has to say so out loud.
+            shapes[@"productionGraph"] = @"not-measured";
+            refuse([NSString stringWithFormat:@"%@ host(s) in the library and none of them has an"
+                    @" app, so there is no graph from `getHosts` to hold", @(libraryHostCount)]);
+        } else {
+            shapes[@"productionGraph"] = MLOwnershipMeasureShape(^(TemporaryHost **hostSlot,
+                                                                  TemporaryApp **appSlot,
+                                                                  NSUInteger *appListCountSlot) {
+                *hostSlot = libraryHost;
+                *appSlot = libraryApp;
+                *appListCountSlot = libraryAppListCount;
+                // The builder is the last place outside the pair that still held these two, so the
+                // handover has to empty it. Leaving them here would put a second holder in the room
+                // and turn "the app keeps its host alive" into a tautology.
+                libraryHost = nil;
+                libraryApp = nil;
+            });
         }
-        if (libraryHost != nil) {
-            ownership[@"productionHostUuid"] = libraryHost.uuid ?: @"";
-        }
-    }
-    ownership[@"libraryHosts"] = @(libraryHostCount);
-    ownership[@"probeOwnedHosts"] = @(libraryProbeOwned);
-    if (libraryApp == nil) {
-        // Not a skip: a library with no app behind any host means there is no production graph
-        // to hold, which is the whole subject, so the run has to say so out loud.
-        shapes[@"productionGraph"] = @"not-measured";
-        refuse([NSString stringWithFormat:@"%@ host(s) in the library and none of them has an"
-                @" app, so there is no graph from `getHosts` to hold", @(libraryHostCount)]);
-    } else {
-        shapes[@"productionGraph"] = MLOwnershipMeasureShape(^(TemporaryHost **hostSlot,
+        // Wrapped rather than passed: the measurement takes a block because the production shape
+        // needs to hand over captured state, and a helper that takes one kind of builder and not
+        // the other would be two measurements pretending to be one.
+        shapes[@"handBuiltGraph"] = MLOwnershipMeasureShape(^(TemporaryHost **hostSlot,
                                                               TemporaryApp **appSlot,
                                                               NSUInteger *appListCountSlot) {
-            *hostSlot = libraryHost;
-            *appSlot = libraryApp;
-            *appListCountSlot = libraryAppListCount;
-            // The builder is the last place outside the pair that still held these two, so the
-            // handover has to empty it. Leaving them here would put a second holder in the room
-            // and turn "the app keeps its host alive" into a tautology.
-            libraryHost = nil;
-            libraryApp = nil;
+            MLOwnershipBuildGraphPair(hostSlot, appSlot, appListCountSlot);
         });
-    }
-    // Wrapped rather than passed: the measurement takes a block because the production shape
-    // needs to hand over captured state, and a helper that takes one kind of builder and not
-    // the other would be two measurements pretending to be one.
-    shapes[@"handBuiltGraph"] = MLOwnershipMeasureShape(^(TemporaryHost **hostSlot,
-                                                          TemporaryApp **appSlot,
-                                                          NSUInteger *appListCountSlot) {
-        MLOwnershipBuildGraphPair(hostSlot, appSlot, appListCountSlot);
-    });
-    shapes[@"backpointerOnly"] = MLOwnershipMeasureShape(^(TemporaryHost **hostSlot,
-                                                           TemporaryApp **appSlot,
-                                                           NSUInteger *appListCountSlot) {
-        MLOwnershipBuildBackpointerPair(hostSlot, appSlot, appListCountSlot);
-    });
-    // The two holder shapes above: the same severed graph, held by a holder that keeps the app
-    // alone and by one that keeps the app and the host. The difference between the two readings is
-    // the pairing's contribution, which is what step 2 and step 3 of the fix are for.
-    shapes[@"severedBackpointerAppOnlyHolder"] = MLOwnershipMeasureHolderShape(NO, YES);
-    shapes[@"severedBackpointerPairedHolder"] = MLOwnershipMeasureHolderShape(YES, YES);
+        shapes[@"backpointerOnly"] = MLOwnershipMeasureShape(^(TemporaryHost **hostSlot,
+                                                               TemporaryApp **appSlot,
+                                                               NSUInteger *appListCountSlot) {
+            MLOwnershipBuildBackpointerPair(hostSlot, appSlot, appListCountSlot);
+        });
+        // The two holder shapes above: the same severed graph, held by a holder that keeps the app
+        // alone and by one that keeps the app and the host. The difference between the two readings is
+        // the pairing's contribution, which is what step 2 and step 3 of the fix are for.
+        shapes[@"severedBackpointerAppOnlyHolder"] = MLOwnershipMeasureHolderShape(NO, YES);
+        shapes[@"severedBackpointerPairedHolder"] = MLOwnershipMeasureHolderShape(YES, YES);
 
-    NSDictionary *report = @{@"ownership": ownership, @"failures": failures};
-    NSData *json = [NSJSONSerialization dataWithJSONObject:report
-                                                  options:NSJSONWritingPrettyPrinted
-                                                    error:nil];
-    [json writeToFile:[output stringByAppendingPathComponent:@"report.json"] atomically:YES];
-    NSDictionary *handBuilt = shapes[@"handBuiltGraph"];
-    fprintf(stderr, "[ownership-probe] app-only holder keeps the host alive: %s | pair survives"
-            " with no holder: %s | a lone back-pointer survives with no holder: %s\n",
-            [handBuilt[@"hostAliveWhileAppHeld"] boolValue] ? "yes" : "no",
-            [handBuilt[@"hostAliveWithNoHolder"] boolValue] ? "yes" : "no",
-            [shapes[@"backpointerOnly"][@"hostAliveWithNoHolder"] boolValue] ? "yes" : "no");
-    NSDictionary *severedAppOnly = shapes[@"severedBackpointerAppOnlyHolder"];
-    NSDictionary *severedPaired = shapes[@"severedBackpointerPairedHolder"];
-    fprintf(stderr, "[ownership-probe] back-pointer severed: a holder keeping only the app keeps"
-            " the host alive: %s | a holder keeping the app and the host keeps it alive: %s\n",
-            [severedAppOnly[@"hostAliveWhileHeldByHolder"] boolValue] ? "yes" : "no",
-            [severedPaired[@"hostAliveWhileHeldByHolder"] boolValue] ? "yes" : "no");
-    if (failures.count) {
-        fprintf(stderr, "[ownership-probe] %s\n",
-                [[failures componentsJoinedByString:@"; "] UTF8String]);
+        NSDictionary *report = @{@"ownership": ownership, @"failures": failures};
+        NSData *json = [NSJSONSerialization dataWithJSONObject:report
+                                                      options:NSJSONWritingPrettyPrinted
+                                                        error:nil];
+        [json writeToFile:[output stringByAppendingPathComponent:@"report.json"] atomically:YES];
+        NSDictionary *handBuilt = shapes[@"handBuiltGraph"];
+        fprintf(stderr, "[ownership-probe] app-only holder keeps the host alive: %s | pair survives"
+                " with no holder: %s | a lone back-pointer survives with no holder: %s\n",
+                [handBuilt[@"hostAliveWhileAppHeld"] boolValue] ? "yes" : "no",
+                [handBuilt[@"hostAliveWithNoHolder"] boolValue] ? "yes" : "no",
+                [shapes[@"backpointerOnly"][@"hostAliveWithNoHolder"] boolValue] ? "yes" : "no");
+        NSDictionary *severedAppOnly = shapes[@"severedBackpointerAppOnlyHolder"];
+        NSDictionary *severedPaired = shapes[@"severedBackpointerPairedHolder"];
+        fprintf(stderr, "[ownership-probe] back-pointer severed: a holder keeping only the app keeps"
+                " the host alive: %s | a holder keeping the app and the host keeps it alive: %s\n",
+                [severedAppOnly[@"hostAliveWhileHeldByHolder"] boolValue] ? "yes" : "no",
+                [severedPaired[@"hostAliveWhileHeldByHolder"] boolValue] ? "yes" : "no");
+        if (failures.count) {
+            fprintf(stderr, "[ownership-probe] %s\n",
+                    [[failures componentsJoinedByString:@"; "] UTF8String]);
+        }
+        fflush(stderr);
+        exit(failures.count ? 1 : 0);
+    } @catch (NSException *exception) {
+        // A throw anywhere in the pass used to kill the process before report.json
+        // existed, and `open -W` reads back as exit 0 either way. Writing nothing is
+        // deliberate: the harness treats a missing report as "no verdict" and the
+        // retry owns the second attempt.
+        fprintf(stderr, "[render-probe] probe pass threw %s: %s; no report written\n",
+                (exception.name?.description ?: @"NSException").UTF8String,
+                (exception.reason ?: @"no reason").UTF8String);
+        fflush(stderr);
     }
-    fflush(stderr);
-    exit(failures.count ? 1 : 0);
 }
 
 static void MLRunRenderProbeAndExitIfRequested(void) {
     if (getenv("ML_RENDER_PROBE") == NULL) {
         return;
     }
+    @try {
 
-    NSString *output = NSProcessInfo.processInfo.environment[@"ML_RENDER_PROBE_OUTPUT"]
-                       ?: [NSHomeDirectory() stringByAppendingPathComponent:@"render-probe"];
-    [[NSFileManager defaultManager] createDirectoryAtPath:output
-                             withIntermediateDirectories:YES
-                                              attributes:nil
-                                                   error:nil];
+        NSString *output = NSProcessInfo.processInfo.environment[@"ML_RENDER_PROBE_OUTPUT"]
+                           ?: [NSHomeDirectory() stringByAppendingPathComponent:@"render-probe"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:output
+                                 withIntermediateDirectories:YES
+                                                  attributes:nil
+                                                       error:nil];
 
-    NSMutableDictionary *report = [NSMutableDictionary dictionary];
-    NSMutableArray<NSString *> *failures = [NSMutableArray array];
-    void (^refuse)(NSString *) = ^(NSString *reason) { [failures addObject:reason]; };
+        NSMutableDictionary *report = [NSMutableDictionary dictionary];
+        NSMutableArray<NSString *> *failures = [NSMutableArray array];
+        void (^refuse)(NSString *) = ^(NSString *reason) { [failures addObject:reason]; };
 
-    // No title is set on purpose: a window title is user-facing text, the
-    // localizability checker is right to say so, and a Diagnostic window that
-    // never outlives its own process has nothing to title.
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1100, 700)
-                                                  styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
-                                                            | NSWindowStyleMaskResizable)
-                                                    backing:NSBackingStoreBuffered
-                                                      defer:NO];
-    // SwiftUI can suspend its layer drawing for an offscreen window. Measure
-    // a visible page instead of accepting an accessibility tree over black pixels.
-    [window center];
-    [window makeKeyAndOrderFront:nil];
-    [NSApp activate];
-    MLProbeSpin(0.4);
+        // No title is set on purpose: a window title is user-facing text, the
+        // localizability checker is right to say so, and a Diagnostic window that
+        // never outlives its own process has nothing to title.
+        NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1100, 700)
+                                                      styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                                                                | NSWindowStyleMaskResizable)
+                                                        backing:NSBackingStoreBuffered
+                                                          defer:NO];
+        // SwiftUI can suspend its layer drawing for an offscreen window. Measure
+        // a visible page instead of accepting an accessibility tree over black pixels.
+        [window center];
+        [window makeKeyAndOrderFront:nil];
+        [NSApp activate];
+        MLProbeSpin(0.4);
 
-    NSView *content = window.contentView;
-    report[@"contentSize"] = NSStringFromSize(content.bounds.size);
-    // A high contrast pattern gives the glass a backdrop whose response can
-    // be compared with a solid fill.
-    NSImageView *backdrop = [[NSImageView alloc] initWithFrame:content.bounds];
-    backdrop.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    backdrop.image = MLProbePatternImage(content.bounds.size);
-    [content addSubview:backdrop];
-    MLProbeSpin(0.2);
+        NSView *content = window.contentView;
+        report[@"contentSize"] = NSStringFromSize(content.bounds.size);
+        // A high contrast pattern gives the glass a backdrop whose response can
+        // be compared with a solid fill.
+        NSImageView *backdrop = [[NSImageView alloc] initWithFrame:content.bounds];
+        backdrop.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        backdrop.image = MLProbePatternImage(content.bounds.size);
+        [content addSubview:backdrop];
+        MLProbeSpin(0.2);
 
-    NSString *beforeFailure = nil;
-    NSBitmapImageRep *beforeRep = MLProbeCaptureView(content, &beforeFailure);
-    report[@"beforePresent"] = MLProbePixels([output stringByAppendingPathComponent:@"01-window-before.png"],
-                                             beforeRep, beforeFailure);
-    report[@"backdropBlocksBeforePresent"] = MLProbeBlockAnalysis(
-        beforeRep, NSMakeRange(0, (NSUInteger)content.bounds.size.width),
-        NSMakeRange(0, (NSUInteger)content.bounds.size.height), beforeFailure);
+        NSString *beforeFailure = nil;
+        NSBitmapImageRep *beforeRep = MLProbeCaptureView(content, &beforeFailure);
+        report[@"beforePresent"] = MLProbePixels([output stringByAppendingPathComponent:@"01-window-before.png"],
+                                                 beforeRep, beforeFailure);
+        report[@"backdropBlocksBeforePresent"] = MLProbeBlockAnalysis(
+            beforeRep, NSMakeRange(0, (NSUInteger)content.bounds.size.width),
+            NSMakeRange(0, (NSUInteger)content.bounds.size.height), beforeFailure);
 
-    // Seeded before the page opens: the page is what reads the library, and a graph that
-    // arrives after the first read is a graph the sweep never saw.
-    MLSeedHostsForMemorySweep(report, refuse);
+        // Seeded before the page opens: the page is what reads the library, and a graph that
+        // arrives after the first read is a graph the sweep never saw.
+        MLSeedHostsForMemorySweep(report, refuse);
 
-    NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
-    NSSet<NSView *> *subviewsBefore = [NSSet setWithArray:content.subviews];
-    // Taken before presenting: the presenter is about to rename the window, so a
-    // baseline read afterwards is the page own title, which no close can return to.
-    NSString *titleBeforePresent = window.title ?: @"";
-    // Read before the present, so one window answers for itself on both sides of the
-    // page: no page in it here, a page in it below.
-    BOOL presentedBeforePresent = [SettingsOverlayPresenter isSettingsPresentedInWindow:window];
+        NSSet<NSWindow *> *windowsBefore = [NSSet setWithArray:NSApp.windows];
+        NSSet<NSView *> *subviewsBefore = [NSSet setWithArray:content.subviews];
+        // Taken before presenting: the presenter is about to rename the window, so a
+        // baseline read afterwards is the page own title, which no close can return to.
+        NSString *titleBeforePresent = window.title ?: @"";
+        // Read before the present, so one window answers for itself on both sides of the
+        // page: no page in it here, a page in it below.
+        BOOL presentedBeforePresent = [SettingsOverlayPresenter isSettingsPresentedInWindow:window];
 
-    [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
-    MLProbeSpin(1.0);
+        [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
+        MLProbeSpin(1.0);
 
-    NSMutableArray<NSString *> *addedWindows = [NSMutableArray array];
-    for (NSWindow *candidate in NSApp.windows) {
-        if (![windowsBefore containsObject:candidate] && candidate != window) {
-            [addedWindows addObject:[NSString stringWithFormat:@"%@/%@",
-                                     NSStringFromClass([candidate class]), candidate.title]];
-        }
-    }
-    report[@"windowsAddedByPresentingSettings"] = addedWindows;
-    if (addedWindows.count != 0) {
-        refuse([NSString stringWithFormat:@"presenting settings opened %lu new window(s): %@",
-                (unsigned long)addedWindows.count, [addedWindows componentsJoinedByString:@", "]]);
-    }
-    if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
-        refuse(@"the presenter did not record settings as presented in the window it was given");
-    }
-    // The filter that gives Command+W back is an app local monitor, so it sees the
-    // gesture in every window this app owns and may swallow it only where the page is
-    // up. It is asked of the same predicate the accessibility bridge uses, which is what
-    // makes this answer the whole claim: the monitor hands the event back to AppKit
-    // unless that predicate is true. A window that could not answer for a page before
-    // one was shown is the shape that closed a stream window instead of settings.
-    report[@"settingsReportedBeforePresent"] = @(presentedBeforePresent);
-    if (presentedBeforePresent) {
-        refuse(@"the window reported a settings page before one was presented, so the Command+W filter had nothing to hand back");
-    }
-
-    NSMutableArray<NSView *> *addedViews = [NSMutableArray array];
-    for (NSView *candidate in content.subviews) {
-        if (![subviewsBefore containsObject:candidate]) {
-            [addedViews addObject:candidate];
-        }
-    }
-    report[@"viewsAddedToWindowContent"] = @(addedViews.count);
-    if (addedViews.count != 1) {
-        refuse([NSString stringWithFormat:@"the settings page added %lu views to the window content, expected 1",
-                (unsigned long)addedViews.count]);
-    }
-
-    NSView *overlay = addedViews.firstObject;
-    if (overlay) {
-        report[@"overlayClass"] = NSStringFromClass([overlay class]);
-        report[@"overlayAlpha"] = @(overlay.alphaValue);
-        report[@"overlayInsideWindowContent"] = @([overlay isDescendantOf:content]);
-        report[@"overlayFrame"] = NSStringFromRect(overlay.frame);
-        if (overlay.alphaValue < 0.99) {
-            refuse([NSString stringWithFormat:@"the settings page is still at alpha %.3f after the fade",
-                    overlay.alphaValue]);
-        }
-        if (![overlay isDescendantOf:content]) {
-            refuse(@"the settings page is not inside the window's own content view");
-        }
-
-        NSUInteger visualEffects = MLProbeCountMatching(overlay, ^BOOL(NSView *view) {
-            return [view isKindOfClass:[NSVisualEffectView class]];
-        });
-        NSDictionary<NSString *, NSNumber *> *inventory = MLProbeClassInventory(overlay);
-        NSMutableDictionary<NSString *, NSNumber *> *layers = [NSMutableDictionary dictionary];
-        MLProbeRecordLayers(overlay, layers);
-        report[@"layerInventory"] = layers;
-        report[@"visualEffectViews"] = @(visualEffects);
-        report[@"classInventory"] = inventory;
-        NSMutableArray<NSString *> *glassBackings = [NSMutableArray array];
-        [inventory enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSNumber *count, BOOL *stop) {
-            // The hosting view is named after the SwiftUI page it hosts, so its
-            // class name mentioning "Glass" says nothing about a material.
-            BOOL isHosting = [name rangeOfString:@"NSHostingView"].location != NSNotFound;
-            BOOL looksGlassy = [name rangeOfString:@"Glass" options:NSCaseInsensitiveSearch].location != NSNotFound
-                               || [name rangeOfString:@"VisualEffect" options:NSCaseInsensitiveSearch].location != NSNotFound
-                               || [name rangeOfString:@"Material" options:NSCaseInsensitiveSearch].location != NSNotFound;
-            if (looksGlassy && !isHosting) {
-                [glassBackings addObject:[NSString stringWithFormat:@"%@ x%lu", name,
-                                          (unsigned long)count.unsignedIntegerValue]];
-            }
-        }];
-        report[@"glassBackings"] = glassBackings;
-
-        NSString *compositeFailure = nil;
-        NSBitmapImageRep *compositeRep = MLProbeCaptureView(content, &compositeFailure);
-        report[@"compositePixels"] = MLProbePixels([output stringByAppendingPathComponent:@"03-composite.png"],
-                                                   compositeRep, compositeFailure);
-        report[@"behindPageBlocks"] = MLProbeBlockAnalysis(
-            compositeRep, NSMakeRange(0, (NSUInteger)content.bounds.size.width),
-            NSMakeRange(0, (NSUInteger)content.bounds.size.height), compositeFailure);
-
-        // How much of the page lets the window backdrop through. Reported, not
-        // asserted: the page deliberately sits on an opaque base, so its materials
-        // read the page's own content rather than the window behind it, and a zero
-        // here is the designed behaviour, not a missing material. What a material
-        // exists at all is measured from the layer tree below.
-        backdrop.image = MLProbeSolidImage(content.bounds.size, 0.95, 0.10, 0.10);
-        MLProbeSpin(0.3);
-        NSString *overSolidFailure = nil;
-        NSBitmapImageRep *overSolid = MLProbeCaptureView(content, &overSolidFailure);
-        NSString *where = nil;
-        // The first image decides. If the composite capture failed the comparison has nothing
-        // to diff against even when this second capture succeeded, so the sentence names that
-        // capture rather than the one that happened to work.
-        NSDictionary *readThrough = MLProbeTranslucentRegions(
-            compositeRep, overSolid, &where,
-            compositeFailure ?: overSolidFailure ?: @"no image was captured for the read-through");
-        report[@"readThroughPageBlocks"] = readThrough;
-        report[@"readThroughPageWhere"] = where ?: @"no block changed when only the backdrop changed"
-                                           " (expected while the page base is opaque)";
-
-        NSMutableArray<NSString *> *materialLayers = [NSMutableArray array];
-        [layers enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSNumber *count, BOOL *stop) {
-            if ([name hasPrefix:@"material:"]) {
-                [materialLayers addObject:[NSString stringWithFormat:@"%@ x%lu",
-                                           [name substringFromIndex:@"material:".length],
-                                           (unsigned long)count.unsignedIntegerValue]];
-            }
-        }];
-        report[@"materialLayers"] = materialLayers;
-        if (materialLayers.count == 0) {
-            refuse([NSString stringWithFormat:@"the settings page has no backdrop or material layer, so no "
-                   @"Liquid Glass material is being composited; layers present: %lu",
-                    (unsigned long)layers.count]);
-        }
-
-        NSString *pageFailure = nil;
-        NSBitmapImageRep *rep = MLProbeCaptureView(overlay, &pageFailure);
-        NSDictionary *pixels = MLProbePixels([output stringByAppendingPathComponent:@"02-settings-page.png"],
-                                             rep, pageFailure);
-
-        report[@"settingsPagePixels"] = pixels;
-        // Say which of the two it is. A flat page is a rendering regression; a page that was
-        // never captured says nothing about rendering, and the sentence below is what stopped
-        // a CI capture-channel failure from being read as one.
-        double stddev = [pixels[@"stddev"] doubleValue];
-        NSUInteger distinct = [pixels[@"distinctColours"] unsignedIntegerValue];
-        if (pixels[@"captureFailure"]) {
-            refuse([NSString stringWithFormat:@"the settings page was never captured, so nothing here "
-                   @"can say whether it drew: %@", pixels[@"captureFailure"]]);
-        } else {
-            // The floor is 0.02, not the 0.08 this gate was written with: the settings page is
-            // a light theme, so a fully drawn page measures 0.0702 here against 0.001 when flat.
-            // The old floor sat above the real number and refused a page that rendered properly.
-            // `render-probe.py --self-test` pins both ends of the line with fixtures.
-            if (stddev < 0.02 || distinct < 40) {
-                refuse([NSString stringWithFormat:@"the settings page rendered as flat: "
-                       @"stddev %.3f, %lu distinct colours", stddev, (unsigned long)distinct]);
+        NSMutableArray<NSString *> *addedWindows = [NSMutableArray array];
+        for (NSWindow *candidate in NSApp.windows) {
+            if (![windowsBefore containsObject:candidate] && candidate != window) {
+                [addedWindows addObject:[NSString stringWithFormat:@"%@/%@",
+                                         NSStringFromClass([candidate class]), candidate.title]];
             }
         }
-
-        // Asking the presenter to close proves the teardown works. It does not prove the
-        // control on the page can reach the presenter, and those are different claims: the
-        // page holds the box that carries the action weakly, so only the presenter keeping
-        // that box alive makes the back control mean anything. With it unheld, the button
-        // and Escape both press on air while Command+W and the window closing still work.
-        // Press the control, then ask what came down with it.
-        // Whether the control is visible to accessibility is reported and not asserted:
-        // SwiftUI publishes that tree to an external client, so a runner with no client
-        // attached answers empty and the assertion would refuse a working page. What is
-        // asserted is the closure the control runs, which is the thing a press executes.
-        report[@"backControlVisibleToAccessibility"] = @(MLProbeFindBackControl((id<NSAccessibility>)overlay, 0) != nil);
-        BOOL backControlReached = [SettingsOverlayPresenter pressBackControlInWindow:window];
-        report[@"backControlPressReachedPresenter"] = @(backControlReached);
-        MLProbeSpin(0.6);
-        report[@"presentedAfterBackControl"] = @([SettingsOverlayPresenter isSettingsPresentedInWindow:window]);
-        report[@"mountedAfterBackControl"] = @([overlay isDescendantOf:content]);
-        report[@"focusOnPageAfterBackControl"] = @(window.firstResponder == overlay);
-        report[@"probeWindowIsKeyWindow"] = @(window.isKeyWindow);
-        report[@"titleBeforePresent"] = titleBeforePresent;
-        report[@"titleAfterBackControl"] = window.title ?: @"";
-        if (!backControlReached) {
-            refuse(@"the settings page was not presented when the back control was asked to run");
+        report[@"windowsAddedByPresentingSettings"] = addedWindows;
+        if (addedWindows.count != 0) {
+            refuse([NSString stringWithFormat:@"presenting settings opened %lu new window(s): %@",
+                    (unsigned long)addedWindows.count, [addedWindows componentsJoinedByString:@", "]]);
         }
-        if ([SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
-            refuse(@"running the back control closure left the page presented -- the closure reaches a box nothing owns");
+        if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+            refuse(@"the presenter did not record settings as presented in the window it was given");
         }
-        if ([overlay isDescendantOf:content]) {
-            refuse(@"running the back control closure left the page mounted in the window content");
-        }
-        // Handing the keyboard back is only a claim a window that can hold the keyboard
-        // can answer. This probe window sits offscreen and is never key, and AppKit does not
-        // move the first responder of a window that is not key, so the claim is asserted
-        // only where the window can actually answer it.
-        if (window.isKeyWindow && window.firstResponder == overlay) {
-            refuse(@"running the back control closure left the keyboard on the page it just closed");
-        }
-        if (![window.title isEqualToString:titleBeforePresent]) {
-            refuse([NSString stringWithFormat:@"running the back control closure left the title %@ instead of %@", window.title ?: @"", titleBeforePresent]);
+        // The filter that gives Command+W back is an app local monitor, so it sees the
+        // gesture in every window this app owns and may swallow it only where the page is
+        // up. It is asked of the same predicate the accessibility bridge uses, which is what
+        // makes this answer the whole claim: the monitor hands the event back to AppKit
+        // unless that predicate is true. A window that could not answer for a page before
+        // one was shown is the shape that closed a stream window instead of settings.
+        report[@"settingsReportedBeforePresent"] = @(presentedBeforePresent);
+        if (presentedBeforePresent) {
+            refuse(@"the window reported a settings page before one was presented, so the Command+W filter had nothing to hand back");
         }
 
-        [SettingsOverlayPresenter dismissSettingsFromWindow:window];
-        MLProbeSpin(0.6);
-        report[@"overlayStillMountedAfterDismiss"] = @([overlay isDescendantOf:content]);
-        report[@"presentedAfterDismiss"] = @([SettingsOverlayPresenter isSettingsPresentedInWindow:window]);
-        if ([SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
-            refuse(@"the presenter still reports settings as presented after dismissal");
+        NSMutableArray<NSView *> *addedViews = [NSMutableArray array];
+        for (NSView *candidate in content.subviews) {
+            if (![subviewsBefore containsObject:candidate]) {
+                [addedViews addObject:candidate];
+            }
         }
-        if ([overlay isDescendantOf:content]) {
-            refuse(@"the settings page is still mounted after dismissal");
+        report[@"viewsAddedToWindowContent"] = @(addedViews.count);
+        if (addedViews.count != 1) {
+            refuse([NSString stringWithFormat:@"the settings page added %lu views to the window content, expected 1",
+                    (unsigned long)addedViews.count]);
         }
-    }
 
+        NSView *overlay = addedViews.firstObject;
+        if (overlay) {
+            report[@"overlayClass"] = NSStringFromClass([overlay class]);
+            report[@"overlayAlpha"] = @(overlay.alphaValue);
+            report[@"overlayInsideWindowContent"] = @([overlay isDescendantOf:content]);
+            report[@"overlayFrame"] = NSStringFromRect(overlay.frame);
+            if (overlay.alphaValue < 0.99) {
+                refuse([NSString stringWithFormat:@"the settings page is still at alpha %.3f after the fade",
+                        overlay.alphaValue]);
+            }
+            if (![overlay isDescendantOf:content]) {
+                refuse(@"the settings page is not inside the window's own content view");
+            }
 
-    // Cumulative measurement: what a person going in and out of the page leaves behind.
-    //
-    // Every claim above looks at one visit and one close. A page that leaks once per visit
-    // and a page that leaks once per run answer the same question at exit -- "these objects
-    // are still here" -- and the difference between them is the one a user feels: the first
-    // gets worse over an evening, the second does not. So the flag asks for N further visits
-    // through the production presenter, in the production order (present, run the back
-    // control's closure, let the teardown land), and the sweep then reports for N visits
-    // rather than one. scripts/leak-audit.py --growth is what turns two of these runs into a
-    // rate; this function deliberately asserts no count, because how many graphs a run holds
-    // is the library's and the render's, not a property anyone should hardcode here.
-    //
-    // What it does assert is that the cycles it was asked for ran. A flag that reached a
-    // build which ignores it would otherwise be read as "the page does not grow across
-    // visits", which is the same false green with a number next to it.
-    // Hand over to the stage that runs after launch. Accessibility is the reason:
-    // measured on this tree, an app that has not finished launching vends a
-    // placeholder tree (the application element referring to itself, no window, no
-    // text), so nothing could be read from the page however hard the checker looked.
-    // The visual claims above do not need accessibility and stay where they were
-    // proven; the readable claims run once the app is really up.
-    MLProbeReport = report;
-    MLProbeFailures = failures;
-    MLProbeOutputDirectory = output;
-    MLProbeWindow = window;
-    MLProbeBackdrop = backdrop;
-    MLProbeArmed = YES;
-}
-
-static void MLFinishRenderProbeIfArmed(void) {
-    if (!MLProbeArmed) {
-        return;
-    }
-    MLProbeArmed = NO;
-    MLProbeSpin(1.0);
-
-    NSMutableDictionary *report = MLProbeReport;
-    NSMutableArray<NSString *> *failures = MLProbeFailures;
-    NSString *output = MLProbeOutputDirectory;
-
-    // What the production code believes about this machine, recorded so the
-    // checker compares the page against the rule instead of against a string
-    // someone typed into a test.
-
-
-    // Four panes of the same page. The video pane holds the enhancement controls
-    // and the readout of what the decoder is really doing; the App pane holds the
-    // capability matrix that says whether Video Toolbox and MetalFX can work here.
-    // Both used to be claims nobody could check without a human looking.
-    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 0, @"streamPane", report);
-    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 1, @"videoPane", report);
-    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 3, @"appPane", report);
-    MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 6, @"devicesPane", report);
-
-    // Device scan status is readable only after application launch completes.
-    NSWindow *window = MLProbeWindow;
-    void (^refuse)(NSString *) = ^(NSString *reason) { [failures addObject:reason]; };
-    const char *requestedCycles = getenv("ML_RENDER_PROBE_CYCLES");
-    if (requestedCycles != NULL) {
-        char *cyclesEnd = NULL;
-        long wantedCycles = strtol(requestedCycles, &cyclesEnd, 10);
-        NSMutableDictionary *cycleRecord = [NSMutableDictionary dictionary];
-        cycleRecord[@"requested"] = [NSString stringWithUTF8String:requestedCycles];
-        cycleRecord[@"completed"] = @0;
-        report[@"memoryCycles"] = cycleRecord;
-        if (cyclesEnd == requestedCycles || *cyclesEnd != '\0' || wantedCycles < 1 || wantedCycles > 64) {
-            cycleRecord[@"status"] = @"invalid";
-            refuse([NSString stringWithFormat:@"ML_RENDER_PROBE_CYCLES asks for %s, which is not a"
-                    @" whole cycle count between 1 and 64, so the growth being measured would have"
-                    @" an unknown denominator", requestedCycles]);
-        } else {
-            cycleRecord[@"status"] = @"running";
-            NSMutableArray<NSNumber *> *readsPerCycle = [NSMutableArray array];
-            NSUserDefaults *cycleDefaults = NSUserDefaults.standardUserDefaults;
-            id savedCyclePane = [cycleDefaults objectForKey:@"selected-settings-pane"];
-            NSMutableArray<NSNumber *> *panesPerCycle = [NSMutableArray array];
-            NSMutableArray<NSString *> *deviceScanResults = [NSMutableArray array];
-#if DEBUG
-            // The loop total is measured from before the first visit rather than summed from the
-            // per-cycle spans, so a read that happens between two cycles (the library count a
-            // pane pass does on its way out, say) cannot hide in the gaps of a sum. Both numbers
-            // are reported; scripts/render-probe.py is what checks they add up.
-            unsigned long long readsAtCyclesStart = MLHostReads();
-#endif
-            for (long cycle = 0; cycle < wantedCycles; cycle++) {
-#if DEBUG
-                unsigned long long readsAtCycleStart = MLHostReads();
-#endif
-                // Exercise device enumeration appearance/disappearance as well as
-                // the stream settings; a saved selection must not narrow the sweep.
-                NSInteger cyclePane = cycle % 2 == 0 ? 0 : 6;
-                [cycleDefaults setInteger:cyclePane forKey:@"selected-settings-pane"];
-                NSSet *cycleViewsBefore = [NSSet setWithArray:window.contentView.subviews];
-                [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
-                MLProbeSpin(0.25);
-                if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
-                    cycleRecord[@"status"] = @"did-not-present";
-                    refuse([NSString stringWithFormat:@"memory cycle %ld did not present the page,"
-                            @" so the sweep counted fewer visits than it asked for", cycle + 1]);
-                    break;
+            NSUInteger visualEffects = MLProbeCountMatching(overlay, ^BOOL(NSView *view) {
+                return [view isKindOfClass:[NSVisualEffectView class]];
+            });
+            NSDictionary<NSString *, NSNumber *> *inventory = MLProbeClassInventory(overlay);
+            NSMutableDictionary<NSString *, NSNumber *> *layers = [NSMutableDictionary dictionary];
+            MLProbeRecordLayers(overlay, layers);
+            report[@"layerInventory"] = layers;
+            report[@"visualEffectViews"] = @(visualEffects);
+            report[@"classInventory"] = inventory;
+            NSMutableArray<NSString *> *glassBackings = [NSMutableArray array];
+            [inventory enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSNumber *count, BOOL *stop) {
+                // The hosting view is named after the SwiftUI page it hosts, so its
+                // class name mentioning "Glass" says nothing about a material.
+                BOOL isHosting = [name rangeOfString:@"NSHostingView"].location != NSNotFound;
+                BOOL looksGlassy = [name rangeOfString:@"Glass" options:NSCaseInsensitiveSearch].location != NSNotFound
+                                   || [name rangeOfString:@"VisualEffect" options:NSCaseInsensitiveSearch].location != NSNotFound
+                                   || [name rangeOfString:@"Material" options:NSCaseInsensitiveSearch].location != NSNotFound;
+                if (looksGlassy && !isHosting) {
+                    [glassBackings addObject:[NSString stringWithFormat:@"%@ x%lu", name,
+                                              (unsigned long)count.unsignedIntegerValue]];
                 }
-                if (cyclePane == 6) {
-                    NSView *cycleOverlay = nil;
-                    for (NSView *candidate in window.contentView.subviews) {
-                        if (![cycleViewsBefore containsObject:candidate]) cycleOverlay = candidate;
-                    }
-                    NSString *scanResult = nil;
-                    NSString *available = [[LanguageManager shared] localize:@"USB devices available"];
-                    NSString *unreadable = [[LanguageManager shared] localize:@"USB device scan failed"];
-                    for (NSUInteger attempt = 0; attempt < 20 && !scanResult; attempt++) {
-                        NSArray *nodes = cycleOverlay ? MLProbeReadableNodes(cycleOverlay) : @[];
-                        if (MLProbeNodesVendText(nodes, available)) scanResult = @"read";
-                        else if (MLProbeNodesVendText(nodes, unreadable)) scanResult = @"unreadable";
-                        else MLProbeSpin(0.25);
-                    }
-                    [deviceScanResults addObject:scanResult ?: @"timeout"];
-                    if (!scanResult) {
-                        cycleRecord[@"deviceScanTimeoutContent"] = cycleOverlay ? MLProbeReadableNodes(cycleOverlay) : @[];
-                        cycleRecord[@"status"] = @"device-scan-timeout";
-                        refuse([NSString stringWithFormat:@"memory cycle %ld never displayed a completed USB scan",
-                                cycle + 1]);
-                        if (![SettingsOverlayPresenter pressBackControlInWindow:window]) {
-                            refuse(@"USB scan timeout cleanup could not reach the back control");
-                        }
-                        MLProbeSpin(0.25);
+            }];
+            report[@"glassBackings"] = glassBackings;
+
+            NSString *compositeFailure = nil;
+            NSBitmapImageRep *compositeRep = MLProbeCaptureView(content, &compositeFailure);
+            report[@"compositePixels"] = MLProbePixels([output stringByAppendingPathComponent:@"03-composite.png"],
+                                                       compositeRep, compositeFailure);
+            report[@"behindPageBlocks"] = MLProbeBlockAnalysis(
+                compositeRep, NSMakeRange(0, (NSUInteger)content.bounds.size.width),
+                NSMakeRange(0, (NSUInteger)content.bounds.size.height), compositeFailure);
+
+            // How much of the page lets the window backdrop through. Reported, not
+            // asserted: the page deliberately sits on an opaque base, so its materials
+            // read the page's own content rather than the window behind it, and a zero
+            // here is the designed behaviour, not a missing material. What a material
+            // exists at all is measured from the layer tree below.
+            backdrop.image = MLProbeSolidImage(content.bounds.size, 0.95, 0.10, 0.10);
+            MLProbeSpin(0.3);
+            NSString *overSolidFailure = nil;
+            NSBitmapImageRep *overSolid = MLProbeCaptureView(content, &overSolidFailure);
+            NSString *where = nil;
+            // The first image decides. If the composite capture failed the comparison has nothing
+            // to diff against even when this second capture succeeded, so the sentence names that
+            // capture rather than the one that happened to work.
+            NSDictionary *readThrough = MLProbeTranslucentRegions(
+                compositeRep, overSolid, &where,
+                compositeFailure ?: overSolidFailure ?: @"no image was captured for the read-through");
+            report[@"readThroughPageBlocks"] = readThrough;
+            report[@"readThroughPageWhere"] = where ?: @"no block changed when only the backdrop changed"
+                                               " (expected while the page base is opaque)";
+
+            NSMutableArray<NSString *> *materialLayers = [NSMutableArray array];
+            [layers enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSNumber *count, BOOL *stop) {
+                if ([name hasPrefix:@"material:"]) {
+                    [materialLayers addObject:[NSString stringWithFormat:@"%@ x%lu",
+                                               [name substringFromIndex:@"material:".length],
+                                               (unsigned long)count.unsignedIntegerValue]];
+                }
+            }];
+            report[@"materialLayers"] = materialLayers;
+            if (materialLayers.count == 0) {
+                refuse([NSString stringWithFormat:@"the settings page has no backdrop or material layer, so no "
+                       @"Liquid Glass material is being composited; layers present: %lu",
+                        (unsigned long)layers.count]);
+            }
+
+            NSString *pageFailure = nil;
+            NSBitmapImageRep *rep = MLProbeCaptureView(overlay, &pageFailure);
+            NSDictionary *pixels = MLProbePixels([output stringByAppendingPathComponent:@"02-settings-page.png"],
+                                                 rep, pageFailure);
+
+            report[@"settingsPagePixels"] = pixels;
+            // Say which of the two it is. A flat page is a rendering regression; a page that was
+            // never captured says nothing about rendering, and the sentence below is what stopped
+            // a CI capture-channel failure from being read as one.
+            double stddev = [pixels[@"stddev"] doubleValue];
+            NSUInteger distinct = [pixels[@"distinctColours"] unsignedIntegerValue];
+            if (pixels[@"captureFailure"]) {
+                refuse([NSString stringWithFormat:@"the settings page was never captured, so nothing here "
+                       @"can say whether it drew: %@", pixels[@"captureFailure"]]);
+            } else {
+                // The floor is 0.02, not the 0.08 this gate was written with: the settings page is
+                // a light theme, so a fully drawn page measures 0.0702 here against 0.001 when flat.
+                // The old floor sat above the real number and refused a page that rendered properly.
+                // `render-probe.py --self-test` pins both ends of the line with fixtures.
+                if (stddev < 0.02 || distinct < 40) {
+                    refuse([NSString stringWithFormat:@"the settings page rendered as flat: "
+                           @"stddev %.3f, %lu distinct colours", stddev, (unsigned long)distinct]);
+                }
+            }
+
+            // Asking the presenter to close proves the teardown works. It does not prove the
+            // control on the page can reach the presenter, and those are different claims: the
+            // page holds the box that carries the action weakly, so only the presenter keeping
+            // that box alive makes the back control mean anything. With it unheld, the button
+            // and Escape both press on air while Command+W and the window closing still work.
+            // Press the control, then ask what came down with it.
+            // Whether the control is visible to accessibility is reported and not asserted:
+            // SwiftUI publishes that tree to an external client, so a runner with no client
+            // attached answers empty and the assertion would refuse a working page. What is
+            // asserted is the closure the control runs, which is the thing a press executes.
+            report[@"backControlVisibleToAccessibility"] = @(MLProbeFindBackControl((id<NSAccessibility>)overlay, 0) != nil);
+            BOOL backControlReached = [SettingsOverlayPresenter pressBackControlInWindow:window];
+            report[@"backControlPressReachedPresenter"] = @(backControlReached);
+            MLProbeSpin(0.6);
+            report[@"presentedAfterBackControl"] = @([SettingsOverlayPresenter isSettingsPresentedInWindow:window]);
+            report[@"mountedAfterBackControl"] = @([overlay isDescendantOf:content]);
+            report[@"focusOnPageAfterBackControl"] = @(window.firstResponder == overlay);
+            report[@"probeWindowIsKeyWindow"] = @(window.isKeyWindow);
+            report[@"titleBeforePresent"] = titleBeforePresent;
+            report[@"titleAfterBackControl"] = window.title ?: @"";
+            if (!backControlReached) {
+                refuse(@"the settings page was not presented when the back control was asked to run");
+            }
+            if ([SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+                refuse(@"running the back control closure left the page presented -- the closure reaches a box nothing owns");
+            }
+            if ([overlay isDescendantOf:content]) {
+                refuse(@"running the back control closure left the page mounted in the window content");
+            }
+            // Handing the keyboard back is only a claim a window that can hold the keyboard
+            // can answer. This probe window sits offscreen and is never key, and AppKit does not
+            // move the first responder of a window that is not key, so the claim is asserted
+            // only where the window can actually answer it.
+            if (window.isKeyWindow && window.firstResponder == overlay) {
+                refuse(@"running the back control closure left the keyboard on the page it just closed");
+            }
+            if (![window.title isEqualToString:titleBeforePresent]) {
+                refuse([NSString stringWithFormat:@"running the back control closure left the title %@ instead of %@", window.title ?: @"", titleBeforePresent]);
+            }
+
+            [SettingsOverlayPresenter dismissSettingsFromWindow:window];
+            MLProbeSpin(0.6);
+            report[@"overlayStillMountedAfterDismiss"] = @([overlay isDescendantOf:content]);
+            report[@"presentedAfterDismiss"] = @([SettingsOverlayPresenter isSettingsPresentedInWindow:window]);
+            if ([SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+                refuse(@"the presenter still reports settings as presented after dismissal");
+            }
+            if ([overlay isDescendantOf:content]) {
+                refuse(@"the settings page is still mounted after dismissal");
+            }
+        }
+
+
+        // Cumulative measurement: what a person going in and out of the page leaves behind.
+        //
+        // Every claim above looks at one visit and one close. A page that leaks once per visit
+        // and a page that leaks once per run answer the same question at exit -- "these objects
+        // are still here" -- and the difference between them is the one a user feels: the first
+        // gets worse over an evening, the second does not. So the flag asks for N further visits
+        // through the production presenter, in the production order (present, run the back
+        // control's closure, let the teardown land), and the sweep then reports for N visits
+        // rather than one. scripts/leak-audit.py --growth is what turns two of these runs into a
+        // rate; this function deliberately asserts no count, because how many graphs a run holds
+        // is the library's and the render's, not a property anyone should hardcode here.
+        //
+        // What it does assert is that the cycles it was asked for ran. A flag that reached a
+        // build which ignores it would otherwise be read as "the page does not grow across
+        // visits", which is the same false green with a number next to it.
+        // Hand over to the stage that runs after launch. Accessibility is the reason:
+        // measured on this tree, an app that has not finished launching vends a
+        // placeholder tree (the application element referring to itself, no window, no
+        // text), so nothing could be read from the page however hard the checker looked.
+        // The visual claims above do not need accessibility and stay where they were
+        // proven; the readable claims run once the app is really up.
+        MLProbeReport = report;
+        MLProbeFailures = failures;
+        MLProbeOutputDirectory = output;
+        MLProbeWindow = window;
+        MLProbeBackdrop = backdrop;
+        MLProbeArmed = YES;
+    }
+
+    static void MLFinishRenderProbeIfArmed(void) {
+        if (!MLProbeArmed) {
+            return;
+        }
+        MLProbeArmed = NO;
+        MLProbeSpin(1.0);
+
+        NSMutableDictionary *report = MLProbeReport;
+        NSMutableArray<NSString *> *failures = MLProbeFailures;
+        NSString *output = MLProbeOutputDirectory;
+
+        // What the production code believes about this machine, recorded so the
+        // checker compares the page against the rule instead of against a string
+        // someone typed into a test.
+
+
+        // Four panes of the same page. The video pane holds the enhancement controls
+        // and the readout of what the decoder is really doing; the App pane holds the
+        // capability matrix that says whether Video Toolbox and MetalFX can work here.
+        // Both used to be claims nobody could check without a human looking.
+        MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 0, @"streamPane", report);
+        MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 1, @"videoPane", report);
+        MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 3, @"appPane", report);
+        MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 6, @"devicesPane", report);
+
+        // Device scan status is readable only after application launch completes.
+        NSWindow *window = MLProbeWindow;
+        void (^refuse)(NSString *) = ^(NSString *reason) { [failures addObject:reason]; };
+        const char *requestedCycles = getenv("ML_RENDER_PROBE_CYCLES");
+        if (requestedCycles != NULL) {
+            char *cyclesEnd = NULL;
+            long wantedCycles = strtol(requestedCycles, &cyclesEnd, 10);
+            NSMutableDictionary *cycleRecord = [NSMutableDictionary dictionary];
+            cycleRecord[@"requested"] = [NSString stringWithUTF8String:requestedCycles];
+            cycleRecord[@"completed"] = @0;
+            report[@"memoryCycles"] = cycleRecord;
+            if (cyclesEnd == requestedCycles || *cyclesEnd != '\0' || wantedCycles < 1 || wantedCycles > 64) {
+                cycleRecord[@"status"] = @"invalid";
+                refuse([NSString stringWithFormat:@"ML_RENDER_PROBE_CYCLES asks for %s, which is not a"
+                        @" whole cycle count between 1 and 64, so the growth being measured would have"
+                        @" an unknown denominator", requestedCycles]);
+            } else {
+                cycleRecord[@"status"] = @"running";
+                NSMutableArray<NSNumber *> *readsPerCycle = [NSMutableArray array];
+                NSUserDefaults *cycleDefaults = NSUserDefaults.standardUserDefaults;
+                id savedCyclePane = [cycleDefaults objectForKey:@"selected-settings-pane"];
+                NSMutableArray<NSNumber *> *panesPerCycle = [NSMutableArray array];
+                NSMutableArray<NSString *> *deviceScanResults = [NSMutableArray array];
+    #if DEBUG
+                // The loop total is measured from before the first visit rather than summed from the
+                // per-cycle spans, so a read that happens between two cycles (the library count a
+                // pane pass does on its way out, say) cannot hide in the gaps of a sum. Both numbers
+                // are reported; scripts/render-probe.py is what checks they add up.
+                unsigned long long readsAtCyclesStart = MLHostReads();
+    #endif
+                for (long cycle = 0; cycle < wantedCycles; cycle++) {
+    #if DEBUG
+                    unsigned long long readsAtCycleStart = MLHostReads();
+    #endif
+                    // Exercise device enumeration appearance/disappearance as well as
+                    // the stream settings; a saved selection must not narrow the sweep.
+                    NSInteger cyclePane = cycle % 2 == 0 ? 0 : 6;
+                    [cycleDefaults setInteger:cyclePane forKey:@"selected-settings-pane"];
+                    NSSet *cycleViewsBefore = [NSSet setWithArray:window.contentView.subviews];
+                    [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
+                    MLProbeSpin(0.25);
+                    if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+                        cycleRecord[@"status"] = @"did-not-present";
+                        refuse([NSString stringWithFormat:@"memory cycle %ld did not present the page,"
+                                @" so the sweep counted fewer visits than it asked for", cycle + 1]);
                         break;
                     }
+                    if (cyclePane == 6) {
+                        NSView *cycleOverlay = nil;
+                        for (NSView *candidate in window.contentView.subviews) {
+                            if (![cycleViewsBefore containsObject:candidate]) cycleOverlay = candidate;
+                        }
+                        NSString *scanResult = nil;
+                        NSString *available = [[LanguageManager shared] localize:@"USB devices available"];
+                        NSString *unreadable = [[LanguageManager shared] localize:@"USB device scan failed"];
+                        for (NSUInteger attempt = 0; attempt < 20 && !scanResult; attempt++) {
+                            NSArray *nodes = cycleOverlay ? MLProbeReadableNodes(cycleOverlay) : @[];
+                            if (MLProbeNodesVendText(nodes, available)) scanResult = @"read";
+                            else if (MLProbeNodesVendText(nodes, unreadable)) scanResult = @"unreadable";
+                            else MLProbeSpin(0.25);
+                        }
+                        [deviceScanResults addObject:scanResult ?: @"timeout"];
+                        if (!scanResult) {
+                            cycleRecord[@"deviceScanTimeoutContent"] = cycleOverlay ? MLProbeReadableNodes(cycleOverlay) : @[];
+                            cycleRecord[@"status"] = @"device-scan-timeout";
+                            refuse([NSString stringWithFormat:@"memory cycle %ld never displayed a completed USB scan",
+                                    cycle + 1]);
+                            if (![SettingsOverlayPresenter pressBackControlInWindow:window]) {
+                                refuse(@"USB scan timeout cleanup could not reach the back control");
+                            }
+                            MLProbeSpin(0.25);
+                            break;
+                        }
+                    }
+                    if (![SettingsOverlayPresenter pressBackControlInWindow:window]) {
+                        cycleRecord[@"status"] = @"back-control-unreachable";
+                        refuse([NSString stringWithFormat:@"memory cycle %ld could not reach the back"
+                                @" control, so the page was never closed and the next cycle would have"
+                                @" presented on top of it", cycle + 1]);
+                        break;
+                    }
+                    MLProbeSpin(0.25);
+                    if ([SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+                        cycleRecord[@"status"] = @"did-not-close";
+                        refuse([NSString stringWithFormat:@"memory cycle %ld left the page presented,"
+                                @" which is a visit that never ends rather than a leak rate", cycle + 1]);
+                        break;
+                    }
+    #if DEBUG
+                    [readsPerCycle addObject:@(MLHostReads() - readsAtCycleStart)];
+    #endif
+                    cycleRecord[@"completed"] = @(cycle + 1);
+                    [panesPerCycle addObject:@(cyclePane)];
                 }
-                if (![SettingsOverlayPresenter pressBackControlInWindow:window]) {
-                    cycleRecord[@"status"] = @"back-control-unreachable";
-                    refuse([NSString stringWithFormat:@"memory cycle %ld could not reach the back"
-                            @" control, so the page was never closed and the next cycle would have"
-                            @" presented on top of it", cycle + 1]);
-                    break;
+                if (savedCyclePane) {
+                    [cycleDefaults setObject:savedCyclePane forKey:@"selected-settings-pane"];
+                } else {
+                    [cycleDefaults removeObjectForKey:@"selected-settings-pane"];
                 }
-                MLProbeSpin(0.25);
-                if ([SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
-                    cycleRecord[@"status"] = @"did-not-close";
-                    refuse([NSString stringWithFormat:@"memory cycle %ld left the page presented,"
-                            @" which is a visit that never ends rather than a leak rate", cycle + 1]);
-                    break;
+                cycleRecord[@"requestedPanesPerCycle"] = panesPerCycle;
+                cycleRecord[@"deviceScanResults"] = deviceScanResults;
+                if ([cycleRecord[@"status"] isEqualToString:@"running"]) {
+                    cycleRecord[@"status"] = @"completed";
                 }
-#if DEBUG
-                [readsPerCycle addObject:@(MLHostReads() - readsAtCycleStart)];
-#endif
-                cycleRecord[@"completed"] = @(cycle + 1);
-                [panesPerCycle addObject:@(cyclePane)];
+                // How many hosts the library holds now, read after the visits rather than before
+                // them. The count moves underneath a run -- MDNSManager keeps adding hosts while
+                // the process is alive -- and a rate divided by a number from the start of the run
+                // is divided by a library that has since grown. Measured across five growth runs on
+                // one build: 230 to 500 first-party bytes per visit per host depending on which of
+                // those two numbers is used, so the denominator is not a detail.
+    #if DEBUG
+                cycleRecord[@"readsPerCycle"] = readsPerCycle;
+                cycleRecord[@"readsDuringCycles"] = @(MLHostReads() - readsAtCyclesStart);
+                // The read below is itself a read of the library, so it is counted on its own line
+                // rather than being folded into a per-cycle average. The library count has to be taken
+                // after the visits -- mDNS keeps adding hosts while the process lives -- and a rate
+                // divided by a stale denominator is not the rate anyone thinks they measured.
+                unsigned long long readsBeforeLibraryEnd = MLHostReads();
+    #endif
+                cycleRecord[@"libraryEnd"] = @((long)[[[DataManager.alloc init] getHosts] count]);
+    #if DEBUG
+                cycleRecord[@"libraryEndReads"] = @(MLHostReads() - readsBeforeLibraryEnd);
+                // Reads that the per-cycle spans did not account for. The spans are cut at cycle
+                // boundaries and the total is taken across the whole loop, so this is what a
+                // completed cycle leaves unexplained -- it should be nothing. It is reported rather
+                // than asserted here because a cycle that broke partway through is allowed to owe a
+                // read to the visit it never finished; render-probe.py is where the completed runs
+                // get held to zero, and it can tell the two cases apart by the status field.
+                unsigned long long sumOfCycleSpans = 0;
+                for (NSNumber *span in readsPerCycle) {
+                    sumOfCycleSpans += [span unsignedLongLongValue];
+                }
+                unsigned long long readsDuringAllCycles = [cycleRecord[@"readsDuringCycles"] unsignedLongLongValue];
+                cycleRecord[@"readsUnattributedToCycles"] = @(readsDuringAllCycles - sumOfCycleSpans);
+                // The counter has to be wired to the thing it claims to count. Every library count
+                // goes through getHosts, so a run that reports zero reads for the one read this
+                // function makes on its own behalf means the instrumentation is dead -- and every
+                // other number in this record would then be a zero as well.
+                if ([cycleRecord[@"libraryEndReads"] unsignedLongLongValue] < 1) {
+                    refuse(@"counting the library through getHosts did not register as a library read,"
+                           @" so the host-read counter is not attached to the read path and every"
+                           @" read count in this report is meaningless");
+                }
+    #endif
             }
-            if (savedCyclePane) {
-                [cycleDefaults setObject:savedCyclePane forKey:@"selected-settings-pane"];
-            } else {
-                [cycleDefaults removeObjectForKey:@"selected-settings-pane"];
-            }
-            cycleRecord[@"requestedPanesPerCycle"] = panesPerCycle;
-            cycleRecord[@"deviceScanResults"] = deviceScanResults;
-            if ([cycleRecord[@"status"] isEqualToString:@"running"]) {
-                cycleRecord[@"status"] = @"completed";
-            }
-            // How many hosts the library holds now, read after the visits rather than before
-            // them. The count moves underneath a run -- MDNSManager keeps adding hosts while
-            // the process is alive -- and a rate divided by a number from the start of the run
-            // is divided by a library that has since grown. Measured across five growth runs on
-            // one build: 230 to 500 first-party bytes per visit per host depending on which of
-            // those two numbers is used, so the denominator is not a detail.
-#if DEBUG
-            cycleRecord[@"readsPerCycle"] = readsPerCycle;
-            cycleRecord[@"readsDuringCycles"] = @(MLHostReads() - readsAtCyclesStart);
-            // The read below is itself a read of the library, so it is counted on its own line
-            // rather than being folded into a per-cycle average. The library count has to be taken
-            // after the visits -- mDNS keeps adding hosts while the process lives -- and a rate
-            // divided by a stale denominator is not the rate anyone thinks they measured.
-            unsigned long long readsBeforeLibraryEnd = MLHostReads();
-#endif
-            cycleRecord[@"libraryEnd"] = @((long)[[[DataManager.alloc init] getHosts] count]);
-#if DEBUG
-            cycleRecord[@"libraryEndReads"] = @(MLHostReads() - readsBeforeLibraryEnd);
-            // Reads that the per-cycle spans did not account for. The spans are cut at cycle
-            // boundaries and the total is taken across the whole loop, so this is what a
-            // completed cycle leaves unexplained -- it should be nothing. It is reported rather
-            // than asserted here because a cycle that broke partway through is allowed to owe a
-            // read to the visit it never finished; render-probe.py is where the completed runs
-            // get held to zero, and it can tell the two cases apart by the status field.
-            unsigned long long sumOfCycleSpans = 0;
-            for (NSNumber *span in readsPerCycle) {
-                sumOfCycleSpans += [span unsignedLongLongValue];
-            }
-            unsigned long long readsDuringAllCycles = [cycleRecord[@"readsDuringCycles"] unsignedLongLongValue];
-            cycleRecord[@"readsUnattributedToCycles"] = @(readsDuringAllCycles - sumOfCycleSpans);
-            // The counter has to be wired to the thing it claims to count. Every library count
-            // goes through getHosts, so a run that reports zero reads for the one read this
-            // function makes on its own behalf means the instrumentation is dead -- and every
-            // other number in this record would then be a zero as well.
-            if ([cycleRecord[@"libraryEndReads"] unsignedLongLongValue] < 1) {
-                refuse(@"counting the library through getHosts did not register as a library read,"
-                       @" so the host-read counter is not attached to the read path and every"
-                       @" read count in this report is meaningless");
-            }
-#endif
         }
-    }
 
-    report[@"failures"] = failures;
-    NSData *json = [NSJSONSerialization dataWithJSONObject:report
-                                                  options:NSJSONWritingPrettyPrinted
-                                                    error:nil];
-    [json writeToFile:[output stringByAppendingPathComponent:@"report.json"] atomically:YES];
-    fprintf(stderr, "[render-probe] %s\n", failures.count
-            ? [[failures componentsJoinedByString:@"; "] UTF8String]
-            : "settings embedded in one window, glass present, page drew pixels");
-    fflush(stderr);
-    exit(failures.count ? 1 : 0);
+        report[@"failures"] = failures;
+        NSData *json = [NSJSONSerialization dataWithJSONObject:report
+                                                      options:NSJSONWritingPrettyPrinted
+                                                        error:nil];
+        [json writeToFile:[output stringByAppendingPathComponent:@"report.json"] atomically:YES];
+        fprintf(stderr, "[render-probe] %s\n", failures.count
+                ? [[failures componentsJoinedByString:@"; "] UTF8String]
+                : "settings embedded in one window, glass present, page drew pixels");
+        fflush(stderr);
+        exit(failures.count ? 1 : 0);
+    } @catch (NSException *exception) {
+        // A throw anywhere in the pass used to kill the process before report.json
+        // existed, and `open -W` reads back as exit 0 either way. Writing nothing is
+        // deliberate: the harness treats a missing report as "no verdict" and the
+        // retry owns the second attempt.
+        fprintf(stderr, "[render-probe] probe pass threw %s: %s; no report written\n",
+                (exception.name?.description ?: @"NSException").UTF8String,
+                (exception.reason ?: @"no reason").UTF8String);
+        fflush(stderr);
+    }
 }
 #endif
 
