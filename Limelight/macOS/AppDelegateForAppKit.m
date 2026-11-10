@@ -146,7 +146,9 @@ static NSBitmapImageRep *MLProbeCGFallbackCapture(NSInteger windowNumber, NSRect
 // without that surface, and the channel comparison on the mini and this Mac showed
 // it answers for both AppKit content and the SwiftUI hosting view the settings page
 // uses. The result is view-local by construction, so no window geometry is involved.
-static NSBitmapImageRep *MLProbeCacheDisplayCapture(NSView *view, NSString **errorOut) {
+// The draw itself must run on the main thread; the hop that enforces it lives in
+// `MLProbeCacheDisplayCapture` below.
+static NSBitmapImageRep *MLProbeCacheDisplayCaptureOnMain(NSView *view, NSString **errorOut) {
     if (errorOut) *errorOut = nil;
     NSBitmapImageRep *bitmap = [view bitmapImageRepForCachingDisplayInRect:view.bounds];
     if (bitmap == nil) {
@@ -155,6 +157,47 @@ static NSBitmapImageRep *MLProbeCacheDisplayCapture(NSView *view, NSString **err
     }
     [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
     if (errorOut) *errorOut = nil;
+    return bitmap;
+}
+
+// The SCK reply block that first calls this runs on an NSXPC reply queue, not the main
+// thread, and cacheDisplay walks the view hierarchy through the AutoLayout engine,
+// which AppKit asserts stays where the engine was first reached: pipeline 1719 measured
+// the assertion escalating to an uncaught NSException that killed the probe before the
+// report was written, twice. The probe's caller owns the main thread and pumps its run
+// loop while waiting for the capture, so an asynchronous hop with a deadline completes
+// without deadlocking; a timeout degrades to the window-list fallback like any other
+// channel failure.
+static NSBitmapImageRep *MLProbeCacheDisplayCapture(NSView *view, NSString **errorOut) {
+    if (errorOut) *errorOut = nil;
+    if ([NSThread isMainThread]) {
+        return MLProbeCacheDisplayCaptureOnMain(view, errorOut);
+    }
+    __block NSBitmapImageRep *bitmap = nil;
+    __block NSString *hopError = nil;
+    __block BOOL hopDone = NO;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            bitmap = MLProbeCacheDisplayCaptureOnMain(view, &hopError);
+        } @catch (NSException *exception) {
+            // The assertion that escalated to the uncaught NSException in pipeline 1719
+            // is thrown by the layout engine while the hop draws; on the main thread it
+            // must be caught here or it unwinds the dispatch block and kills the probe.
+            hopError = [NSString stringWithFormat:@"cacheDisplay threw: %@ %@",
+                         exception.name ?: @"NSException", exception.reason ?: @"no reason"];
+            fprintf(stderr, "[render-probe] main-thread cacheDisplay threw %s: %s\n",
+                    (exception.name ?: @"NSException").UTF8String,
+                    (exception.reason ?: @"no reason").UTF8String);
+        }
+        hopDone = YES;
+    });
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10.0];
+    while (!hopDone && deadline.timeIntervalSinceNow > 0) usleep(20000);
+    if (!hopDone) {
+        if (errorOut) *errorOut = @"the main-thread cacheDisplay hop timed out";
+        return nil;
+    }
+    if (errorOut) *errorOut = hopError;
     return bitmap;
 }
 

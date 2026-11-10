@@ -1569,6 +1569,73 @@ check('measurements[@"captureChannel"]' in probe_app
       else "the captureChannel stamp is gone from the producer or the reader: a window-list "
            "fallback capture would then pass through as if ScreenCaptureKit had drawn it, "
            "which is exactly how the -3811 outage read as a rendering regression")
+# Pipeline 1719 measured the view-local cacheDisplay fallback dying the probe: the SCK
+# reply block runs on an NSXPC reply queue, and cacheDisplay walks the view hierarchy
+# through the AutoLayout engine off the main thread, which AppKit asserts. The
+# assertion escalated to an uncaught NSException that killed the probe before the report
+# was written. The draw must hop to the main thread (the probe's caller owns it and pumps
+# its run loop while waiting, so an async hop with a deadline cannot deadlock), and the
+# hop itself must catch the exception or it unwinds the dispatch block. The guard reads
+# the source the same way the packaging guard below does, so a mutation that removes the
+# hop has to trip it here rather than only on the next red runner.
+def cache_hop_problems(source):
+    bad = []
+    if "if ([NSThread isMainThread]) {" not in source:
+        bad.append("draws the fallback on whatever queue the SCK reply lands on instead "
+                   "of checking for the main thread")
+    if "MLProbeCacheDisplayCaptureOnMain(view, &hopError)" not in source:
+        bad.append("never runs the actual draw off the main thread, so the on-main "
+                   "helper is dead code")
+    if "dispatch_async(dispatch_get_main_queue(), ^{" not in source:
+        bad.append("reaches the draw without hopping to the main queue")
+    if "MLProbeCacheDisplayCaptureOnMain(view, errorOut)" not in source:
+        bad.append("loses the already-on-main fast path, so the probe pays a hop it "
+                   "does not need")
+    hop_start = source.find("dispatch_async(dispatch_get_main_queue(), ^{")
+    hop_end = source.find("hopDone = YES;", hop_start)
+    hop_body = source[hop_start:hop_end] if hop_start != -1 and hop_end != -1 else ""
+    if "@try" not in hop_body or "hopError" not in hop_body:
+        bad.append("lets the layout assertion escape the hop block as an uncaught "
+                   "exception instead of recording it as a channel failure")
+    return bad
+
+_cache_hop_bad = cache_hop_problems(probe_app)
+check(not _cache_hop_bad,
+      "the probe's view-local cacheDisplay fallback hops the draw to the main thread and "
+      "catches the exception there"
+      if not _cache_hop_bad
+      else "AppDelegateForAppKit.m: " + "; ".join(_cache_hop_bad))
+# The fast path must sit before the hop, or a main-thread caller pays a round trip.
+check(probe_app.find("if ([NSThread isMainThread])") != -1
+      and probe_app.find("if ([NSThread isMainThread])")
+      < probe_app.find("dispatch_async(dispatch_get_main_queue(), ^{"),
+      "the probe's cacheDisplay hop is guarded by a main-thread check that runs first"
+      if probe_app.find("if ([NSThread isMainThread])") != -1
+      and probe_app.find("if ([NSThread isMainThread])")
+      < probe_app.find("dispatch_async(dispatch_get_main_queue(), ^{")
+      else "the probe's main-thread check no longer guards the hop, so the fast path or "
+           "the hop order it depends on has drifted")
+_hop_draw = "bitmap = MLProbeCacheDisplayCaptureOnMain(view, &hopError);"
+check(_hop_draw in probe_app,
+      "the cacheDisplay hop block still contains the draw the mutations below expect"
+      if _hop_draw in probe_app
+      else "the render probe no longer draws in the shape the cacheDisplay hop mutations "
+           "expect, so the guard checks nothing")
+for _label, _mutated in (
+        ("draws the fallback on the SCK reply queue",
+         probe_app.replace("if ([NSThread isMainThread])",
+                           "if (NO && [NSThread isMainThread])")),
+        ("loses the off-main draw entirely",
+         probe_app.replace("            bitmap = MLProbeCacheDisplayCaptureOnMain(view, &hopError);\n",
+                           "")),
+        ("hops to a queue that is not the main one",
+         probe_app.replace("dispatch_async(dispatch_get_main_queue(), ^{",
+                           "dispatch_async(dispatch_get_global_queue(0, 0), ^{")),
+        ("lets the assertion escape the hop",
+         probe_app.replace("@try {", "{")),
+):
+    check(bool(cache_hop_problems(_mutated)),
+          "the cacheDisplay hop guard does not notice a probe that %s" % _label)
 probe_key = re.search(r'MLProbeAdvancedSectionCollapsedKey\s*\n?\s*= @"([^"]+)"', probe_app)
 check(bool(probe_key) and probe_key.group(1) in app_pane,
       "the probe forces the same preference the app page stores the section state under"
