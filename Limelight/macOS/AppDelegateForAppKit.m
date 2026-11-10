@@ -294,7 +294,7 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
         // pipeline 1687: the process died with no report written). The exception
         // is treated as a channel failure, the spin loop below owns the timeout.
         fprintf(stderr, "[render-probe] SCK threw %s: %s; falling through to the capture deadline\n",
-                (exception.name?.description ?: @"NSException").UTF8String,
+                (exception.name ?: @"NSException").UTF8String,
                 (exception.reason ?: @"no reason").UTF8String);
         if (failureOut) *failureOut = [NSString stringWithFormat:@"SCK channel threw: %@ %@",
                                         exception.name ?: @"NSException", exception.reason ?: @"no reason"];
@@ -1959,7 +1959,7 @@ static void MLRunOwnershipProbeAndExitIfRequested(void) {
         // deliberate: the harness treats a missing report as "no verdict" and the
         // retry owns the second attempt.
         fprintf(stderr, "[render-probe] probe pass threw %s: %s; no report written\n",
-                (exception.name?.description ?: @"NSException").UTF8String,
+                (exception.name ?: @"NSException").UTF8String,
                 (exception.reason ?: @"no reason").UTF8String);
         fflush(stderr);
     }
@@ -2255,14 +2255,25 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         MLProbeWindow = window;
         MLProbeBackdrop = backdrop;
         MLProbeArmed = YES;
+    } @catch (NSException *exception) {
+        // A throw anywhere in the pass used to kill the process before report.json
+        // existed, and `open -W` reads back as exit 0 either way. Writing nothing is
+        // deliberate: the harness treats a missing report as "no verdict" and the
+        // retry owns the second attempt.
+        fprintf(stderr, "[render-probe] probe pass threw %s: %s; no report written\n",
+                (exception.name ?: @"NSException").UTF8String,
+                (exception.reason ?: @"no reason").UTF8String);
+        fflush(stderr);
     }
+}
 
-    static void MLFinishRenderProbeIfArmed(void) {
-        if (!MLProbeArmed) {
-            return;
-        }
-        MLProbeArmed = NO;
-        MLProbeSpin(1.0);
+static void MLFinishRenderProbeIfArmed(void) {
+    if (!MLProbeArmed) {
+        return;
+    }
+    MLProbeArmed = NO;
+    MLProbeSpin(1.0);
+    @try {
 
         NSMutableDictionary *report = MLProbeReport;
         NSMutableArray<NSString *> *failures = MLProbeFailures;
@@ -2445,7 +2456,7 @@ static void MLRunRenderProbeAndExitIfRequested(void) {
         // deliberate: the harness treats a missing report as "no verdict" and the
         // retry owns the second attempt.
         fprintf(stderr, "[render-probe] probe pass threw %s: %s; no report written\n",
-                (exception.name?.description ?: @"NSException").UTF8String,
+                (exception.name ?: @"NSException").UTF8String,
                 (exception.reason ?: @"no reason").UTF8String);
         fflush(stderr);
     }
