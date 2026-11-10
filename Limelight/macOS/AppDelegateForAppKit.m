@@ -228,52 +228,56 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
             } else {
                 // The window is offered and the filter was built, but the stream still
                 // refused to start (measured -3811 on the runner session with the TCC row
-                // granted and the panel awake). The view renders fine underneath, so the
-                // window-list channel gets one attempt before the refusal is final.
-                NSString *fallbackError = nil;
-                NSBitmapImageRep *fallback = MLProbeCGFallbackCapture(windowNumber, rect,
-                                                                      [window backingScaleFactor],
-                                                                      &fallbackError);
-                if (fallback != nil) {
-                    bitmap = fallback;
-                    channel = @"CG";
-                    fprintf(stderr,
-                            "[render-probe] SCK refused the stream (%s, osStatus %ld); "
-                            "window-list fallback captured the pane\n",
-                            (captureError.localizedDescription ?: @"no image").UTF8String,
-                            (long)captureError.code);
-                } else {
-                    // Both window-scoped channels are dark on a headless runner session
-                    // (pipeline 1656: SCK -3811, then the window-list image measured pure
-                    // black because the offscreen window never reached a synthesized
-                    // surface). The view still owns its pixels, so the view-local channel
-                    // gets one attempt before the refusal is final.
+                // granted and the panel awake). Pipeline 1668 showed the window-list API
+                // can answer a refusal with a stale frame of the same window: all four
+                // pane captures came back as one pixel hash while the accessibility tree
+                // proved the page underneath had already switched, so a non-nil CG image
+                // is no proof it drew the fold that is up. The view-local cacheDisplay
+                // channel draws the hierarchy as it stands now and is tried first; the
+                // window-list capture remains the last resort for a session where the
+                // view-local drawing is dark too (pipeline 1656 measured pure black there,
+                // which is why the ordering exists in both directions at all).
                     NSString *cacheError = nil;
                     NSBitmapImageRep *cache = MLProbeCacheDisplayCapture(view, &cacheError);
                     if (cache != nil) {
                         bitmap = cache;
                         channel = @"CACHE";
                         fprintf(stderr,
-                                "[render-probe] SCK refused the stream (%s, osStatus %ld), "
-                                "the window-list capture said %s; view-local cacheDisplay "
-                                "captured the pane\n",
+                                "[render-probe] SCK refused the stream (%s, osStatus %ld); "
+                                "view-local cacheDisplay captured the pane\n",
                                 (captureError.localizedDescription ?: @"no image").UTF8String,
-                                (long)captureError.code,
-                                (fallbackError ?: @"no image").UTF8String);
+                                (long)captureError.code);
                     } else {
+                        NSString *fallbackError = nil;
+                        NSBitmapImageRep *fallback = MLProbeCGFallbackCapture(windowNumber, rect,
+                                                                              [window backingScaleFactor],
+                                                                              &fallbackError);
+                        if (fallback != nil) {
+                            bitmap = fallback;
+                            channel = @"CG";
+                            fprintf(stderr,
+                                    "[render-probe] SCK refused the stream (%s, osStatus %ld), "
+                                    "view-local cacheDisplay said %s; window-list fallback "
+                                    "captured the pane\n",
+                                    (captureError.localizedDescription ?: @"no image").UTF8String,
+                                    (long)captureError.code,
+                                    (cacheError ?: @"no image").UTF8String);
+                        } else {
                     fprintf(stderr,
-                            "[render-probe] SCK refused the stream (%s, osStatus %ld) and the "
-                            "window-list fallback said %s; cacheDisplay said %s\n",
+                            "[render-probe] SCK refused the stream (%s, osStatus %ld), "
+                            "view-local cacheDisplay said %s; window-list fallback "
+                            "said %s\n",
                             (captureError.localizedDescription ?: @"no image").UTF8String,
                             (long)captureError.code,
-                            (fallbackError ?: @"no image").UTF8String,
-                            (cacheError ?: @"no image").UTF8String);
-                    failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld), "
-                           "window-list fallback: %@, cacheDisplay: %@",
-                               captureError.localizedDescription ?: @"no image",
-                               (long)captureError.code,
-                               fallbackError ?: @"no image",
-                               cacheError ?: @"no image"];
+                            (cacheError ?: @"no image").UTF8String,
+                            (fallbackError ?: @"no image").UTF8String);
+                            failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld), "
+                                   "view-local cacheDisplay: %@, window-list fallback: %@",
+                                       captureError.localizedDescription ?: @"no image",
+                                       (long)captureError.code,
+                                       cacheError ?: @"no image",
+                                       fallbackError ?: @"no image"];
+                        }
                     }
                 }
             }

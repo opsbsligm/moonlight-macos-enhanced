@@ -1542,6 +1542,21 @@ check('MLProbeCacheDisplayCapture(view, &cacheError)' in probe_app
            "session the window-list capture can come back pure black (pipeline 1656) and "
            "without this channel a correctly drawn settings page would red the build "
            "while rendering fine")
+# Pipeline 1668 measured the window-list API answering an SCK refusal with a stale frame
+# of the same window: all four pane captures hashed identically while the accessibility
+# tree proved the page underneath had switched. A non-nil CG image is no proof it drew
+# the fold that is up, so the view-local channel must come first; the window-list call
+# stays reachable, but only as the last resort.
+_cache_order_ok = (probe_app.find('MLProbeCacheDisplayCapture(view, &cacheError)') != -1
+                   and probe_app.find('MLProbeCacheDisplayCapture(view, &cacheError)')
+                   < probe_app.find('MLProbeCGFallbackCapture(windowNumber, rect'))
+check(_cache_order_ok,
+      "after an SCK refusal the probe draws the view locally before it asks the "
+      "window-list API, which can hand back a stale frame of the same window"
+      if _cache_order_ok
+      else "the render probe asks the window-list API before the view-local capture "
+           "(pipeline 1668): a stale frame of the current window then reads as every "
+           "pane drawing identical pixels while the page underneath has already switched")
 check('measurements[@"captureChannel"]' in probe_app
       and '"captureChannel"' in render_probe,
       "the probe stamps which capture channel drew each measurement, and the reader checks "
