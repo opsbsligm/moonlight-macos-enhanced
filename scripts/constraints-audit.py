@@ -1488,10 +1488,14 @@ check("hold_seconds=None" in render_probe and "def _hold_display(" in render_pro
            "asleep by the time ScreenCaptureKit is asked answers the same refusal a page "
            "that never drew would give (pipeline 1596: awake at launch, TCC allowed, every "
            "capture still refused)")
-check("hold_seconds=min(args.timeout, 300) + 30" in render_probe,
+# The horizon moved with the one-pass retry (pipeline 1687): the cap is named once, in
+# probe_with_retry, and every attempt -- the first and the retry -- inherits it.
+horizon_ok = ("horizon = min(timeout, 300)" in render_probe
+              and "hold_seconds=horizon + 30" in render_probe)
+check(horizon_ok,
       "the keep-awake horizon covers the run timeout plus margin, so the last second of a "
       "run to its limit is not captured after the hold lapsed"
-      if "hold_seconds=min(args.timeout, 300) + 30" in render_probe
+      if horizon_ok
       else "render-probe.py's keep-awake horizon no longer covers the run timeout: the "
            "hold can lapse while the probe is still capturing")
 # The failure sentence must carry the channel's own number, or -3801 (TCC) and -3811

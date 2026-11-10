@@ -1051,10 +1051,70 @@ def self_test():
                 if not refused:
                     print("     the verifier accepted it")
                     failures += 1
+            # The retry is a behaviour, so it needs a check that can fail: a helper
+            # that retries forever, or not at all, would both pass a wording test.
+            # Count the attempts through a stand-in `run` and refuse both shapes.
+            real_run = globals()["run"]
+            try:
+                counts = {"n": 0}
+
+                def flaky_run(app, out, timeout, hold_seconds=None):
+                    counts["n"] += 1
+                    return None if counts["n"] == 1 else good
+
+                globals()["run"] = flaky_run
+                retried = probe_with_retry(app=None, out=None, timeout=10)
+                if retried is not good or counts["n"] != 2:
+                    print("FAIL a pass that dies once must succeed on the second attempt "
+                          "(got %d attempt(s))" % counts["n"])
+                    failures += 1
+                else:
+                    print("ok   a pass that dies once is retried once and then accepted")
+
+                counts = {"n": 0}
+
+                def dead_run(app, out, timeout, hold_seconds=None):
+                    counts["n"] += 1
+                    return None
+
+                globals()["run"] = dead_run
+                hopeless = probe_with_retry(app=None, out=None, timeout=10)
+                if hopeless is not None or counts["n"] != 2:
+                    print("FAIL two dead passes must stay a missing report after exactly "
+                          "one retry (got %d attempt(s))" % counts["n"])
+                    failures += 1
+                else:
+                    print("ok   two dead passes still end as a missing report, after one "
+                          "retry and no more")
+            finally:
+                globals()["run"] = real_run
         finally:
             os.chdir(previous)
     print("%d render-probe self-test failures" % failures)
     return 1 if failures else 0
+
+
+def probe_with_retry(app, out, timeout):
+    """The one place that decides how many times a missing report may happen.
+
+    A missing report means the Debug entry point never ran to its write: the crash
+    that measured this (pipeline 1687) was an NSXPC exception inside the capture
+    channel, dead before report.json existed, and `open -W` read back as exit 0
+    either way. The app now catches the exception, but a runner session can still
+    answer no stream at all for one whole pass, so one re-run keeps a transient
+    refusal from failing the gate while a genuinely broken entry point still has
+    to fail two passes to prove itself.
+    """
+    horizon = min(timeout, 300)
+
+    def attempt():
+        return run(app, out, horizon, hold_seconds=horizon + 30)
+
+    report = attempt()
+    if report is None:
+        print("[render-probe] no report on the first pass; retrying once")
+        report = attempt()
+    return report
 
 
 def main():
@@ -1068,16 +1128,18 @@ def main():
     if args.self_test:
         return self_test()
 
-    out = args.out or tempfile.mkdtemp(prefix="render-probe-")
+    out = (args.out
+           or os.environ.get("ML_RENDER_PROBE_OUT_DIR")
+           or tempfile.mkdtemp(prefix="render-probe-"))
     os.makedirs(out, exist_ok=True)
     app = args.app or build(args.timeout)
     if app is None:
         return 1
-    # The panel must stay awake for the whole run, not just at launch: pass the run
-    # timeout straight through as the keep-awake horizon (plus a margin so a probe that
-    # runs exactly to its limit is not captured in the last second of a lapsed hold).
-    report = run(app, out, min(args.timeout, 300),
-                 hold_seconds=min(args.timeout, 300) + 30)
+    # The panel must stay awake for the whole run, not just at launch: the retry
+    # helper passes the run timeout straight through as the keep-awake horizon
+    # (plus a margin so a probe that runs exactly to its limit is not captured in
+    # the last second of a lapsed hold).
+    report = probe_with_retry(app, out, args.timeout)
     if report is None:
         return 1
 
