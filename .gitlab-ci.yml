@@ -464,7 +464,17 @@ audit:deep:
     # build-app runs (538a23be fixed the Release path; pipeline 1534 job 11240 died
     # on <openssl/evp.h> here).
     - zsh scripts/download-frameworks.sh
+    # The probe writes into one job-local directory so a red run can keep its
+    # field: report.json, probe-stderr.txt and the pane captures survive the
+    # cleanup_file_variables step (pipeline 1687 job 12613 died with the probe
+    # directory under the runner's temp, which is gone with the slot).
+    - export ML_RENDER_PROBE_OUT_DIR="$CI_PROJECT_DIR/probe-output"
     - bash -eo pipefail -x < gates-deep.txt
+  artifacts:
+    when: always
+    paths:
+      - probe-output
+    expire_in: 7 days
 
 # The full assertion battery: every guard we rely on is broken on purpose and
 # shown to be caught. Measured at 71 minutes (146 cases) on a clean local tree,
