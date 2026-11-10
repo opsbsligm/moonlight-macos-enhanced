@@ -271,7 +271,7 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
                             (long)captureError.code,
                             (cacheError ?: @"no image").UTF8String,
                             (fallbackError ?: @"no image").UTF8String);
-                            failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld), "
+                             failure = [NSString stringWithFormat:@"capture refused: %@ (osStatus %ld), "
                                    "view-local cacheDisplay: %@, window-list fallback: %@",
                                        captureError.localizedDescription ?: @"no image",
                                        (long)captureError.code,
@@ -280,7 +280,6 @@ static NSBitmapImageRep *MLProbeCaptureView(NSView *view, NSString **failureOut)
                         }
                     }
                 }
-            }
             dispatch_async(dispatch_get_main_queue(), ^{
                 result = bitmap;
                 finished = YES;
