@@ -2730,6 +2730,13 @@ static NSString *MLLogRow(NSString *level, NSString *category, NSString *message
 
     Log(LOG_I, @"[diag] Reconnect requested: reason=%@", reason ?: @"unknown");
     self.reconnectAttemptCount += 1;
+    // Re-arm the connect watchdog for the attempt about to start. The first
+    // stream launch arms it from prepareForStreaming, but a reconnection that
+    // fails during launch (e.g. request -1001 on a transient host drop) used
+    // to leave no timer behind: reconnectInProgress stayed set, the
+    // "reconnecting" overlay never resolved, and every manual reconnect after
+    // that was ignored by the guard above for the rest of the session.
+    [self startConnectWatchdog];
     NSString *msg = [NSString stringWithFormat:MLString(@"Reconnecting… (%ld)", nil), (long)self.reconnectAttemptCount];
     [self showReconnectOverlayWithMessage:msg];
 
