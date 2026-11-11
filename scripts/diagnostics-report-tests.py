@@ -85,7 +85,7 @@ CHECKLIST = "docs/hardware-acceptance-checklist.md"
 # export shape -- a build identity that survives its own secret scrub, the canonical byte form an
 # exported file has to hold, and the write that produces it. A floor that stays behind the real
 # count is how a case list disappears without anyone noticing.
-MIN_DRIVER_CHECKS = 136
+MIN_DRIVER_CHECKS = 138
 
 failures = []
 
@@ -267,6 +267,7 @@ DRIVER = r'''
 #import "DiagnosticsReportBuilder.h"
 #import "InputDiagnosticsLedger.h"
 #import "MLControllerInventory.h"
+#import "moonlight-common/moonlight-common-c/src/Limelight.h"
 
 static int gFailures = 0;
 static int gChecks = 0;
@@ -599,6 +600,9 @@ int main(void) {
         check([steamText rangeOfString:@"player 0=steam"].location != NSNotFound &&
               [steamText rangeOfString:@"unknown"].location == NSNotFound,
               "the report names an announced Steam type rather than calling it unknown");
+        check([steamText rangeOfString:@"caps=none recorded"].location != NSNotFound,
+              "an arrival recorded without a capability set says none recorded rather than "
+              "inheriting the M1 baseline the rest of the fleet sends");
         check([MLControllerDriverNameForIndex(0) isEqualToString:@"HID"] &&
               [MLControllerDriverNameForIndex(1) isEqualToString:@"MFi"],
               "the probe names the HID and MFi settings indices");
@@ -650,13 +654,19 @@ int main(void) {
               [captured rangeOfString:@"advertised controller type/caps: not advertised"].location != NSNotFound,
               "a session report names the driver the stream used and does not claim "
               "controller types reached the host");
-        [inventory noteControllerArrival:0 protocolType:0x02];
-        [inventory noteControllerArrival:1 protocolType:0x03];
+        [inventory noteControllerArrival:0
+                            protocolType:0x02
+                            capabilities:LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE];
+        [inventory noteControllerArrival:1
+                            protocolType:0x03
+                            capabilities:LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE |
+                                          LI_CCAP_ACCEL | LI_CCAP_GYRO];
         NSString *announced = [[DiagnosticsReportBuilder
             controllersSectionWithSnapshot:inventory.snapshot].lines componentsJoinedByString:@"\n"];
         check([announced rangeOfString:@"controller arrivals sent to host: yes"].location != NSNotFound &&
-              [announced rangeOfString:@"advertised controller type/caps: player 0=ps player 1=nintendo caps=analog triggers+rumble"].location != NSNotFound,
-              "recorded arrivals print the types the host was told, per player slot, with the capability set");
+              [announced rangeOfString:@"advertised controller type/caps: player 0=ps player 1=nintendo caps=analog triggers + rumble"].location != NSNotFound,
+              "recorded arrivals print the types the host was told, per player slot, and the "
+              "summary names the bits every slot carried rather than the widest set anyone had");
         [inventory noteSessionStartedWithDriverName:@"MFi"];
         NSString *freshSession = [[DiagnosticsReportBuilder
             controllersSectionWithSnapshot:inventory.snapshot].lines componentsJoinedByString:@"\n"];
@@ -1031,6 +1041,9 @@ int main(void) {
         advertised.advertisedControllerArrivals = YES;
         advertised.advertisedControllerTypes = @{ @1: @(MLControllerProtocolTypeForFamily(
                                             MLControllerFamilyPS5)) };
+        advertised.advertisedControllerCapabilities = @{
+            @1: @(LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE | LI_CCAP_ACCEL | LI_CCAP_GYRO)
+        };
         advertised.driverName = @"MFi";
         NSString *advertisedText = [[DiagnosticsReportBuilder
             machineStateSectionWithState:DiagnosticsFeatureState.new
@@ -1042,8 +1055,11 @@ int main(void) {
                   .location != NSNotFound &&
               [advertisedText rangeOfString:@"ml.controllers.caps.rumble=yes"]
                   .location != NSNotFound,
-              "each advertised capability is its own key, so a check for an unimplemented "
-              "capability does not have to split a joined bundle");
+              "each capability every announced slot carried is its own key, so a check for "
+              "an unimplemented capability does not have to split a joined bundle");
+        check([advertisedText rangeOfString:@"ml.controllers.slot.1.caps=51"].location != NSNotFound,
+              "the slot's own capability bits are recorded per player, so a pad that arrived "
+              "with a different set cannot be graded by the fleet default");
         check([advertisedText rangeOfString:@"ml.controllers.driver=MFi"].location != NSNotFound,
               "the driver recorded at session start is carried, because the three HID drivers "
               "disagree about the same pad");
@@ -1222,6 +1238,14 @@ int main(void) {
             @0: @(MLControllerProtocolTypeForFamily(MLControllerFamilyXbox)),
             @1: @(MLControllerProtocolTypeForFamily(MLControllerFamilyPS5)),
         };
+        // The bits the M2 tree actually sends for these two families: Xbox carries the
+        // trigger-rumble write, the PS pad the motion, battery and touchpad paths, so the
+        // shaped report the checker grades is the report a real dual-pad session writes.
+        twoPads.advertisedControllerCapabilities = @{
+            @0: @(LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE | LI_CCAP_TRIGGER_RUMBLE),
+            @1: @(LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE | LI_CCAP_TOUCHPAD |
+                    LI_CCAP_ACCEL | LI_CCAP_GYRO | LI_CCAP_BATTERY_STATE | LI_CCAP_RGB_LED),
+        };
 
         NSString *acceptanceReport = [DiagnosticsReportBuilder reportFromSections:@[
             [DiagnosticsReportBuilder machineStateSectionWithState:acceptance snapshot:twoPads],
@@ -1310,9 +1334,11 @@ MUTATIONS = (
      "            ? @\"controller arrivals sent to host: yes\"\n"
      "            : @\"controller arrivals sent to host: no\"];",
      "        [lines addObject:@\"controller arrivals sent to host: yes\"];"),
-    ("the report drops the capability set that goes with the announced types",
-     "@\"caps=analog triggers+rumble\"",
-     "@\"caps=rumble\""),
+    ("the report's capability names drop the rumble half of the baseline",
+     "    if (bits & LI_CCAP_RUMBLE) [names addObject:@\"rumble\"];\n", ""),
+    ("the machine block stops recording the slot's own capability bits",
+     ", (unsigned)bits]];",
+     ", (unsigned)(bits | 0xFFFF)]];"),
     ("the report claims controller type/caps were advertised",
      '@"advertised controller type/caps: not advertised"',
      '@"advertised controller type/caps: sent"'),
@@ -1397,6 +1423,14 @@ INVENTORY_MUTATIONS = (
      "    if (driverName != nil) { snapshot.driverName = driverName; }"),
     ("an invalid driver setting is reported as HID",
      '        default: return @"unknown";', '        default: return @"HID";'),
+    ("an arrival's capability bits are dropped where the snapshot is refreshed",
+     "    snapshot.advertisedControllerCapabilities = [caps copy];\n"
+     "    snapshot.advertisedControllerArrivals = YES;",
+     "    snapshot.advertisedControllerCapabilities = @{};\n"
+     "    snapshot.advertisedControllerArrivals = YES;"),
+    ("an arrival records no capability set even though the packet carried one",
+     "    caps[@(playerIndex)] = @(capabilities);",
+     "    caps[@(playerIndex)] = @(0);"),
 )
 
 
@@ -1476,7 +1510,9 @@ def analyze(source, work, cc, sdk):
         with open(os.path.join(work, name), "w", encoding="utf-8") as handle:
             handle.write(text)
     ran = subprocess.run(
-        [cc, "--analyze", "-x", "objective-c", "-fobjc-arc", "-isysroot", sdk, "-I", work,
+        [cc, "--analyze", "-x", "objective-c", "-fobjc-arc", "-isysroot", sdk,
+        "-I", os.path.join(ROOT, "moonlight-common", "moonlight-common-c", "src"),
+        "-I", ROOT,
          os.path.join(work, os.path.basename(SOURCE)),
          "-o", os.path.join(work, "analysis.plist")],
         capture_output=True, text=True)
@@ -1507,6 +1543,11 @@ def compile_and_run(source, work, cc, sdk, inventory_source=None, dump_path=None
     binary = os.path.join(work, "report")
     built = subprocess.run(
         [cc, "-x", "objective-c", "-fobjc-arc", "-isysroot", sdk, "-Wall", "-Werror",
+        # The shipping builder imports the wire table the way every other file does --
+        # flat, resolved through the target header search paths -- so the gate needs the
+        # same src directory. The repo root stays as a fallback for the flat work dir.
+        "-I", os.path.join(ROOT, "moonlight-common", "moonlight-common-c", "src"),
+        "-I", ROOT,
          "-framework", "Foundation", os.path.join(work, "driver.m"),
          os.path.join(work, os.path.basename(SOURCE)),
          os.path.join(work, os.path.basename(LEDGER_SOURCE)),

@@ -1355,7 +1355,8 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
                 ![self.deviceControllerTable.allValues containsObject:entry]) return;
             entry.advertisedToHost = YES;
             [MLControllerInventory.sharedInventory noteControllerArrival:playerIndex
-                                                           protocolType:protocolType];
+                                                           protocolType:protocolType
+                                                           capabilities:capabilities];
         });
     });
 }
