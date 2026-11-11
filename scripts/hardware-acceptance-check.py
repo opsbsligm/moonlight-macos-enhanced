@@ -144,6 +144,21 @@ def keys_under(machine, prefix):
     return sorted(k for k in machine if k.startswith(prefix))
 
 
+def slot_type_keys(machine):
+    """The player slots a report told the host about: the bare `slot.N=<type>` rows.
+
+    P0-5 added `slot.N.caps=<bits>` to the same block, and a prefix match alone would
+    grade a capability row as if it were a player, so the two callers that count players
+    read through this instead.
+    """
+    slots = []
+    for key in keys_under(machine, "ml.controllers.slot."):
+        rest = key.split("=", 1)[0][len("ml.controllers.slot."):]
+        if rest.isdigit():
+            slots.append(key)
+    return slots
+
+
 def stream_was_running(machine):
     """A stream delivered frames, so any host-side claim made in this session has a subject."""
     if machine.get("ml.video.present") != "yes":
@@ -194,7 +209,7 @@ def join_reasons(reasons):
 def check_two_pads(machine):
     present = number_at(machine, "ml.controllers.slot_count_placeholder")
     del present
-    slots = keys_under(machine, "ml.controllers.slot.")
+    slots = slot_type_keys(machine)
     reasons = [(machine.get("ml.controllers.present") == "yes",
                 "ml.controllers.present is %s" % machine.get("ml.controllers.present", "absent")),
                (want(machine, "ml.controllers.arrivals", "yes"),
@@ -219,14 +234,28 @@ def check_two_pads(machine):
 
 
 def check_host_side_types(machine):
-    slots = keys_under(machine, "ml.controllers.slot.")
+    slots = slot_type_keys(machine)
     types = [machine[k] for k in slots]
+    # P0-5: each graded player has to carry its own capability bits. A pad announced
+    # without `slot.N.caps` never completed the handshake the force-feedback row grades,
+    # and a set missing the rumble bit is not the baseline the fleet promises.
+    caps_ok = (
+        len(slots) == 0
+        or all(
+            machine.get(k + ".caps", "").isdigit()
+            and int(machine.get(k + ".caps", "0")) & 0x02
+            for k in slots
+        )
+    )
     reasons = [(want(machine, "ml.controllers.arrivals", "yes"),
                 "ml.controllers.arrivals is %s" % machine.get("ml.controllers.arrivals", "absent")),
                (bool(slots), "no ml.controllers.slot.N rows -- the host was told no player at all"),
                (bool(slots) and all(t in ANNOUNCED_TYPES for t in types),
                 "advertised slot types: %s -- each has to be one of %s"
                 % (", ".join(types) or "none", "/".join(ANNOUNCED_TYPES))),
+               (caps_ok,
+                "a graded slot has no ml.controllers.slot.N.caps row, or its bits do not "
+                "carry rumble -- force feedback was not actually promised for that pad"),
                (want(machine, "ml.controllers.caps.rumble", "yes"),
                 "ml.controllers.caps.rumble is %s -- a capability that is not advertised cannot be "
                 "graded for force feedback" % machine.get("ml.controllers.caps.rumble", "absent"))]
@@ -436,7 +465,9 @@ def golden_report():
               "ml.controllers.present=yes", "ml.controllers.sessions=1",
               "ml.controllers.recording=yes", "ml.controllers.driver=AppleUserHIDDrivers",
               "ml.controllers.arrivals=yes", "ml.controllers.slot.0=xbox",
-              "ml.controllers.slot.1=ps", "ml.controllers.caps.analog_triggers=yes",
+              "ml.controllers.slot.1=ps", "ml.controllers.slot.0.caps=7",
+              "ml.controllers.slot.1.caps=251",
+              "ml.controllers.caps.analog_triggers=yes",
               "ml.controllers.caps.rumble=yes", "ml.controllers.group_count=2",
               "ml.controllers.group_count_is_physical_devices=no",
               "ml.controllers.group.0.vid=045e", "ml.controllers.group.0.pid=0b12",
@@ -587,7 +618,8 @@ def contract(tool, workdir, failures, label):
     # so the contract deletes one key each row depends on and demands the row stop
     # grading PASS. Grading a key that was never written would invent an observation.
     for drop, row in (("ml.param.summon_grace.written", "edge-sidebar-params"),
-                      ("ml.controllers.caps.rumble", "host-side-controller-behaviour")):
+                      ("ml.controllers.caps.rumble", "host-side-controller-behaviour"),
+                      ("ml.controllers.slot.0.caps", "host-side-controller-behaviour")):
         tightened = "\n".join(line for line in golden.splitlines()
                               if not line.startswith("%s=" % drop))
         graded = grade_text("no-%s" % drop.replace(".", "-"), tightened)

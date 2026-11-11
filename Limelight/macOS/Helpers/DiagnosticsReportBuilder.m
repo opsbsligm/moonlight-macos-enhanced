@@ -6,6 +6,7 @@
 #import "DiagnosticsReportBuilder.h"
 
 #import <math.h>
+#import "moonlight-common/moonlight-common-c/src/Limelight.h"
 
 #import "InputDiagnosticsLedger.h"
 #import "MLControllerInventory.h"
@@ -115,6 +116,47 @@ static NSString *const kBuildIdentityGuard = @"\001ml-build-git-commit\001";
     return @"unknown";
 }
 
+// P0-5: read the capability bits back out of the arrival record. The HID layer computes
+// what it sends and the inventory records the same value, so the two are one source of
+// truth; this is the second place the number gets a name, and the gate checks the name
+// table against the wire table the sender uses, so a rename in either stays visible.
++ (uint16_t)controllerCapabilitySummaryBits:(MLControllerInventorySnapshot *)snapshot {
+    NSDictionary<NSNumber *, NSNumber *> *caps = snapshot.advertisedControllerCapabilities;
+    if (caps.count == 0) {
+        return 0;
+    }
+    // A summary sentence may only claim what every slot carried at least, which is the
+    // intersection across slots -- and the per-slot record below keeps the actual bits.
+    uint16_t bits = 0xFFFF;
+    for (NSNumber *slot in caps.allKeys) {
+        bits &= (uint16_t)caps[slot].unsignedShortValue;
+    }
+    return bits;
+}
+
++ (NSString *)controllerCapabilityBits:(uint16_t)bits {
+    if (bits == 0) {
+        return @"none recorded";
+    }
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    if (bits & LI_CCAP_ANALOG_TRIGGERS) [names addObject:@"analog triggers"];
+    if (bits & LI_CCAP_RUMBLE) [names addObject:@"rumble"];
+    if (bits & LI_CCAP_TRIGGER_RUMBLE) [names addObject:@"trigger rumble"];
+    if (bits & LI_CCAP_TOUCHPAD) [names addObject:@"touchpad"];
+    if (bits & LI_CCAP_DUAL_TOUCHPAD) [names addObject:@"dual touchpad"];
+    if (bits & LI_CCAP_ACCEL) [names addObject:@"accelerometer"];
+    if (bits & LI_CCAP_GYRO) [names addObject:@"gyroscope"];
+    if (bits & LI_CCAP_BATTERY_STATE) [names addObject:@"battery state"];
+    if (bits & LI_CCAP_RGB_LED) [names addObject:@"RGB LED"];
+    if (names.count == 0) {
+        // Bits no summary name covers yet (a capability landed upstream): print the
+        // number rather than drop the promise, so the report cannot read as "nothing
+        // was advertised" when something was.
+        return [NSString stringWithFormat:@"0x%04x", (unsigned)bits];
+    }
+    return [names componentsJoinedByString:@" + "];
+}
+
 + (DiagnosticsReportSection *)controllersSectionWithSnapshot:(MLControllerInventorySnapshot *_Nullable)snapshot {
     NSMutableArray<NSString *> *lines = [NSMutableArray array];
     if (snapshot == nil) {
@@ -144,7 +186,11 @@ static NSString *const kBuildIdentityGuard = @"\001ml-build-git-commit\001";
                                    [self controllerTypeNameForProtocolType:
                                         [snapshot.advertisedControllerTypes[slot] unsignedCharValue]]]];
             }
-            [parts addObject:@"caps=analog triggers+rumble"];
+            // The summary names what every announced slot carried (the intersection), so
+            // one sentence stays true even when a PS5 and an Xbox sit in the same session.
+            uint16_t summaryBits = [self controllerCapabilitySummaryBits:snapshot];
+            [parts addObject:[@"caps=" stringByAppendingString:
+                               [self controllerCapabilityBits:summaryBits]]];
             [lines addObject:[@"advertised controller type/caps: "
                                stringByAppendingString:[parts componentsJoinedByString:@" "]]];
         } else {
@@ -721,11 +767,25 @@ static NSString *MachineParamState(DiagnosticsFeatureParam *param, double effect
                               [self controllerTypeNameForProtocolType:
                                    [snapshot.advertisedControllerTypes[slot] unsignedCharValue]]]];
         }
-        // One key per capability. A checker grading "did we advertise something we do not
-        // implement" asks per capability, and a `+`-joined bundle makes it split a string to
-        // find out what was even claimed.
-        [lines addObject:@"ml.controllers.caps.analog_triggers=yes"];
-        [lines addObject:@"ml.controllers.caps.rumble=yes"];
+        // P0-5: the machine block no longer claims the M1 baseline -- it reports the bits
+        // the arrival record actually carries, per slot. A checker grading "did we advertise
+        // something we do not implement" reads the slot's own bits; a pad that arrived with
+        // nothing recorded says so instead of inheriting the fleet default.
+        for (NSNumber *slot in slots) {
+            uint16_t bits = (uint16_t)snapshot.advertisedControllerCapabilities[slot]
+                                .unsignedShortValue;
+            [lines addObject:[NSString stringWithFormat:@"ml.controllers.slot.%ld.caps=%u",
+                              (long)[slot integerValue], (unsigned)bits]];
+        }
+        // One key per capability the summary intersection still claims, so a checker asking
+        // per capability does not have to split a joined bundle.
+        uint16_t summaryBits = [self controllerCapabilitySummaryBits:snapshot];
+        if (summaryBits & LI_CCAP_ANALOG_TRIGGERS) {
+            [lines addObject:@"ml.controllers.caps.analog_triggers=yes"];
+        }
+        if (summaryBits & LI_CCAP_RUMBLE) {
+            [lines addObject:@"ml.controllers.caps.rumble=yes"];
+        }
     }
     // The one number here that a checker must not read as a device count. Two pads of the same
     // model are one row, so an acceptance run that wants "two controllers" grades the slots the
