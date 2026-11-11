@@ -25,7 +25,7 @@ harness = r'''
 typedef void *PML_INPUT_STREAM_CONTEXT;
 typedef struct { void *context; uint64_t generation; } HIDInputLease;
 static NSMutableArray *inputJobs, *mainJobs;
-static int sends, resultCode, notes, removals, removalMask;
+static int sends, resultCode, notes, removals, removalMask, lastCaps;
 static BOOL initialized = YES;
 @interface HIDDeviceControllerEntry : NSObject
 @property int playerIndex;
@@ -40,10 +40,17 @@ static BOOL initialized = YES;
 @interface MLControllerInventory : NSObject
 + (instancetype)sharedInventory;
 - (void)noteControllerArrival:(int)slot protocolType:(uint8_t)type;
+- (void)noteControllerArrival:(int)slot protocolType:(uint8_t)type capabilities:(uint16_t)caps;
 @end
 @implementation MLControllerInventory
 + (instancetype)sharedInventory { static id s; if (!s) s = [self new]; return s; }
-- (void)noteControllerArrival:(int)slot protocolType:(uint8_t)type { notes++; }
+- (void)noteControllerArrival:(int)slot protocolType:(uint8_t)type {
+    [self noteControllerArrival:slot protocolType:type capabilities:0];
+}
+- (void)noteControllerArrival:(int)slot protocolType:(uint8_t)type capabilities:(uint16_t)caps {
+    lastCaps = caps;
+    notes++;
+}
 @end
 @interface HIDSupport : NSObject
 @property int controllerDriver;
@@ -85,6 +92,7 @@ int main(void) { @autoreleasepool {
     HIDSupport *s = [HIDSupport new]; s.shouldSendInputEvents = YES; s.generation = 1;
     HIDDeviceControllerEntry *e = [HIDDeviceControllerEntry new];
     s.deviceControllerTable = [@{@"a":e} mutableCopy];
+    e.capabilities = 0x0003;
     [s sendControllerArrivalForEntry:e]; CHECK(!e.advertisedToHost && sends == 0 && notes == 0);
     s.inputContext = (void *)1; resultCode = -1;
     [s sendControllerArrivalForEntry:e]; drain(inputJobs); drain(mainJobs);
@@ -94,6 +102,7 @@ int main(void) { @autoreleasepool {
     CHECK(notes == 0 && !e.advertisedToHost);
     drain(inputJobs); CHECK(sends == 2 && notes == 0);
     drain(mainJobs); CHECK(notes == 1 && e.advertisedToHost);
+    CHECK(lastCaps == 0x0003);
     s.generation = 2;
     [s sendControllerArrivalForEntry:e]; s.generation = 3;
     drain(inputJobs); drain(mainJobs); CHECK(sends == 2 && notes == 1);
@@ -138,6 +147,12 @@ for name, old, new in (
      '        LiSendMultiControllerEventCtx(inputCtx, playerIndex, mask, 0, 0, 0, 0, 0, 0, 0);',
      '        if (entry.advertisedInputGeneration != inputLease.generation) return;\n'
      '        LiSendMultiControllerEventCtx(inputCtx, playerIndex, mask, 0, 0, 0, 0, 0, 0, 0);'),
+    # P0-5: the record and the packet are one source of truth. Recording a different
+    # bit set than the arrival sent is exactly the drift the report layer reads back.
+    ('arrival record drops the capability bits',
+     'protocolType:protocolType\n'
+     '                                                           capabilities:capabilities];',
+     'protocolType:protocolType capabilities:0];'),
 ):
     assert method.count(old) == 1, name
     r = run(method.replace(old, new))

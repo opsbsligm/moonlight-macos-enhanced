@@ -75,6 +75,13 @@ typedef NS_ENUM(NSInteger, MLControllerFamily) {
 /// record is the arrival event itself, so an empty dictionary reads as "nothing was
 /// sent" even though the arrival flag says a stream ran.
 @property (nonatomic, copy) NSDictionary<NSNumber *, NSNumber *> *advertisedControllerTypes;
+/// The capability bits the arrival event carried for each arriving pad, in the
+/// LI_CCAP_* numbering, keyed by the same player slot as the types above. A
+/// capability is a promise the host will keep using, so the settings page must
+/// show what was promised, not what the family table says a pad could have.
+/// P0-5: this is the read side of "did the handshake actually happen" -- the
+/// record stays empty until an arrival event really goes out with those bits.
+@property (nonatomic, copy) NSDictionary<NSNumber *, NSNumber *> *advertisedControllerCapabilities;
 @end
 
 /// The layout family for a vendor/product pair. A zero id is a legal read -- some devices
@@ -120,6 +127,12 @@ FOUNDATION_EXPORT NSString *MLControllerDriverNameForIndex(NSInteger index);
 /// A controller was told to the host. The type is what the arrival event carried,
 /// the slot its player index. Called from the main thread, like the rest of the record.
 - (void)noteControllerArrival:(NSInteger)playerIndex protocolType:(uint8_t)protocolType;
+/// Same record, with the capability bits the arrival event carried. The caller
+/// passes the entry's own computed set, so the record and the packet agree by
+/// construction; there is no second place where the answer could drift.
+- (void)noteControllerArrival:(NSInteger)playerIndex
+                protocolType:(uint8_t)protocolType
+                capabilities:(uint16_t)capabilities;
 
 /// That session ended. The tally stays and the entries stay -- a report read afterwards is
 /// exactly the case the record exists for -- but it stops claiming the bench is in use.
