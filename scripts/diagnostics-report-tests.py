@@ -1511,7 +1511,8 @@ def analyze(source, work, cc, sdk):
             handle.write(text)
     ran = subprocess.run(
         [cc, "--analyze", "-x", "objective-c", "-fobjc-arc", "-isysroot", sdk,
-         "-I", ROOT,
+        "-I", os.path.join(ROOT, "moonlight-common", "moonlight-common-c", "src"),
+        "-I", ROOT,
          os.path.join(work, os.path.basename(SOURCE)),
          "-o", os.path.join(work, "analysis.plist")],
         capture_output=True, text=True)
@@ -1542,9 +1543,11 @@ def compile_and_run(source, work, cc, sdk, inventory_source=None, dump_path=None
     binary = os.path.join(work, "report")
     built = subprocess.run(
         [cc, "-x", "objective-c", "-fobjc-arc", "-isysroot", sdk, "-Wall", "-Werror",
-         # The shipping builder now imports the wire table by repo-root-relative path so a
-         # rename in Limelight.h stays visible at the gate; the flat work dir needs the root.
-         "-I", ROOT,
+        # The shipping builder imports the wire table the way every other file does --
+        # flat, resolved through the target header search paths -- so the gate needs the
+        # same src directory. The repo root stays as a fallback for the flat work dir.
+        "-I", os.path.join(ROOT, "moonlight-common", "moonlight-common-c", "src"),
+        "-I", ROOT,
          "-framework", "Foundation", os.path.join(work, "driver.m"),
          os.path.join(work, os.path.basename(SOURCE)),
          os.path.join(work, os.path.basename(LEDGER_SOURCE)),

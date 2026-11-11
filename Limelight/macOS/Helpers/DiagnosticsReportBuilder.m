@@ -6,7 +6,7 @@
 #import "DiagnosticsReportBuilder.h"
 
 #import <math.h>
-#import "moonlight-common/moonlight-common-c/src/Limelight.h"
+#import "Limelight.h"
 
 #import "InputDiagnosticsLedger.h"
 #import "MLControllerInventory.h"
