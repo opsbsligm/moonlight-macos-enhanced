@@ -1,0 +1,10 @@
+{
+  "date": "2026-11-11",
+  "product": "网易UU远程",
+  "channel": "overseas PC (Windows)",
+  "version_in_filename": "6.21.1",
+  "download_url": "https://uu.gdl.netease.com/5253/UU-6.21.1-overseas.exe",
+  "redirect_source": "https://adl.netease.com/d/g/uu/c/overseas?type=pc",
+  "method": "官网下载链间接取证：官网页面为 JS 渲染，版本号不直接出现在 HTML 正文；跟随官方下载重定向源 adl.netease.com 的海外 PC 渠道，下载文件名内含版本号。",
+  "notes": "未下载 exe 本体、未读其 Info 版本字段；国内渠道与 macOS 客户端未另钉。"
+}
