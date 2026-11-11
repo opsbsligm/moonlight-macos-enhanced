@@ -691,6 +691,18 @@
         [self tearDownControllerSupportOnMainThreadIfNeeded];
         [self uncaptureMouseWithCode:@"MUC303" reason:@"close-window-from-main-queue"];
 
+        // This is the one place a reconnect can end without a connection ever
+        // being established (launch-failed / stage-failed fallback). Reset the
+        // reconnect flags here or the next launch inherits them: the overlay
+        // keeps saying "reconnecting" and the manual button stays dead until
+        // the window itself is torn down (2026-11-12 payload-stall case).
+        if (self.reconnectInProgress) {
+            Log(LOG_I, @"[diag] Reconnect state cleared on window close: reconnectInProgress=1");
+            self.reconnectInProgress = NO;
+            [self hideReconnectOverlay];
+        }
+        [self.reconnector cancelWithReason:@"close-window"];
+
         if (message != nil) {
             // Show the error overlay and keep window open for retry/options
             [self showErrorOverlayWithTitle:MLString(@"Connection Failed", nil) message:message canWait:NO];
