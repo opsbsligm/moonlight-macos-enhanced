@@ -147,6 +147,7 @@ NSString *MLControllerDriverNameForIndex(NSInteger index) {
     copy.driverName = self.driverName;
     copy.advertisedControllerArrivals = self.advertisedControllerArrivals;
     copy.advertisedControllerTypes = self.advertisedControllerTypes;
+    copy.advertisedControllerCapabilities = self.advertisedControllerCapabilities;
     return copy;
 }
 
@@ -260,6 +261,12 @@ NSString *MLControllerDriverNameForIndex(NSInteger index) {
 }
 
 - (void)noteControllerArrival:(NSInteger)playerIndex protocolType:(uint8_t)protocolType {
+    [self noteControllerArrival:playerIndex protocolType:protocolType capabilities:0];
+}
+
+- (void)noteControllerArrival:(NSInteger)playerIndex
+                protocolType:(uint8_t)protocolType
+                capabilities:(uint16_t)capabilities {
     NSAssert(NSThread.isMainThread, @"the inventory is written where the HID manager runs");
     MLControllerInventorySnapshot *snapshot = [self.snapshot copy];
     if (snapshot == nil) {
@@ -270,6 +277,10 @@ NSString *MLControllerDriverNameForIndex(NSInteger index) {
         [snapshot.advertisedControllerTypes mutableCopy] ?: [NSMutableDictionary dictionary];
     types[@(playerIndex)] = @(protocolType);
     snapshot.advertisedControllerTypes = [types copy];
+    NSMutableDictionary<NSNumber *, NSNumber *> *caps =
+        [snapshot.advertisedControllerCapabilities mutableCopy] ?: [NSMutableDictionary dictionary];
+    caps[@(playerIndex)] = @(capabilities);
+    snapshot.advertisedControllerCapabilities = [caps copy];
     snapshot.advertisedControllerArrivals = YES;
     self.snapshot = snapshot;
 }
