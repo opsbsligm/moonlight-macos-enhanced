@@ -1725,23 +1725,34 @@ def published_defaults_gap(model, fields, persistence, bridge, stream_view, load
     the current tree has zero gaps, so a new field is a violation until a default
     is written for it in the persistence layer, the bridge, an Objective-C
     substitution, or the loader.
+
+    Non-optional profile fields answer a narrower question: their shipped value is
+    the single unconditional assignment in the model's `init()` all-defaults block,
+    which `loadDefaultSettings()` mirrors into the loader table. A field that no
+    layer *reads* with a fallback cannot fork -- there is nothing to read -- but the
+    moment that assignment disappears it runs on the type's zero in every new
+    session without warning, so a loader entry is the whole contract here and a
+    missing one is the same ratcheted gap.
     """
-    optional = re.findall(r"@Published\s+(?:var|let)\s+(\w+)\s*:\s*[^\n]*\?", model)
+    published = re.findall(r"@Published\s+(?:var|let)\s+(\w+)\s*:", model)
     gap = {}
-    for name in optional:
-        if fields.get(name) is not True:
+    for name in published:
+        if fields.get(name) is None:
             continue  # not a profile field: a UI state the profile never persists
-        stated = []
-        if name in persistence:
-            stated.append(("persistence", persistence[name][0][0]))
-        if name in bridge:
-            stated.append(("bridge", bridge[name][0][0]))
-        if name in stream_view:
-            stated.append(("stream", stream_view[name][0][0]))
-        if name in loader:
-            stated.append(("loader", loader[name][0][0]))
-        if not stated:
-            gap[name] = stated
+        if fields[name]:
+            stated = []
+            if name in persistence:
+                stated.append(("persistence", persistence[name][0][0]))
+            if name in bridge:
+                stated.append(("bridge", bridge[name][0][0]))
+            if name in stream_view:
+                stated.append(("stream", stream_view[name][0][0]))
+            if name in loader:
+                stated.append(("loader", loader[name][0][0]))
+            if not stated:
+                gap[name] = stated
+        elif name not in loader:
+            gap[name] = []
     return gap
 
 PRIVATE_FIELDS = frozenset(("cachedPersistedSettingsByProfileKey",))
@@ -2317,13 +2328,25 @@ def audit(tree=None):
     # that no layer has met yet never becomes a candidate and the books stay
     # quiet. The gap question runs on the model's own declaration list instead:
     # a published optional profile field with no default in any audited layer is
-    # a zero the two layers silently agree on by accident.
+    # a zero the two layers silently agree on by accident, and a published
+    # non-optional profile field with no all-defaults assignment runs on the type's
+    # zero in every new session.
     gap = published_defaults_gap(tree.read(MODEL), fields, persistence, bridge,
                                  stream_view, loader)
+    nonoptional_published = {name for name in
+                             re.findall(r"@Published\s+(?:var|let)\s+(\w+)\s*:",
+                                        tree.read(MODEL))
+                             if fields.get(name) is False}
     for key in sorted(gap):
-        problems.append("published optional profile field %s has no default in "
-                        "persistence, the bridge, the stream, or the loader -- "
-                        "an unset profile runs on the zero of its type" % key)
+        if key in nonoptional_published:
+            problems.append("published profile field %s has no all-defaults "
+                            "assignment in the loader -- a new session runs on "
+                            "the zero of its type" % key)
+        else:
+            problems.append("published optional profile field %s has no default "
+                            "in persistence, the bridge, the stream, or the "
+                            "loader -- an unset profile runs on the zero of "
+                            "its type" % key)
     return {"candidates": candidates, "compared": compared, "divergences": divergences,
             "ledger": ledger, "unresolved": unresolved, "unread": unread,
             "problems": problems,
@@ -3027,6 +3050,36 @@ def self_test():
                    "absoluteMouseMode" not in result["published_defaults_gap"]
                    and not any(p.startswith("published optional profile field "
                                             "absoluteMouseMode")
+                                for p in result["problems"])))
+    # 15c. The non-optional half of the gate: a profile field with no `?` has no
+    #      coalesce anywhere to fork -- its only stated shipped value is the
+    #      all-defaults assignment, so deleting the loader's line is the same
+    #      ratcheted gap as an optional with no layer at all. `autoFullscreen`
+    #      is one of the seven non-optional published profile fields and its
+    #      loader assignment is its single shipped answer.
+    result = relaunch([(PERSISTENCE,
+                        "    autoFullscreen = Self.defaultAutoFullscreen\n",
+                        "")])
+    checks.append(("published non-optional field with no all-defaults assignment is reported",
+                   any(p.startswith("published profile field autoFullscreen has "
+                                    "no all-defaults assignment")
+                       for p in result["problems"])
+                   and result["published_defaults_gap"].get("autoFullscreen") == []))
+    # 15d. Paired negative control: a non-optional field that no layer reads
+    #      with a `??` fallback still owes exactly one thing -- the loader
+    #      assignment. Deleting the one persistence *read* of `emulateGuide`
+    #      (the branch that copies a stored value) must stay quiet, because the
+    #      loader still states the shipped default and the field cannot fork
+    #      with nothing to coalesce. A gate that cried here would be counting
+    #      reader shapes instead of asking whether a default still exists --
+    #      the same over-eager trap the 15b control guards on the optional side.
+    result = relaunch([(PERSISTENCE,
+                        "      emulateGuide = settings.emulateGuide\n",
+                        "")])
+    checks.append(("published non-optional field that keeps its all-defaults assignment stays green",
+                   "emulateGuide" not in result["published_defaults_gap"]
+                   and not any(p.startswith("published profile field "
+                                            "emulateGuide")
                                 for p in result["problems"])))
 
     failed = 0
