@@ -64,7 +64,7 @@
 | commit | 备注 |
 | --- | --- |
 | `d85371c`/`be43885`/`62e0663` | **已处置（Wave G-3，2026-10-30）**：fork 侧 `5340b26`/`c759034`/`49cfe3a` 已逐 hunk 等价移植，子模块 merge `093098f5`，主仓 bump `6e1aa0b1`（MR 32）。等价性取证与 fork 侧行号见 `docs/history/waves/goal-mode-prompt.md` §3.5（该文档 Wave AO 起迁出仓内，现存开发机本地 infra-baseline 目录）；真机弱网收益待取证 |
-| `342b106` | **建议回吸，但须真机验证**（见下 §评估 1）。唯一有真实收益的一项，收益在我们的 clipboard 大分块路径上 |
+| `342b106` | **已回吸（Wave AP7，2026-11-12）**：vendored `src/ControlStream.c` 照上游原样落地 in-place 加密，`scripts/control-stream-alloc-tests.py` 同步 re-anchor 为 in-place 基线（0 staging malloc + 1 次 payload 写入 memcpy + inplace=1）。真机加密控制路径回归仍待验收窗口（见下 §评估 1 的未闭合风险） |
 | `41cedb8` | **已在 fork**，原判定作废。fork 侧等价实现来自 `f65f5b3`（Wave E-B），带 `ctx->peer` 适配 |
 | `f1cca2d` | **不取**。我们没有任何 pen 事件生产路径，这是死代码修复（见下 §评估 3） |
 | `7022b33` | **不适用**。整段在 `__MINGW32__` 分支内，macOS 走 `#else` BSD 路径，且全仓无 `EMSGSIZE` 使用 |
@@ -75,20 +75,28 @@
 判定口径：吸收 / 拒绝 / 不适用，每项给可复核证据。全部结论来自当前 submodule
 （pin `093098f5`）与 `upstream/master`（`5d3c0ec`）的源码对比，**不含任何真机结论**。
 
-### 1. `342b106` control stream 加密 in-place 化 —— 建议回吸（须真机验证）
+### 1. `342b106` control stream 加密 in-place 化 —— 已回吸（须真机回归）
 
 - 上游现在直接把明文构造在密文目的地：
   `packet = (PNVCTL_ENET_PACKET_HEADER_V2)(((unsigned char*)(encPacket + 1)) + AES_GCM_TAG_LENGTH)`，
   `encryptControlMessage()` 就地加密（输入输出同地址）。
-- fork 侧 `sendMessageEnet()` 仍是 `char tempBuffer[256]` + 超限 `malloc` 回退，
-  该回退由我们的 `991396a` clipboard sync 引入（`LI_CLIPBOARD_MAX_CHUNK_SIZE 16384`，
-  见 `src/Limelight-internal.h:93`、`src/ControlStream.c:2322`）。
-- 因此两者互斥且有净收益：取 in-place 后可同时删掉 `tempBuffer` 与 `malloc` 分支，
-  每个 >256B 剪贴板分块少一次堆分配加一次整块 memcpy。
-- 未闭合风险（所以只写"建议"，不写"已完成"）：需确认 macOS 实际 crypto 后端在
-  in-place 下的行为——`PlatformCrypto.c` 有 MbedTLS(`auth_encrypt_ext` 后接 memmove 挪 tag)
-  与 OpenSSL(`EVP_EncryptUpdate`) 两条路径，且 fork 的 `USE_MBEDTLS` 默认 OFF。
-  真机至少覆盖：配对新主机、>256B 文本剪贴板同步、rumble/LED 控制包。
+- Wave AP7（2026-11-12）已照上游原样落地：`char tempBuffer[256]` + 超限 `malloc` 回退
+  （由我们的 `991396a` clipboard sync 引入，`LI_CLIPBOARD_MAX_CHUNK_SIZE 16384`，见
+  `src/Limelight-internal.h:93`、`src/ControlStream.c:2322`）整段删除，每个 >256B
+  剪贴板分块少一次堆分配加一次整块 memcpy。
+- in-place 前提已在源码级核实：`encryptControlMessage()` 的 tag 输出
+  `((unsigned char*)(encPacket + 1))` 与密文输出 `((unsigned char*)(encPacket + 1)) + AES_GCM_TAG_LENGTH`
+  正是明文构造位置；GCM 无块边界依赖（C 层调用 `flags=0`，padding 只作用于 CBC 分支），
+  `MbedTLS auth_encrypt_ext`（"tag 在密文后 + memmove 挪位"）与 OpenSSL `EVP_EncryptUpdate`
+  两条后端对 in==out 均安全。
+- 未闭合风险（所以写"已回吸"，不写"已真机验证"）：源码级已核实两条 crypto 后端
+  （MbedTLS `auth_encrypt_ext` 后接 memmove 挪 tag / OpenSSL `EVP_EncryptUpdate`）
+  对 in==out 均安全、GCM 无块边界依赖；但 macOS 出货后端运行行为仍需真机覆盖：
+  配对新主机、>256B 文本剪贴板同步、rumble/LED 控制包。
+- 分配形状已由门禁钉死（Wave AP 预埋，AP7 re-anchor）：`scripts/control-stream-alloc-tests.py`
+  编译出货 `sendMessageEnet()` 文本回放，断言全尺寸 inplace=1、0 staging malloc、
+  每次仅 1 次 memcpy（payload 写入）；4 个行为变异（退回分块暂存 / 偷渡 staging 拷贝 /
+  摘掉加密调用 / 未加密路径起堆分配）均被 self-test 抓住。
 
 ### 2. `41cedb8` ENet disconnect 只对本机 peer 生效 —— 已在 fork（原待定作废）
 
@@ -135,9 +143,10 @@
 
 ### 评估后的净待办
 
-- 只剩 `342b106` 一项可开工，且必须先有真机窗口做加密控制路径回归；无可离线完成的子步骤。
-- 本轮把"未取待定"从 5 项收敛到 1 项，其余 4 项分别落到已在 fork / 不取 / 不适用，
-  不再作为未完成任务重复出现在下一波的清单里。
+- ~~只剩 `342b106` 一项可开工~~ → **`342b106` 已回吸（Wave AP7，2026-11-12）**：
+  代码层与分配形状门禁已收口，"未取待定"从 5 项收敛到 0 项；剩下的只是真机窗口里的
+  加密控制路径回归（配对 / >256B 剪贴板 / rumble-LED），随 AP7 真机验收一起做。
+- 其余 4 项分别落到已在 fork / 不取 / 不适用，不再作为未完成任务重复出现在下一波的清单里。
 
 ## 回吸时的已知冲突面（17 个交集文件）
 
