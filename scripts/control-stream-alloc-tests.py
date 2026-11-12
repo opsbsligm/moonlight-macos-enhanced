@@ -1,43 +1,39 @@
 #!/usr/bin/env python3
-"""Wave AP criterion gate: how many times does the encrypted control sender allocate.
+"""Wave AP7 gate: the encrypted control sender builds its plaintext in place.
 
 What this file is about
 -----------------------
 `docs/history/incidents/common-c-drift-2026-10-26.md` (evaluation 1) judged upstream
 `342b106` (control stream encryption built in place) as the one drift commit worth
-absorbing: our `sendMessageEnet()` still stages every encrypted control message in a
+absorbing: the old `sendMessageEnet()` staged every encrypted control message in a
 separate plaintext buffer -- `char tempBuffer[256]` on the stack, a heap `malloc` plus
-a whole-block `memcpy` once the message grows past 256 bytes. That heap fallback is
+a whole-block `memcpy` once the message grew past 256 bytes. That heap fallback was
 live: the clipboard sync (commit `991396a`) sends `LI_CLIPBOARD_MAX_CHUNK_SIZE`
-(16384)-byte chunks down this exact path, so every big chunk costs one heap
-allocation and one full copy that an in-place build of the plaintext inside the
-destination packet would not.
+(16384)-byte chunks down this exact path. Wave AP7 absorbed `342b106` as-is: the
+plaintext is now constructed at the very offset `encryptControlMessage()` writes its
+ciphertext to, so the sender needs no staging buffer of any size.
 
-The goal-mode contract for this wave is deliberately narrow: *criterion first, hot
-path later*. A real encrypted control stream is only provable on hardware, so this
-gate does not merge a behaviour change -- it makes the allocation behaviour of the
-shipping sender a re-runnable, mutation-tested fact. The harness compiles the
-*shipping `sendMessageEnet()` text* (extracted from
-`moonlight-common/moonlight-common-c/src/ControlStream.c`) against a stubbed ENet and
-crypto layer and, for each message size, records:
+The harness keeps the wave-AP contract: it compiles the *shipping `sendMessageEnet()`
+text* (extracted from `moonlight-common/moonlight-common-c/src/ControlStream.c`)
+against a stubbed ENet and crypto layer and, for each message size, records:
 
   * heap allocations on top of the destination buffer itself (2 mallocs: the
     ENetPacket struct and its data region, present in every variant),
-  * whether the crypto layer ever saw the plaintext inside the destination packet
+  * total `memcpy` calls the sender performs (the one payload write into the
+    destination packet is expected; a *staging* copy would add a second one),
+  * whether the crypto layer saw the plaintext inside the destination packet
     (`inplace=1`) or in a separate buffer (`inplace=0`).
 
-Expected on the shipped tree:
+Expected on the shipped tree (post 342b106):
 
-  * encrypted, payload that fits the 256-byte stack buffer: 0 staging mallocs,
-    inplace=0;
-  * encrypted, clipboard-sized (16384) and one size past the boundary: 1 staging
-    malloc and 1 staging copy each, inplace=0;
+  * encrypted, small / clipboard-sized (16384) / past-the-old-boundary payloads:
+    0 staging mallocs, exactly 1 memcpy each (the payload write), inplace=1;
   * unencrypted, both sizes: 0 staging mallocs.
 
-A refactor of `sendMessageEnet()` that changes any of these numbers fails the gate;
-the planted defects in --self-test prove each direction is noticed. When `342b106`
-finally lands, this gate is the one to re-anchor: staging mallocs and copies drop to
-zero and `inplace` flips to 1 on the encrypted paths.
+A regression of `sendMessageEnet()` back to separate-buffer staging fails the gate;
+the planted defects in --self-test prove each direction is noticed. Real encrypted
+control traffic (pairing, >256B clipboard, rumble/LED) still awaits the hardware
+acceptance window -- this gate pins the allocation shape, not the wire.
 """
 import os
 import subprocess
@@ -253,9 +249,9 @@ int main(void) {
     ctx.currentEnetSequenceNumber = 7;
     ctx.encryptionCtx = (void*)3;
 
-    const size_t small = 100;    /* fits the 256-byte stack buffer      */
+    const size_t small = 100;    /* small control message               */
     const size_t clip = 16384;   /* LI_CLIPBOARD_MAX_CHUNK_SIZE         */
-    const size_t over = 256 + 4; /* first size past the buffer (V2+256) */
+    const size_t over = 256 + 4; /* first size past the old 256B boundary */
 
     unsigned char* payload = cs_malloc(clip);
     for (size_t i = 0; i < clip; i++) payload[i] = (unsigned char)(i * 31 + 7);
@@ -326,12 +322,14 @@ def main():
     # we think they name, so fail loudly instead of re-grading quietly.
     check(text.count("static bool sendMessageEnet(") == 1,
           "exactly one sendMessageEnet() in ControlStream.c")
-    check("char tempBuffer[256];" in source,
-          "shipped stack buffer still present (criterion anchor)")
-    check("plaintextBufferAllocated = true;" in source,
-          "shipped heap fallback still present (criterion anchor)")
+    check("((unsigned char*)(encPacket + 1)) + AES_GCM_TAG_LENGTH);" in source,
+          "in-place plaintext construction still present (criterion anchor, upstream 342b106)")
+    check("char tempBuffer[256];" not in source,
+          "old 256-byte stack staging buffer gone (regression anchor)")
+    check("plaintextBufferAllocated = true;" not in source,
+          "old heap fallback gone (regression anchor)")
     check("memcpy(&packet[1], payload, paylen);" in source,
-          "plaintext staging copy present in the encrypted path")
+          "plaintext payload copy present in the encrypted path")
 
     r = run_probe(source)
     check(r.returncode == 0,
@@ -341,31 +339,30 @@ def main():
         return
     c = counts(r)
 
-    # The shipped fact: the 256-byte stack buffer buys zero staging allocation under
-    # its limit; at/over it the sender adds exactly one staging malloc per message
-    # (16384-byte clipboard chunks take this path today) and the plaintext never
-    # starts life inside the destination packet.
+    # The shipped fact after 342b106: every encrypted message, whatever its size
+    # (16384-byte clipboard chunks included), is built directly inside the
+    # destination packet -- no staging allocation, no staging copy.
     check(c.get("small_mallocs") == 0,
-          "encrypted under-buffer message: no staging malloc (got %s)" % c.get("small_mallocs"))
-    check(c.get("small_inplace") == 0,
-          "encrypted under-buffer message: plaintext staged separately (got %s)" % c.get("small_inplace"))
-    check(c.get("clip_mallocs") == 1,
-          "encrypted clipboard chunk: one staging malloc per message (got %s)" % c.get("clip_mallocs"))
+          "encrypted small message: no staging malloc (got %s)" % c.get("small_mallocs"))
+    check(c.get("small_inplace") == 1,
+          "encrypted small message: plaintext built in place (got %s)" % c.get("small_inplace"))
+    check(c.get("clip_mallocs") == 0,
+          "encrypted clipboard chunk: no staging malloc (got %s)" % c.get("clip_mallocs"))
     check(c.get("clip_copies") == 1,
-          "encrypted clipboard chunk: one staging copy (got %s)" % c.get("clip_copies"))
-    check(c.get("clip_inplace") == 0,
-          "encrypted clipboard chunk: plaintext staged separately (got %s)" % c.get("clip_inplace"))
-    check(c.get("over_mallocs") == 1,
-          "encrypted message past the buffer: one staging malloc (got %s)" % c.get("over_mallocs"))
-    check(c.get("over_inplace") == 0,
-          "encrypted message past the buffer: plaintext staged separately (got %s)" % c.get("over_inplace"))
+          "encrypted clipboard chunk: only the payload write, no staging copy (got %s)" % c.get("clip_copies"))
+    check(c.get("clip_inplace") == 1,
+          "encrypted clipboard chunk: plaintext built in place (got %s)" % c.get("clip_inplace"))
+    check(c.get("over_mallocs") == 0,
+          "encrypted message past the old boundary: no staging malloc (got %s)" % c.get("over_mallocs"))
+    check(c.get("over_inplace") == 1,
+          "encrypted message past the old boundary: plaintext built in place (got %s)" % c.get("over_inplace"))
     check(c.get("plain_small_mallocs") == 0,
           "unencrypted small: no staging malloc (got %s)" % c.get("plain_small_mallocs"))
     check(c.get("plain_clip_mallocs") == 0,
           "unencrypted clipboard chunk: no staging malloc (got %s)" % c.get("plain_clip_mallocs"))
 
-    print("criterion recorded: shipped encrypted sender = 0 staging mallocs under the "
-          "256B buffer, 1 malloc + 1 copy per message at/over it (clipboard chunks 16384B)")
+    print("criterion recorded: shipped encrypted sender = in-place plaintext at every "
+          "size (0 staging mallocs, 1 payload-write memcpy, clipboard chunks 16384B)")
 
 
 def run_self_test():
@@ -381,23 +378,25 @@ def run_self_test():
         return
     baseline = counts(base)
     cases = [
-        # 1. grow the stack buffer past the clipboard chunk: clip drops to 0 mallocs.
-        ("char tempBuffer[256];", "char tempBuffer[65536];",
-         "stack buffer grown past the clipboard chunk size"),
-        # 2. shrink it below the small probe size: small now mallocs.
-        ("char tempBuffer[256];", "char tempBuffer[1];",
-         "stack buffer shrunk below the small probe size"),
-        # 3. kill the fast path: every size takes the heap branch.
-        ("if (plaintextLength <= sizeof(tempBuffer)) {", "if (false) {",
-         "stack buffer fast path removed"),
+        # 1. the in-place construction moves back to a separate buffer: `inplace`
+        #    flips to 0 and staging mallocs appear -- the pre-342b106 shape.
+        ("packet = (PNVCTL_ENET_PACKET_HEADER_V2)(((unsigned char*)(encPacket + 1)) + AES_GCM_TAG_LENGTH);",
+         "packet = (PNVCTL_ENET_PACKET_HEADER_V2)malloc(sizeof(*packet) + paylen);",
+         "regressed to separate-buffer staging (pre-342b106 shape)"),
+        # 2. a staging copy is smuggled back in before the payload is written:
+        #    the copy counter rises even though the shape still compiles.
+        ("packet->payloadLength = paylen;",
+         "packet->payloadLength = paylen;\n        memcpy((void*)payload, payload, paylen);",
+         "planted redundant payload copy"),
+        # 3. the crypto call disappears: the harness asserts exactly one call, so
+        #    the probe itself fails.
+        ("if (!encryptControlMessage(ctx, encPacket, packet)) {",
+         "if (!true) {",
+        "crypto call removed from the encrypted path"),
         # 4. the unencrypted path starts staging: plain numbers rise.
         ("packet = (PNVCTL_ENET_PACKET_HEADER_V1)enetPacket->data;",
          "packet = (PNVCTL_ENET_PACKET_HEADER_V1)malloc(sizeof(*packet));",
          "unencrypted path now heap-allocates the header"),
-        # 5. a planted in-place rewrite must flip `inplace` and drop the staging copy:
-        #    this is the shape 342b106 will take, and the gate must notice it.
-        ("plaintextBuffer = tempBuffer;", "plaintextBuffer = (char*)enetPacket->data + 24;",
-         "planted in-place rewrite (upstream 342b106 shape)"),
     ]
     for needle, replacement, label in cases:
         if original.count(needle) != 1:
