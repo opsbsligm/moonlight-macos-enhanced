@@ -21,7 +21,7 @@
 ### 选项 A（默认）：维持现状，retry 兜底
 
 - 门禁语义不变：只有 success 或明确豁免的 skipped 能放行镜像。
-- 代价：failed+af 出现时 publish 被拦，需要 owner 用 liguangming 临时 PAT 走
+- 代价：failed+af 出现时 publish 被拦，需要 owner 用其审查账号的临时 PAT 走
   API retry（已跑通两遍，每次约 10-20 分钟人工/自动时间）。
 - 收益：对"该 job 是否真该放行"保持逐次人工判断，不扩大放行面。
 
