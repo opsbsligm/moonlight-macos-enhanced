@@ -37,6 +37,8 @@ REC_M = "Limelight/macOS/Helpers/MLStreamReconnector.m"
 SVC = "Limelight/macOS/ViewControllers/StreamViewController.m"
 INT = "Limelight/macOS/ViewControllers/StreamViewController_Internal.h"
 MENU = "Limelight/macOS/ViewControllers/StreamViewController+MenuUI.m"
+DIAG = "Limelight/macOS/ViewControllers/StreamViewController+Diagnostics.m"
+WM = "Limelight/macOS/ViewControllers/StreamViewController+WindowModes.m"
 PBX = "Moonlight.xcodeproj/project.pbxproj"
 EN = "Limelight/macOS/en.lproj/Localizable.strings"
 ZH = "Limelight/macOS/zh-Hans.lproj/Localizable.strings"
@@ -111,6 +113,8 @@ def main():
     svc = read(SVC)
     internal = read(INT)
     menu = read(MENU)
+    diag = read(DIAG)
+    winmodes = read(WM)
     pbx = read(PBX)
     flat = re.sub(r"\s+", " ", header)
 
@@ -343,6 +347,30 @@ def main():
     check(svc.count("markHostConfirmedGoneWithReason:") >= 1,
           "the host-gone wrapper is reachable from the termination path")
 
+    # --- 3. a reconnection re-arms the connect watchdog, and a window close
+    #        that ends a reconnect without a connection clears its flags ------
+    # The 2026-11-12 payload-stall case: attemptReconnect tore the old stream
+    # down, the relaunch died on a request -1001 during launch, and the
+    # launch-failed path closed the window. reconnectInProgress was only ever
+    # reset on watchdog-timeout, user-stop, or connection-success, so it
+    # survived the close and every manual reconnect for the rest of the session
+    # was swallowed by the guard in handleTimeoutReconnect.
+    attempt_body = method_body(diag, "- (void)attemptReconnectWithReason:")
+    check("startConnectWatchdog" in attempt_body,
+          "a reconnection re-arms the connect watchdog, so a relaunch that dies "
+            "during launch still resolves the overlay instead of leaving "
+            "reconnectInProgress set forever")
+    close_body = method_body(winmodes, "- (void)closeWindowFromMainQueueWithMessage:")
+    check("self.reconnectInProgress = NO" in close_body,
+          "closing the stream window clears reconnectInProgress, so the next "
+            "launch does not inherit a reconnect that already died")
+    check("hideReconnectOverlay" in close_body,
+          "closing the stream window hides the reconnect overlay that the "
+            "abandoned attempt left up")
+    check("cancelWithReason" in close_body,
+          "closing the stream window cancels the backoff budget, so a pending "
+            "attempt cannot fire into a new, unrelated stream")
+
 
 def mutations():
     """Each case rewrites a real line and expects the assertions above to fail."""
@@ -418,6 +446,32 @@ def mutations():
          "[self markHostConfirmedGoneFromDiagnosticsWithReason:goneReason];",
          "/* PLANTED: the host-gone caller was deleted */",
          "the host-gone caller was removed; the backoff never learns the host is gone"),
+        # Reconnect-flag leak fixes: each mutation must turn the section-3
+        # assertions red.
+        (DIAG,
+         "    Log(LOG_I, @\"[diag] Reconnect requested: reason=%@\", reason ?: @\"unknown\");\n"
+         "    self.reconnectAttemptCount += 1;\n"
+         "    // Re-arm the connect watchdog for the attempt about to start. The first\n"
+         "    // stream launch arms it from prepareForStreaming, but a reconnection that\n"
+         "    // fails during launch (e.g. request -1001 on a transient host drop) used\n"
+         "    // to leave no timer behind: reconnectInProgress stayed set, the\n"
+         "    // \"reconnecting\" overlay never resolved, and every manual reconnect after\n"
+         "    // that was ignored by the guard above for the rest of the session.\n"
+         "    [self startConnectWatchdog];",
+         "    Log(LOG_I, @\"[diag] Reconnect requested: reason=%@\", reason ?: @\"unknown\");\n"
+         "    self.reconnectAttemptCount += 1;",
+         "a reconnection no longer re-arms the watchdog, so a launch failure "
+          "leaves the overlay stuck and the manual button dead"),
+        (WM,
+         "        if (self.reconnectInProgress) {\n"
+         "            Log(LOG_I, @\"[diag] Reconnect state cleared on window close: reconnectInProgress=1\");\n"
+         "            self.reconnectInProgress = NO;\n"
+         "            [self hideReconnectOverlay];\n"
+         "        }\n"
+         "        [self.reconnector cancelWithReason:@\"close-window\"];",
+         "        /* PLANTED: the abandoned reconnect keeps its flags */",
+         "closing the window stopped clearing the reconnect flags, so the next "
+          "launch inherits a reconnect that already died"),
     ]
 
 
