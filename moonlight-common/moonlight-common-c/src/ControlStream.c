@@ -915,29 +915,12 @@ static bool sendMessageEnet(PML_CONTROL_STREAM_CONTEXT ctx, short ptype, short p
     if (ctx->encryptedControlStream) {
         PNVCTL_ENCRYPTED_PACKET_HEADER encPacket;
         PNVCTL_ENET_PACKET_HEADER_V2 packet;
-        char tempBuffer[256];
-        char* plaintextBuffer;
-        size_t plaintextLength;
-        bool plaintextBufferAllocated = false;
 
         enetPacket = enet_packet_create(NULL,
                                         sizeof(*encPacket) + AES_GCM_TAG_LENGTH + sizeof(*packet) + paylen,
                                         flags);
         if (enetPacket == NULL) {
             return false;
-        }
-
-        plaintextLength = sizeof(*packet) + paylen;
-        if (plaintextLength <= sizeof(tempBuffer)) {
-            plaintextBuffer = tempBuffer;
-        }
-        else {
-            plaintextBuffer = malloc(plaintextLength);
-            if (plaintextBuffer == NULL) {
-                enet_packet_destroy(enetPacket);
-                return false;
-            }
-            plaintextBufferAllocated = true;
         }
 
         // We (ab)use the enetMutex to protect currentEnetSequenceNumber and the cipherContext
@@ -949,8 +932,11 @@ static bool sendMessageEnet(PML_CONTROL_STREAM_CONTEXT ctx, short ptype, short p
         encPacket->length = sizeof(encPacket->seq) + AES_GCM_TAG_LENGTH + sizeof(*packet) + paylen;
         encPacket->seq = ctx->currentEnetSequenceNumber++;
 
-        // Construct the plaintext data for encryption
-        packet = (PNVCTL_ENET_PACKET_HEADER_V2)plaintextBuffer;
+        // Construct the plaintext data for encryption in place, at the exact
+        // offset encryptControlMessage() writes its ciphertext to. Upstream
+        // 342b106: this lets a payload of any size (16384-byte clipboard chunks
+        // included) skip the tempBuffer/stack+malloc staging entirely.
+        packet = (PNVCTL_ENET_PACKET_HEADER_V2)(((unsigned char*)(encPacket + 1)) + AES_GCM_TAG_LENGTH);
         packet->type = ptype;
         packet->payloadLength = paylen;
         memcpy(&packet[1], payload, paylen);
@@ -959,15 +945,8 @@ static bool sendMessageEnet(PML_CONTROL_STREAM_CONTEXT ctx, short ptype, short p
         if (!encryptControlMessage(ctx, encPacket, packet)) {
             Limelog("Failed to encrypt control stream message\n");
             enet_packet_destroy(enetPacket);
-            if (plaintextBufferAllocated) {
-                free(plaintextBuffer);
-            }
             PltUnlockMutex(&ctx->enetMutex);
             return false;
-        }
-
-        if (plaintextBufferAllocated) {
-            free(plaintextBuffer);
         }
 
         // enetMutex still locked here
