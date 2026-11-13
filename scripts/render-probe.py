@@ -455,6 +455,65 @@ def verify_panes(report, refusals, out_dir):
                    "the render" % {k: v[:8] for k, v in digests.items()})
 
 
+def verify_write_chain(report, refusals):
+    """The AP15 write chain: a segment press the page's own binding can feel.
+
+    The producer runs the block only when ML_RENDER_PROBE_WRITE_CHAIN is set
+    (a Release binary never reaches it), so an absent block is not a failure --
+    the self-test's wiring check is what keeps the launch from dropping the flag.
+    With the block present, every press gets its own verdict: a press onto a new
+    pane must produce exactly one write the page received and must leave the page
+    storing that pane; a repeat press onto the pane the page already shows must
+    produce zero writes, which is the inequality guard working. Writes above one
+    are a double commit; zero on a fresh press is the click defect AP15 exists
+    to find.
+    """
+    record = report.get("writeChain")
+    if record is None:
+        return
+
+    def refuse(message):
+        refusals.append(message)
+
+    if record.get("presented") is not True:
+        refuse("the write-chain probe could not present the settings page, so its "
+               "presses have no verdict to carry")
+        return
+    if not isinstance(record.get("presses"), list) or not record["presses"]:
+        refuse("the write-chain probe recorded no presses")
+        return
+    if record.get("panePreferenceRestored") is not True:
+        refuse("the write-chain probe left the pane preference changed")
+    previous = record.get("storedBefore")
+    for i, press in enumerate(record["presses"]):
+        pane = press.get("pane")
+        if press.get("reached") is not True:
+            refuse("write-chain press %d never reached the tab bar's pane %s segment" % (i, pane))
+            continue
+        writes = press.get("writes")
+        after = press.get("storedAfter")
+        if not isinstance(writes, int) or not isinstance(after, int):
+            refuse("write-chain press %d recorded no verdict (writes=%r storedAfter=%r)"
+                   % (i, writes, after))
+            continue
+        fresh = pane != previous
+        if fresh:
+            if writes != 1:
+                refuse("write-chain press %d produced %d write(s) for a new pane, "
+                       "expected exactly one" % (i, writes))
+            if after != pane:
+                refuse("write-chain press %d asked for pane %s but the page stored %r"
+                       % (i, pane, after))
+            previous = pane
+        else:
+            if writes != 0:
+                refuse("write-chain press %d re-pressed the pane the page was already "
+                       "showing and still wrote %d time(s)" % (i, writes))
+            if after != pane:
+                refuse("write-chain press %d left the page storing %r instead of pane %s"
+                       % (i, after, pane))
+
+
 def verify(report, out_dir=None):
     """Return every way this report says the product is wrong."""
     refusals = []
@@ -516,6 +575,7 @@ def verify(report, out_dir=None):
     expect(len(materials) > 0, "no backdrop or material layer in the page: no Liquid Glass is composited")
 
     verify_panes(report, refusals, out_dir)
+    verify_write_chain(report, refusals)
     verify_host_reads(report, refusals)
     return refusals
 
@@ -671,6 +731,10 @@ def run(app, out, timeout, hold_seconds=None):
     stderr_path = os.path.join(out, "probe-stderr.txt")
     command = ["open", "-n", "-W", "--stderr", stderr_path,
                "--env", "HOME=" + home, "--env", "ML_RENDER_PROBE=1",
+               # Ask for the AP15 write-chain pass. The app's Release binary cannot
+               # reach the pass at all (it is Debug-only), so the flag costs nothing
+               # there; this line is the wiring the self-test holds the launch to.
+               "--env", "ML_RENDER_PROBE_WRITE_CHAIN=1",
                "--env", "ML_RENDER_PROBE_OUTPUT=" + out, app]
     try:
         subprocess.run(command, capture_output=True, text=True, timeout=timeout)
@@ -838,12 +902,46 @@ def self_test():
                 "readsPerCycle": [0, 0, 0, 0], "readsDuringCycles": 0,
                 "readsUnattributedToCycles": 0, "libraryEndReads": 1,
             }
+            # The write chain answers what the pane passes cannot: the page's own binding
+            # feels the writes a segment press produces. The fixture walks the same
+            # sequence the C pass presses -- five fresh presses, each one write, and one
+            # repeat press the inequality guard turns into none.
+            good["writeChain"] = {
+                "presented": True, "storedBefore": 0, "panePreferenceRestored": True,
+                "presses": [
+                    {"pane": 5, "reached": True, "writes": 1, "storedAfter": 5},
+                    {"pane": 2, "reached": True, "writes": 1, "storedAfter": 2},
+                    {"pane": 2, "reached": True, "writes": 0, "storedAfter": 2},
+                    {"pane": 3, "reached": True, "writes": 1, "storedAfter": 3},
+                    {"pane": 6, "reached": True, "writes": 1, "storedAfter": 6},
+                    {"pane": 0, "reached": True, "writes": 1, "storedAfter": 0},
+                ],
+            }
             if verify(good):
                 print("FAIL the verifier refused a report that satisfies every rule: %s" % verify(good))
                 failures += 1
             else:
                 print("ok   the verifier accepts a page that is embedded, drawn, composites glass, "
                       "and says what its rules say")
+            # A report that never ran the block (a Release binary, or a launch that dropped
+            # the flag) is not a failure -- only the self-test's wiring check below can
+            # catch that. An absent block must still pass.
+            unclaimed = json.loads(json.dumps(good))
+            unclaimed.pop("writeChain", None)
+            if verify(unclaimed, out):
+                print("FAIL a report without the write-chain block is refused again")
+                failures += 1
+            else:
+                print("ok   a report without the write-chain block still passes")
+            # The C pass is gated on ML_RENDER_PROBE_WRITE_CHAIN, so a launch that drops
+            # the flag silently loses the block; hold the launch line to the flag by name.
+            with open(os.path.abspath(__file__), encoding="utf-8") as source_file:
+                if '"--env", "ML_RENDER_PROBE_WRITE_CHAIN=1"' not in source_file.read():
+                    print("FAIL the launch no longer asks for the write-chain pass the "
+                          "C producer is gated on")
+                    failures += 1
+                else:
+                    print("ok   the launch carries the write-chain flag the C pass is gated on")
 
             def video():
                 return good["videoPane"]
@@ -947,6 +1045,20 @@ def self_test():
                      {"hostReadsDuringPresent": HOST_READS_WHEN_OPENED["videoPane"] + 1})),
                 ("a pane read the library while it was being dismissed",
                  lambda report: report["streamPane"].update({"hostReadsDuringDismiss": 1})),
+                ("a new pane press wrote twice", lambda report: report["writeChain"]["presses"][1].update(
+                    {"writes": 2})),
+                ("a new pane press wrote nothing", lambda report: report["writeChain"]["presses"][1].update(
+                    {"writes": 0})),
+                ("a press that reached the bar never stored the pane", lambda report:
+                 report["writeChain"]["presses"][2].update({"storedAfter": 3})),
+                ("the repeat press on the shown pane still wrote", lambda report:
+                 report["writeChain"]["presses"][2].update({"writes": 1})),
+                ("a press never reached the tab bar", lambda report:
+                 report["writeChain"]["presses"][3].update({"reached": False})),
+                ("the probe left the pane preference changed", lambda report: report["writeChain"].update(
+                    {"panePreferenceRestored": False})),
+                ("the write-chain probe could not present the page", lambda report: report["writeChain"].update(
+                    {"presented": False})),
             ]
             # The other end of the line: the numbers this page really drew on a player's
             # display, measured on 2026-09-28 from the probe's own screenshot (mean 0.9765,
