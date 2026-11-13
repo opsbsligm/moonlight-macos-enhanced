@@ -2,10 +2,12 @@
 
 ## UI 外观变更规则：必须尊重用户已验收的控件
 
-设置页标签栏（设置导航 串流/视频/音频/输入/应用/设备）**已被用户验收为 macOS 27 系统原生的 `NSSegmentedControl` + `role=.tabs`**（即 system settings / Activity Monitor 风格的标签切换器）。这一决定记录在 commit `00315f0f`（"let the system's own tab picker draw the selection"），验收语料为"已恢复了"。
+设置页标签栏（设置导航 串流/视频/音频/输入/应用/设备）**已被用户验收为 macOS 27 系统原生 `NSSegmentedControl` 的外观：选中段蓝色胶囊**（浅色底、胶囊容器、蓝色高亮）。验收提交 `00315f0f`（2026-10-17，验收语料"已恢复了"；该 build minos=26，代码里的 `role=.tabs` 守卫当时未生效，用户看到的是 `segmentStyle=.rounded` + `borderShape=.capsule` 的蓝色选中态）。
+
+2026-11-08 `7c863480` 把 minos 提到 27 后 `role=.tabs` 真正生效，标签栏变白。同一台 macOS 27.3 + SDK 27.2 上三组 A/B/C 像素实验（仅 role / role+rounded+capsule / 无 role+rounded+capsule）钉死：**蓝色来自 rounded+capsule，`role=.tabs` 会把选中段画成白色胶囊**。故 2026-11-14 摘除 `role=.tabs` 赋值（保留 `#if` 守卫与 pbxproj 编译条件防止回潮），以用户验收截图为最终事实。
 
 - **严禁**以任何理由（"观感更好""可见性增强""统一风格"等）替换为自绘替代方案。
-- **严禁**改 UI 前不查该文件最近的验收提交；至少检查 `git log --oneline Limelight/macOS/ViewControllers/LiquidGlass/LiquidGlassTabBar.swift` 最近 10 条提交。
+- **严禁**在验收截图之外重新引入 `role` 赋值或改默认值（换 segmentStyle/borderShape/controlSize 均算）；改 UI 前必须查该文件最近 10 条提交并做像素级对比（本机 A/B/C 实验脚本可重放：`NSSegmentedControl(labels:)` 分别设 role=、role+rounded+capsule、rounded+capsule，采样选中段中心颜色，验收态必须为蓝）。
 - 任何涉及用户已验收外观的改动，必须先横向对比用户验收时截图的像素级表现，并在 PR/提交中附上实测截图。
 - 这条规则只有用户本人可以解除。
 
