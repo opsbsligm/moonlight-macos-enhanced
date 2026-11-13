@@ -308,18 +308,29 @@ private final class DismissBox {
   /// Presses the segment that carries `pane` on the page's tab bar, through the
   /// native control's own click path.
   ///
-  /// `selectSegment(withTag:)` runs the control's target/action the way a
-  /// pointer's second click does. The SDK only vends the tag form of the press,
-  /// so this selects by the same identity the walk below searched: a segment
-  /// whose tag is the pane. That keeps the probe on the three links a player's
-  /// click walks -- the control's action, the coordinator's deferred commit and
-  /// the binding behind the page -- instead of setting the binding, which would
-  /// skip the two links a click defect hides. False means the page is not up in
-  /// this window or the pane has no segment: a missing page, not a missing write.
+  /// The SDK only vends the tag form of the press, so this selects by the same
+  /// identity the walk below searched: a segment whose tag is the pane. On the
+  /// macOS 27 SDK `selectSegment(withTag:)` changes the selection but does not
+  /// run the control's target/action (verified in CI pipeline 1959: six presses,
+  /// zero writes), so after selecting this sends the action itself the way
+  /// AppKit does for a real second click on the segment, with the control as
+  /// sender. That keeps the probe on the three links a player's click walks --
+  /// the control's action, the coordinator's deferred commit and the binding
+  /// behind the page -- instead of setting the binding, which would skip the two
+  /// links a click defect hides. False means the page is not up in this window or
+  /// the pane has no segment: a missing page, not a missing write.
   @MainActor
   func pressSegment(pane: Int) -> Bool {
     guard let control = hosting.view.findSegmentedControl() else { return false }
-    return control.selectSegment(withTag: pane)
+    guard control.selectSegment(withTag: pane) else { return false }
+    // The tag press selected the pane but did not fire the action, so the
+    // coordinator's deferred commit never scheduled. selectedSegment now points
+    // at the pane, so sending the action with the control as the sender drives
+    // the same deferred commit a real click would.
+    if let action = control.action {
+      NSApp.sendAction(action, to: control.target, from: control)
+    }
+    return true
   }
 }
 
