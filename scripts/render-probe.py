@@ -156,7 +156,10 @@ def ensure_display(timeout=DISPLAY_WAIT_SECONDS, hold_seconds=None):
         return "display state unknown (CoreGraphics could not be queried)", None
     if count > 0:
         awake = "%d active display(s)" % count
-        return _hold_display(awake, hold_seconds), None
+        # _hold_display already returns the (sentence, hold) pair the caller unpacks;
+        # wrapping it again made the already-awake path crash on desktop machines while
+        # the CI runner's asleep panel took the wake path and stayed hidden.
+        return _hold_display(awake, hold_seconds)
     try:
         subprocess.run(["caffeinate", "-u", "-t", str(DISPLAY_WAKE_SECONDS)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -1199,7 +1202,32 @@ def self_test():
                     print("ok   two dead passes still end as a missing report, after one "
                           "retry and no more")
             finally:
-                globals()["run"] = real_run
+                    globals()["run"] = real_run
+
+            # The already-awake display path must hand back the flat (sentence, hold) pair
+            # that run() unpacks. The old code nested that pair inside a second tuple, which
+            # only exploded on machines whose panel was already awake -- exactly the desktop,
+            # never the asleep CI panel -- so a shape check is the only self-test that can
+            # hold it: a nested pair would hand the caller a tuple where it expects a string.
+            real_count = globals()["active_display_count"]
+            globals()["active_display_count"] = lambda: 2
+            try:
+                result = ensure_display(hold_seconds=5)
+                sentence, hold_handle = result
+                if not isinstance(sentence, str) or "active display" not in sentence:
+                    print("FAIL the already-awake display path returned %r for the sentence, "
+                          "not the string the caller prints" % (type(sentence).__name__,))
+                    failures += 1
+                else:
+                    print("ok   the already-awake display path returns the pair the caller unpacks")
+            except TypeError as error:
+                print("FAIL the already-awake display path crashed on unpack: %s" % error)
+                failures += 1
+            finally:
+                globals()["active_display_count"] = real_count
+                if isinstance(hold_handle, subprocess.Popen):
+                    hold_handle.terminate()
+                    hold_handle.wait(timeout=5)
         finally:
             os.chdir(previous)
     print("%d render-probe self-test failures" % failures)
