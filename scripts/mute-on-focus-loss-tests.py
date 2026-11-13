@@ -345,8 +345,11 @@ def main():
               "toggle binding block parses correctly")
         check('if settingsModel.mouseMode == "remote"' not in tail,
               "toggle is not gated on free-mouse mode (audio focus is orthogonal)")
-    check("NSSegmentedControl" in tab and "role = .tabs" in tab,
-          "tab bar uses user-accepted NSSegmentedControl with role=.tabs")
+    # 1fad66c7: the accepted macOS 27 look is the blue selected pill drawn WITHOUT
+    # the .tabs role, so the assignment is gone; the #if guard stays declared.
+    check("NSSegmentedControl" in tab and
+          (".role = " not in tab or "#if ML_APPKIT_TABS_ROLE" in tab),
+          "tab bar uses user-accepted NSSegmentedControl (role guarded or unset)")
 
     # --- StreamViewController wiring --------------------------------------------
     check("setAudioFocusMuted:YES" in svc,

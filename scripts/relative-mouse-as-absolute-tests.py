@@ -206,8 +206,11 @@ def main():
     check('if settingsModel.mouseMode == "remote" {' in pane and
           'Relative Mouse Sends Absolute Position' in pane.split('if settingsModel.mouseMode == "remote" {')[1][:500],
           "P2-1 toggle is gated on free-mouse mode")
-    check("NSSegmentedControl" in tab and "role = .tabs" in tab,
-          "tab bar uses user-accepted NSSegmentedControl with role=.tabs")
+    # 1fad66c7: the accepted macOS 27 look is the blue selected pill drawn WITHOUT
+    # the .tabs role, so the assignment is gone; the #if guard stays declared.
+    check("NSSegmentedControl" in tab and
+          (".role = " not in tab or "#if ML_APPKIT_TABS_ROLE" in tab),
+          "tab bar uses user-accepted NSSegmentedControl (role guarded or unset)")
 
     # --- Behavioural mutation battery -------------------------------------------
     if NESTED:
