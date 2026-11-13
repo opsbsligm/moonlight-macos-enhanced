@@ -818,6 +818,18 @@ static NSString *const MLProbeAdvancedSectionCollapsedKey
 static NSString *const MLProbeHubsGroupCollapsedKey
     = @"settings.devices.hubsExpanded";
 
+// The write chain is three links the probe can only see at the last one: the segment's
+// target/action, the coordinator's deferred commit, and the binding behind the page.
+// This counter sits on that last link -- the page's own binding, which the page passes
+// to the tab bar -- so a write recorded here is a write the player's selection can feel.
+static NSUInteger MLProbeWriteChainWrites = 0;
+static void MLProbeWriteChainReset(void) { MLProbeWriteChainWrites = 0; }
+void MLProbeWriteChainRecord(NSInteger pane) {
+    MLProbeWriteChainWrites++;
+    fprintf(stderr, "[render-probe] write-chain pane=%ld (total %llu)\n",
+            (long)pane, (unsigned long long)MLProbeWriteChainWrites);
+}
+
 static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *output,
                                NSInteger pane, NSString *name, NSMutableDictionary *report) {
     NSView *content = window.contentView;
@@ -1058,6 +1070,75 @@ static void MLProbeRunPanePass(NSWindow *window, NSView *backdrop, NSString *out
     result[@"panePreferenceRestored"] = @((BOOL)((previousPane == nil && restoredPane == nil)
                                          || [previousPane isEqual:restoredPane]));
     report[name] = result;
+}
+
+// The write chain, probed the way AP15 asked for it: no synthetic click, no second GUI
+// session -- the page's own segment is pressed through the native control's click path
+// (the presenter's pressSegment bridge), and the page's own binding counts the writes it
+// receives. Two claims are recorded separately and the checker keeps them separate:
+//   * `reached` -- the bridge found the tab bar and a segment for the pane. A false here
+//     means the page or its bar was not up, which is not the same as a write that never
+//     happened;
+//   * `delta` -- writes recorded around the press. The coordinator commits through
+//     RunLoop .default, so the spin below is what lets the deferred commit land; a delta
+//     of zero is the click defect this wave exists to find, and a delta above one is a
+//     double commit.
+// The page's own selection binding is the counter: a write the page did not receive is
+// not a write, no matter what the control thinks. The preference the page stores is
+// restored afterwards, exactly like the pane passes do, so the probe leaves the user's
+// own choice alone.
+static void MLProbeWriteChain(NSWindow *window, NSMutableDictionary *report) {
+    NSMutableDictionary *record = [NSMutableDictionary dictionary];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    id previousPane = [defaults objectForKey:@"selected-settings-pane"];
+
+    [SettingsOverlayPresenter presentSettingsInWindow:window hostId:nil];
+    MLProbeSpin(1.2);
+    if (![SettingsOverlayPresenter isSettingsPresentedInWindow:window]) {
+        record[@"presented"] = @NO;
+        report[@"writeChain"] = record;
+        return;
+    }
+    record[@"presented"] = @YES;
+
+    // The sequence presses both directions the write chain must answer. 5 (audio) from the
+    // stored pane, 2 (input), then 2 again -- the same pane the page is already showing,
+    // which the inequality guard must turn into no write at all -- then 3 (app), 6
+    // (devices) and 0 (stream). Every press is a fresh press through the native control's
+    // own target/action, not a synthetic click; the coordinator's deferred commit decides
+    // the rest.
+    NSInteger presses[] = {5, 2, 2, 3, 6, 0};
+    NSMutableArray<NSDictionary *> *pressesRecorded = [NSMutableArray array];
+    record[@"storedBefore"] = @([defaults integerForKey:@"selected-settings-pane"]);
+    for (NSUInteger i = 0; i < sizeof(presses) / sizeof(presses[0]); i++) {
+        NSInteger pane = presses[i];
+        MLProbeWriteChainReset();
+        BOOL reached = [SettingsOverlayPresenter pressSegmentInWindow:window pane:pane];
+        // The deferred commit runs in .default mode; a spin that drains the queue is what
+        // waits for it. Longer than a pane pass because this is the whole question.
+        MLProbeSpin(1.5);
+        NSInteger storedAfter = [defaults integerForKey:@"selected-settings-pane"];
+        NSMutableDictionary *press = [NSMutableDictionary dictionary];
+        press[@"pane"] = @(pane);
+        press[@"reached"] = @(reached);
+        press[@"writes"] = @(MLProbeWriteChainWrites);
+        press[@"storedAfter"] = @(storedAfter);
+        [pressesRecorded addObject:press];
+    }
+    record[@"presses"] = pressesRecorded;
+
+    [SettingsOverlayPresenter dismissSettingsFromWindow:window];
+    MLProbeSpin(0.5);
+    if (previousPane) {
+        [defaults setObject:previousPane forKey:@"selected-settings-pane"];
+    } else {
+        [defaults removeObjectForKey:@"selected-settings-pane"];
+    }
+    [defaults synchronize];
+    record[@"panePreferenceRestored"] = @((BOOL)((previousPane == nil
+        && [defaults objectForKey:@"selected-settings-pane"] == nil)
+        || [previousPane isEqual:[defaults objectForKey:@"selected-settings-pane"]]));
+    report[@"writeChain"] = record;
 }
 
 // The back control is the exit a player actually presses, so the probe presses it
@@ -2335,6 +2416,16 @@ static void MLFinishRenderProbeIfArmed(void) {
         MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 1, @"videoPane", report);
         MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 3, @"appPane", report);
         MLProbeRunPanePass(MLProbeWindow, MLProbeBackdrop, output, 6, @"devicesPane", report);
+
+        // The pane passes above reach the page by setting the preference the page reads.
+        // The write chain is the question those passes cannot answer: does pressing the
+        // segment the player presses produce exactly one write the page's binding can feel?
+        // render-probe.py asks for it with ML_RENDER_PROBE_WRITE_CHAIN; an armed probe
+        // that does not ask leaves the block out of the report, which the checker then
+        // treats as absent rather than failed.
+        if (getenv("ML_RENDER_PROBE_WRITE_CHAIN") != NULL) {
+            MLProbeWriteChain(MLProbeWindow, report);
+        }
 
         // Device scan status is readable only after application launch completes.
         NSWindow *window = MLProbeWindow;
