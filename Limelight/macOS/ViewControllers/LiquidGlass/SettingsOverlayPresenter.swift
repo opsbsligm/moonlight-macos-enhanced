@@ -102,6 +102,22 @@ private final class DismissBox {
   }
 #endif
 
+#if DEBUG
+  /// Presses the settings tab for the given pane, through the segment that carries it.
+  ///
+  /// The player clicks a segment; this presses exactly that segment so the probe
+  /// exercises the shipped write chain end to end -- the control's action, the
+  /// coordinator's deferred commit, and the binding behind the page -- instead of
+  /// reaching in and setting the binding, which would skip the two links a click
+  /// defect hides. Returns false when the page is not up in the window or the pane
+  /// has no segment, which the caller reads as "not there", not as "not written".
+  @objc(pressSegmentInWindow:pane:)
+  static func pressSegment(in window: NSWindow?, pane: Int) -> Bool {
+    guard let window, let presenter = active[ObjectIdentifier(window)] else { return false }
+    return presenter.pressSegment(pane: pane)
+  }
+#endif
+
   /// Runs the closure the back control runs, so the probe presses what the player
   /// presses instead of the teardown behind it.
   @objc(pressBackControlInWindow:)
@@ -287,5 +303,37 @@ private final class DismissBox {
         SettingsOverlayPresenter.dismiss(from: target)
       }
     }
+  }
+
+  /// Presses the segment that carries `pane` on the page's tab bar, through the
+  /// native control's own click path.
+  ///
+  /// `selectSegment(withTag:)` runs the control's target/action the way a
+  /// pointer's second click does. The SDK only vends the tag form of the press,
+  /// so this selects by the same identity the walk below searched: a segment
+  /// whose tag is the pane. That keeps the probe on the three links a player's
+  /// click walks -- the control's action, the coordinator's deferred commit and
+  /// the binding behind the page -- instead of setting the binding, which would
+  /// skip the two links a click defect hides. False means the page is not up in
+  /// this window or the pane has no segment: a missing page, not a missing write.
+  @MainActor
+  func pressSegment(pane: Int) -> Bool {
+    guard let control = hosting.view.findSegmentedControl() else { return false }
+    return control.selectSegment(withTag: pane)
+  }
+}
+
+private extension NSView {
+  /// The page's tab bar, found by identity rather than by position so the walk
+  /// keeps working if the layout above the bar changes.
+  func findSegmentedControl() -> NSSegmentedControl? {
+    if let control = self as? NSSegmentedControl,
+       control.accessibilityIdentifier() == "settings-navigation" {
+      return control
+    }
+    for subview in subviews {
+      if let control = subview.findSegmentedControl() { return control }
+    }
+    return nil
   }
 }

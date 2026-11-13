@@ -67,6 +67,12 @@ struct LiquidGlassSettingsView: View {
       set: {
         if let p = Pane(rawValue: $0) {
           selectedPane = p
+          #if DEBUG
+          // The Debug write-chain probe counts the writes this binding actually
+          // receives, so "the click committed" is answered by the page itself
+          // instead of by the control's claim. No-op in a Release build.
+          MLProbeWriteChainRecord(selectedPane.rawValue)
+          #endif
         }
       }
     )
