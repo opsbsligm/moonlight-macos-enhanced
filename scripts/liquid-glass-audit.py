@@ -77,17 +77,14 @@ def check(files):
             problems.append("%s uses an overshooting curve (%s)" % (name, hit.group(0).strip()))
 
     bar = files.get("LiquidGlassTabBar.swift", "")
-    # NSSegmentedControl.role = .tabs hides the selected segment's label. Measured inside a
-    # real key window over a light page base: the darkest pixel in the selected segment's
-    # label band is 0.12 without a role and 0.92 with .tabs, under every combination of
-    # segmentStyle, borderShape, controlSize and per-segment widths tried, including a bare
-    # control with no overrides. The tab naming the page the user is reading is the one tab
-    # that goes white-on-white, so the role stays unset until a system build draws its
-    # selected tab with readable text -- and the guard that used to make it compile on one
-    # SDK alone is gone with it, because a condition nothing reads is a second way to lie.
-    # The segmented control draws its own selection: on macOS 27 that is the system's
-    # tabs look, guarded so the macOS 26 SDK CI builds against still compiles. The bar
-    # overlays nothing; hand-drawn stands-ins for that surface were measured and refused.
+    # NSSegmentedControl.role stays unset: on macOS 27.3 / SDK 27.2 an A/B/C pixel run
+    # (role only / role + rounded + capsule / rounded + capsule) showed the .tabs role
+    # draws the selected segment as a white pill, while rounded + capsule without a role
+    # draws the blue selected pill the user accepted in 00315f0f (that build's minos was
+    # 26, so the guarded role never fired). The 7c863480 minos bump made the role live and
+    # silently swapped blue for white; the accepted look is the blue one, so the assignment
+    # is removed. The #if guard and the pbxproj build condition stay declared so an
+    # accidental role re-enable still compiles on the macOS 26 SDK CI builds against.
     if ".role = " in strip_comments(bar) and "#if ML_APPKIT_TABS_ROLE" not in strip_comments(bar):
         problems.append("the tabs role compiles unguarded, so the macOS 26 SDK cannot build the tab bar")
     match = COLOUR.search(strip_comments(bar))
