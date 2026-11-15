@@ -290,6 +290,7 @@ struct Settings: Encodable, Decodable {
       hoverActivatesStreamWindow: hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: gamepadMenuLongPressTogglesMouseMode,
       commandSendsControl: commandSendsControl,
+      keyboardTypedMapping: keyboardTypedMapping,
       appArtworkDimensions: appArtworkDimensions,
       dimNonHoveredArtwork: dimNonHoveredArtwork,
       quitAppAfterStream: quitAppAfterStream,
@@ -553,6 +554,7 @@ extension SettingsClass {
       hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: settings.gamepadMenuLongPressTogglesMouseMode,
       commandSendsControl: settings.commandSendsControl,
+      keyboardTypedMapping: settings.keyboardTypedMapping,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 
