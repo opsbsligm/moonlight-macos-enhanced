@@ -1,6 +1,6 @@
 # KeyboardRouting 吸收评估（只读）
 
-评估日期：2026-11-15。目标仓 `/Users/liguangming/code/moonlight-ci`，基地版为任务级只读浅克隆（上游 Moonlight macOS 增强分支 v1.3.9 RC8，HEAD `2c13fd6f46d1d83ca838dadae011116d0088260a`，评估后已按归属清理）。以下行号对应本次检查时文件版本。
+评估日期：2026-11-15。目标仓为本仓（moonlight-ci / moonlight-macos-enhanced），基地版为任务级只读浅克隆（上游 Moonlight macOS 增强分支 v1.3.9 RC8，HEAD `2c13fd6f46d1d83ca838dadae011116d0088260a`，评估后已按归属清理）。以下行号对应本次检查时文件版本。
 
 ## 结论
 

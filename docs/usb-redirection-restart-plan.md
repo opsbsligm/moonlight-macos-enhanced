@@ -1,6 +1,6 @@
 # USB 重定向重启方案
 
-日期：2026-11-15。范围：只读评估 `/Users/liguangming/code/moonlight-ci` 当前客户端仓与基地版为任务级只读浅克隆（上游 Moonlight macOS 增强分支 v1.3.9 RC8，HEAD `2c13fd6f46d1d83ca838dadae011116d0088260a`，评估后已按归属清理）；本报告不修改仓库。主仓评估时 HEAD `f27dead906ddea6cd536459cb4d746ed6579f8c0`，工作树另有 9 个设置相关未提交文件，评估期间未触碰。
+日期：2026-11-15。范围：只读评估本仓（moonlight-ci / moonlight-macos-enhanced）当前客户端与基地版任务级只读浅克隆（上游 Moonlight macOS 增强分支 v1.3.9 RC8，HEAD `2c13fd6f46d1d83ca838dadae011116d0088260a`，评估后已按归属清理）；本报告不修改仓库。主仓评估时 HEAD `f27dead906ddea6cd536459cb4d746ed6579f8c0`，工作树另有 9 个设置相关未提交文件，评估期间未触碰。
 
 标记：**源码已核**表示本次直接读了对应文件；**文档记载**表示沿用仓内文档对较早阶段的实测/CI描述，本次未重跑；**推断/未核**表示尚无主机端或真机证据。
 
