@@ -222,7 +222,7 @@ UP_GUARD = """    if (!self.shouldSendInputEvents || (savedCode == nil && pendin
 """
 UP_GUARD_TEST = "    if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {\n"
 UP_DISPATCH = """        Log(LOG_D, @"[inputdiag] keyboard-wire sent-up code=0x%hx mods=0x%hhx", (unsigned short)keyCode, modifiers);
-        LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_UP, modifiers);
+        LiSendKeyboardEvent2Ctx(inputCtx, keyCode, KEY_ACTION_UP, modifiers, keyFlags);
     });
 """
 UP_SPEND = """    [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:physical];
@@ -236,7 +236,7 @@ DOWN_CLEAR = """    [self.keyboardSuppressedKeyDownKeyCodes removeObject:physica
 DOWN_CLEAR_ONESHOT = "    }\n" + DOWN_CLEAR
 DOWN_DISPATCH = """    HIDDispatchInput(self, inputLease, ^{
         Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx", (unsigned short)keyCode, modifiers);
-        LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
+        LiSendKeyboardEvent2Ctx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers, wireFlags);
     });
 """
 # What the stick cursor asks before it moves the remote cursor, and the send it
@@ -418,7 +418,7 @@ def late_clear(text):
     return rest.replace(DOWN_DISPATCH, DOWN_DISPATCH + DOWN_CLEAR, 1)
 
 
-REC = """    self.keyboardForwardedKeyDownKeyCodes[physical] = @(keyCode);
+REC = """    self.keyboardForwardedKeyDownKeyCodes[physical] = @(pair);
 """
 
 INIT = """        self.keyboardForwardedKeyDownKeyCodes = [NSMutableDictionary dictionary];
@@ -570,7 +570,9 @@ def constant_toggle(text):
 
 
 
-UNMAPPED_GUARD = "    if (translated == 0) {\n"
+# The wire code now carries a real-key flag in the high bit, so the unmapped test
+# looks at the virtual-key half: zero there means the table has no entry.
+UNMAPPED_GUARD = "    if ((keyCode & 0x7FFF) == 0) {\n"
 
 SPACE_ROW = "    {kVK_Space, 0x20},\n"
 ISO_ROW = "    {kVK_ISO_Section, 0xE2},\n"
@@ -580,7 +582,7 @@ W_ROW = "    {kVK_ANSI_W, 'W'},\n"
 
 def unmapped_press(text):
     return replace_nth(text, UNMAPPED_GUARD,
-                       "        if (NO && translated == 0) {\n", 1, "keyDown zero guard")
+                       "        if (NO && (keyCode & 0x7FFF) == 0) {\n", 1, "keyDown zero guard")
 
 
 def unmapped_release(text):
