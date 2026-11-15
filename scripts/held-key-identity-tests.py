@@ -118,16 +118,35 @@ enum { KEY_ACTION_UP = 0, KEY_ACTION_DOWN = 1 };
 
 static NSMutableArray<NSString *> *gHostEvents;
 
-static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action, char modifiers) {
+static void LiSendKeyboardEvent2Ctx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action,
+                                    char modifiers, char flags) {
     [gHostEvents addObject:[NSString stringWithFormat:@"%04X%c",
                             (unsigned)(keyCode & 0xFFFF), action == KEY_ACTION_DOWN ? 'D' : 'U']];
+}
+static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action,
+                                   char modifiers) {
+    LiSendKeyboardEvent2Ctx(ctx, keyCode, action, modifiers, 0);
+}
+static inline uint32_t HIDPackKeyPair(short keyCode, uint8_t flags) {
+    return ((uint32_t)flags << 16) | (uint32_t)(uint16_t)keyCode;
+}
+static inline short HIDKeyPairKeyCode(uint32_t pair) {
+    return (short)(uint16_t)(pair & 0xFFFF);
+}
+static inline char HIDKeyPairFlags(uint32_t pair) {
+    return (char)((pair >> 16) & 0xFF);
+}
+typedef struct { PML_INPUT_STREAM_CONTEXT context; } HIDInputLease;
+static HIDInputLease HIDAcquireInputContext(id support) {
+    static struct MLInputStreamContext ctx = { 1 };
+    HIDInputLease lease; lease.context = &ctx; return lease;
 }
 static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
     static struct MLInputStreamContext ctx = { 1 };
     return &ctx;
 }
 static BOOL HIDValidateInputContext(PML_INPUT_STREAM_CONTEXT ctx, const char *op) { return ctx != NULL && ctx->alive; }
-static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^block)(void)) { block(); }
+static void HIDDispatchInput(id support, HIDInputLease lease, void (^block)(void)) { (void)lease; block(); }
 // The heal loop reads the clock, so the probe owns one: an age the harness sets is how a press is
 // made "still inside the race allowance" or "old enough to ask the keyboard about".
 static uint64_t gMLProbeNowMs = 0;
@@ -163,9 +182,13 @@ RECORD_PROPERTY
 // is an error; key-state-heal-tests.py is where the held-back press actually has scenarios.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                       wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp;
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags;
 @end
 """
 
@@ -182,6 +205,7 @@ def epilogue(mapping_literal):
 @implementation MLKeyboardUnderProbe
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                       wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp { return NO; }
 - (instancetype)init {
@@ -196,6 +220,13 @@ def epilogue(mapping_literal):
 }
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event {}
 - (short)translateKeyModifierWithEvent:(NSEvent *)event { return 0; }
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags {
+    NSNumber *positional = self.mappings[@(macKeyCode)];
+    *outCode = (short)(0x8000 | (positional != nil ? [positional shortValue] : 0));
+    *outFlags = 0;
+}
 """
 
 
@@ -222,7 +253,7 @@ KNOWN_BAD = r"""
         if (translated == 0) return;
         short keyCode = 0x8000 | translated;
         [self.keyboardForwardedKeyDownKeyCodes addObject:@(keyCode)];
-        HIDDispatchInput(self, HIDInputContext(self), ^{
+        HIDDispatchInput(self, (HIDInputLease){ HIDInputContext(self), 0 }, ^{
             LiSendKeyboardEventCtx(HIDInputContext(self), keyCode, KEY_ACTION_DOWN, 0);
         });
     }
@@ -235,7 +266,7 @@ KNOWN_BAD = r"""
         if (translated == 0) return;
         short keyCode = 0x8000 | translated;
         [self.keyboardForwardedKeyDownKeyCodes removeObject:@(keyCode)];
-        HIDDispatchInput(self, HIDInputContext(self), ^{
+        HIDDispatchInput(self, (HIDInputLease){ HIDInputContext(self), 0 }, ^{
             LiSendKeyboardEventCtx(HIDInputContext(self), keyCode, KEY_ACTION_UP, 0);
         });
     }
@@ -246,7 +277,7 @@ KNOWN_BAD = r"""
     NSArray *held = self.keyboardForwardedKeyDownKeyCodes.allObjects;
     [self.keyboardForwardedKeyDownKeyCodes removeAllObjects];
     if (held.count == 0) { self.keyboardHeldKeyReleaseInProgress = NO; return; }
-    HIDDispatchInput(self, HIDInputContext(self), ^{
+    HIDDispatchInput(self, (HIDInputLease){ HIDInputContext(self), 0 }, ^{
         for (NSNumber *keyCode in held) {
             LiSendKeyboardEventCtx(HIDInputContext(self), keyCode.shortValue, KEY_ACTION_UP, 0);
         }

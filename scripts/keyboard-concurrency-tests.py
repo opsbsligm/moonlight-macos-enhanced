@@ -67,6 +67,8 @@ def method(text, signature):
 
 PROLOGUE = r"""
 #import <AppKit/AppKit.h>
+#import <Carbon/Carbon.h>
+#define SS_KBE_FLAG_NON_NORMALIZED 0x01
 // A press is never held back inside this harness: it is about which edges reach the page and which
 // modifiers ride along, and the state question behind the hold-back has its own scenarios in
 // key-state-heal-tests.py. Answering it for real here would ask the machine running the probe
@@ -80,9 +82,23 @@ enum { KEY_ACTION_UP = 0, KEY_ACTION_DOWN = 1 };
 
 static NSMutableArray<NSString *> *gHostEvents;
 
-static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action, char modifiers) {
+static void LiSendKeyboardEvent2Ctx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action,
+                                    char modifiers, char flags) {
     [gHostEvents addObject:[NSString stringWithFormat:@"%04X%c",
                             (unsigned)(keyCode & 0xFFFF), action == KEY_ACTION_DOWN ? 'D' : 'U']];
+}
+static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action,
+                                   char modifiers) {
+    LiSendKeyboardEvent2Ctx(ctx, keyCode, action, modifiers, 0);
+}
+static inline uint32_t HIDPackKeyPair(short keyCode, uint8_t flags) {
+    return ((uint32_t)flags << 16) | (uint32_t)(uint16_t)keyCode;
+}
+static inline short HIDKeyPairKeyCode(uint32_t pair) {
+    return (short)(uint16_t)(pair & 0xFFFF);
+}
+static inline char HIDKeyPairFlags(uint32_t pair) {
+    return (char)((pair >> 16) & 0xFF);
 }
 // The heal loop reads the clock, so the probe owns one (docs/history/incidents/memory-ownership.md S32).
 static uint64_t gMLProbeNowMs = 0;
@@ -92,7 +108,12 @@ static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
     return &ctx;
 }
 static BOOL HIDValidateInputContext(PML_INPUT_STREAM_CONTEXT ctx, const char *op) { return ctx != NULL && ctx->alive; }
-static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^block)(void)) { block(); }
+typedef struct { PML_INPUT_STREAM_CONTEXT context; uint64_t generation; } HIDInputLease;
+static HIDInputLease HIDAcquireInputContext(id support) {
+    static struct MLInputStreamContext ctx = { 1 };
+    HIDInputLease lease; lease.context = &ctx; lease.generation = 0; return lease;
+}
+static void HIDDispatchInput(id support, HIDInputLease lease, void (^block)(void)) { (void)lease; block(); }
 static unsigned short HIDRemappedKeyCodeForModifierKey(id support, unsigned short kc) { return 0; }
 static BOOL HIDIsModifierKeyCode(unsigned short kc) { return kc == 54 || kc == 59 || kc == 60 || kc == 61 || kc == 56 || kc == 62; }
 
@@ -105,6 +126,15 @@ static BOOL HIDIsModifierKeyCode(unsigned short kc) { return kc == 54 || kc == 5
 
 @interface MLKeyboardUnderProbe : NSObject
 @property (nonatomic) BOOL shouldSendInputEvents;
+@property (nonatomic, strong) id host;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *typedVirtualKeyCache;
+@property (nonatomic, copy) NSString *typedKeyLayoutID;
+@property (nonatomic) CFAbsoluteTime typedKeyLayoutCheckTime;
+@property (nonatomic) NSInteger loggedKeyMappingMode;
+@property (nonatomic, copy) NSString *loggedKeyMappingLayoutID;
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags;
 @property (nonatomic, strong) MLLocalIMESession *imeSession;
 @property (nonatomic) BOOL keyboardHeldKeyReleaseInProgress;
 @property (nonatomic, strong) NSMutableSet<NSNumber *> *keyboardSuppressedKeyDownKeyCodes;
@@ -126,6 +156,7 @@ static BOOL HIDIsModifierKeyCode(unsigned short kc) { return kc == 54 || kc == 5
 // because this class is implemented by hand and -Wincomplete-implementation is an error.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                       wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp;
 - (void)keyDown:(NSEvent *)event;
@@ -149,11 +180,20 @@ EPILOGUE = r"""
         // Only the two keys from the report: W and Space, mapped as the shipping
         // table maps them.
         _mappings = @{ @13: @(0x57), @49: @(0x20) };
+        _typedVirtualKeyCache = [NSMutableDictionary dictionary];
+        _loggedKeyMappingMode = -1;
     }
     return self;
 }
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event {}
 - (short)translateKeyModifierWithEvent:(NSEvent *)event { return 0; }
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags {
+    NSNumber *positional = self.mappings[@(macKeyCode)];
+    *outCode = (short)(0x8000 | (positional != nil ? [positional shortValue] : 0));
+    *outFlags = 0;
+}
 // The session stays nil in this harness; the flush is the no-op the nil check
 // in the shipping code already implies, kept here only so the class compiles.
 - (void)flushIMECommit {}
@@ -162,6 +202,7 @@ EPILOGUE = r"""
 // implemented by hand and -Wincomplete-implementation is an error.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                       wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp { return NO; }
 """
@@ -184,6 +225,7 @@ LEGACY = r"""
 - (void)noteKeyboardKeyDownSuppressedForEvent:(NSEvent *)event { /* the page kept no record */ }
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                       wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp { (void)timestamp; return NO; }
 - (void)keyDown:(NSEvent *)event {

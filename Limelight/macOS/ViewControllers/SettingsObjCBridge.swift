@@ -245,6 +245,7 @@ class SettingsClass: NSObject {
     "hoverActivatesStreamWindow": settings.hoverActivatesStreamWindow ?? SettingsModel.defaultHoverActivatesStreamWindow,
     "gamepadMenuLongPressTogglesMouseMode": settings.gamepadMenuLongPressTogglesMouseMode ?? SettingsModel.defaultGamepadMenuLongPressTogglesMouseMode,
     "commandSendsControl": settings.commandSendsControl ?? SettingsModel.defaultCommandSendsControl,
+    "keyboardTypedMapping": settings.keyboardTypedMapping ?? SettingsModel.defaultKeyboardTypedMapping,
         "appArtworkDimensions": settings.appArtworkDimensions,
         "dimNonHoveredArtwork": settings.dimNonHoveredArtwork,
         "quitAppAfterStream": settings.quitAppAfterStream,
@@ -443,6 +444,7 @@ class SettingsClass: NSObject {
       hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: settings.gamepadMenuLongPressTogglesMouseMode,
       commandSendsControl: settings.commandSendsControl,
+      keyboardTypedMapping: settings.keyboardTypedMapping,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 
@@ -565,6 +567,7 @@ class SettingsClass: NSObject {
       hoverActivatesStreamWindow: updated.hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: updated.gamepadMenuLongPressTogglesMouseMode,
       commandSendsControl: updated.commandSendsControl,
+      keyboardTypedMapping: updated.keyboardTypedMapping,
         appArtworkDimensions: updated.appArtworkDimensions,
         dimNonHoveredArtwork: updated.dimNonHoveredArtwork,
         quitAppAfterStream: updated.quitAppAfterStream,
@@ -691,6 +694,7 @@ class SettingsClass: NSObject {
       hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: settings.gamepadMenuLongPressTogglesMouseMode,
       commandSendsControl: settings.commandSendsControl,
+      keyboardTypedMapping: settings.keyboardTypedMapping,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 
@@ -1336,6 +1340,16 @@ class SettingsClass: NSObject {
       return settings.hoverActivatesStreamWindow ?? SettingsModel.defaultHoverActivatesStreamWindow
     }
     return SettingsModel.defaultHoverActivatesStreamWindow
+  }
+
+  /// Positional (the mapping every build has shipped) or typed-character key
+  /// mapping, per host. Asked on every key edge so a player can flip it
+  /// between streams without rebuilding the HID support.
+  @objc static func keyboardTypedMapping(for key: String) -> Bool {
+    if let settings = Settings.getSettings(for: key) {
+      return settings.keyboardTypedMapping ?? SettingsModel.defaultKeyboardTypedMapping
+    }
+    return SettingsModel.defaultKeyboardTypedMapping
   }
 
   @objc static func mouseMode(for key: String) -> String {

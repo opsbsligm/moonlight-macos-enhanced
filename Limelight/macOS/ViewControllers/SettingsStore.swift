@@ -115,6 +115,7 @@ struct Settings: Encodable, Decodable {
   /// absent value is a player who never opened the setting, which means the Windows key,
   /// not the Control key.
   let commandSendsControl: Bool?
+  let keyboardTypedMapping: Bool?
   let appArtworkDimensions: CGSize?
   let dimNonHoveredArtwork: Bool
 
@@ -289,6 +290,7 @@ struct Settings: Encodable, Decodable {
       hoverActivatesStreamWindow: hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: gamepadMenuLongPressTogglesMouseMode,
       commandSendsControl: commandSendsControl,
+      keyboardTypedMapping: keyboardTypedMapping,
       appArtworkDimensions: appArtworkDimensions,
       dimNonHoveredArtwork: dimNonHoveredArtwork,
       quitAppAfterStream: quitAppAfterStream,
@@ -552,6 +554,7 @@ extension SettingsClass {
       hoverActivatesStreamWindow: settings.hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: settings.gamepadMenuLongPressTogglesMouseMode,
       commandSendsControl: settings.commandSendsControl,
+      keyboardTypedMapping: settings.keyboardTypedMapping,
       appArtworkDimensions: settings.appArtworkDimensions,
       dimNonHoveredArtwork: settings.dimNonHoveredArtwork,
 

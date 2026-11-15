@@ -38,10 +38,23 @@ static uint64_t gMLProbeNowMs = 0;
 static uint64_t LiGetMillis(void) { return gMLProbeNowMs; }
 
 static NSMutableArray<NSString *> *gHostEvents;
-static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action,
-                                   char modifiers) {
+static void LiSendKeyboardEvent2Ctx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action,
+                                    char modifiers, char flags) {
     [gHostEvents addObject:[NSString stringWithFormat:@"%04X%c", (unsigned)(keyCode & 0xFFFF),
                             action == KEY_ACTION_DOWN ? 'D' : 'U']];
+}
+static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action,
+                                   char modifiers) {
+    LiSendKeyboardEvent2Ctx(ctx, keyCode, action, modifiers, 0);
+}
+static inline uint32_t HIDPackKeyPair(short keyCode, uint8_t flags) {
+    return ((uint32_t)flags << 16) | (uint32_t)(uint16_t)keyCode;
+}
+static inline short HIDKeyPairKeyCode(uint32_t pair) {
+    return (short)(uint16_t)(pair & 0xFFFF);
+}
+static inline char HIDKeyPairFlags(uint32_t pair) {
+    return (char)((pair >> 16) & 0xFF);
 }
 static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
     static struct MLInputStreamContext ctx = { 1 };
@@ -50,7 +63,12 @@ static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
 static BOOL HIDValidateInputContext(PML_INPUT_STREAM_CONTEXT ctx, const char *op) {
     return ctx != NULL && ctx->alive;
 }
-static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^block)(void)) { block(); }
+typedef struct { PML_INPUT_STREAM_CONTEXT context; uint64_t generation; } HIDInputLease;
+static HIDInputLease HIDAcquireInputContext(id support) {
+    static struct MLInputStreamContext ctx = { 1 };
+    HIDInputLease lease; lease.context = &ctx; lease.generation = 0; return lease;
+}
+static void HIDDispatchInput(id support, HIDInputLease lease, void (^block)(void)) { (void)lease; block(); }
 // The shipped question, without the shipped table: the heal excludes modifiers, so this has to answer
 // YES for the codes the driver drives, or the exclusion is never exercised.
 static BOOL HIDIsModifierKeyCode(unsigned short kc) {
@@ -81,6 +99,15 @@ static BOOL gHealEnabled = YES;
 
 @interface MLKeyboardHealProbe : NSObject
 @property (nonatomic) BOOL shouldSendInputEvents;
+@property (nonatomic, strong) id host;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *typedVirtualKeyCache;
+@property (nonatomic, copy) NSString *typedKeyLayoutID;
+@property (nonatomic) CFAbsoluteTime typedKeyLayoutCheckTime;
+@property (nonatomic) NSInteger loggedKeyMappingMode;
+@property (nonatomic, copy) NSString *loggedKeyMappingLayoutID;
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags;
 @property (nonatomic) BOOL keyboardHeldKeyReleaseInProgress;
 @property (nonatomic, strong) HIDKeyboardQuirkFilter *keyboardQuirkFilter;
 @property (nonatomic) NSUInteger keyboardPhysicalModifierSourceMask;
@@ -119,6 +146,13 @@ IMPL_HEAD = r"""
 - (void)syncKeyboardModifierStateForEvent:(NSEvent *)event {}
 - (void)updateKeyboardPhysicalModifierStateFromEvent:(NSEvent *)event {}
 - (char)translateKeyModifierWithEvent:(NSEvent *)event { return 0; }
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags {
+    NSNumber *positional = self.mappings[@(macKeyCode)];
+    *outCode = (short)(0x8000 | (positional != nil ? [positional shortValue] : 0));
+    *outFlags = 0;
+}
 """
 
 DRIVER = r"""
@@ -223,8 +257,12 @@ def main():
     mutants={
         "permission-independent C guard": ("BOOL unpairedC = physicalKeyCode == kVK_ANSI_C && !quirk;", "BOOL unpairedC = NO;"),
         "rapid tap pairing": ("if (pending != nil && savedCode == nil) {", "if (NO) {"),
-        "shared VK release ownership": ("if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(keyCode)]) {", "if (NO) {"),
-        "saved wire identity": ("short keyCode = savedCode != nil ? savedCode.shortValue : [pending[@\"wire\"] shortValue];", "short keyCode = (short)(0x8000 | [self translateKeyCodeWithEvent:event]);"),
+        "shared VK release ownership": ("if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(pair)]) {", "if (NO) {"),
+        "saved wire identity": ("uint32_t pair = savedCode != nil\n"
+               "        ? savedCode.unsignedIntValue\n"
+               "        : (uint32_t)HIDPackKeyPair((short)(0x8000 | (uint16_t)[pending[@\"wire\"] shortValue]),\n"
+               "                                   (uint8_t)[pending[@\"flags\"] charValue]);",
+         "uint32_t pair = (uint32_t)HIDPackKeyPair((short)(0x8000 | [self translateKeyCodeWithEvent:event]), 0);"),
     }
     for label,(before,after) in mutants.items():
         if text.count(before)!=1: print("FAIL mutation cannot find",label); return 1

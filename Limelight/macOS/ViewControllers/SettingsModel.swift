@@ -951,6 +951,16 @@ class SettingsModel: ObservableObject {
       saveSettings()
     }
   }
+  /// Whether letter and digit keys send the character the key types under the
+  /// current Mac layout instead of the key's physical table position. Off keeps
+  /// the mapping every build of this app has shipped; on is what a non-QWERTY
+  /// player needs, because a layout rule cannot give them a per-layout answer.
+  @Published var keyboardTypedMapping: Bool {
+    didSet {
+      guard !isLoading else { return }
+      saveSettings()
+    }
+  }
   @Published var appArtworkWidth: CGFloat? {
     didSet {
       guard !isLoading else { return }
@@ -1503,6 +1513,7 @@ class SettingsModel: ObservableObject {
     hoverActivatesStreamWindow = Self.defaultHoverActivatesStreamWindow
     gamepadMenuLongPressTogglesMouseMode = Self.defaultGamepadMenuLongPressTogglesMouseMode
     commandSendsControl = Self.defaultCommandSendsControl
+    keyboardTypedMapping = Self.defaultKeyboardTypedMapping
     appArtworkWidth = Self.defaultAppArtworkWidth
     appArtworkHeight = Self.defaultAppArtworkHeight
     dimNonHoveredArtwork = Self.defaultDimNonHoveredArtwork

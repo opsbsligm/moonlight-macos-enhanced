@@ -529,7 +529,7 @@ KNOWNS_BAD = [
      "if (!self.shouldSendInputEvents) {",
      "a release is forwarded without ownership of any press"),
     ("lost-ownership", "hid",
-     "self.keyboardForwardedKeyDownKeyCodes[physical] = @(keyCode);",
+     "self.keyboardForwardedKeyDownKeyCodes[physical] = @(pair);",
      "/* forwarded press lost its ownership record */",
      "a forwarded press is not recorded, so its real release is mistaken for an orphan"),
 ]
