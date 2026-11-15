@@ -1077,6 +1077,9 @@ extension SettingsModel {
   /// means false here. Two defaults in two languages, compared by
   /// scripts/command-to-control-tests.py.
   static let defaultCommandSendsControl = false
+  /// Positional (shipped) or typed-character keyboard mapping. The default is the
+  /// mapping every build of this app has shipped: the key's table position.
+  static let defaultKeyboardTypedMapping = false
   static let defaultAppArtworkWidth: CGFloat? = nil
   static let defaultAppArtworkHeight: CGFloat? = nil
   static let defaultQuitAppAfterStream = false

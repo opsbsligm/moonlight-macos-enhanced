@@ -115,6 +115,7 @@ struct Settings: Encodable, Decodable {
   /// absent value is a player who never opened the setting, which means the Windows key,
   /// not the Control key.
   let commandSendsControl: Bool?
+  let keyboardTypedMapping: Bool?
   let appArtworkDimensions: CGSize?
   let dimNonHoveredArtwork: Bool
 

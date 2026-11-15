@@ -135,6 +135,7 @@ PROLOGUE = r"""
 // whether its own keyboard is being held, and it is not.
 #define CGEventSourceKeyState(stateID, key) true
 #import <Carbon/Carbon.h>
+#define SS_KBE_FLAG_NON_NORMALIZED 0x01
 // The per-key halves of the modifier snapshot, read by the shipping
 // record this harness drives.
 #import <IOKit/hidsystem/IOLLEvent.h>
@@ -161,8 +162,21 @@ static NSString *Ev(unsigned short vk, BOOL down, unsigned char modifiers) {
     return [NSString stringWithFormat:@"%04X%c%02X", vk, down ? 'D' : 'U', modifiers];
 }
 
-static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action, char modifiers) {
+static void LiSendKeyboardEvent2Ctx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action,
+                                    char modifiers, char flags) {
     [gHostEvents addObject:Ev((unsigned short)keyCode, action == KEY_ACTION_DOWN, (unsigned char)modifiers)];
+}
+static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode, char action, char modifiers) {
+    LiSendKeyboardEvent2Ctx(ctx, keyCode, action, modifiers, 0);
+}
+static inline uint32_t HIDPackKeyPair(short keyCode, uint8_t flags) {
+    return ((uint32_t)flags << 16) | (uint32_t)(uint16_t)keyCode;
+}
+static inline short HIDKeyPairKeyCode(uint32_t pair) {
+    return (short)(uint16_t)(pair & 0xFFFF);
+}
+static inline char HIDKeyPairFlags(uint32_t pair) {
+    return (char)((pair >> 16) & 0xFF);
 }
 // The heal loop reads the clock, so the probe owns one (docs/history/incidents/memory-ownership.md S32).
 static uint64_t gMLProbeNowMs = 0;
@@ -220,6 +234,9 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 - (void)sendSyntheticRemoteShortcut:(StreamShortcut *)shortcut;
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
 - (char)translateKeyModifierWithEvent:(NSEvent *)event;
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags;
 - (void)keyDown:(NSEvent *)event;
 - (void)keyUp:(NSEvent *)event;
 - (void)startKeyboardStateHealTimerIfNeeded;
@@ -231,6 +248,7 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 // pinned, with its own scenarios, by key-state-heal-tests.py.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                       wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp;
 - (void)releaseAllModifierKeys;
@@ -260,8 +278,16 @@ static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx, void (^bl
 }
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                       wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp { return NO; }
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags {
+    NSNumber *positional = self.mappings[@(macKeyCode)];
+    *outCode = (short)(0x8000 | (positional != nil ? [positional shortValue] : 0));
+    *outFlags = 0;
+}
 """
 
 TEST_BODY = r"""

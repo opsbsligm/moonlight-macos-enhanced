@@ -815,6 +815,8 @@
 "Background Gamepad detail" = "当串流窗口不在前台窗口时，停止向主机发送手柄事件（按键、动作、触摸板、电量），键盘与鼠标输入依然正常发送。关闭时保持 shipped 行为——始终发送手柄输入。";
 "Command Key Sends Control" = "Command 键发送 Control";
 "Command Key Sends Control detail" = "关闭时 Command 发送 Windows 键，与 Parsec、UU 远程、Steam Link 的读法一致，也是本应用一直的行为。开启后 Command 组合键一律改为发送 Control，适合习惯用 Control 复制粘贴保存的玩家；它会作用于所有 Command 组合，包含用 Command 绑定的规则，以保证键盘行为一致。代价是不再有按键发送 Windows 键：若主机需要 Win 组合键，请保持关闭。Mac 本机的快捷键（如 Command-Q、Command-Tab）不受影响。";
+"Map Keys by Typed Character" = "按键字映射";
+"Map Keys by Typed Character detail" = "关闭时按键按 QWERTY 键盘上的位置发送，与本应用历来行为一致。开启后，字母键与数字键按该键在当前 Mac 键盘布局下实际打出的字符发送，非 QWERTY 键盘按你所见字母输入。这些键由主机按主机自己的布局解析；打不出字母或数字的键仍按位置发送。";
 "Pointer Enter Activates Stream" = "指针移入窗口时激活串流";
 "Pointer Enter Activates Stream detail" = "鼠标移入串流窗口时，把串流窗口带到前台（与本机此前所有版本的行为一致）。关闭后可继续在其他 Mac 应用工作：需要接管指针时，点击一次串流窗口即可。\n";
 "Clipboard Sync detail" = "当当前串流会话持有剪贴板同步控制权时，自动同步文本和单张图片。";

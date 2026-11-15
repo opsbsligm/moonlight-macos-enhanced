@@ -111,6 +111,7 @@ PROLOGUE = r"""
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
 #import <ApplicationServices/ApplicationServices.h>
+#define SS_KBE_FLAG_NON_NORMALIZED 0x01
 #define CGEventSourceKeyState(stateID, key) true
 
 @class HIDSupport;
@@ -130,11 +131,24 @@ static NSString * const HIDKeyStateHoldEnabledDefault = @"input.enableKeyStateHo
 static NSMutableArray<NSString *> *gHostKeys;
 static NSMutableArray<NSString *> *gHostText;
 
-static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode,
-                                   char action, char modifiers) {
+static void LiSendKeyboardEvent2Ctx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode,
+                                    char action, char modifiers, char flags) {
     [gHostKeys addObject:[NSString stringWithFormat:@"%04X%c",
                           (unsigned)(keyCode & 0xFFFF),
                           action == KEY_ACTION_DOWN ? 'D' : 'U']];
+}
+static void LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode,
+                                   char action, char modifiers) {
+    LiSendKeyboardEvent2Ctx(ctx, keyCode, action, modifiers, 0);
+}
+static inline uint32_t HIDPackKeyPair(short keyCode, uint8_t flags) {
+    return ((uint32_t)flags << 16) | (uint32_t)(uint16_t)keyCode;
+}
+static inline short HIDKeyPairKeyCode(uint32_t pair) {
+    return (short)(uint16_t)(pair & 0xFFFF);
+}
+static inline char HIDKeyPairFlags(uint32_t pair) {
+    return (char)((pair >> 16) & 0xFF);
 }
 static uint64_t gMLProbeNowMs = 0;
 static uint64_t LiGetMillis(void) { return gMLProbeNowMs; }
@@ -288,6 +302,15 @@ FAKE_SESSION = r"""
 PROBE_INTERFACE = r"""
 @interface MLProbeIME : NSObject
 @property (nonatomic) BOOL shouldSendInputEvents;
+@property (nonatomic, strong) id host;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *typedVirtualKeyCache;
+@property (nonatomic, copy) NSString *typedKeyLayoutID;
+@property (nonatomic) CFAbsoluteTime typedKeyLayoutCheckTime;
+@property (nonatomic) NSInteger loggedKeyMappingMode;
+@property (nonatomic, copy) NSString *loggedKeyMappingLayoutID;
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags;
 @property (nonatomic) BOOL imeLocalCompositionEnabled;
 @property (nonatomic) NSRect imeCandidateAnchorRect;
 @property (nonatomic, strong) MLLocalIMESession *imeSession;
@@ -318,8 +341,19 @@ PROBE_IMPL = r"""
         _keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
         _keyboardQuirkFilter = [HIDKeyboardQuirkFilter new];
         _mappings = @{ @13: @(0x57), @49: @(0x20) };
+        _typedVirtualKeyCache = [NSMutableDictionary dictionary];
+        _loggedKeyMappingMode = -1;
     }
     return self;
+}
+// The typed mapping is off by default in this probe: the scenarios drive the
+// positional route, so the character route answers the positional table.
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags {
+    NSNumber *positional = self.mappings[@(macKeyCode)];
+    *outCode = (short)(0x8000 | (positional != nil ? [positional shortValue] : 0));
+    *outFlags = 0;
 }
 // The shipping implementation reads the per-host setting; the probe has no
 // hosts, so it answers the default the setting exists to override.
