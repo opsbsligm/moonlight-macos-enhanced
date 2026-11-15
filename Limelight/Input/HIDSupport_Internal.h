@@ -198,6 +198,18 @@
 /// The loop that asks. Strong, because ARC releases a dispatch source that only a local knows about,
 /// and a timer nobody holds is a timer that never fires.
 @property (nonatomic, strong) dispatch_source_t keyboardStateHealTimer;
+/// Typed-character cache, keyed by the Mac key code. Main thread only: Text Input
+/// Services is not thread safe, and key events arrive on the main thread.
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *typedVirtualKeyCache;
+/// The input source id the typed cache answers for, so a layout switch invalidates it.
+@property (nonatomic, copy) NSString *typedKeyLayoutID;
+/// When the layout id was last read, so one player switching layouts between keys
+/// costs at most one Text Input Services read per second instead of one per key.
+@property (atomic) CFAbsoluteTime typedKeyLayoutCheckTime;
+/// The mapping mode (0 positional / 1 typed) and layout the last key-mapping log line
+/// described, so the line repeats only when the state it describes changes.
+@property (atomic) NSInteger loggedKeyMappingMode;
+@property (nonatomic, copy) NSString *loggedKeyMappingLayoutID;
 /// Presses that reached this app while the HID key state insisted that nobody was holding the
 /// key. They are not put on the wire on arrival: the heal loop releases them the moment the state
 /// flips, and drops them - together with the release that will follow - if the state never flips.

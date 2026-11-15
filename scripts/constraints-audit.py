@@ -1024,7 +1024,7 @@ problem = guard_exits(
     hid_up,
     "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {",
     "return;",
-    "LiSendKeyboardEventCtx")
+    "LiSendKeyboardEvent2Ctx")
 check(problem is None, "a release whose press was consumed never reaches the host"
       if problem is None else "the release path is not effective: " + problem)
 def ordered_once(body, first_prefix, second_prefix, what):
@@ -1058,7 +1058,7 @@ check(problem is None, "a release the app keeps still spends the held-key record
 problem = ordered_once(
     hid_down,
     "[self.keyboardSuppressedKeyDownKeyCodes removeObject:",
-    "LiSendKeyboardEventCtx",
+    "LiSendKeyboardEvent2Ctx",
     "clearing the stale consumed-key record")
 check(problem is None, "a forwarded press clears any stale record for that key"
       if problem is None else "the stale-record clear is not effective: " + problem)
@@ -1078,14 +1078,14 @@ hid_capture_off = method_body(capture_all,
 hid_init = method_body(hid_all, "- (instancetype)init:(TemporaryHost *)host")
 
 for problem, message in [
-    (ordered_once(hid_down, "self.keyboardForwardedKeyDownKeyCodes[physical] = @(keyCode)",
-                  "LiSendKeyboardEventCtx", "recording the press"),
+    (ordered_once(hid_down, "self.keyboardForwardedKeyDownKeyCodes[physical] = @(pair)",
+                  "LiSendKeyboardEvent2Ctx", "recording the press"),
      "a press the host is told about is recorded before it is sent"),
     (ordered_once(hid_up, "[self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:physical]",
-                  "LiSendKeyboardEventCtx", "spending the held-key record"),
+                  "LiSendKeyboardEvent2Ctx", "spending the held-key record"),
      "a forwarded release spends the held-key record for that physical key"),
     (ordered_once(hid_release, "[self.keyboardForwardedKeyDownKeyCodes removeAllObjects]",
-                  "LiSendKeyboardEventCtx", "dropping the records"),
+                  "LiSendKeyboardEvent2Ctx", "dropping the records"),
      "the held-key release drops its records before sending the releases"),
     (ordered_once(hid_capture_off, "self.hidSupport.shouldSendInputEvents = NO;",
                   "[self.hidSupport releaseAllHeldKeys];", "closing input admission"),
@@ -1108,7 +1108,7 @@ for signature in ("- (void)releaseAllHeldKeys", "- (void)releaseAllModifierKeys"
 
 check(guard_exits(hid_release, "if (self.keyboardHeldKeyReleaseInProgress)",
                     "self.keyboardHeldKeyReleaseInProgress = YES",
-                    "LiSendKeyboardEventCtx") is None,
+                    "LiSendKeyboardEvent2Ctx") is None,
       "the held-key release cannot re-enter itself")
 check("KEY_ACTION_UP" in hid_release,
       "the held-key release actually sends releases")
@@ -1237,9 +1237,9 @@ check(not zero_rows, "no mapping entry forwards VK 0"
       % ", ".join(zero_rows))
 
 for edge, body, guard in (
-        ("keyDown:", hid_down, "if (translated == 0) {"),
+        ("keyDown:", hid_down, "if ((keyCode & 0x7FFF) == 0) {"),
         ("keyUp:", hid_up, "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {")):
-    problem = guard_exits(body, guard, "return;", "LiSendKeyboardEventCtx")
+    problem = guard_exits(body, guard, "return;", "LiSendKeyboardEvent2Ctx")
     check(problem is None, "%s refuses an unmapped key instead of forwarding VK 0" % edge
           if problem is None else "%s does not refuse an unmapped key: %s" % (edge, problem))
 
@@ -4342,10 +4342,10 @@ if "translateKeyModifierWithEvent" not in key_up_body:
                             "used, so a release is sent for a key the host never saw")
 if guard_exits(key_up_body,
                "if (!self.shouldSendInputEvents || (savedCode == nil && pending == nil)) {",
-               "return;", "LiSendKeyboardEventCtx") is not None:
+               "return;", "LiSendKeyboardEvent2Ctx") is not None:
     release_problems.append("-keyUp: no longer requires ownership of a forwarded or deferred "
                             "press, so a client shortcut releases a gameplay key")
-if "short keyCode = savedCode != nil ? savedCode.shortValue : [pending[@\"wire\"] shortValue];" not in key_up_body:
+if "savedCode.unsignedIntValue" not in key_up_body:
     release_problems.append("-keyUp: does not replay the wire code saved by its original press")
 check(not release_problems,
       "a released key carries the modifier its press carried, and never answers a press "

@@ -143,6 +143,7 @@ HEAD = r"""
 // scenarios, by key-state-heal-tests.py. Left alone it would ask the machine running the probe.
 #define CGEventSourceKeyState(stateID, key) true
 #import <Carbon/Carbon.h>
+#define SS_KBE_FLAG_NON_NORMALIZED 0x01
 // The per-key halves of the modifier snapshot. These are the bits that tell left
 // shift from right shift; the family bit (NSEventModifierFlagShift) cannot.
 #import <IOKit/hidsystem/IOLLEvent.h>
@@ -158,8 +159,8 @@ enum { KEY_ACTION_UP = 0, KEY_ACTION_DOWN = 1 };
 RECORDER = r"""
 static NSMutableArray<NSString *> *gHostEvents;
 
-int LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode,
-                           char action, char modifiers) {
+int LiSendKeyboardEvent2Ctx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode,
+                            char action, char modifiers, char flags) {
     // The modifier byte is recorded next to the key code on purpose. Half of
     // the failures this harness looks for leave the key code correct and the
     // byte beside it stale, and a recorder that drops it cannot see them.
@@ -168,6 +169,19 @@ int LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode,
                             action == KEY_ACTION_DOWN ? 'D' : 'U',
                             (unsigned)(unsigned char)modifiers]];
     return 0;
+}
+int LiSendKeyboardEventCtx(PML_INPUT_STREAM_CONTEXT ctx, short keyCode,
+                           char action, char modifiers) {
+    return LiSendKeyboardEvent2Ctx(ctx, keyCode, action, modifiers, 0);
+}
+static inline uint32_t HIDPackKeyPair(short keyCode, uint8_t flags) {
+    return ((uint32_t)flags << 16) | (uint32_t)(uint16_t)keyCode;
+}
+static inline short HIDKeyPairKeyCode(uint32_t pair) {
+    return (short)(uint16_t)(pair & 0xFFFF);
+}
+static inline char HIDKeyPairFlags(uint32_t pair) {
+    return (char)((pair >> 16) & 0xFF);
 }
 // The heal loop reads the clock, so the probe owns one: an age the harness sets is how a press is
 // made "still inside the race allowance" or "old enough to ask the keyboard about".
@@ -180,8 +194,12 @@ static PML_INPUT_STREAM_CONTEXT HIDInputContext(id support) {
 static BOOL HIDValidateInputContext(PML_INPUT_STREAM_CONTEXT ctx, const char *op) {
     return ctx != NULL && ctx->alive;
 }
-static void HIDDispatchInput(id support, PML_INPUT_STREAM_CONTEXT ctx,
-                             void (^block)(void)) { block(); }
+typedef struct { PML_INPUT_STREAM_CONTEXT context; uint64_t generation; } HIDInputLease;
+static HIDInputLease HIDAcquireInputContext(id support) {
+    static struct MLInputStreamContext ctx = { 1 };
+    HIDInputLease lease; lease.context = &ctx; lease.generation = 0; return lease;
+}
+static void HIDDispatchInput(id support, HIDInputLease lease, void (^block)(void)) { (void)lease; block(); }
 static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
                                                        unsigned short kc) { return 0; }
 
@@ -213,6 +231,15 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 
 @interface MLModifierPairProbe : NSObject
 @property (nonatomic) BOOL shouldSendInputEvents;
+@property (nonatomic, strong) id host;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *typedVirtualKeyCache;
+@property (nonatomic, copy) NSString *typedKeyLayoutID;
+@property (nonatomic) CFAbsoluteTime typedKeyLayoutCheckTime;
+@property (nonatomic) NSInteger loggedKeyMappingMode;
+@property (nonatomic, copy) NSString *loggedKeyMappingLayoutID;
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags;
 @property (nonatomic) BOOL keyboardModifierReleaseInProgress;
 @property (nonatomic) NSUInteger keyboardPhysicalModifierSourceMask;
 @property (nonatomic) NSUInteger keyboardRemoteModifierMask;
@@ -238,6 +265,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 // is an error; key-state-heal-tests.py is where the held-back press actually has scenarios.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                       wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp;
 - (short)translateKeyCodeWithEvent:(NSEvent *)event;
@@ -249,6 +277,7 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
 @implementation MLModifierPairProbe
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                       wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp { return NO; }
 - (instancetype)init {
@@ -260,8 +289,17 @@ static unsigned short HIDRemappedKeyCodeForModifierKey(id support,
         // W and Space are the keys from the report; the shifts are the sprint.
         _mappings = @{ @13: @(0x57), @49: @(0x20),
                        @56: @(0xA0), @60: @(0xA1) };
+        _typedVirtualKeyCache = [NSMutableDictionary dictionary];
+        _loggedKeyMappingMode = -1;
     }
     return self;
+}
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags {
+    NSNumber *positional = self.mappings[@(macKeyCode)];
+    *outCode = (short)(0x8000 | (positional != nil ? [positional shortValue] : 0));
+    *outFlags = 0;
 }
 
 - (KMR_CommandPreference)commandKeyPreferenceForCurrentHost {

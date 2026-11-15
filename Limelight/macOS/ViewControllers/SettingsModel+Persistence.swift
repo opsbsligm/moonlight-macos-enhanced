@@ -209,6 +209,7 @@ extension SettingsModel {
     hoverActivatesStreamWindow = Self.defaultHoverActivatesStreamWindow
     gamepadMenuLongPressTogglesMouseMode = Self.defaultGamepadMenuLongPressTogglesMouseMode
     commandSendsControl = Self.defaultCommandSendsControl
+    keyboardTypedMapping = Self.defaultKeyboardTypedMapping
     appArtworkWidth = Self.defaultAppArtworkWidth
     appArtworkHeight = Self.defaultAppArtworkHeight
     dimNonHoveredArtwork = Self.defaultDimNonHoveredArtwork
@@ -398,6 +399,7 @@ extension SettingsModel {
       hoverActivatesStreamWindow = settings.hoverActivatesStreamWindow ?? Self.defaultHoverActivatesStreamWindow
       gamepadMenuLongPressTogglesMouseMode = settings.gamepadMenuLongPressTogglesMouseMode ?? Self.defaultGamepadMenuLongPressTogglesMouseMode
       commandSendsControl = settings.commandSendsControl ?? Self.defaultCommandSendsControl
+      keyboardTypedMapping = settings.keyboardTypedMapping ?? Self.defaultKeyboardTypedMapping
 
       let appArtworkDimensions = loadNillableDimensionSetting(
         inputDimensions: settings.appArtworkDimensions)
@@ -796,6 +798,7 @@ extension SettingsModel {
       hoverActivatesStreamWindow: hoverActivatesStreamWindow,
       gamepadMenuLongPressTogglesMouseMode: gamepadMenuLongPressTogglesMouseMode,
       commandSendsControl: commandSendsControl,
+      keyboardTypedMapping: keyboardTypedMapping,
       appArtworkDimensions: appArtworkDimensions,
       dimNonHoveredArtwork: dimNonHoveredArtwork,
       quitAppAfterStream: quitAppAfterStream,
