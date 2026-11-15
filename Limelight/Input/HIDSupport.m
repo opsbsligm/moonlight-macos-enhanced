@@ -19,6 +19,7 @@
 #import <IOKit/hid/IOHIDElement.h>
 #import <IOKit/hid/IOHIDKeys.h>  // kIOHIDPrimaryUsagePageKey: what kind of device a node claims to be
 #import <ApplicationServices/ApplicationServices.h>  // CGEventSourceKeyState: what the keyboard is physically doing
+#import <Carbon/Carbon.h>  // TIS + UCKeyTranslate + KBGetLayoutType: typed-character keyboard mapping
 #import <IOKit/hidsystem/IOLLEvent.h>
 
 // Physical modifier mappings and the per-host Command preference are resolved
@@ -352,6 +353,21 @@ static char HIDRemoteModifierFlagsToGenericFlags(NSUInteger remoteMask) {
 // is a normal sequence and not an edge case.
 static NSUInteger HIDSyntheticOwnedModifierMask(HIDSupport *support, NSUInteger requested) {
     return requested & ~support.keyboardRemoteModifierMask;
+}
+
+// A key event is sent as a (virtual key, flags) pair. The pair used for a key-down
+// is remembered per Mac key code and reused for the matching key-up, because the
+// host tracks key state per (VK, flags).
+static inline uint32_t HIDPackKeyPair(short keyCode, uint8_t flags) {
+    return ((uint32_t)flags << 16) | (uint32_t)(uint16_t)keyCode;
+}
+
+static inline short HIDKeyPairKeyCode(uint32_t pair) {
+    return (short)(uint16_t)(pair & 0xFFFF);
+}
+
+static inline char HIDKeyPairFlags(uint32_t pair) {
+    return (char)((pair >> 16) & 0xFF);
 }
 
 static NSUInteger HIDSyntheticRemoteModifierMaskForKeyCode(HIDSupport *support,
@@ -940,6 +956,7 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
 // A known pointer-generated key is discarded, never translated into a second click.
 - (BOOL)holdKeyboardPressIfUnconfirmedForKeyCode:(unsigned short)physicalKeyCode
                                         wireCode:(short)wireCode
+                                        wireFlags:(char)wireFlags
                                        modifiers:(char)modifiers
                                        timestamp:(NSTimeInterval)timestamp {
     NSNumber *physical = @(physicalKeyCode);
@@ -956,8 +973,8 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
         self.keyboardHeldUnconfirmedKeyDowns = [NSMutableDictionary dictionary];
     }
     self.keyboardHeldUnconfirmedKeyDowns[physical] =
-        @{@"wire": @(wireCode), @"mods": @(modifiers), @"at": @((unsigned long long)LiGetMillis()),
-          @"timestamp": @(timestamp), @"quirk": @(quirk)};
+        @{@"wire": @(wireCode), @"flags": @(wireFlags), @"mods": @(modifiers),
+          @"at": @((unsigned long long)LiGetMillis()), @"timestamp": @(timestamp), @"quirk": @(quirk)};
     Log(LOG_D, @"[inputdiag] keyboard-wire held-unconfirmed kVK=%hu source-check=%d unpaired-c=%d", physicalKeyCode, quirk, unpairedC);
     return YES;
 }
@@ -1002,14 +1019,16 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
             continue;
         }
         short code = [held[@"wire"] shortValue];
+        char keyFlags = [held[@"flags"] charValue];
         char modifiers = [held[@"mods"] charValue];
-        BOOL alreadyOwned = [self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(code)];
-        self.keyboardForwardedKeyDownKeyCodes[physicalKeyCode] = @(code);
+        uint32_t pair = HIDPackKeyPair((short)(0x8000 | (uint16_t)code), (uint8_t)keyFlags);
+        BOOL alreadyOwned = [self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(pair)];
+        self.keyboardForwardedKeyDownKeyCodes[physicalKeyCode] = @(pair);
         self.keyboardForwardedKeyDownAtMs[physicalKeyCode] = @(nowMs);
         if (!alreadyOwned) {
             HIDDispatchInput(self, inputLease, ^{
                 Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx", (unsigned short)code, modifiers);
-                LiSendKeyboardEventCtx(inputCtx, code, KEY_ACTION_DOWN, modifiers);
+                LiSendKeyboardEvent2Ctx(inputCtx, (short)(0x8000 | (uint16_t)code), KEY_ACTION_DOWN, modifiers, keyFlags);
             });
         }
     }
@@ -1039,7 +1058,7 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
         if (HIDIsModifierKeyCode(physical)) {
             continue;
         }
-        if (!HIDWireCodeIsKeyStateDetectable([self.keyboardForwardedKeyDownKeyCodes[physicalKeyCode] shortValue])) {
+        if (!HIDWireCodeIsKeyStateDetectable(HIDKeyPairKeyCode([self.keyboardForwardedKeyDownKeyCodes[physicalKeyCode] unsignedIntValue]))) {
             continue;
         }
         if (CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)physical)) {
@@ -1064,7 +1083,8 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
         uint64_t ageMs = nowMs >= sinceMs.unsignedLongLongValue ? nowMs - sinceMs.unsignedLongLongValue : 0;
         [self.keyboardForwardedKeyDownKeyCodes removeObjectForKey:physicalKeyCode];
         [self.keyboardForwardedKeyDownAtMs removeObjectForKey:physicalKeyCode];
-        short code = wireCode.shortValue;
+        short code = HIDKeyPairKeyCode(wireCode.unsignedIntValue);
+        char keyFlags = HIDKeyPairFlags(wireCode.unsignedIntValue);
         if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:wireCode]) {
             continue;
         }
@@ -1072,7 +1092,7 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
             (unsigned short)physicalKeyCode.unsignedShortValue, (unsigned short)code,
             (unsigned long long)ageMs);
         HIDDispatchInput(self, inputLease, ^{
-            LiSendKeyboardEventCtx(inputCtx, code, KEY_ACTION_UP, 0);
+            LiSendKeyboardEvent2Ctx(inputCtx, code, KEY_ACTION_UP, 0, keyFlags);
         });
     }
 }
@@ -1233,7 +1253,20 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
             [d setObject:@(m.windows) forKey:@(m.mac)];
         }
         _mappings = [NSDictionary dictionaryWithDictionary:d];
-        
+
+        self.typedVirtualKeyCache = [NSMutableDictionary dictionary];
+        self.loggedKeyMappingMode = -1;
+
+        // The typed-character cache is per keyboard layout; drop it when the
+        // layout changes. keyDown also re-checks the layout id (throttled).
+        [[NSDistributedNotificationCenter defaultCenter]
+            addObserver:self
+               selector:@selector(keyboardInputSourceDidChange:)
+                   name:(__bridge NSString *)kTISNotifySelectedKeyboardInputSourceChanged
+                 object:nil
+     suspensionBehavior:NSNotificationSuspensionBehaviorDeliverImmediately];
+        [self logKeyMappingStateForMode:[self usesTypedKeyMapping] ? 1 : 0];
+
         [self initializeDisplayLink];
         [self setupCoreHIDMouseDriverIfNeeded];
     }
@@ -1242,6 +1275,7 @@ static BOOL HIDWireCodeIsKeyStateDetectable(short wireCode) {
 
 - (void)dealloc {
     [self stopKeyboardStateHealTimer];
+    [[NSDistributedNotificationCenter defaultCenter] removeObserver:self];
     if (_mouseConnectObserver != nil) [[NSNotificationCenter defaultCenter] removeObserver:_mouseConnectObserver];
     if (_mouseDisconnectObserver != nil) [[NSNotificationCenter defaultCenter] removeObserver:_mouseDisconnectObserver];
     [self tearDownCoreHIDMouseDriver];
@@ -1700,6 +1734,186 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     [self.keyboardSuppressedKeyDownKeyCodes addObject:physical];
 }
 
+// Per-host, per event: the setting is read on every key edge so a player can
+// flip it between streams without rebuilding the HID support.
+- (BOOL)usesTypedKeyMapping {
+    return [SettingsClass keyboardTypedMappingFor:self.host.uuid];
+}
+
+// ---------------------------------------------------------------------------
+// Typed-character keyboard mapping (setting "keyboardTypedMapping", per host,
+// off by default). With it on, the letter and digit positions send the
+// character the key types under the Mac layout currently selected, flagged
+// SS_KBE_FLAG_NON_NORMALIZED so the host resolves the key in its own layout.
+// Everything that types no A-Z/0-9 character falls back to the positional
+// mapping the app has always shipped, so a QWERTY player sees no change.
+// Key events arrive on the main thread, which is where Text Input Services
+// wants to be asked; the cache keeps that to one call per layout per key.
+
+// Main-block character positions: letters, digits and the punctuation row.
+// Keypad, modifier, function and navigation keys never come from a layout.
+static BOOL HIDIsTypedMappingCandidateKeyCode(unsigned short keyCode) {
+    switch (keyCode) {
+        case kVK_ANSI_A: case kVK_ANSI_B: case kVK_ANSI_C: case kVK_ANSI_D: case kVK_ANSI_E:
+        case kVK_ANSI_F: case kVK_ANSI_G: case kVK_ANSI_H: case kVK_ANSI_I: case kVK_ANSI_J:
+        case kVK_ANSI_K: case kVK_ANSI_L: case kVK_ANSI_M: case kVK_ANSI_N: case kVK_ANSI_O:
+        case kVK_ANSI_P: case kVK_ANSI_Q: case kVK_ANSI_R: case kVK_ANSI_S: case kVK_ANSI_T:
+        case kVK_ANSI_U: case kVK_ANSI_V: case kVK_ANSI_W: case kVK_ANSI_X: case kVK_ANSI_Y:
+        case kVK_ANSI_Z:
+        case kVK_ANSI_0: case kVK_ANSI_1: case kVK_ANSI_2: case kVK_ANSI_3: case kVK_ANSI_4:
+        case kVK_ANSI_5: case kVK_ANSI_6: case kVK_ANSI_7: case kVK_ANSI_8: case kVK_ANSI_9:
+        case kVK_ANSI_Equal: case kVK_ANSI_Minus: case kVK_ANSI_RightBracket:
+        case kVK_ANSI_LeftBracket: case kVK_ANSI_Quote: case kVK_ANSI_Semicolon:
+        case kVK_ANSI_Backslash: case kVK_ANSI_Comma: case kVK_ANSI_Slash:
+        case kVK_ANSI_Period: case kVK_ANSI_Grave:
+            return YES;
+        default:
+            return NO;
+    }
+}
+
+// The Windows virtual key for a character, when it is A-Z or 0-9 (VK == ASCII).
+static short HIDVirtualKeyForTypedCharacter(UniChar character) {
+    if (character >= 'a' && character <= 'z') {
+        return (short)(character - 'a' + 'A');
+    }
+    if ((character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9')) {
+        return (short)character;
+    }
+    return 0;
+}
+
+// Copies the id of the keyboard layout currently selected. Main thread only.
+static NSString *HIDCurrentKeyboardLayoutID(void) {
+    TISInputSourceRef source = TISCopyCurrentKeyboardLayoutInputSource();
+    if (source == NULL) {
+        return nil;
+    }
+    CFStringRef layoutID = (CFStringRef)TISGetInputSourceProperty(source, kTISPropertyInputSourceID);
+    NSString *result = layoutID != NULL ? [(__bridge NSString *)layoutID copy] : nil;
+    CFRelease(source);
+    return result;
+}
+
+// The A-Z/0-9 Windows virtual key for the character this Mac key types, without
+// modifiers, under the current layout; 0 when the key is not a candidate or its
+// character is not a letter or digit. Main thread only, cached per key per layout.
+- (short)typedVirtualKeyForMacKeyCode:(unsigned short)macKeyCode {
+    if (!HIDIsTypedMappingCandidateKeyCode(macKeyCode) || ![NSThread isMainThread]) {
+        return 0;
+    }
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (self.typedKeyLayoutID != nil && now - self.typedKeyLayoutCheckTime < 0.25) {
+        return self.typedVirtualKeyCache[@(macKeyCode)].shortValue;
+    }
+    self.typedKeyLayoutCheckTime = now;
+    NSString *layoutID = HIDCurrentKeyboardLayoutID();
+    if (layoutID == nil || ![layoutID isEqualToString:self.typedKeyLayoutID]) {
+        [self.typedVirtualKeyCache removeAllObjects];
+        self.typedKeyLayoutID = layoutID;
+    }
+    NSNumber *cached = self.typedVirtualKeyCache[@(macKeyCode)];
+    if (cached != nil) {
+        return cached.shortValue;
+    }
+    short virtualKey = 0;
+    UniChar character = 0;
+    BOOL translated = NO;
+    TISInputSourceRef source = TISCopyCurrentKeyboardLayoutInputSource();
+    if (source != NULL) {
+        CFDataRef layoutData = (CFDataRef)TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
+        if (layoutData != NULL) {
+            const UCKeyboardLayout *layout = (const UCKeyboardLayout *)CFDataGetBytePtr(layoutData);
+            UInt32 deadKeyState = 0;
+            UniCharCount length = 0;
+            UniChar characters[4] = {0, 0, 0, 0};
+            OSStatus status = UCKeyTranslate(layout, macKeyCode, kUCKeyActionDisplay, 0,
+                                             LMGetKbdType(), kUCKeyTranslateNoDeadKeysMask,
+                                             &deadKeyState, 4, &length, characters);
+            if (status == noErr && length == 1) {
+                character = characters[0];
+                translated = YES;
+                virtualKey = HIDVirtualKeyForTypedCharacter(character);
+            }
+        }
+        CFRelease(source);
+    }
+    self.typedVirtualKeyCache[@(macKeyCode)] = @(virtualKey);
+    if (virtualKey == 0) {
+        // Only letter and digit positions are worth reporting; punctuation
+        // positions normally type punctuation and need no log line.
+        short positional = (short)[self.mappings[@(macKeyCode)] shortValue];
+        if ((positional >= 'A' && positional <= 'Z') || (positional >= '0' && positional <= '9')) {
+            Log(LOG_D, @"[keyboard] typed mapping: key 0x%02x has no A-Z/0-9 character under layout=%@ (%@), using position",
+                macKeyCode, self.typedKeyLayoutID ?: @"(unknown)",
+                translated ? [NSString stringWithFormat:@"U+%04X", character] : @"no translation");
+        }
+    }
+    return virtualKey;
+}
+
+// The (windows code, flags) a Mac key goes out under. Typed mode: a letter or
+// digit position sends the character it types, non-normalized; every other key
+// falls through to the positional table with flags 0, which is exactly the
+// value the mapping table already answers. On Apple ISO keyboards the key left
+// of 1 reports kVK_ISO_Section and the key beside the left Shift reports
+// kVK_ANSI_Grave, the reverse of the PC positions the table describes, so the
+// two are swapped before the table lookup so each physical key sends its PC
+// equivalent. (The swap ships with this setting only: it is a no-op on ANSI
+// and its first behavioural change rides behind a default-off switch.)
+- (void)typedMappingKeyCodeFlags:(unsigned short)macKeyCode
+                         outCode:(short *)outCode
+                       outFlags:(char *)outFlags {
+    if ([self usesTypedKeyMapping]) {
+        short typed = [self typedVirtualKeyForMacKeyCode:macKeyCode];
+        if (typed != 0) {
+            *outCode = (short)(0x8000 | typed);
+            *outFlags = SS_KBE_FLAG_NON_NORMALIZED;
+            return;
+        }
+    }
+    unsigned short lookup = macKeyCode;
+    if ((macKeyCode == kVK_ISO_Section || macKeyCode == kVK_ANSI_Grave) &&
+        KBGetLayoutType(LMGetKbdType()) == kKeyboardISO) {
+        lookup = macKeyCode == kVK_ISO_Section ? kVK_ANSI_Grave : kVK_ISO_Section;
+    }
+    NSNumber *positional = [self.mappings objectForKey:@(lookup)];
+    *outCode = (short)(0x8000 | (positional != nil ? [positional shortValue] : 0));
+    *outFlags = 0;
+}
+
+// Logs the active mapping once per stream and whenever it changes. Position
+// mode reads no layout, so switching layouts while it is active is silent.
+- (void)logKeyMappingStateForMode:(NSInteger)mode {
+    if (![NSThread isMainThread] || (mode == 0 && self.loggedKeyMappingMode == 0)) {
+        return;
+    }
+    NSString *layoutID = (mode == 1 && self.typedKeyLayoutID != nil)
+        ? self.typedKeyLayoutID : HIDCurrentKeyboardLayoutID();
+    if (mode == 1 && self.loggedKeyMappingMode == 1 &&
+        ((layoutID == nil && self.loggedKeyMappingLayoutID == nil) ||
+         [layoutID isEqualToString:self.loggedKeyMappingLayoutID])) {
+        return;
+    }
+    self.loggedKeyMappingMode = mode;
+    self.loggedKeyMappingLayoutID = [layoutID copy];
+    Log(LOG_I, @"[keyboard] key mapping=%s layout=%@", mode == 1 ? "typed" : "position",
+        layoutID ?: @"(unknown)");
+}
+
+- (void)keyboardInputSourceDidChange:(NSNotification *)note {
+    __weak HIDSupport *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [weakSelf typedKeyLayoutInvalidateForNotification];
+    });
+}
+
+- (void)typedKeyLayoutInvalidateForNotification {
+    [self.typedVirtualKeyCache removeAllObjects];
+    self.typedKeyLayoutID = nil;
+    self.typedKeyLayoutCheckTime = 0;
+}
+
 - (void)keyDown:(NSEvent *)event {
     if (event == nil || event.type != NSEventTypeKeyDown || !self.shouldSendInputEvents) {
         return;
@@ -1731,7 +1945,20 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     }
     [self.keyboardSuppressedKeyDownKeyCodes removeObject:physical];
     [self syncKeyboardModifierStateForEvent:event];
-    short translated = savedCode != nil ? savedCode.shortValue : [self translateKeyCodeWithEvent:event];
+    // The first press of a physical key resolves its wire identity; a repeat,
+    // a re-delivery and the modifier path reuse what went out before, so a
+    // layout change mid-press cannot move the key that is held on the host.
+    short keyCode = 0;
+    char wireFlags = 0;
+    if (savedCode != nil) {
+        keyCode = (short)(savedCode.unsignedIntValue & 0xFFFF);
+        wireFlags = HIDKeyPairFlags(savedCode.unsignedIntValue);
+    } else if (!event.isARepeat && !HIDIsModifierKeyCode(event.keyCode)) {
+        [self typedMappingKeyCodeFlags:event.keyCode outCode:&keyCode outFlags:&wireFlags];
+    } else {
+        short translated = [self translateKeyCodeWithEvent:event];
+        keyCode = (short)(0x8000 | translated);
+    }
     NSData *committed = savedCode == nil ? HIDUnicodeTextForEvent(event) : nil;
     if (committed != nil && committed.length > 0) {
         // Text owns this edge; no key-code DOWN or orphan UP accompanies it.
@@ -1747,10 +1974,11 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
         }
         return;
     }
-    if (translated == 0) {
+    // 0x8000 is the wire "real key" flag; a zero virtual-key half means the table
+    // has no entry for this physical key, so the edge is ignored on both halves.
+    if ((keyCode & 0x7FFF) == 0) {
         return;
     }
-    short keyCode = (short)(0x8000 | translated);
     char modifiers = [self translateKeyModifierWithEvent:event];
     HIDInputLease inputLease = HIDAcquireInputContext(self);
     PML_INPUT_STREAM_CONTEXT inputCtx = inputLease.context;
@@ -1759,12 +1987,14 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     }
     if (savedCode == nil && [self holdKeyboardPressIfUnconfirmedForKeyCode:event.keyCode
                                                                 wireCode:keyCode
+                                                                wireFlags:wireFlags
                                                                modifiers:modifiers
                                                                timestamp:event.timestamp]) {
         return;
     }
-    BOOL alreadyOwned = [self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(keyCode)];
-    self.keyboardForwardedKeyDownKeyCodes[physical] = @(keyCode);
+    uint32_t pair = HIDPackKeyPair(keyCode, (uint8_t)wireFlags);
+    BOOL alreadyOwned = [self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(pair)];
+    self.keyboardForwardedKeyDownKeyCodes[physical] = @(pair);
     if (savedCode == nil) {
         self.keyboardForwardedKeyDownAtMs[physical] = @((unsigned long long)LiGetMillis());
     }
@@ -1773,7 +2003,7 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
     }
     HIDDispatchInput(self, inputLease, ^{
         Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx", (unsigned short)keyCode, modifiers);
-        LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers);
+        LiSendKeyboardEvent2Ctx(inputCtx, keyCode, KEY_ACTION_DOWN, modifiers, wireFlags);
     });
 }
 
@@ -1805,8 +2035,13 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
         return;
     }
     [self syncKeyboardModifierStateForEvent:event];
-    short keyCode = savedCode != nil ? savedCode.shortValue : [pending[@"wire"] shortValue];
-    if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(keyCode)]) {
+    uint32_t pair = savedCode != nil
+        ? savedCode.unsignedIntValue
+        : (uint32_t)HIDPackKeyPair((short)(0x8000 | (uint16_t)[pending[@"wire"] shortValue]),
+                                   (uint8_t)[pending[@"flags"] charValue]);
+    short keyCode = HIDKeyPairKeyCode(pair);
+    char keyFlags = HIDKeyPairFlags(pair);
+    if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(pair)]) {
         return; // The remaining owner still holds this remote key.
     }
     char modifiers = [self translateKeyModifierWithEvent:event];
@@ -1821,10 +2056,10 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
         // Keep both edges in one queue item so teardown cannot split the pair.
         if (pending != nil && savedCode == nil) {
             Log(LOG_D, @"[inputdiag] keyboard-wire sent-down code=0x%hx mods=0x%hhx", (unsigned short)keyCode, pressModifiers);
-            LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_DOWN, pressModifiers);
+            LiSendKeyboardEvent2Ctx(inputCtx, keyCode, KEY_ACTION_DOWN, pressModifiers, keyFlags);
         }
         Log(LOG_D, @"[inputdiag] keyboard-wire sent-up code=0x%hx mods=0x%hhx", (unsigned short)keyCode, modifiers);
-        LiSendKeyboardEventCtx(inputCtx, keyCode, KEY_ACTION_UP, modifiers);
+        LiSendKeyboardEvent2Ctx(inputCtx, keyCode, KEY_ACTION_UP, modifiers, keyFlags);
     });
 }
 
@@ -1915,7 +2150,9 @@ static const uint16_t kHIDArrivalCapabilities = LI_CCAP_ANALOG_TRIGGERS | LI_CCA
         if (HIDValidateInputContext(inputCtx, "releaseAllHeldKeys")) {
             HIDDispatchInput(self, inputLease, ^{
                 for (NSNumber *keyCode in held) {
-                    LiSendKeyboardEventCtx(inputCtx, keyCode.shortValue, KEY_ACTION_UP, 0);
+                    short code = HIDKeyPairKeyCode(keyCode.unsignedIntValue);
+                    char keyFlags = HIDKeyPairFlags(keyCode.unsignedIntValue);
+                    LiSendKeyboardEvent2Ctx(inputCtx, code, KEY_ACTION_UP, 0, keyFlags);
                 }
             });
         }
@@ -2131,7 +2368,7 @@ static BOOL HIDIMECurrentInputSourceComposes(void) {
     char translatedModifiers = HIDRemoteModifierFlagsToGenericFlags(remoteModifierMask);
     short translatedKeyCode = (short)(0x8000 | [mappedKey shortValue]);
     // A synthetic tap cannot release a key that a physical press still owns.
-    if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(translatedKeyCode)]) {
+    if ([self.keyboardForwardedKeyDownKeyCodes.allValues containsObject:@(HIDPackKeyPair(translatedKeyCode, 0))]) {
         return;
     }
 

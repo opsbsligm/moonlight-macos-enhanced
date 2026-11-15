@@ -22,7 +22,7 @@ static int LiSendUtf8TextEventCtx(void *ctx, const char *text, unsigned int leng
     [texts addObject:[[NSString alloc] initWithBytes:text length:length encoding:NSUTF8StringEncoding]];
     return 0;
 }''')
-source = source.replace('static void HIDDispatchInput(id support, HIDInputLease lease, void (^block)(void)) { block(); }', '''static NSMutableArray *jobs;
+source = source.replace('static void HIDDispatchInput(id support, HIDInputLease lease, void (^block)(void)) { (void)lease; block(); }', '''static NSMutableArray *jobs;
 static void HIDDispatchInput(id support, HIDInputLease lease, void (^block)(void)) {
     [jobs addObject:[block copy]];
 }''')
@@ -93,7 +93,7 @@ assert result.returncode == 0, result.stdout + result.stderr
 print(result.stdout.strip())
 for label, old, new in (
     ('wire owner rerouted as text', 'savedCode == nil ? HIDUnicodeTextForEvent(event) : nil', 'HIDUnicodeTextForEvent(event)'),
-    ('text also sends a key code', '        return;\n    }\n    if (translated == 0)', '    }\n    if (translated == 0)'),
+    ('text also sends a key code', '        return;\n    }\n    // 0x8000 is the wire \"real key\" flag', '    }\n    // 0x8000 is the wire \"real key\" flag'),
     ('text silently lost', 'LiSendUtf8TextEventCtx(textCtx, committed.bytes, (unsigned int)committed.length);', '(void)textCtx;'),
     ('ASCII rerouted as text', 'if (!nonASCII) return nil;', 'if (NO) return nil;'),
     ('shortcut modifiers ignored', 'if (event.modifierFlags & (NSEventModifierFlagCommand |',

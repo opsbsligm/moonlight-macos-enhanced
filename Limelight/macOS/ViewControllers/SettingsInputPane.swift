@@ -498,6 +498,18 @@ struct InputView: View {
 
       Divider()
 
+      // Typed-character mapping: with it on, letter and digit keys send the
+      // character the key types under the Mac layout, flagged so the host
+      // resolves them in its own layout. Off keeps the positional mapping
+      // every build has shipped, so a QWERTY player sees no change at all.
+      ToggleCell(
+        title: "Map Keys by Typed Character",
+        hintKey: "Map Keys by Typed Character detail",
+        boolBinding: $settingsModel.keyboardTypedMapping
+      )
+
+      Divider()
+
       ToggleCell(
         title: "Capture system keyboard shortcuts",
         boolBinding: $settingsModel.captureSystemShortcuts
