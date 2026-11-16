@@ -19,6 +19,18 @@ def method(source, signature):
 HARNESS = r'''
 #import <AppKit/AppKit.h>
 #include <math.h>
+// Production edge-control methods call the semantic event emitter; the probe
+// only replays pointer/state logic, so a no-op stand-in keeps -Werror clean.
+@interface AIEventEmitter : NSObject
++ (void)emit:(NSString *)event data:(NSDictionary *)data;
++ (NSString *)eventsFilePath;
++ (void)flushAndClose;
+@end
+@implementation AIEventEmitter
++ (void)emit:(NSString *)event data:(NSDictionary *)data { }
++ (NSString *)eventsFilePath { return @""; }
++ (void)flushAndClose { }
+@end
 static NSMutableArray<NSString *> *ProbeLogLines;
 @interface ProbeLog : NSObject
 + (void)reset;
