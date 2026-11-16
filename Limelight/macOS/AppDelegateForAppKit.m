@@ -1939,58 +1939,6 @@ static void MLProbePartialHostInfoIfRequested(NSMutableDictionary *report, void 
 }
 
 
-// --- AI Native CLI headless mode -------------------------------------------
-// `--ai-native <cmd>` runs and exits without bringing up the main UI, so an
-// Agent can drive the app binary directly instead of clicking through the
-// settings window. This is the natural-language-operation surface: the same
-// report the settings pane offers is one command away from a shell.
-//
-// Two commands, both read-only (no host touched, no setting written):
-//   report  print the full diagnostics report to stdout (the same text the
-//           "Copy Diagnostics Report" button puts on the pasteboard)
-//   events  print the semantic JSONL event stream to stdout (the file the
-//           runtime emitters append to; absence means no events yet)
-//
-// It runs from applicationWillFinishLaunching, on the main thread, which is
-// the thread currentReport wants (it reads the main database and the
-// pasteboard). The ownership probe already uses the database at this same
-// hook, so the store is ready here.
-static void MLRunAINativeCLIAndExitIfRequested(void) {
-    NSArray<NSString *> *args = [NSProcessInfo processInfo].arguments;
-    NSUInteger idx = [args indexOfObject:@"--ai-native"];
-    if (idx == NSNotFound || idx + 1 >= args.count) {
-        return;
-    }
-    NSString *cmd = [args objectAtIndex:idx + 1];
-    @autoreleasepool {
-        if ([cmd isEqualToString:@"report"]) {
-            NSString *report = [DiagnosticsReportBuilder currentReport];
-            if (report.length > 0) {
-                printf("%s\n", report.UTF8String);
-            }
-            [AIEventEmitter emit:@"ai_cli" data:@{@"command": @"report",
-                                                  @"bytes": @(report.length)}];
-            [AIEventEmitter flushAndClose];
-            exit(report.length > 0 ? 0 : 1);
-        }
-        if ([cmd isEqualToString:@"events"]) {
-            NSString *path = [AIEventEmitter eventsFilePath];
-            NSString *body = [NSString stringWithContentsOfFile:path
-                                                       encoding:NSUTF8StringEncoding
-                                                          error:NULL];
-            if (body.length > 0) {
-                printf("%s\n", body.UTF8String);
-            }
-            [AIEventEmitter emit:@"ai_cli" data:@{@"command": @"events",
-                                                  @"bytes": @(body.length)}];
-            [AIEventEmitter flushAndClose];
-            exit(0);
-        }
-        fprintf(stderr, "[ai-native] unknown command: %s (expected report|events)\n",
-                cmd.UTF8String);
-        exit(2);
-    }
-}
 
 static void MLRunOwnershipProbeAndExitIfRequested(void) {
     if (getenv("ML_OWNERSHIP_PROBE") == NULL) {
@@ -2840,6 +2788,59 @@ static const void *MoonlightOriginalToolbarToolTipKey = &MoonlightOriginalToolba
     [diagnoseItem setTarget:self];
 }
 
+
+// --- AI Native CLI headless mode -------------------------------------------
+// `--ai-native <cmd>` runs and exits without bringing up the main UI, so an
+// Agent can drive the app binary directly instead of clicking through the
+// settings window. This is the natural-language-operation surface: the same
+// report the settings pane offers is one command away from a shell.
+//
+// Two commands, both read-only (no host touched, no setting written):
+//   report  print the full diagnostics report to stdout (the same text the
+//           "Copy Diagnostics Report" button puts on the pasteboard)
+//   events  print the semantic JSONL event stream to stdout (the file the
+//           runtime emitters append to; absence means no events yet)
+//
+// It runs from applicationWillFinishLaunching, on the main thread, which is
+// the thread currentReport wants (it reads the main database and the
+// pasteboard). The ownership probe already uses the database at this same
+// hook, so the store is ready here.
+static void MLRunAINativeCLIAndExitIfRequested(void) {
+    NSArray<NSString *> *args = [NSProcessInfo processInfo].arguments;
+    NSUInteger idx = [args indexOfObject:@"--ai-native"];
+    if (idx == NSNotFound || idx + 1 >= args.count) {
+        return;
+    }
+    NSString *cmd = [args objectAtIndex:idx + 1];
+    @autoreleasepool {
+        if ([cmd isEqualToString:@"report"]) {
+            NSString *report = [DiagnosticsReportBuilder currentReport];
+            if (report.length > 0) {
+                printf("%s\n", report.UTF8String);
+            }
+            [AIEventEmitter emit:@"ai_cli" data:@{@"command": @"report",
+                                                  @"bytes": @(report.length)}];
+            [AIEventEmitter flushAndClose];
+            exit(report.length > 0 ? 0 : 1);
+        }
+        if ([cmd isEqualToString:@"events"]) {
+            NSString *path = [AIEventEmitter eventsFilePath];
+            NSString *body = [NSString stringWithContentsOfFile:path
+                                                       encoding:NSUTF8StringEncoding
+                                                          error:NULL];
+            if (body.length > 0) {
+                printf("%s\n", body.UTF8String);
+            }
+            [AIEventEmitter emit:@"ai_cli" data:@{@"command": @"events",
+                                                  @"bytes": @(body.length)}];
+            [AIEventEmitter flushAndClose];
+            exit(0);
+        }
+        fprintf(stderr, "[ai-native] unknown command: %s (expected report|events)\n",
+                cmd.UTF8String);
+        exit(2);
+    }
+}
 - (void)applicationWillFinishLaunching:(NSNotification *)notification {
     // Headless CLI must also work in release builds (the DMG is what an Agent
     // drives), so this sits outside the DEBUG block. Without --ai-native it is
