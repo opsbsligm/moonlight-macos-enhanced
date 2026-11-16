@@ -1314,13 +1314,6 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         self.view.window.isKeyWindow ? 1 : 0,
         self.view.window.isMainWindow ? 1 : 0,
         [self isWindowFullscreen] ? 1 : 0);
-    if ([resolvedStage isEqualToString:@"commit"]) {
-        [AIEventEmitter emit:@"mouse_capture"
-                       data:@{@"captured": @NO,
-                              @"stage": resolvedStage,
-                              @"code": resolvedCode,
-                              @"reason": resolvedReason}];
-    }
 }
 
 - (BOOL)hasRecentTopEdgeClickWithinMs:(uint64_t)maxAgeMs {
@@ -1537,6 +1530,16 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         windowKey ? 1 : 0,
         windowMain ? 1 : 0,
         [self isWindowFullscreen] ? 1 : 0);
+    // The commit stage is the one the pointer report is read for: the request and
+    // skip stages say where an uncapture went, but only the commit says it happened,
+    // and an Agent that tails the stream wants the moment, not the detour.
+    if ([resolvedStage isEqualToString:@"commit"]) {
+        [AIEventEmitter emit:@"mouse_capture"
+                       data:@{@"captured": @NO,
+                              @"stage": resolvedStage,
+                              @"code": resolvedCode,
+                              @"reason": resolvedReason}];
+    }
 }
 
 - (void)requestMouseUncaptureWhenSafeWithReason:(NSString *)reason code:(NSString *)code {
