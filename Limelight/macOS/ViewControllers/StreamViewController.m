@@ -8,6 +8,7 @@
 
 #import "StreamViewController_Internal.h"
 #import "MLStreamReconnector.h"
+#import "AIEventEmitter.h"
 
 static NSScreen *MLScreenContainingMouseLocation(void) {
     NSPoint mouseLocation = [NSEvent mouseLocation];
@@ -727,6 +728,10 @@ highFreqMotor:(unsigned short)highFreqMotor {
         double stopStart = CACurrentMediaTime();
         [strongSelf.streamMan stopStream];
         Log(LOG_I, @"Stream stop took %.3fs (total %.3fs)", CACurrentMediaTime() - stopStart, CACurrentMediaTime() - start);
+        [AIEventEmitter emit:@"stream_stopped"
+                       data:@{@"host": strongSelf.app.host.uuid ?: @"",
+                              @"reason": reason ?: @"",
+                              @"stop_ms": @((CACurrentMediaTime() - stopStart) * 1000.0)}];
 
         // Ensure streaming state is cleared for this host even if we don't receive a termination callback
         if (self.app.host.uuid) {
@@ -1683,6 +1688,8 @@ highFreqMotor:(unsigned short)highFreqMotor {
             self.view.window,
             callbackConn,
             self.streamMan.connection);
+        [AIEventEmitter emit:@"stream_started"
+                       data:@{@"host": self.app.host.uuid ?: @""}];
         @try {
                 // Notify session manager (main-thread only for window access)
                 [[StreamingSessionManager shared] startStreamingWithHost:self.app.host.uuid

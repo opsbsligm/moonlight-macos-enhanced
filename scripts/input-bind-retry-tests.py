@@ -31,6 +31,26 @@ PREAMBLE = r'''
 #import <Foundation/Foundation.h>
 #import <dispatch/dispatch.h>
 #define Log(...) ((void)0)
+// The extracted production methods report stream lifecycle to the semantic
+// event stream and read self.app.host.uuid; the probe only replays
+// binding/retry logic, so no-op/host stand-ins keep it compiling against
+// Foundation alone.
+@interface Host : NSObject
+@property(readonly) NSString *uuid;
+@end
+@implementation Host
+@end
+@interface App : NSObject
+@property Host *host;
+@end
+@implementation App
+@end
+@interface AIEventEmitter : NSObject
++ (void)emit:(NSString *)event data:(NSDictionary *)data;
+@end
+@implementation AIEventEmitter
++ (void)emit:(NSString *)event data:(NSDictionary *)data { }
+@end
 typedef struct { BOOL initialized, retired; } ML_INPUT_STREAM_CONTEXT, *PML_INPUT_STREAM_CONTEXT;
 static NSMutableArray *pending;
 static int failures, reads, retiredReads, startedEffects;
@@ -69,6 +89,8 @@ static Connection *currentConnection;
 @implementation InputSupport
 @end
 @interface StreamViewController : NSObject
+@property App *app;
+@property id view;
 @property BOOL stopStreamInProgress;
 @property BOOL reconnectInProgress;
 @property NSUInteger activeStreamGeneration;

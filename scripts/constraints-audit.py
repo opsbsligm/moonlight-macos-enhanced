@@ -4155,7 +4155,11 @@ if run_battery:
                           # the other report gate rather than excused: this host either has
                           # Apple's toolchain, in which case the harness compiles and runs, or
                           # it says so in the skip line above rather than passing quietly.
-                          os.path.join("scripts", "diagnostics-report-tests.py"))
+                          os.path.join("scripts", "diagnostics-report-tests.py"),
+                          # The emitter is the only writer an Agent can trust for the semantic
+                          # stream, so it gets the same treatment the report gate got: compiled
+                          # and driven here, and driven again where CI grades the commit.
+                          os.path.join("scripts", "ai-native-event-stream-tests.py"))
         for behaviour in behaviours:
             harness = subprocess.run([sys.executable, os.path.join(root, behaviour)],
                                      capture_output=True, text=True, cwd=root)

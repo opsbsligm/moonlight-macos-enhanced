@@ -13,6 +13,7 @@
 
 #import "DataManager.h"
 #import "DeviceRedirectionPanelModel.h"
+#import "AIEventEmitter.h"
 #import "InputDiagnosticsLedger.h"
 #import "MLControllerInventory.h"
 #import "Moonlight-Swift.h"
@@ -79,7 +80,15 @@ static NSString *stringOrNone(NSString *_Nullable value) {
     }
     NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
     [pasteboard clearContents];
-    return [pasteboard setString:report forType:NSPasteboardTypeString];
+    BOOL ok = [pasteboard setString:report forType:NSPasteboardTypeString];
+    if (ok) {
+        // The human path just exported a report; record it so an Agent that
+        // tails the event stream sees the same moment without UI access.
+        [AIEventEmitter emit:@"diagnostics_report"
+                        data:@{@"bytes": @(report.length),
+                               @"source": @"pasteboard"}];
+    }
+    return ok;
 }
 
 + (DiagnosticsReportSection *)reportSection {
