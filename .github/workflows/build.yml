@@ -580,6 +580,11 @@ jobs:
       # stream. It compiles the shipped builder, so it belongs beside the other report gates.
       run: python3 scripts/diagnostics-report-tests.py
 
+    - name: Verify the AI Native event stream and headless CLI answer what an Agent needs
+      # The emitter is compiled and driven with planted defects, and the headless hook is
+      # checked against the tree, so a renamed field or a DEBUG-only hook goes red here.
+      run: python3 scripts/ai-native-event-stream-tests.py
+
     - name: Verify the hardware-acceptance grader refuses to grade without evidence
       # Seven acceptance rows stay `hardware_validated=false` until a report and an observer
       # statement agree about the same session. This self-test grades a fixture pair, then

@@ -7,6 +7,7 @@
 //
 #import "HIDSupport_Internal.h"
 #import "InputDiagnosticsLedger.h"
+#import "AIEventEmitter.h"
 #import "ControllerEventBaseline.h"
 #import "GamepadMenuGesture.h"
 #import "KeyboardMapResolver.h"
@@ -1899,6 +1900,10 @@ static NSString *HIDCurrentKeyboardLayoutID(void) {
     self.loggedKeyMappingLayoutID = [layoutID copy];
     Log(LOG_I, @"[keyboard] key mapping=%s layout=%@", mode == 1 ? "typed" : "position",
         layoutID ?: @"(unknown)");
+    [AIEventEmitter emit:@"key_mapping"
+                   data:@{@"mode": mode == 1 ? @"typed" : @"position",
+                          @"layout": layoutID ?: @"",
+                          @"host": self.host.uuid ?: @""}];
 }
 
 - (void)keyboardInputSourceDidChange:(NSNotification *)note {
