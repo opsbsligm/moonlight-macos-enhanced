@@ -96,6 +96,7 @@
 				macOS/AppCell.xib,
 				macOS/AppDelegateForAppKit.m,
 				macOS/Assets.xcassets,
+				macOS/Helpers/AIEventEmitter.m,
 				macOS/Helpers/AlertPresenter.m,
 				macOS/Helpers/AwdlAuthorizationHelper.m,
 				macOS/Helpers/BackgroundColorView.m,

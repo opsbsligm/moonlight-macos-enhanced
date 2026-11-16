@@ -6,6 +6,7 @@
 #import "StreamViewController_Internal.h"
 #import "Moonlight-Swift.h"
 #import "PointerEntryPolicy.h"
+#import "AIEventEmitter.h"
 #import <dlfcn.h>
 
 // ---------------------------------------------------------------------------
@@ -938,6 +939,12 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     self.edgeMenuTemporaryReleaseActive = wasCaptured && !self.userReleasedInput;
     Log(LOG_I, @"[diag] Edge controls opened: reason=%@ edge=%ld capturedBefore=%d band=%.0fpt dwell=%.0fms",
         reason, (long)edge, wasCaptured, [self edgeSensorBandWidthPoints], [self edgeSensorDwellSeconds] * 1000.0);
+    [AIEventEmitter emit:@"edge_controls_opened"
+                   data:@{@"reason": reason ?: @"",
+                          @"edge": @(edge),
+                          @"captured_before": @(wasCaptured),
+                          @"band_pt": @([self edgeSensorBandWidthPoints]),
+                          @"dwell_ms": @([self edgeSensorDwellSeconds] * 1000.0)}];
 }
 
 // The locked-mode edge entry. Locked events carry no trusted position, but they do
@@ -1307,6 +1314,13 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         self.view.window.isKeyWindow ? 1 : 0,
         self.view.window.isMainWindow ? 1 : 0,
         [self isWindowFullscreen] ? 1 : 0);
+    if ([resolvedStage isEqualToString:@"commit"]) {
+        [AIEventEmitter emit:@"mouse_capture"
+                       data:@{@"captured": @NO,
+                              @"stage": resolvedStage,
+                              @"code": resolvedCode,
+                              @"reason": resolvedReason}];
+    }
 }
 
 - (BOOL)hasRecentTopEdgeClickWithinMs:(uint64_t)maxAgeMs {
@@ -3712,6 +3726,10 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         [self isWindowFullscreen] ? 1 : 0,
         self.isRemoteDesktopMode ? 1 : 0,
         self.hidSupport.inputContext);
+    [AIEventEmitter emit:@"mouse_capture"
+                   data:@{@"captured": @YES,
+                          @"remote_desktop": @(self.isRemoteDesktopMode),
+                          @"fullscreen": @([self isWindowFullscreen])}];
 }
 
 // K1.2: the candidate window anchors at the stream view's top-left corner

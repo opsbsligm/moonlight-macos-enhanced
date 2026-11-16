@@ -5,6 +5,7 @@
 
 #import "StreamViewController_Internal.h"
 #import "DeviceRedirectionPanelModel.h"
+#import "AIEventEmitter.h"
 #import "USBScanPolicy.h"
 #import "USBMenuStatus.h"
 #import "DeviceRedirectionPolicy.h"
@@ -439,6 +440,11 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
             (long)self.edgeMenuDockEdge, self.edgeMenuPointerHasVisited,
             [self edgeMenuReturnDelay] * 1000.0, self.isMouseCaptured,
             (long)previousPhase, (long)phase);
+        [AIEventEmitter emit:@"edge_controls_closed"
+                       data:@{@"edge": @(self.edgeMenuDockEdge),
+                              @"visited": @(self.edgeMenuPointerHasVisited),
+                              @"grace_ms": @([self edgeMenuReturnDelay] * 1000.0),
+                              @"captured": @(self.isMouseCaptured)}];
     }
     self.edgeMenuPhase = phase;
     // A visit record describes one stay on screen: it is opened when the bar comes out
