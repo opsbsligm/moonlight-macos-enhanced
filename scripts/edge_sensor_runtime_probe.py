@@ -310,6 +310,19 @@ int main(void) { @autoreleasepool {
         CHECK(![s edgeSensorPointIsInHoverRegion:NSMakePoint(NSMidX(dock),NSMidY(dock)) edge:edge], "expanded interaction box is not an activation region");
         NSPoint outsideSpan = edge <= 2 ? NSMakePoint(NSMidX(region),NSMinY(s.view.bounds)+1) : NSMakePoint(NSMinX(s.view.bounds)+1,NSMidY(region));
         CHECK(![s edgeSensorPointIsInHoverRegion:outsideSpan edge:edge], "rest of the screen edge cannot summon controls");
+        // Edge-band hysteresis geometry: a pointer that has just crossed the edge must still
+        // be recognised as "aiming at the dock" so the exit handler holds the capture. A
+        // point that has genuinely travelled away must not. The allowance is one band-width
+        // past the edge, so these two probes sit on opposite sides of that line.
+        CGFloat band = [s edgeSensorBandWidthPoints];
+        NSRect b = s.view.bounds;
+        NSPoint nearEdge, farEdge;
+        if (edge == MLFreeMouseExitEdgeRight)      { nearEdge = NSMakePoint(NSMaxX(b)+band, NSMidY(b)); farEdge = NSMakePoint(NSMaxX(b)+band*4, NSMidY(b)); }
+        else if (edge == MLFreeMouseExitEdgeLeft)  { nearEdge = NSMakePoint(NSMinX(b)-band, NSMidY(b)); farEdge = NSMakePoint(NSMinX(b)-band*4, NSMidY(b)); }
+        else if (edge == MLFreeMouseExitEdgeTop)   { nearEdge = NSMakePoint(NSMidX(b), NSMaxY(b)+band); farEdge = NSMakePoint(NSMidX(b), NSMaxY(b)+band*4); }
+        else                                        { nearEdge = NSMakePoint(NSMidX(b), NSMinY(b)-band); farEdge = NSMakePoint(NSMidX(b), NSMinY(b)-band*4); }
+        CHECK([s edgeSensorPointIsWithinEdgeBandWithOvershoot:nearEdge], "a pointer one band-width past the edge still belongs to the dock");
+        CHECK(![s edgeSensorPointIsWithinEdgeBandWithOvershoot:farEdge], "a pointer that has truly left is not kept hostage to the edge");
         for (int cycle=0; cycle<10; cycle++) {
             // Arrival is not a request. Resting against the dock lights the tab and must
             // change nothing else: the same ten cycles are what turned "the sidebar fires
@@ -1157,6 +1170,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
     signatures = [
         '- (void)resetEdgeSensorSummonState', '- (void)resetEdgeSensorPointerState',
         '- (BOOL)edgeSensorPointIsInHoverRegion:', '- (BOOL)edgeSensorPointIsOnVisibleHandle:',
+        '- (BOOL)edgeSensorPointIsWithinEdgeBandWithOvershoot:',
         '- (void)captureMousePreservingEdgeSensorPoint:',
         '- (BOOL)captureFreeMouseIfNeededForEvent:', '- (BOOL)edgeMenuOwnsPointer', '- (void)rightMouseDown:', '- (void)rightMouseUp:',
         '- (void)otherMouseDown:', '- (void)otherMouseUp:', '- (void)handleModifierOnlyReleaseShortcut:',
