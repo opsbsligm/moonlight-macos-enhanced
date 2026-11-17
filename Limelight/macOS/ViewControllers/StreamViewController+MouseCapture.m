@@ -900,6 +900,38 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
            point.y >= NSMinY(region) && point.y <= NSMaxY(region);
 }
 
+// The band check above is clamped to the view, so a pointer that has already crossed the
+// edge never matches it — which is exactly the moment the exit handler needs to answer
+// "was the player aiming at the dock, or really leaving?" This is that answer, with a
+// small overshoot allowance: still along the band, and no more than a swipe-width past the
+// edge, means the pointer belongs to the edge, not to the outside.
+- (BOOL)edgeSensorPointIsWithinEdgeBandWithOvershoot:(NSPoint)point {
+    NSRect bounds = self.view.bounds;
+    if (self.edgeMenuDockEdge == MLFreeMouseExitEdgeNone || NSIsEmptyRect(bounds) ||
+        !isfinite(point.x) || !isfinite(point.y)) return NO;
+    CGFloat tolerance = [self edgeSensorBandWidthPoints] + 4.0;
+    switch (self.edgeMenuDockEdge) {
+        case MLFreeMouseExitEdgeRight:
+            return point.y >= NSMinY(bounds) && point.y <= NSMaxY(bounds) &&
+                   point.x >= NSMaxX(bounds) - [self edgeSensorBandWidthPoints] &&
+                   point.x <= NSMaxX(bounds) + tolerance;
+        case MLFreeMouseExitEdgeLeft:
+            return point.y >= NSMinY(bounds) && point.y <= NSMaxY(bounds) &&
+                   point.x <= NSMinX(bounds) + [self edgeSensorBandWidthPoints] &&
+                   point.x >= NSMinX(bounds) - tolerance;
+        case MLFreeMouseExitEdgeTop:
+            return point.x >= NSMinX(bounds) && point.x <= NSMaxX(bounds) &&
+                   point.y >= NSMaxY(bounds) - [self edgeSensorBandWidthPoints] &&
+                   point.y <= NSMaxY(bounds) + tolerance;
+        case MLFreeMouseExitEdgeBottom:
+            return point.x >= NSMinX(bounds) && point.x <= NSMaxX(bounds) &&
+                   point.y <= NSMinY(bounds) + [self edgeSensorBandWidthPoints] &&
+                   point.y >= NSMinY(bounds) - tolerance;
+        default:
+            return NO;
+    }
+}
+
 // Arriving at the edge and asking for the control bar are two different acts, and the
 // bar used to treat them as one: a pointer that happened to rest against the dock for a
 // quarter of a second took the mouse out of the game and opened the panel, which is what
@@ -2728,6 +2760,21 @@ static int MLSystemGlobalHotkeysSetEnabled(BOOL enabled) {
         if ([self hasPressedMouseButtonsForCaptureTransition]) {
             [self logMouseExitDiagnosticsForEvent:event stage:@"skip-buttons-down"];
             [self reassertHiddenLocalCursorIfNeededWithReason:@"mouse-exited-view-buttons-down"];
+            return;
+        }
+        // Edge-band hysteresis: the pointer that is parked against the activation band and
+        // overshoots the window by a hair must not bounce the capture state. Each bounce
+        // cancelled the dwell timer and re-armed the 120ms warp-cooldown that swallows the
+        // sidebar's own 120ms dwell, so the edge the player was trying to hold stayed shut.
+        // Still along the band — even a swipe-width past the edge — means still aiming at
+        // the dock; hold the capture and let the dwell timer keep running.
+        if (self.edgeSensorSummonEnabled && [self edgeMenuCanInteract] &&
+            [self edgeSensorPointIsWithinEdgeBandWithOvershoot:currentPoint]) {
+            self.isMouseInsideView = YES;
+            self.globalInactivePointerInsideStreamView = YES;
+            [self logMouseExitDiagnosticsForEvent:event stage:@"skip-edge-band-hysteresis"];
+            [self logMouseUncaptureStage:@"skip-edge-band-hysteresis" code:@"MUC102" reason:@"mouse-exited-view"];
+            [self reassertHiddenLocalCursorIfNeededWithReason:@"mouse-exited-view-edge-band"];
             return;
         }
         if ([self shouldSuppressMouseExitedUncaptureForEvent:event]) {
