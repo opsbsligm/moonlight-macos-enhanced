@@ -113,4 +113,38 @@ static inline int MLInterpolationSuggestedFpsForRefresh(double refreshHz)
     return MLInterpolationMaxSourceFpsForRefresh(refreshHz);
 }
 
+/// The hold a panel can actually sustain for a production rate the negotiated cadence no
+/// longer describes. The admission pairs a negotiated rate with the refresh, but the content
+/// does not always produce the negotiated rate: a 90 FPS agreement over a desktop that draws
+/// 36 FPS still outputs 36 + at most 36 interpolated, and a hold computed for the agreement
+/// leaves that real output at a non-integer multiple of the refresh -- frame gaps alternating
+/// between two and three scans, the beat a player reads as jitter. The answer is the whole
+/// number of refreshes per frame, k, whose implied output rate refresh / k sits closest to
+/// the production rate; unknown inputs answer one refresh (no hold), the same floor the
+/// unpaced present falls back to.
+static inline long MLInterpolationSnappedRefreshesPerFrame(double refreshHz, double productionFps)
+{
+    if (!isfinite(refreshHz) || refreshHz <= 0.0 || !isfinite(productionFps) || productionFps <= 0.0) {
+        return 1;
+    }
+    long centre = (long)llround(refreshHz / productionFps);
+    if (centre < 1) {
+        centre = 1;
+    }
+    long best = centre;
+    double bestDifference = 0.0;
+    for (long candidate = centre - 1; candidate <= centre + 1; candidate++) {
+        if (candidate < 1) {
+            continue;
+        }
+        double implied = refreshHz / (double)candidate;
+        double difference = implied > productionFps ? implied - productionFps : productionFps - implied;
+        if (candidate == centre || difference < bestDifference) {
+            best = candidate;
+            bestDifference = difference;
+        }
+    }
+    return best;
+}
+
 #endif /* InterpolationCadencePolicy_h */
