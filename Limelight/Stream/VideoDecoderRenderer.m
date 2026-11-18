@@ -6083,18 +6083,21 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
             // that never admitted it starts from a clean answer. A window with fewer than
             // four frames is pause or startup, not a rate: reading it in would dip the EMA
             // on every engine backoff and the hold would chase its own shadow.
-            if (_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
+            // Bare ivars are only legal inside an Objective-C method; this runs in the
+            // C display-link callback, where self is a bridged pointer, so reach the
+            // fields the way the rest of this callback does.
+            if (self->_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
                 completedStats.receivedFrames >= 4) {
                 double windowFps = (double)completedStats.receivedFrames;
-                if (_measuredSourceFpsEma <= 0.0) {
-                    _measuredSourceFpsEma = windowFps;
+                if (self->_measuredSourceFpsEma <= 0.0) {
+                    self->_measuredSourceFpsEma = windowFps;
                 } else {
-                    _measuredSourceFpsEma = 0.5 * _measuredSourceFpsEma + 0.5 * windowFps;
+                    self->_measuredSourceFpsEma = 0.5 * self->_measuredSourceFpsEma + 0.5 * windowFps;
                 }
-                if (fabs(_measuredSourceFpsEma - _lastLoggedMeasuredSourceFps) > 1.0) {
+                if (fabs(self->_measuredSourceFpsEma - self->_lastLoggedMeasuredSourceFps) > 1.0) {
                     Log(LOG_I, @"[video] Measured source cadence: %.1f FPS over a %d FPS agreement (window %.0f)",
-                        _measuredSourceFpsEma, (int)self.frameRate, windowFps);
-                    _lastLoggedMeasuredSourceFps = _measuredSourceFpsEma;
+                        self->_measuredSourceFpsEma, (int)self.frameRate, windowFps);
+                    self->_lastLoggedMeasuredSourceFps = self->_measuredSourceFpsEma;
                 }
             }
 
