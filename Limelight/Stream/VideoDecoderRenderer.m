@@ -1569,6 +1569,17 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // can read it.
     double _measuredSourceFpsEma;
     double _lastLoggedMeasuredSourceFps;
+    // The measured interpolation output rate, same window blend as the source. The snap's
+    // production answer used to assume one interpolated frame per source frame; the field
+    // session measured a ~50% interpolation success rate, so that assumption overshot the
+    // real production and the hold grid outran the frames it was supposed to pace.
+    double _measuredInterpolatedFpsEma;
+    double _lastLoggedMeasuredInterpolatedFps;
+    // The whole-refresh answer the last cadence decision produced, so the drawable pool
+    // can size itself to the hold instead of to a constant that was right for a 1 refresh
+    // hold and wrong for a 3 refresh one: a 50 ms hold with a depth-2 pool queues the next
+    // submission inside the hold and the next-drawable timeout drops it for nothing.
+    long long _activeCadenceRefreshesPerFrame;
     // The hold the last present asked the window server for, in nanoseconds, and the frame
     // rate it was computed for. Both exist so the answer is logged when it changes and not
     // once per frame: a cadence claim that never appears in the log is a claim nobody can
@@ -3186,6 +3197,15 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         return 3;
     }
 
+    if (_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
+        _activeCadenceRefreshesPerFrame >= 2) {
+        // A multi-refresh hold parks the pipeline mid-frame: with a constant depth-2 pool the
+        // next submission waits inside the hold and the next-drawable timeout drops it, which
+        // is the measured 33 ms frame P95. One slot per held refresh plus headroom carries the
+        // hold; the 2 floor keeps a 1 refresh session byte-for-byte on the shipped constant.
+        return (NSUInteger)MAX(2LL, _activeCadenceRefreshesPerFrame + 1);
+    }
+
     return 2;
 }
 
@@ -3194,6 +3214,11 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     NSUInteger drawableDepth = [self desiredEnhancedDrawableDepth];
     if (_timingEnableVsync || _timingCompatibilityMode || _timingBufferLevel >= 2 || _smoothnessLatencyMode >= 2) {
         return drawableDepth;
+    }
+
+    if (_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
+        _activeCadenceRefreshesPerFrame >= 2) {
+        return 2;
     }
 
     if (_enableHdr) {
@@ -4772,9 +4797,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         _activeFrameInterpolationEngine != MLActiveVideoFrameInterpolationEngineVTLowLatency ||
         _lastDisplayRefreshRate <= 0.0 ||
         self.frameRate <= 0) {
+        _activeCadenceRefreshesPerFrame = 1;
         return NO;
     }
     if (!MLInterpolationHasCadenceHeadroom(_lastDisplayRefreshRate, self.frameRate)) {
+        _activeCadenceRefreshesPerFrame = 1;
         return NO;
     }
     long long refreshesPerFrame;
@@ -4786,11 +4813,19 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         // refreshes -- frame gaps alternating between two and three scans, the beat a
         // player reads as jitter. Snap to the whole-refresh hold whose implied output
         // rate sits closest to the real production instead.
-        const double productionFps = _measuredSourceFpsEma + MIN(_measuredSourceFpsEma, (double)self.frameRate);
+        // The production answer is the measured source rate plus the measured interpolation
+        // rate, not a full interpolation assumption: the field session interpolated at a
+        // ~50% success rate, and the assumed 72 FPS made the 60 FPS grid outrun the 52 FPS
+        // the panel was actually being handed -- the short/long dwell alternation that read
+        // as the second beat. Before the first window the assumption stands in, so a
+        // decision made at stream start is not a no-hold.
+        const double productionFps = _measuredInterpolatedFpsEma > 0.0
+            ? _measuredSourceFpsEma + MIN(_measuredInterpolatedFpsEma, _measuredSourceFpsEma)
+            : _measuredSourceFpsEma + MIN(_measuredSourceFpsEma, (double)self.frameRate);
         refreshesPerFrame = MLInterpolationSnappedRefreshesPerFrame(_lastDisplayRefreshRate, productionFps);
         if (!_cadenceSnapLogged) {
-            Log(LOG_W, @"[video] Presentation cadence snapped: agreement %d FPS, measured source %.1f FPS, output production %.0f FPS, holding %lld refresh(es) on %.2f Hz",
-                (int)self.frameRate, _measuredSourceFpsEma, productionFps, refreshesPerFrame, _lastDisplayRefreshRate);
+            Log(LOG_W, @"[video] Presentation cadence snapped: agreement %d FPS, measured source %.1f FPS, measured interpolation %.1f FPS, output production %.0f FPS, holding %lld refresh(es) on %.2f Hz",
+                (int)self.frameRate, _measuredSourceFpsEma, _measuredInterpolatedFpsEma, productionFps, refreshesPerFrame, _lastDisplayRefreshRate);
             _cadenceSnapLogged = YES;
         }
     } else {
@@ -4798,8 +4833,10 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         refreshesPerFrame = llround(ratio);
     }
     if (refreshesPerFrame < 1) {
+        _activeCadenceRefreshesPerFrame = 1;
         return NO;
     }
+    _activeCadenceRefreshesPerFrame = refreshesPerFrame;
     const CFTimeInterval hold = (CFTimeInterval)refreshesPerFrame / _lastDisplayRefreshRate;
     if (holdSecondsOut != NULL) {
         *holdSecondsOut = hold;
@@ -6098,6 +6135,24 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
                     Log(LOG_I, @"[video] Measured source cadence: %.1f FPS over a %d FPS agreement (window %.0f)",
                         self->_measuredSourceFpsEma, (int)self.frameRate, windowFps);
                     self->_lastLoggedMeasuredSourceFps = self->_measuredSourceFpsEma;
+                }
+            }
+
+            // The interpolation counter is the other half of the production answer, and it
+            // blends with the same window rule: the snap must not assume one interpolated
+            // frame per source frame when the measured success rate says otherwise.
+            if (self->_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
+                completedStats.receivedFrames >= 4) {
+                double interpWindowFps = (double)completedStats.interpolatedFrames;
+                if (self->_measuredInterpolatedFpsEma <= 0.0) {
+                    self->_measuredInterpolatedFpsEma = interpWindowFps;
+                } else {
+                    self->_measuredInterpolatedFpsEma = 0.5 * self->_measuredInterpolatedFpsEma + 0.5 * interpWindowFps;
+                }
+                if (fabs(self->_measuredInterpolatedFpsEma - self->_lastLoggedMeasuredInterpolatedFps) > 1.0) {
+                    Log(LOG_I, @"[video] Measured interpolation cadence: %.1f FPS against a %.1f FPS source (window %.0f)",
+                        self->_measuredInterpolatedFpsEma, self->_measuredSourceFpsEma, interpWindowFps);
+                    self->_lastLoggedMeasuredInterpolatedFps = self->_measuredInterpolatedFpsEma;
                 }
             }
 
