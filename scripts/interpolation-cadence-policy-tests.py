@@ -195,7 +195,9 @@ def wiring(policy_text, renderer_text, swift_text):
         gaps.append("the hold path does not ask the shared snap for a whole-refresh answer")
     if "_measuredSourceFpsEma > 0.0 && _measuredSourceFpsEma < (double)self.frameRate * 0.9" not in renderer_text:
         gaps.append("the hold path never compares the measured source rate against the agreement")
-    if "_measuredSourceFpsEma = 0.5 * _measuredSourceFpsEma + 0.5 * windowFps" not in renderer_text:
+    # The blend runs inside the C display-link callback, where self is a bridged
+    # pointer, so it reaches the EMA through self->_, not the bare ivar.
+    if "self->_measuredSourceFpsEma = 0.5 * self->_measuredSourceFpsEma + 0.5 * windowFps" not in renderer_text:
         gaps.append("the measured source rate is never blended from the one-second windows")
     if "completedStats.receivedFrames >= 4" not in renderer_text:
         gaps.append("a sub-four-frame window can seed the measured source rate")
