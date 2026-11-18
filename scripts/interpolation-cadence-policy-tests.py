@@ -22,9 +22,11 @@ Three things are checked:
     it, and the recommendation cannot name a frame rate the page cannot select;
   * floors, because an audit whose driver stopped parsing would report zero failures.
 
---self-test plants four mistakes: loosen the rule by ten hertz; put the arithmetic back into the
-renderer next to the shared call; change a frame rate in the settings list alone; and replace the
-snap's candidate walk with a plain rounding. All four have to come back red.
+--self-test plants six mistakes: loosen the rule by ten hertz; put the arithmetic back into the
+renderer next to the shared call; change a frame rate in the settings list alone; replace the
+snap's candidate walk with a plain rounding; let the drawable pool forget the cadence hold; and
+assume one interpolated frame per source frame instead of the measured rate. All six have to
+come back red.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -81,8 +83,9 @@ int main(void) {
            MLInterpolationHasCadenceHeadroom(0.0, 60),
            MLInterpolationHasCadenceHeadroom(-5.0, 60),
            MLInterpolationHasCadenceHeadroom(240.0, 0));
-    printf("snap180_72=%ld snap180_180=%ld snap60_60=%ld snap180_36=%ld snap144_108=%ld snap0_72=%ld snap180_130=%ld\n",
+    printf("snap180_72=%ld snap180_52=%ld snap180_180=%ld snap60_60=%ld snap180_36=%ld snap144_108=%ld snap0_72=%ld snap180_130=%ld\n",
            MLInterpolationSnappedRefreshesPerFrame(180.0, 72.0),
+           MLInterpolationSnappedRefreshesPerFrame(180.0, 52.0),
            MLInterpolationSnappedRefreshesPerFrame(180.0, 180.0),
            MLInterpolationSnappedRefreshesPerFrame(60.0, 60.0),
            MLInterpolationSnappedRefreshesPerFrame(180.0, 36.0),
@@ -129,7 +132,11 @@ EXPECTED = {
     # 72 -- the hold never sits at 2.5). 180 against 180 is one refresh; 60 on 60 is one; a
     # 36 FPS source with no interpolation headroom snaps to 5 refreshes (36 implied). Unknown
     # refresh is the no-hold floor of one, and 130 sits closer to 90 than to 60.
-    "snap180_72": "3", "snap180_180": "1", "snap60_60": "1", "snap180_36": "5",
+    # 52 is the field session's measured production (a 35 FPS source at a ~50% interpolation
+    # success rate): 180 / 52 sits between 90 and 60 implied, 45 closer to 52 than 60 is, so
+    # the walk answers 4 refreshes.
+    "snap180_72": "3", "snap180_52": "4", "snap180_180": "1", "snap60_60": "1",
+    "snap180_36": "5",
     "snap144_108": "1", "snap0_72": "1", "snap180_130": "2",
 }
 
@@ -199,6 +206,18 @@ def wiring(policy_text, renderer_text, swift_text):
     # pointer, so it reaches the EMA through self->_, not the bare ivar.
     if "self->_measuredSourceFpsEma = 0.5 * self->_measuredSourceFpsEma + 0.5 * windowFps" not in renderer_text:
         gaps.append("the measured source rate is never blended from the one-second windows")
+    # The production answer is measured, not assumed. The snap's production must fold in the
+    # measured interpolation rate, because a ~50% interpolation success rate halves the output
+    # the full-assumption formula would predict; without it the hold grid outruns the panel.
+    if "MIN(_measuredInterpolatedFpsEma, _measuredSourceFpsEma)" not in renderer_text:
+        gaps.append("the snap's production answer never folds in the measured interpolation rate")
+    if "self->_measuredInterpolatedFpsEma = 0.5 * self->_measuredInterpolatedFpsEma + 0.5 * interpWindowFps" not in renderer_text:
+        gaps.append("the measured interpolation rate is never blended from the one-second windows")
+    # The drawable pool sizes itself to the hold, not to a constant that is right for a one-
+    # refresh hold and wrong for a multi-refresh one: a 50 ms hold with a depth-2 pool queues
+    # the next submission inside the hold and the next-drawable timeout drops it (33 ms P95).
+    if "MAX(2LL, _activeCadenceRefreshesPerFrame + 1)" not in renderer_text:
+        gaps.append("the drawable pool does not size itself to the cadence hold")
     if "completedStats.receivedFrames >= 4" not in renderer_text:
         gaps.append("a sub-four-frame window can seed the measured source rate")
     listed = re.search(r"static\s+var\s+fpss\s*:\s*\[Int\]\s*=\s*\[([^\]]*)\]", swift_text)
@@ -299,6 +318,41 @@ def red_proofs():
         hit = any("snap180_130" in problem for problem in wrong)
         print("%-4s rounding the hold instead of snapping to the real rate is refused (%d readings wrong)"
               % ("ok" if hit else "FAIL", len(wrong)))
+        rc |= 0 if hit else 1
+
+    # A depth-2 pool is right for a one-refresh hold and wrong for a multi-refresh one: the
+    # next submission waits inside the 50 ms hold and the next-drawable timeout drops it,
+    # which is the 33 ms frame P95 the field session measured. Putting the constant back
+    # must go red.
+    shallow = renderer.replace(
+        "return (NSUInteger)MAX(2LL, _activeCadenceRefreshesPerFrame + 1);",
+        "return 2;", 1)
+    if shallow == renderer:
+        print("FAIL  the drawable pool depth could not be mutated (the source text moved)")
+        rc = 1
+    else:
+        gaps = wiring(policy, shallow, swift)
+        hit = any("size itself to the cadence hold" in gap for gap in gaps)
+        print("%-4s letting the drawable pool forget the cadence hold is refused (%d gaps named)"
+              % ("ok" if hit else "FAIL", len(gaps)))
+        rc |= 0 if hit else 1
+
+    # The production answer must be measured, not assumed: dropping the interpolation EMA
+    # restores the one-interpolated-frame-per-source assumption that overshot the ~50% field
+    # success rate, and the 60 FPS grid outran the panel.
+    assumed = renderer.replace(
+        """        const double productionFps = _measuredInterpolatedFpsEma > 0.0
+            ? _measuredSourceFpsEma + MIN(_measuredInterpolatedFpsEma, _measuredSourceFpsEma)
+            : _measuredSourceFpsEma + MIN(_measuredSourceFpsEma, (double)self.frameRate);""",
+        """        const double productionFps = _measuredSourceFpsEma + MIN(_measuredSourceFpsEma, (double)self.frameRate);""", 1)
+    if assumed == renderer:
+        print("FAIL  the production answer could not be mutated (the source text moved)")
+        rc = 1
+    else:
+        gaps = wiring(policy, assumed, swift)
+        hit = any("measured interpolation rate" in gap for gap in gaps)
+        print("%-4s assuming one interpolated frame per source frame is refused (%d gaps named)"
+              % ("ok" if hit else "FAIL", len(gaps)))
         rc |= 0 if hit else 1
     return rc
 
