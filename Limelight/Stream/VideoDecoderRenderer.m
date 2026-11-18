@@ -1545,6 +1545,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     BOOL _frameInterpolationForceAdmission;
     MLFramePacer *_pacer;
     BOOL _frameInterpolationCadenceForced;
+    BOOL _cadenceSnapLogged;
     BOOL _frameInterpolationWarmupInFlight;
     NSUInteger _frameInterpolationWarmupGeneration;
     NSInteger _frameInterpolationWarmupWidth;
@@ -1562,6 +1563,12 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     uint64_t _deferredCurrentSourceSequence;
     uint64_t _interpolationStagingSequence;
     double _lastDisplayRefreshRate;
+    // The measured source frame rate, one-second windows blended into an EMA. The
+    // negotiated frame rate is an agreement; this is what the host actually produced.
+    // Updated only while the interpolation engine is active, where the cadence answer
+    // can read it.
+    double _measuredSourceFpsEma;
+    double _lastLoggedMeasuredSourceFps;
     // The hold the last present asked the window server for, in nanoseconds, and the frame
     // rate it was computed for. Both exist so the answer is logged when it changes and not
     // once per frame: a cadence claim that never appears in the log is a claim nobody can
@@ -3027,9 +3034,12 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _frameInterpolationForceAdmission = streamConfig ? streamConfig.frameInterpolationForce : NO;
     _shortQueueOnDoubledCadence = streamConfig ? streamConfig.shortQueueOnDoubledCadence : NO;
     _frameInterpolationCadenceForced = NO;
+    _cadenceSnapLogged = NO;
     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastLoggedFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
     _lastDisplayRefreshRate = 0.0;
+    _measuredSourceFpsEma = 0.0;
+    _lastLoggedMeasuredSourceFps = 0.0;
     _lastLoggedPresentationHoldNs = -1;
     _lastLoggedPresentationHoldFps = 0;
     _frameInterpolationNoSlotWidth = 0;
@@ -4087,6 +4097,11 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     } else {
         _frameInterpolationCadenceForced = NO;
     }
+    // The admission pairs the negotiated rate with the refresh; the hold
+    // (presentationCadenceForInterpolationHold:) additionally watches the measured source
+    // rate and snaps to a whole-refresh answer when the host produces less than the
+    // agreement. Two answers, two questions: can this panel carry the stream, and is the
+    // content keeping up with it.
 
     if (reportOut != NULL) *reportOut = _frameInterpolationCadenceForced
             ? MLVideoFrameInterpolationReportActiveForced
@@ -4762,8 +4777,26 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     if (!MLInterpolationHasCadenceHeadroom(_lastDisplayRefreshRate, self.frameRate)) {
         return NO;
     }
-    const double ratio = _lastDisplayRefreshRate / ((double)self.frameRate * 2.0);
-    const long long refreshesPerFrame = llround(ratio);
+    long long refreshesPerFrame;
+    if (_measuredSourceFpsEma > 0.0 && _measuredSourceFpsEma < (double)self.frameRate * 0.9) {
+        // The host is not producing the negotiated rate, so the negotiated cadence no
+        // longer describes what the panel is actually being handed: one interpolated
+        // frame per source pair caps the output at twice the measured rate, and a hold
+        // computed for the agreement leaves that real output at a non-integer number of
+        // refreshes -- frame gaps alternating between two and three scans, the beat a
+        // player reads as jitter. Snap to the whole-refresh hold whose implied output
+        // rate sits closest to the real production instead.
+        const double productionFps = _measuredSourceFpsEma + MIN(_measuredSourceFpsEma, (double)self.frameRate);
+        refreshesPerFrame = MLInterpolationSnappedRefreshesPerFrame(_lastDisplayRefreshRate, productionFps);
+        if (!_cadenceSnapLogged) {
+            Log(LOG_W, @"[video] Presentation cadence snapped: agreement %d FPS, measured source %.1f FPS, output production %.0f FPS, holding %lld refresh(es) on %.2f Hz",
+                (int)self.frameRate, _measuredSourceFpsEma, productionFps, refreshesPerFrame, _lastDisplayRefreshRate);
+            _cadenceSnapLogged = YES;
+        }
+    } else {
+        const double ratio = _lastDisplayRefreshRate / ((double)self.frameRate * 2.0);
+        refreshesPerFrame = llround(ratio);
+    }
     if (refreshesPerFrame < 1) {
         return NO;
     }
@@ -6043,6 +6076,30 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
                                                        outputFps:completedStats.renderedFps
                                                   interpolatedFps:completedStats.interpolatedFps
                                                        refreshHz:self->_lastDisplayRefreshRate];
+
+            // Blend this window's measured source rate into the cadence EMA. Only real
+            // received frames count -- the interpolated counter is a separate window -- and
+            // only while the interpolating engine is the one deciding holds, so a stream
+            // that never admitted it starts from a clean answer. A window with fewer than
+            // four frames is pause or startup, not a rate: reading it in would dip the EMA
+            // on every engine backoff and the hold would chase its own shadow.
+            // Bare ivars are only legal inside an Objective-C method; this runs in the
+            // C display-link callback, where self is a bridged pointer, so reach the
+            // fields the way the rest of this callback does.
+            if (self->_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
+                completedStats.receivedFrames >= 4) {
+                double windowFps = (double)completedStats.receivedFrames;
+                if (self->_measuredSourceFpsEma <= 0.0) {
+                    self->_measuredSourceFpsEma = windowFps;
+                } else {
+                    self->_measuredSourceFpsEma = 0.5 * self->_measuredSourceFpsEma + 0.5 * windowFps;
+                }
+                if (fabs(self->_measuredSourceFpsEma - self->_lastLoggedMeasuredSourceFps) > 1.0) {
+                    Log(LOG_I, @"[video] Measured source cadence: %.1f FPS over a %d FPS agreement (window %.0f)",
+                        self->_measuredSourceFpsEma, (int)self.frameRate, windowFps);
+                    self->_lastLoggedMeasuredSourceFps = self->_measuredSourceFpsEma;
+                }
+            }
 
             memset(&self->_activeWndVideoStats, 0, sizeof(VideoStats));
             self->_activeWndVideoStats.measurementStartTimestamp = now;
