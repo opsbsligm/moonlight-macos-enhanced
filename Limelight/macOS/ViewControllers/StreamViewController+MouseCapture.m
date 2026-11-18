@@ -950,9 +950,14 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         (self.isMouseCaptured && !self.isRemoteDesktopMode) || self.edgeMenuButtonExpanded ||
         ![self edgeMenuShouldBeVisible] || self.edgeMenuDockEdge != edge ||
         self.edgeSensorMustLeaveHoverRegion || [self hasPressedMouseButtonsForCaptureTransition] ||
-        self.edgeSensorIgnoreMotionUntilMs > [self nowMs] ||
         self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) return;
     if (![self edgeSensorPointIsInHoverRegion:[self edgeSensorPointForEvent:nil] edge:edge]) return;
+    // The exit-uncapture dwell timer fires at the warp cooldown's expiry, so the two
+    // compete on a millisecond: the arm flips between accepted and dropped on the same
+    // pointer. The hover check above already proved the pointer is still in the zone,
+    // which is the same proof the blocker path accepts — the transition is over.
+    if (self.edgeSensorIgnoreMotionUntilMs > [self nowMs] &&
+        ![self edgeSensorPointerInActivationZone]) return;
     if (self.edgeMenuHandleArmed) return;
     self.edgeMenuHandleArmed = YES;
     [self updateEdgeMenuButtonAppearance];
@@ -1058,9 +1063,22 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
     if (![self edgeMenuShouldBeVisible]) return @"not-visible";
     if (self.edgeMenuButtonExpanded) return @"already-open";
     if ([self hasPressedMouseButtonsForCaptureTransition]) return @"button-held";
-    if (self.edgeSensorIgnoreMotionUntilMs > [self nowMs]) return @"warp-cooldown";
+    // The cooldown is against the pointer jump a capture or mode change leaves behind.
+    // An event that reaches this gate with the local pointer already inside the
+    // activation zone is not that jump: the transition is over and the player is
+    // aiming at the dock. Swallowing it here is the field log that read
+    // "refused: warp-cooldown" while the pointer sat in the band -- the exit-uncapture
+    // armed the cooldown, and the very stroke that left the view was the one denied.
+    if (self.edgeSensorIgnoreMotionUntilMs > [self nowMs] &&
+        ![self edgeSensorPointerInActivationZone]) return @"warp-cooldown";
     if (self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) return @"reentry-cooldown";
     return nil;
+}
+
+- (BOOL)edgeSensorPointerInActivationZone {
+    // The live local pointer, not the event's position: the event that gets refused is
+    // the one that proves where the pointer is right now.
+    return [self edgeSensorPointIsInHoverRegion:[self edgeSensorPointForEvent:nil] edge:self.edgeMenuDockEdge];
 }
 
 - (BOOL)handleEdgeSensorSummonForEvent:(NSEvent *)event {
