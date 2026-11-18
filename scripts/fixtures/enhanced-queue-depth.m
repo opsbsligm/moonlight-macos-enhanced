@@ -7,6 +7,7 @@
 #define CAMetalLayer MLQueueTestLayer
 
 @@RENDERER_ENUM@@
+@@FI_ENUM@@
 @@CONSTANTS@@
 @@CLAMP@@
 static uint64_t LiGetMillis(void) { return 1000; }
@@ -30,6 +31,8 @@ static uint64_t LiGetMillis(void) { return 1000; }
     BOOL _timingSdrCompatibilityWorkaround, _enableHdr, _didLogEnhancedStartupPacing;
     int videoFormat;
     MLActiveVideoRendererMode _activeRendererMode;
+    MLActiveVideoFrameInterpolationEngine _activeFrameInterpolationEngine;
+    long long _activeCadenceRefreshesPerFrame;
     uint64_t _enhancedStartupPacingUntilMs;
     NSUInteger _enhancedStartupPresentedFrameCount, _metalInflightLimit;
     double _lastDisplayRefreshRate;
@@ -186,6 +189,24 @@ int main(void) {
         p->_timingEnableVsync = NO;
         assert([p desiredPendingFramesForDisplayRefreshRate:180] == 0);
         p.shortQueueOnDoubledCadence = NO;
+
+        // The drawable pool sizes itself to the cadence hold: a multi-refresh hold
+        // parks the pipeline mid-frame, and a constant depth-2 pool drops the next
+        // submission inside the hold. A refresh-rate value alone never touches the
+        // pool; the engine must be active and the snap must have committed a
+        // multi-refresh hold before the pool grows by one slot per held refresh.
+        p->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+        p->_activeCadenceRefreshesPerFrame = 3;
+        assert([p desiredEnhancedDrawableDepth] == 2);
+        assert([p desiredEnhancedInflightLimit] == 1);
+        p->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineVTLowLatency;
+        assert([p desiredEnhancedDrawableDepth] == 4);
+        assert([p desiredEnhancedInflightLimit] == 2);
+        p->_activeCadenceRefreshesPerFrame = 1;
+        assert([p desiredEnhancedDrawableDepth] == 2);
+        assert([p desiredEnhancedInflightLimit] == 1);
+        p->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+        p->_activeCadenceRefreshesPerFrame = 1;
 
 
 

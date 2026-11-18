@@ -299,12 +299,15 @@ else:
     assert 'DISPATCH_TIME_FOREVER' not in queue_methods, 'queue depth adjustment blocks UI'
     mode_start = source.index('typedef NS_ENUM(NSInteger, MLActiveVideoRendererMode)')
     mode_enum = source[mode_start:source.index('};', mode_start) + 2]
+    fi_start = source.index('typedef NS_ENUM(NSInteger, MLActiveVideoFrameInterpolationEngine)')
+    fi_enum = source[fi_start:source.index('};', fi_start) + 2]
     clamp = section('static int MLClampInt(', 'static BOOL MLPixelFormatIsVideoRange(')
     constants = '\n'.join('enum { %s = %s };' % (name, re.search(name + r'\s*=\s*(\d+)', source).group(1))
                           for name in ('kMLEnhancedStartupPacingWindowMs', 'kMLEnhancedStartupPacingPresentThreshold'))
     def queue_replay(methods, expected, name):
         text = (ROOT/'scripts/fixtures/enhanced-queue-depth.m').read_text()
         for key, value in [('@@METHODS@@', methods), ('@@RENDERER_ENUM@@', mode_enum),
+                           ('@@FI_ENUM@@', fi_enum),
                            ('@@CLAMP@@', clamp), ('@@CONSTANTS@@', constants)]:
             text = text.replace(key, value)
         with tempfile.TemporaryDirectory(prefix='ml-queue-depth-') as d:
