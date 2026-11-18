@@ -1177,6 +1177,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (void)releaseInputToLocalControlWithCode:', '- (void)resumeInputForExplicitStreamClick:',
         '- (NSPoint)edgeSensorPointForEvent:', '- (void)beginEdgeSensorDwellTimerIfNeededForEdge:',
         '- (void)armEdgeMenuHandleIfStillAtEdge:', '- (BOOL)handleEdgeSensorSummonForEvent:', '- (NSString *)edgeSensorSummonBlocker',
+        '- (BOOL)edgeSensorPointerInActivationZone',
         '- (BOOL)noteLockedEdgeFlickMotionForEvent:',
         '- (void)summonEdgeMenuDockForEdge:',
         '- (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer', '- (void)mouseDown:', '- (void)mouseUp:',

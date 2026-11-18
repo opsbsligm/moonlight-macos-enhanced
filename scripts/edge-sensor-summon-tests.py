@@ -91,6 +91,13 @@ print('PASS settings copy carries the geometry the code arms and the locked-mode
 arm = method(mouse, '- (void)armEdgeMenuHandleIfStillAtEdge:')
 for banned in ('summonEdgeMenuDock', 'uncaptureMouse', 'activateEdgeMenuDock'):
     assert banned not in arm, 'arriving at the edge still %s' % banned
+# The dwell timer fires at the warp cooldown's expiry, so the arm must accept the
+# same proof the blocker does: a pointer already inside the activation zone means
+# the transition is over, and the race must not drop it on the expiry millisecond.
+assert 'edgeSensorIgnoreMotionUntilMs' in arm, \
+    'the warp cooldown no longer guards the arm at all'
+assert 'edgeSensorPointerInActivationZone' in arm, \
+    'the arm still drops a dwell that fired while the pointer sat in the activation zone'
 # Arrival-opening exists, and only the preference decides it: the dwell timer is the
 # one place allowed to open from arrival, and it must ask edgeSensorSummonOnArrival
 # first so the two-step protocol stays reachable. An ungated open here is the old
@@ -127,6 +134,18 @@ def gate_ok(text):
 gate = method(menu, '- (BOOL)edgeMenuCanInteract')
 assert gate_ok(gate), 'the interaction gate lost: ' + ', '.join(f for f in GATE_FACTS if f not in gate)
 assert 'self.userReleasedInput' not in gate, 'the interaction gate also owns pointer release'
+# The warp cooldown exists to swallow the pointer jump a capture or mode change
+# leaves behind, not the player's own stroke. The field log read
+# "refused: warp-cooldown" while the local pointer already stood inside the
+# activation zone: the exit-uncapture armed the cooldown, and the very stroke
+# that left the view was the one denied a few milliseconds later. A pointer in
+# the zone proves the transition is over, so the gate must let it through.
+blocker = method(mouse, '- (NSString *)edgeSensorSummonBlocker')
+assert 'edgeSensorPointerInActivationZone' in blocker, \
+    'the warp cooldown still swallows a pointer that is already inside the activation zone'
+zone = method(mouse, '- (BOOL)edgeSensorPointerInActivationZone')
+assert 'edgeSensorPointIsInHoverRegion' in zone and 'edgeSensorPointForEvent:nil' in zone, \
+    'the in-zone probe does not measure the live local pointer'
 # The sensor measures the video view, not the window frame. Fullscreen insets and letterbox
 # bars move the picture inside the window, and a tab parked on the window edge would sit on
 # the black bar instead of on the frame the player is aiming at.
