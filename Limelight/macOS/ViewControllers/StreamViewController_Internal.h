@@ -614,6 +614,10 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) BOOL edgeMenuClickConsumedLocally;
 @property (nonatomic) double edgeSensorLastSampleLogMs;
 @property (nonatomic) double edgeSensorLastRefusalLogMs;
+// Arm/summon drops are named, not silent: one line a second per path says which
+// gate stayed shut, so a field session that never mentions the sensor can still
+// answer "why".
+@property (nonatomic) double edgeSensorLastDropLogMs;
 // The flick accumulator is one stroke, not a history: the moment the pointer
 // reverses or pauses, the stroke is over. What survives is only the cooldown.
 @property (nonatomic) double edgeSensorFlickSegmentStartMs;
