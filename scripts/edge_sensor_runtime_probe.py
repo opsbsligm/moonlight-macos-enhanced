@@ -174,7 +174,7 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 @property NSRect edgeSensorRelativeBounds;
 @property NSTimer *edgeSensorDwellTimer;
 @property CGFloat edgeMenuButtonEdgeRatio;
-@property double edgeSensorIgnoreMotionUntilMs, suppressFreeMouseEdgeUncaptureUntilMs, edgeSensorLastRefusalLogMs;
+@property double edgeSensorIgnoreMotionUntilMs, suppressFreeMouseEdgeUncaptureUntilMs, edgeSensorLastRefusalLogMs, edgeSensorLastDropLogMs;
 @property double edgeSensorFlickSegmentStartMs, edgeSensorFlickLastEventMs, edgeSensorFlickTravel, edgeSensorFlickCooldownUntilMs;
 @property NSInteger edgeSensorFlickDirection;
 @property double fakeNowMs;
@@ -1256,7 +1256,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
                 ('the two waits report one number', '[self edgeMenuReturnDelay] * 1000.0,', 'MLEdgeMenuAutoCollapseDelay * 1000.0,'),
                 ('tab click leaks into the game', 'if ([self expandEdgeMenuForLocalClickAtCurrentPointer]) {\n        return;\n    }', 'if (NO) {\n        return;\n    }'),
                 ('a lit desktop tab cannot be clicked', '((self.isMouseCaptured && !self.isRemoteDesktopMode) ||\n        self.edgeMenuPhase != MLEdgeMenuPhaseCollapsed ||', '(self.isMouseCaptured ||\n        self.edgeMenuPhase != MLEdgeMenuPhaseCollapsed ||'),
-                ('arrival at the edge still grabs the pointer', '    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;', '    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];\n    if (self.edgeMenuHandleArmed) return;\n    self.edgeMenuHandleArmed = YES;'),
+                ('arrival at the edge still grabs the pointer', '    if (armDrop == nil && self.edgeMenuHandleArmed) armDrop = @"already-armed";\n    if (armDrop != nil) {', '    [self summonEdgeMenuDockForEdge:edge reason:@"edge-sensor-dwell"];\n    if (armDrop == nil && self.edgeMenuHandleArmed) armDrop = @"already-armed";\n    if (armDrop != nil) {'),
                 ('the tab ignores where the player dragged it', 'return minValue + available * MIN(MAX(self.edgeMenuButtonEdgeRatio, 0.0), 1.0);', 'return minValue + available * 0.5;'),
                 ('the lit tab shrinks under the pointer that is clicking it', '        if (![self edgeSensorPointIsOnVisibleHandle:point]) [self resetEdgeSensorSummonState];', '        if (YES) [self resetEdgeSensorSummonState];'),
                 # Wave C: the production check reads the clamped getter, so the
