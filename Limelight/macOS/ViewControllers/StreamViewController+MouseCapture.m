@@ -878,7 +878,16 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf || timer != strongSelf.edgeSensorDwellTimer) return;
         strongSelf.edgeSensorDwellTimer = nil;
-        if (token != strongSelf.edgeMenuLifecycleToken || !NSEqualRects(bounds, strongSelf.view.bounds)) return;
+        BOOL tokenOK = (token == strongSelf.edgeMenuLifecycleToken);
+        BOOL boundsOK = NSEqualRects(bounds, strongSelf.view.bounds);
+        // The dwell that lit the tab is also the request to open: say so, with the
+        // two staleness checks named, or a session that armed nothing reads like a
+        // sensor that never existed.
+        NSPoint dwellPoint = [strongSelf edgeSensorPointForEvent:nil];
+        Log(LOG_I, @"[diag] Edge dwell fired: token-ok=%d bounds-ok=%d armed=%d summonOnArrival=%d pointerView=(%.0f,%.0f)",
+            tokenOK, boundsOK, (int)strongSelf.edgeMenuHandleArmed, (int)strongSelf.edgeSensorSummonOnArrival,
+            dwellPoint.x, dwellPoint.y);
+        if (!tokenOK || !boundsOK) return;
         [strongSelf armEdgeMenuHandleIfStillAtEdge:edge];
         // UU-style arrival: the dwell that lit the tab is also the request to open.
         // Arming stays a light show on its own; the opening lives here, in the one
@@ -946,28 +955,64 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
 }
 
 - (void)armEdgeMenuHandleIfStillAtEdge:(MLFreeMouseExitEdge)edge {
-    if (!self.edgeSensorSummonEnabled || ![self edgeMenuCanInteract] ||
-        (self.isMouseCaptured && !self.isRemoteDesktopMode) || self.edgeMenuButtonExpanded ||
-        ![self edgeMenuShouldBeVisible] || self.edgeMenuDockEdge != edge ||
-        self.edgeSensorMustLeaveHoverRegion || [self hasPressedMouseButtonsForCaptureTransition] ||
-        self.suppressFreeMouseEdgeUncaptureUntilMs > [self nowMs]) return;
-    if (![self edgeSensorPointIsInHoverRegion:[self edgeSensorPointForEvent:nil] edge:edge]) return;
+    // One named drop per gate, throttled a second: the field session that never
+    // mentions the sensor cannot say which of these stayed shut, and that silence
+    // is exactly why "the sidebar does whatever it wants" had no evidence to work
+    // from. The pointer reading is what turns a drop into a location, not a guess.
+    NSPoint armPointer = [self edgeSensorPointForEvent:nil];
+    double armNow = [self nowMs];
+    NSString *armDrop = nil;
+    if (!self.edgeSensorSummonEnabled) armDrop = @"not-enabled";
+    else if (![self edgeMenuCanInteract]) armDrop = @"cannot-interact";
+    else if (self.isMouseCaptured && !self.isRemoteDesktopMode) armDrop = @"captured-non-remote";
+    else if (self.edgeMenuButtonExpanded) armDrop = @"already-expanded";
+    else if (![self edgeMenuShouldBeVisible]) armDrop = @"not-visible";
+    else if (self.edgeMenuDockEdge != edge) armDrop = @"edge-mismatch";
+    else if (self.edgeSensorMustLeaveHoverRegion) armDrop = @"must-leave-hover";
+    else if ([self hasPressedMouseButtonsForCaptureTransition]) armDrop = @"buttons-held";
+    else if (self.suppressFreeMouseEdgeUncaptureUntilMs > armNow) armDrop = @"reentry-suppress";
+    else if (![self edgeSensorPointIsInHoverRegion:armPointer edge:edge]) armDrop = @"not-in-region";
     // The exit-uncapture dwell timer fires at the warp cooldown's expiry, so the two
     // compete on a millisecond: the arm flips between accepted and dropped on the same
     // pointer. The hover check above already proved the pointer is still in the zone,
     // which is the same proof the blocker path accepts — the transition is over.
-    if (self.edgeSensorIgnoreMotionUntilMs > [self nowMs] &&
-        ![self edgeSensorPointerInActivationZone]) return;
-    if (self.edgeMenuHandleArmed) return;
+    if (armDrop == nil && self.edgeSensorIgnoreMotionUntilMs > armNow &&
+        ![self edgeSensorPointerInActivationZone]) armDrop = @"warp-cooldown";
+    if (armDrop == nil && self.edgeMenuHandleArmed) armDrop = @"already-armed";
+    if (armDrop != nil) {
+        if (armNow - self.edgeSensorLastDropLogMs >= 1000.0) {
+            self.edgeSensorLastDropLogMs = armNow;
+            Log(LOG_I, @"[diag] Edge arm dropped: reason=%@ captured=%d remoteDesktop=%d edge=%ld pointerView=(%.0f,%.0f)",
+                armDrop, self.isMouseCaptured, self.isRemoteDesktopMode, (long)edge, armPointer.x, armPointer.y);
+        }
+        return;
+    }
     self.edgeMenuHandleArmed = YES;
     [self updateEdgeMenuButtonAppearance];
-    Log(LOG_D, @"[diag] Edge handle armed: edge=%ld band=%.0fpt dwell=%.0fms pointer held=1 opened=0",
+    // The one success this path has deserves the same loudness as its drops:
+    // DEBUG does not survive the curated log, so the arm that actually worked
+    // was the line nobody ever saw.
+    Log(LOG_I, @"[diag] Edge handle armed: edge=%ld band=%.0fpt dwell=%.0fms pointer held=1 opened=0",
         (long)edge, [self edgeSensorBandWidthPoints], [self edgeSensorDwellSeconds] * 1000.0);
 }
 
 - (void)summonEdgeMenuDockForEdge:(MLFreeMouseExitEdge)edge reason:(NSString *)reason {
-    if (![self edgeMenuCanInteract] || ![self edgeMenuShouldBeVisible] ||
-        self.edgeMenuButtonExpanded || [self hasPressedMouseButtonsForCaptureTransition]) return;
+    // The four preconditions used to bail in silence too: a tab that lit but
+    // never opened left no line at all, so the opening half of the two-act
+    // contract had no failure shape.
+    NSString *summonDrop = nil;
+    if (![self edgeMenuCanInteract]) summonDrop = @"cannot-interact";
+    else if (![self edgeMenuShouldBeVisible]) summonDrop = @"not-visible";
+    else if (self.edgeMenuButtonExpanded) summonDrop = @"already-open";
+    else if ([self hasPressedMouseButtonsForCaptureTransition]) summonDrop = @"buttons-held";
+    if (summonDrop != nil) {
+        double summonNow = [self nowMs];
+        if (summonNow - self.edgeSensorLastDropLogMs >= 1000.0) {
+            self.edgeSensorLastDropLogMs = summonNow;
+            Log(LOG_I, @"[diag] Edge summon dropped: reason=%@ edge=%ld", summonDrop, (long)edge);
+        }
+        return;
+    }
     [self resetEdgeSensorSummonState];
     BOOL wasCaptured = self.isMouseCaptured;
     if (wasCaptured) [self uncaptureMouseWithCode:@"MUC109" reason:reason];

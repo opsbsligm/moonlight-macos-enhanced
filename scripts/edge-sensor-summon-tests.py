@@ -282,3 +282,36 @@ if '--self-test' in sys.argv:
 
 rebuild=method(menu,'- (void)rebuildStreamMenu')
 assert rebuild.index('if (self.edgeMenuMenuVisible) return;') < rebuild.index('[self.streamMenu removeAllItems]'), 'live updates can mutate the tracked menu'
+
+# Decision-chain diagnostics: the field session that never mentions the sensor
+# cannot say which gate stayed shut, so the arm/summon drops and the dwell
+# expiry must each leave a named INFO line. Pin the anchors and the level
+# (DEBUG does not survive the curated log, which is how the arm's success
+# went invisible).
+def decision_diagnostics(src):
+    arm = method(src, '- (void)armEdgeMenuHandleIfStillAtEdge:')
+    summon = method(src, '- (void)summonEdgeMenuDockForEdge:')
+    timer = method(src, '- (void)beginEdgeSensorDwellTimerIfNeededForEdge:')
+    for needle in ('Edge arm dropped: reason=', 'Edge handle armed: edge='):
+        assert needle in arm, 'the arm path lost its ' + needle.split('=')[0] + ' line'
+    assert 'Log(LOG_I, @"[diag] Edge arm dropped: reason=' in arm, 'arm drops must be INFO: DEBUG dies in the curated log'
+    assert 'Log(LOG_I, @"[diag] Edge handle armed: edge=' in arm, 'the arm success went silent below INFO'
+    assert 'pointerView=' in arm, 'an arm drop without the pointer location is a guess, not a reading'
+    assert 'Edge summon dropped: reason=' in summon and 'Log(LOG_I, @"[diag] Edge summon dropped: reason=' in summon, \
+        'summon precondition drops are silent or below INFO'
+    assert 'Edge dwell fired: token-ok=' in timer and 'Log(LOG_I, @"[diag] Edge dwell fired:' in timer, \
+        'the dwell expiry does not report its staleness checks'
+decision_diagnostics(mouse)
+print('PASS decision chain: arm/summon drops and dwell expiry all leave named INFO lines')
+if '--self-test' in sys.argv:
+    for label, broken, want in (
+        ('demoted arm drop', mouse.replace('Log(LOG_I, @"[diag] Edge arm dropped: reason=', 'Log(LOG_D, @"[diag] Edge arm dropped: reason='), 'INFO'),
+        ('blind arm drop', mouse.replace('pointerView=', 'pointer-'), 'reading'),
+        ('silent summon drop', mouse.replace('Edge summon dropped: reason=', 'Edge summon dropped: code='), 'INFO'),
+        ('missing dwell report', mouse.replace('Edge dwell fired: token-ok=', 'Edge dwell done: token='), 'staleness')):
+        try:
+            decision_diagnostics(broken)
+            raise AssertionError('decision diagnostics accept: ' + label)
+        except AssertionError as error:
+            assert ('INFO' in str(error) or 'reading' in str(error) or 'staleness' in str(error) or 'lost' in str(error)), error
+        print('PASS negative control: ' + label + ' is rejected')
