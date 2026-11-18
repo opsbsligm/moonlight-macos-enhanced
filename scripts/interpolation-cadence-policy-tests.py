@@ -22,9 +22,9 @@ Three things are checked:
     it, and the recommendation cannot name a frame rate the page cannot select;
   * floors, because an audit whose driver stopped parsing would report zero failures.
 
---self-test plants three mistakes: loosen the rule by ten hertz; put the arithmetic back into the
-renderer next to the shared call; and change a frame rate in the settings list alone. All three
-have to come back red.
+--self-test plants four mistakes: loosen the rule by ten hertz; put the arithmetic back into the
+renderer next to the shared call; change a frame rate in the settings list alone; and replace the
+snap's candidate walk with a plain rounding. All four have to come back red.
 """
 import os, re, subprocess, sys, tempfile
 
@@ -81,6 +81,14 @@ int main(void) {
            MLInterpolationHasCadenceHeadroom(0.0, 60),
            MLInterpolationHasCadenceHeadroom(-5.0, 60),
            MLInterpolationHasCadenceHeadroom(240.0, 0));
+    printf("snap180_72=%ld snap180_180=%ld snap60_60=%ld snap180_36=%ld snap144_108=%ld snap0_72=%ld snap180_130=%ld\n",
+           MLInterpolationSnappedRefreshesPerFrame(180.0, 72.0),
+           MLInterpolationSnappedRefreshesPerFrame(180.0, 180.0),
+           MLInterpolationSnappedRefreshesPerFrame(60.0, 60.0),
+           MLInterpolationSnappedRefreshesPerFrame(180.0, 36.0),
+           MLInterpolationSnappedRefreshesPerFrame(144.0, 108.0),
+           MLInterpolationSnappedRefreshesPerFrame(0.0, 72.0),
+           MLInterpolationSnappedRefreshesPerFrame(180.0, 130.0));
     const int refreshes[] = {180, 179, 165, 144, 120, 90, 60, 45, 30, 0, -8};
     for (int i = 0; i < 11; i++) {
         printf("cap%d=%d\nsug%d=%d\n", refreshes[i],
@@ -116,6 +124,13 @@ EXPECTED = {
     "sug90": "0", "sug60": "30", "sug45": "0", "sug30": "0", "sug0": "0", "sug-8": "0",
     "count": "5", "preset0": "30", "preset1": "60", "preset2": "90", "preset3": "120",
     "preset4": "144", "oob": "0",
+    # The snap is the whole-refresh hold closest to the real production rate: 72 FPS of
+    # output on a 180 Hz panel is 3 refreshes (60 FPS implied, the nearest divisor point to
+    # 72 -- the hold never sits at 2.5). 180 against 180 is one refresh; 60 on 60 is one; a
+    # 36 FPS source with no interpolation headroom snaps to 5 refreshes (36 implied). Unknown
+    # refresh is the no-hold floor of one, and 130 sits closer to 90 than to 60.
+    "snap180_72": "3", "snap180_180": "1", "snap60_60": "1", "snap180_36": "5",
+    "snap144_108": "1", "snap0_72": "1", "snap180_130": "2",
 }
 
 
@@ -173,6 +188,17 @@ def wiring(policy_text, renderer_text, swift_text):
     if re.search(r"frameRate\s*\*\s*1\.5", renderer_text) or \
        re.search(r"frameRate\s*\+\s*12\.0", renderer_text):
         gaps.append("the renderer still carries its own copy of the cadence arithmetic")
+    # The negotiated agreement is not the content. When the measured source rate runs below
+    # it, the hold must be the shared snap's answer, not the agreement's arithmetic: 36 FPS
+    # over a 90 FPS agreement on 180 Hz is the field session that read as jitter.
+    if "MLInterpolationSnappedRefreshesPerFrame(_lastDisplayRefreshRate, productionFps)" not in renderer_text:
+        gaps.append("the hold path does not ask the shared snap for a whole-refresh answer")
+    if "_measuredSourceFpsEma > 0.0 && _measuredSourceFpsEma < (double)self.frameRate * 0.9" not in renderer_text:
+        gaps.append("the hold path never compares the measured source rate against the agreement")
+    if "_measuredSourceFpsEma = 0.5 * _measuredSourceFpsEma + 0.5 * windowFps" not in renderer_text:
+        gaps.append("the measured source rate is never blended from the one-second windows")
+    if "completedStats.receivedFrames >= 4" not in renderer_text:
+        gaps.append("a sub-four-frame window can seed the measured source rate")
     listed = re.search(r"static\s+var\s+fpss\s*:\s*\[Int\]\s*=\s*\[([^\]]*)\]", swift_text)
     if listed is None:
         gaps.append("the settings page's frame rate list cannot be found to compare against")
@@ -248,6 +274,29 @@ def red_proofs():
         hit = any("while the policy recommends" in gap for gap in gaps)
         print("%-4s changing a frame rate on the page alone is refused (%d gaps named)"
               % ("ok" if hit else "FAIL", len(gaps)))
+        rc |= 0 if hit else 1
+
+    # The snap is an answer about the real production rate, not a rounding of the agreement.
+    # Killing the candidate walk leaves only the centre, and 130 FPS on 180 Hz rounds to 1
+    # refresh (180 implied) when the walk would answer 2 (90 implied) -- the reading this
+    # file names as snap180_130.
+    unsnapped = policy.replace("""    for (long candidate = centre - 1; candidate <= centre + 1; candidate++) {
+        if (candidate < 1) {
+            continue;
+        }""",
+                              """    for (long candidate = centre; candidate <= centre; candidate++) {
+        if (candidate < 1) {
+            continue;
+        }""", 1)
+    if unsnapped == policy:
+        print("FAIL  the snap candidate walk could not be mutated (the source text moved)")
+        rc = 1
+    else:
+        answers, _ = drive(unsnapped)
+        wrong = behaviour(answers) if answers else ["the mutated policy did not build"]
+        hit = any("snap180_130" in problem for problem in wrong)
+        print("%-4s rounding the hold instead of snapping to the real rate is refused (%d readings wrong)"
+              % ("ok" if hit else "FAIL", len(wrong)))
         rc |= 0 if hit else 1
     return rc
 
