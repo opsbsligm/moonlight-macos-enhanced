@@ -53,13 +53,15 @@ public struct LiquidGlassTabBar: NSViewRepresentable {
     control.font = .systemFont(ofSize: 13)
     control.segmentDistribution = .fit
     control.borderShape = .capsule
-    // Role stays unset: measured on macOS 27.3 / SDK 27.2 the `.tabs` role draws the
-    // selected segment as a white pill with no accent, while the rounded+capsule style
-    // without it draws the blue selected pill the user accepted in 00315f0f (that build
-    // had minos 26, so the guarded role never fired and blue was the accepted look;
-    // 7c863480 raised minos to 27 and the role silently switched the bar to white).
-    // The guard and its build condition stay declared so an accidental role re-enable
-    // still compiles on the macOS 26 SDK CI builds against.
+    // Not merely version-guarded: the macOS 26 SDK has no `role` symbol at all, so `#available`
+    // alone fails to compile there. ML_APPKIT_TABS_ROLE is declared by the project only when the
+    // SDK in use declares the property; #available still guards the run on older systems.
+    // Dropping the assignment instead would change the accepted Activity-Monitor-style tabs look.
+#if ML_APPKIT_TABS_ROLE
+    if #available(macOS 27.0, *) {
+      control.role = .tabs
+    }
+#endif
     control.target = context.coordinator
     control.action = #selector(Coordinator.selectSegment(_:))
     control.setAccessibilityIdentifier("settings-navigation")
