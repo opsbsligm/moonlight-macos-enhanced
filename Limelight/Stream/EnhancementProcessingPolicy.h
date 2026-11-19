@@ -24,9 +24,23 @@ static inline bool MLEnhancementShouldWait(bool sameInput, uint64_t startedAtMs,
 // that is the pace at which the single-flight task stops being an addition to
 // the frame and starts being a tax on it -- so gross overruns accumulate and the
 // severe multiplier still trips at once.
+// Four times the budget is the severe pace, but it trips at once only after
+// the engine has already shown it is slow (at least one earlier strike): a
+// single 98-109ms call against a 22ms budget was measured on the acceptance
+// machine as GPU preemption in a large scene, not engine death -- the same
+// engine then interpolated 31fps for hours before and after. Charging that
+// isolated spike with a full trip opens the breaker for two seconds of
+// visible cadence pause over one outlying call, so it scores one strike and
+// the next honest call clears it. An engine that truly cannot keep up still
+// trips within two frames: a severe call right after any strike, or two
+// consecutive gross overloads.
 static inline uint32_t MLEnhancementOverloadStrikes(uint32_t previous, bool processed,
                                                    uint64_t elapsedMs, uint64_t budgetMs) {
-    if (!processed || budgetMs == 0 || elapsedMs / budgetMs >= 4) return 3;
+    if (!processed || budgetMs == 0) return 3;
+    // UINT64_MAX is the caller's "the clock underflowed" sentinel, not a
+    // measured cost: an unmeasurably long call is a hard trip either way.
+    if (elapsedMs == UINT64_MAX) return 3;
+    if (elapsedMs / budgetMs >= 4) return previous >= 1 ? 3 : 1;
     if (elapsedMs / budgetMs >= 2) return previous >= 2 ? 3 : previous + 1;
     return 0;
 }
@@ -41,7 +55,8 @@ static inline uint32_t MLEnhancementOverloadStrikes(uint32_t previous, bool proc
 // reach a present that still wants it, and MLEnhancementMayPublish already
 // refuses that publication. It is still a deadline the task is charged against:
 // a call over the budget scores a strike and a call at four times the budget
-// trips the breaker at once, so an engine that cannot keep up still stops.
+// trips the breaker once the engine has already shown it is slow, so an
+// engine that cannot keep up still stops.
 static inline uint64_t MLEnhancementStagingBudgetMs(double refreshHz, int sourceFps) {
     if (refreshHz <= 0.0 || sourceFps <= 0) {
         return 16;
@@ -63,10 +78,14 @@ static inline uint64_t MLEnhancementStagingBudgetMs(double refreshHz, int source
 
 // The same deadline again, once the engine has shown what a call costs. A fixed
 // window guesses; a measured one knows. The EMA of finished calls sets the
-// window at a quarter above the typical call, and the window may never exceed
-// two source frames -- past that the task no longer describes the stream it
+// window at a quarter above the typical call. The window may never exceed two
+// source frames as a floor for its ceiling -- past four source frames the task
 // came from, and a call that slow should earn strikes under the multiplier
 // rules above rather than be forgiven by a budget that grew out of all reason.
+// The ceiling itself follows the measured engine above that floor at 1.5x its
+// typical call: the measured 1080p VTLLFI call costs 18-41ms, so at a 90fps
+// source the old fixed 22ms ceiling sat below the typical call and struck the
+// engine for being honest on every frame.
 static inline uint64_t MLEnhancementAdaptiveBudgetMs(uint64_t emaCallMs,
                                                     double refreshHz, int sourceFps) {
     const uint64_t frameBudget = MLEnhancementStagingBudgetMs(refreshHz, sourceFps);
@@ -74,7 +93,11 @@ static inline uint64_t MLEnhancementAdaptiveBudgetMs(uint64_t emaCallMs,
         return frameBudget;
     }
     uint64_t measured = emaCallMs + emaCallMs / 4 + 1;
-    uint64_t ceiling = 2 * frameBudget;
+    uint64_t emaCeiling = (emaCallMs * 3) / 2;
+    uint64_t ceiling = emaCeiling > 2 * frameBudget ? emaCeiling : 2 * frameBudget;
+    if (ceiling > 4 * frameBudget) {
+        ceiling = 4 * frameBudget;
+    }
     if (measured > ceiling) {
         measured = ceiling;
     }
