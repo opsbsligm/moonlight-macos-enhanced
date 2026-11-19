@@ -22,6 +22,8 @@ static NSScreen *MLScreenContainingMouseLocation(void) {
 
 static const NSTimeInterval MLClipboardMonitorInterval = 0.25;
 static const NSUInteger MLClipboardImageSizeLimit = 4 * 1024 * 1024;
+static const uint64_t MLClipboardInitialSnapshotRetryMs = 1500;
+static const uint64_t MLClipboardDedupeLogThrottleMs = 10000;
 static const uint64_t MLClipboardActivationRepeatLogIntervalMs = 1000;
 static const uint64_t MLClipboardControlStartupGraceMs = 500;
 static const uint64_t MLClipboardFNVOffsetBasis = 14695981039346656037ULL;
@@ -2182,9 +2184,14 @@ highFreqMotor:(unsigned short)highFreqMotor {
     [self stopClipboardMonitor];
     self.clipboardAwaitingInitialSnapshot = NO;
     self.clipboardInitialSnapshotDeadlineMs = 0;
+    self.clipboardSnapshotRetried = NO;
     self.clipboardSessionBound = NO;
     self.clipboardHasPendingEchoSuppressionHash = NO;
     self.clipboardPendingEchoSuppressionHash = 0;
+    self.clipboardHasLastSentHash = NO;
+    self.clipboardLastSentHash = 0;
+    self.clipboardLastSentMs = 0;
+    self.clipboardLastDedupeLogMs = 0;
     [self resetClipboardActivationDiagnosticState];
 
     if (shouldRequestUnbind && connection != nil) {
@@ -2338,9 +2345,21 @@ highFreqMotor:(unsigned short)highFreqMotor {
         uint64_t nowMs = [self nowMs];
         if (self.clipboardInitialSnapshotDeadlineMs != 0 &&
             nowMs >= self.clipboardInitialSnapshotDeadlineMs) {
+            if (!self.clipboardSnapshotRetried) {
+                // Some host builds answer the first request late (a BIND replay is
+                // enough to start the snapshot handshake), so the first timeout
+                // re-arms a one-shot retry before we fall back to local-only sync.
+                self.clipboardSnapshotRetried = YES;
+                self.clipboardInitialSnapshotDeadlineMs = nowMs + MLClipboardInitialSnapshotRetryMs;
+                Connection *retryConnection = [self currentClipboardConnection];
+                int retryErr = retryConnection != nil ? [retryConnection requestClipboardSnapshot] : -1;
+                Log(LOG_W, @"[clipboard] Initial host clipboard snapshot timed out; retrying snapshot request (err=%d)", retryErr);
+                return;
+            }
             self.clipboardAwaitingInitialSnapshot = NO;
             self.clipboardInitialSnapshotDeadlineMs = 0;
-            Log(LOG_I, @"[clipboard] Initial host clipboard snapshot timed out; continuing with local clipboard sync");
+            self.clipboardSnapshotRetried = NO;
+            Log(LOG_W, @"[clipboard] Initial host clipboard snapshot timed out after retry; continuing with local clipboard sync");
         }
         else {
         return;
@@ -2445,6 +2464,22 @@ highFreqMotor:(unsigned short)highFreqMotor {
         return;
     }
 
+    // Dedupe resend: when the content is identical to the last item we already
+    // pushed but the pasteboard changeCount still flipped (system/IME touches),
+    // sending again is pure bandwidth noise (26KB PNG every ~30s on 11-19).
+    // The hash is computed unconditionally above, so this costs one compare.
+    if (self.clipboardHasLastSentHash && self.clipboardLastSentHash == contentHash) {
+        self.clipboardLastChangeCount = changeCount;
+        uint64_t nowMs = [self nowMs];
+        if (self.clipboardLastDedupeLogMs == 0 ||
+            nowMs - self.clipboardLastDedupeLogMs >= MLClipboardDedupeLogThrottleMs) {
+            self.clipboardLastDedupeLogMs = nowMs;
+            Log(LOG_I, @"[clipboard] Skipping resend of unchanged local clipboard item hash=%llu",
+                contentHash);
+        }
+        return;
+    }
+
     int err = [connection sendClipboardItemData:payload
                                            type:itemType
                                        mimeType:mimeType
@@ -2468,6 +2503,9 @@ highFreqMotor:(unsigned short)highFreqMotor {
     }
 
     self.clipboardLastChangeCount = changeCount;
+    self.clipboardHasLastSentHash = YES;
+    self.clipboardLastSentHash = contentHash;
+    self.clipboardLastSentMs = [self nowMs];
     [self resetClipboardActivationDiagnosticState];
     Log(LOG_I, @"[clipboard] Sent local clipboard item: type=%u length=%lu name=%@",
         itemType,

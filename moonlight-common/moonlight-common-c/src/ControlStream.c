@@ -1532,7 +1532,14 @@ static void handleClipboardPacket(PML_CONTROL_STREAM_CONTEXT ctx,
     case LI_CLIPBOARD_MSG_BIND:
     case LI_CLIPBOARD_MSG_UNBIND:
     case LI_CLIPBOARD_MSG_SNAPSHOT_REQUEST:
-        Limelog("Ignoring unexpected host clipboard control message: %u\n", kind);
+        // These three kinds are client->host commands in this protocol; a host
+        // replying with them (or nothing at all) means the 0x5508 dispatch on
+        // the host side is silent. This line is the client-side tripwire for
+        // that diagnosis: if the host never answers SNAPSHOT_REQUEST, only
+        // this log and the ObjC "snapshot timed out" pair are visible.
+        Limelog("Ignoring host-direction clipboard control message: kind=%u "
+                "(expected client->host; host should reply with ITEM packets)\n",
+                kind);
         break;
     default:
         Limelog("Unknown clipboard control message kind: %u\n", kind);
