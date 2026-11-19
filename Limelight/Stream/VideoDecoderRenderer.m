@@ -4832,7 +4832,21 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         const double productionFps = _measuredInterpolatedFpsEma > 0.0
             ? _measuredSourceFpsEma + MIN(_measuredInterpolatedFpsEma, _measuredSourceFpsEma)
             : _measuredSourceFpsEma + MIN(_measuredSourceFpsEma, (double)self.frameRate);
-        refreshesPerFrame = MLInterpolationSnappedRefreshesPerFrame(_lastDisplayRefreshRate, productionFps);
+        long long candidate = MLInterpolationSnappedRefreshesPerFrame(_lastDisplayRefreshRate, productionFps);
+        // The snap's grid has no memory: a measured rate sitting on a grid boundary makes
+        // the one-second windows swing the EMA across it every other window, and the hold
+        // flips between the two adjacent grids -- the 45/36 FPS beat the field session read
+        // as a second jitter. Hold the grid that is already active unless the candidate is
+        // clearly closer to the real production: inside a dead zone the standing answer
+        // wins, so the boundary can wobble without the panel feeling it.
+        refreshesPerFrame = _activeCadenceRefreshesPerFrame;
+        if (refreshesPerFrame < 2 || refreshesPerFrame > 6 || refreshesPerFrame != candidate) {
+            const double currentImplied = _lastDisplayRefreshRate / (double)refreshesPerFrame;
+            const double candidateImplied = _lastDisplayRefreshRate / (double)candidate;
+            const double currentError = productionFps > currentImplied ? productionFps - currentImplied : currentImplied - productionFps;
+            const double candidateError = productionFps > candidateImplied ? productionFps - candidateImplied : candidateImplied - productionFps;
+            refreshesPerFrame = (candidateError + 4.0 < currentError) ? candidate : refreshesPerFrame;
+        }
         if (!_cadenceSnapLogged) {
             Log(LOG_W, @"[video] Presentation cadence snapped: agreement %d FPS, measured source %.1f FPS, measured interpolation %.1f FPS, output production %.0f FPS, holding %lld refresh(es) on %.2f Hz",
                 (int)self.frameRate, _measuredSourceFpsEma, _measuredInterpolatedFpsEma, productionFps, refreshesPerFrame, _lastDisplayRefreshRate);
@@ -6157,7 +6171,12 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
                 if (self->_measuredInterpolatedFpsEma <= 0.0) {
                     self->_measuredInterpolatedFpsEma = interpWindowFps;
                 } else {
-                    self->_measuredInterpolatedFpsEma = 0.5 * self->_measuredInterpolatedFpsEma + 0.5 * interpWindowFps;
+                    // Slower blend than the source rate: the interpolation success rate is
+                    // bursty, and a one-second window that lands on a VT backoff swings the
+                    // raw counter by more than a whole cadence grid. The 0.5 blend tracked
+                    // that swing into the snap, which is how the grid wobbled across its
+                    // boundary; 0.25 keeps the production answer from riding the burst.
+                    self->_measuredInterpolatedFpsEma = 0.75 * self->_measuredInterpolatedFpsEma + 0.25 * interpWindowFps;
                 }
                 if (fabs(self->_measuredInterpolatedFpsEma - self->_lastLoggedMeasuredInterpolatedFps) > 1.0) {
                     Log(LOG_I, @"[video] Measured interpolation cadence: %.1f FPS against a %.1f FPS source (window %.0f)",
