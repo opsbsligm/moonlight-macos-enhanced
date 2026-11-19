@@ -3684,8 +3684,18 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             previousInterpolationSourceFrame != NULL) {
             _interpolationStagingSequence = sourceSequence;
             _interpolationStagingStartedAtMs = LiGetMillis();
+            uint64_t previousInterpolationStagingBudgetMs = _interpolationStagingBudgetMs;
             _interpolationStagingBudgetMs = MLEnhancementAdaptiveBudgetMs(
                 _interpolationCallEmaMs, _lastDisplayRefreshRate, self.frameRate);
+            // One line per budget change (not per frame) so a session log can
+            // replay the engine's cost distribution and the window it was
+            // charged against, instead of only the calls that tripped it.
+            if (_interpolationStagingBudgetMs != previousInterpolationStagingBudgetMs) {
+                Log(LOG_I, @"[video] VT frame interpolation staging budget %llums -> %llums (ema call %.0fms refresh %.1fHz source %d fps)",
+                    (unsigned long long)previousInterpolationStagingBudgetMs,
+                    (unsigned long long)_interpolationStagingBudgetMs,
+                    (double)_interpolationCallEmaMs, _lastDisplayRefreshRate, self.frameRate);
+            }
         }
     }
 
