@@ -65,7 +65,17 @@ int main(void) {
     assert(MLEnhancementOverloadStrikes(1,true,10,5)==2);
     assert(MLEnhancementOverloadStrikes(2,true,10,5)==3);
     assert(MLEnhancementOverloadStrikes(2,true,4,5)==0);
-    assert(MLEnhancementOverloadStrikes(0,true,20,5)==3);
+    // A severe spike trips at once only after the engine has already shown it
+    // is slow: build 2222 measured one 104ms call against a 22ms budget on a
+    // healthy engine (GPU preemption in a large scene), and the old one-shot
+    // trip cost the session two seconds of visible cadence pause. An isolated
+    // severe spike scores a single strike the next honest call clears; a
+    // severe call right after any strike, or two consecutive gross overloads,
+    // still trip within two frames.
+    assert(MLEnhancementOverloadStrikes(0,true,20,5)==1);
+    assert(MLEnhancementOverloadStrikes(1,true,20,5)==3);
+    assert(MLEnhancementOverloadStrikes(2,true,20,5)==3);
+    assert(MLEnhancementOverloadStrikes(1,true,40,10)==3);
     assert(MLEnhancementOverloadStrikes(0,false,0,5)==3);
     assert(MLEnhancementOverloadStrikes(0,true,1,0)==3);
     assert(MLEnhancementOverloadStrikes(0,true,UINT64_MAX,5)==3);
@@ -76,9 +86,22 @@ int main(void) {
     // A cheap engine may not pull the window under the honest fixed floor.
     assert(MLEnhancementAdaptiveBudgetMs(1,180,60)==16);
     assert(MLEnhancementAdaptiveBudgetMs(20,180,60)==26);
-    assert(MLEnhancementAdaptiveBudgetMs(30,180,60)==32);
-    assert(MLEnhancementAdaptiveBudgetMs(100,180,60)==32);
+    // Above the two-frame floor the ceiling follows the engine at 1.5x, so a
+    // 30ms-typical engine (measured 18-41ms) keeps a 38ms window at 60fps, and
+    // a 100ms-typical engine is capped at four source frames, not measured.
+    assert(MLEnhancementAdaptiveBudgetMs(30,180,60)==38);
+    assert(MLEnhancementAdaptiveBudgetMs(100,180,60)==64);
     assert(MLEnhancementAdaptiveBudgetMs(20,0,0)==26);
+    // The ceiling's floor is two source frames, and it may follow the measured
+    // engine at 1.5x its typical call up to four source frames: the measured
+    // 1080p VTLLFI call costs 18-41ms, so at a 90fps source the old fixed 22ms
+    // ceiling sat below the typical call and struck the engine on every frame.
+    assert(MLEnhancementAdaptiveBudgetMs(20,180,90)==26);
+    assert(MLEnhancementAdaptiveBudgetMs(30,180,90)==38);
+    assert(MLEnhancementAdaptiveBudgetMs(40,180,90)==44);
+    assert(MLEnhancementAdaptiveBudgetMs(50,180,90)==44);
+    assert(MLEnhancementAdaptiveBudgetMs(100,180,90)==44);
+    assert(MLEnhancementAdaptiveBudgetMs(100,180,30)==126);
     // The staging deadline must be a window the work can honestly fit: one
     // source frame, never below a display period, never below a service floor.
     assert(MLEnhancementStagingBudgetMs(180,60)==16);
@@ -196,7 +219,7 @@ enhancement_mutations = [
     ('staging-budget-service-floor-dropped', 'if (budget < 8.0) {\n        budget = 8.0;\n    }', '(void)budget;'),
     ('staging-budget-unknown-rate-refuses', 'return 16;', 'return 0;'),
     ('adaptive-budget-can-shrink', 'measured > frameBudget ? measured : frameBudget', 'measured'),
-    ('adaptive-budget-ignores-its-ceiling', 'uint64_t ceiling = 2 * frameBudget;', 'uint64_t ceiling = frameBudget;'),
+    ('adaptive-budget-ignores-its-ceiling', 'uint64_t emaCeiling = (emaCallMs * 3) / 2;', 'uint64_t emaCeiling = 0;'),
 
 ]
 for name, before, after in enhancement_mutations:
