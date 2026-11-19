@@ -253,28 +253,75 @@ int main(void) { @autoreleasepool {
         CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;
     }
     // Stale input still consumed compute; failure/overload pauses that session.
-    for (int reason=0; reason<3; reason++) {
+    // reason 0 arms one strike (a 2x call) then a severe spike -- the new rule
+    // that suspends; reason 1 is a backend failure; reason 2 is a severe call
+    // on a retired processor (cannot suspend); reason 3 is an isolated severe
+    // spike with no prior strike (the measured 98-109ms-on-22ms case), which
+    // must now score only one strike and not suspend.
+    for (int reason=0; reason<4; reason++) {
+        testTimeMs=100;
         Probe *r=freshProbe(); VTFrameProcessor *p=r->_frameProcessor;
-        p.elapsedMs=reason==0?900:0; p.fail=reason==1;
+        p.elapsedMs=reason==0?10:(reason==1?0:900); p.fail=reason==1;
         BOOL w=NO,pending=NO,wait=NO;
         [r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTQualitySuperResolution scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
         assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
+        if(reason==0) {
+            // Finish the 2x call so it arms one strike, then run a severe
+            // spike on the next frame: the single-flight slot must be free
+            // before the second task can enter.
+            @synchronized(r) {r->_currentFrameSequence=8;}
+            dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
+            assert(!r->_enhancementSuspended && r->_enhancementOverloadStrikes==1 && p.calls==1);
+            p.elapsedMs=900;
+            [r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTQualitySuperResolution scaleFactor:2 frameSequence:8 presentationTimeStamp:CMTimeMake(8,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
+            assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
+        }
         @synchronized(r) {r->_currentFrameSequence=8;}
-        if(reason==2) {p.elapsedMs=900; [r teardownEnhancementProcessor];}
+        if(reason==2) { [r teardownEnhancementProcessor]; }
         dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
-        assert(r->_enhancementSuspended==(reason!=2));
+        assert(r->_enhancementSuspended==(reason==0||reason==1));
         assert(!r->_enhancementResultFrame);
-        if(reason!=2) {
+        if(reason==0||reason==1) {
             for(int i=0;i<20;i++) {
                 CVImageBufferRef result=[r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTQualitySuperResolution scaleFactor:2 frameSequence:8 presentationTimeStamp:CMTimeMake(8,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
-                assert(!result && pending && !wait && p.calls==1);
+                assert(!result && pending && !wait && p.calls==(reason==0?2:1));
             }
         }
         [r teardownEnhancementProcessor];dispatch_sync(r->_vtEnhancementQueue,^{});
         assert(!r->_enhancementSuspended && r->_enhancementOverloadStrikes==0);
         CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;
     }
-    puts("ok: overload/failure suppress repeated VT, stale source charged, retired session cannot suspend replacement");
+    // A charge from a retired session must not leak into the replacement:
+    // the processor + generation guard keeps the old task's accounting out
+    // of the new session's breaker, so the replacement is judged on its own
+    // first call. Retire the old session mid-flight, install a fresh
+    // processor and output pool, then let the old task settle: its 2x call
+    // must not arm the new session, and the new session's own 2x call arms
+    // exactly one strike.
+    {
+        testTimeMs=100;
+        Probe *r=freshProbe();VTFrameProcessor *p=r->_frameProcessor;
+        p.elapsedMs=10;
+        BOOL w=NO,pending=NO,wait=NO;
+        [r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTQualitySuperResolution scaleFactor:2 frameSequence:7 presentationTimeStamp:CMTimeMake(7,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
+        assert(dispatch_semaphore_wait(p.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
+        [r teardownEnhancementProcessor];
+        VTFrameProcessor *q=[VTFrameProcessor new];q.elapsedMs=10;
+        @synchronized(r) {r->_frameProcessor=q;}
+        NSDictionary *attrs=@{(id)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_32BGRA),
+            (id)kCVPixelBufferWidthKey:@8,(id)kCVPixelBufferHeightKey:@8};
+        assert(CVPixelBufferPoolCreate(NULL,NULL,(__bridge CFDictionaryRef)attrs,&r->_frameProcessorOutputPool)==kCVReturnSuccess);
+        dispatch_semaphore_signal(p.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
+        assert(r->_enhancementOverloadStrikes==0 && !r->_enhancementSuspended && p.calls==1);
+        @synchronized(r) {r->_currentFrameSequence=8;}
+        [r copyFrameUsingFrameProcessorIfNeeded:r->_currentFrame activeEnhancement:MLActiveVideoEnhancementEngineVTQualitySuperResolution scaleFactor:2 frameSequence:8 presentationTimeStamp:CMTimeMake(8,90) interpolatedFrame:NO warmupPending:&w processingPending:&pending waitForOutput:&wait];
+        assert(dispatch_semaphore_wait(q.entered,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC))==0);
+        dispatch_semaphore_signal(q.allowed);dispatch_sync(r->_vtEnhancementQueue,^{});
+        assert(r->_enhancementOverloadStrikes==1 && !r->_enhancementSuspended && q.calls==1);
+        [r teardownEnhancementProcessor];dispatch_sync(r->_vtEnhancementQueue,^{});
+        CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;
+    }
+    puts("ok: overload/failure suppress repeated VT, stale source charged, spike after a strike suspends, isolated spike does not, retired session cannot suspend replacement");
     puts("ok: 8 shipping asynchronous lifecycle scenarios, native CV lifetime + dispatch ordering; VT backend simulated");
     return 0;
 }}

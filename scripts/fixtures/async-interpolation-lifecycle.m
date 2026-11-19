@@ -163,41 +163,71 @@ int main(void) { @autoreleasepool {
     // Preparatory staging also expires, without requiring a task to have been admitted.
     r=freshProbe(NO);atomic_store(&testClock,105);[r expireInterpolationStagingIfNeeded];
     assert(r->_interpolationStagingSequence==0);dispose(r);
-    // Severe/gross overruns stop compute; in-budget work resets gross strikes. A
+    // Severe/gross overruns stop compute; in-budget work resets gross strikes.
+    // A single severe spike scores one strike (the measured 104ms call on a
+    // healthy engine was GPU preemption, not engine death), so only a severe
+    // call after any strike, or two consecutive gross overloads, trips. A
     // late-but-under-twice call publishes nothing and charges nothing (the
-    // breaker must not kill an engine for the calendar), so this loop drives the
-    // gross multiplier that the measured VT cost actually reaches.
-    for(int mode=0;mode<3;mode++) {
+    // breaker must not kill an engine for the calendar).
+    for(int mode=0;mode<4;mode++) {
         r=freshProbe(NO);p=r->_frameInterpolationProcessor;
-        int tasks=mode==0?1:3;
+        int tasks=mode==0?1:(mode==3?2:3);
         for(int task=0;task<tasks;task++) {
             @synchronized(r) {
                 r->_currentFrameSequence=7+task;r->_interpolationStagingSequence=7+task;
                 r->_interpolationStagingStartedAtMs=LiGetMillis();
             }
-            p.elapsedMs=mode==0?900:((mode==2 && task==1)?4:10);
+            p.elapsedMs=mode==0?900:((mode==3&&task==1)?900:((mode==2&&task==1)?4:10));
             assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:7+task enqueueTimeMs:90 frameNumber:42 displayRefreshRate:180]);
             waitFor(r.finished);
         }
-        assert(r->_interpolationSuspended==(mode!=2));
-        assert(r->_interpolationOverloadStrikes==(mode==2?1:3));
-        if(mode!=2) {for(int i=0;i<20;i++) {assert(!stage(r));assert(p.calls==(NSUInteger)tasks);}}
+        assert(r->_interpolationSuspended==(mode!=0&&mode!=2));
+        assert(r->_interpolationOverloadStrikes==((mode==0||mode==2)?1:3));
+        if(mode!=0&&mode!=2) {for(int i=0;i<20;i++) {assert(!stage(r));assert(p.calls==(NSUInteger)tasks);}}
         dispose(r);
     }
-    // Actual failed/slow work on a stale source must still pause its session.
-    for(int failure=0;failure<2;failure++) {
-        r=freshProbe(YES);p=r->_frameInterpolationProcessor;p.fail=failure;p.elapsedMs=failure?0:900;
+    // Actual failed work on a stale source must still pause its session. A
+    // single severe slow call is a spike (one strike, engine kept); the
+    // session that already armed a strike trips on the next severe call.
+    {
+        r=freshProbe(YES);p=r->_frameInterpolationProcessor;p.fail=YES;p.elapsedMs=0;
         assert(stage(r));waitFor(p.entered);
         @synchronized(r){r->_currentFrameSequence=8;}
         dispatch_semaphore_signal(p.releaseWork);waitFor(r.finished);
-        assert(r->_interpolationSuspended && !r->_pendingInterpolatedFrame && p.calls==1);dispose(r);
+        assert(r->_interpolationSuspended && r->_interpolationOverloadStrikes==3
+            && !r->_pendingInterpolatedFrame && p.calls==1);dispose(r);
     }
-    // Retired task's late failure must not latch a replacement's breaker.
+    {
+        r=freshProbe(NO);p=r->_frameInterpolationProcessor;p.elapsedMs=900;
+        assert(stage(r));waitFor(r.finished);
+        assert(!r->_interpolationSuspended && r->_interpolationOverloadStrikes==1);
+        atomic_store(&testClock,105);
+        @synchronized(r){r->_currentFrameSequence=8;r->_interpolationStagingSequence=8;r->_interpolationStagingStartedAtMs=LiGetMillis();}
+        p.elapsedMs=900;
+        assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:8 enqueueTimeMs:105 frameNumber:42 displayRefreshRate:180]);
+        waitFor(r.finished);
+        assert(r->_interpolationSuspended && r->_interpolationOverloadStrikes==3 && !r->_pendingInterpolatedFrame && p.calls==2);
+        dispose(r);
+    }
+    // Retired task's late completion must not charge the replacement: the
+    // generation guard keeps the old session's strike out of the new session's
+    // breaker, so the replacement's first honest call is judged on its own.
     r=freshProbe(YES);p=r->_frameInterpolationProcessor;p.fail=YES;p.elapsedMs=900;
     assert(stage(r));waitFor(p.entered);[r teardownFrameInterpolationProcessor];
-    r->_frameInterpolationProcessor=[VTFrameProcessor new];
-    dispatch_semaphore_signal(p.releaseWork);waitFor(r.finished);dispatch_sync(r->_vtInterpolationQueue,^{});
-    assert(!r->_interpolationSuspended && r->_interpolationOverloadStrikes==0);dispose(r);
+    VTFrameProcessor *q=[VTFrameProcessor new];q.elapsedMs=10;
+    {
+        NSDictionary *attrs=@{(id)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_32BGRA),(id)kCVPixelBufferWidthKey:@8,(id)kCVPixelBufferHeightKey:@8};
+        assert(CVPixelBufferPoolCreate(NULL,NULL,(__bridge CFDictionaryRef)attrs,&r->_frameInterpolationOutputPool)==kCVReturnSuccess);
+        assert(CVPixelBufferPoolCreatePixelBuffer(NULL,r->_frameInterpolationOutputPool,&r->_previousInterpolationSourceFrame)==kCVReturnSuccess);
+    }
+    @synchronized(r){r->_frameInterpolationProcessor=q;r->_previousInterpolationSourcePresentationTimeStamp=CMTimeMake(99,100);}
+    dispatch_semaphore_signal(p.releaseWork);waitFor(r.finished);
+    assert(!r->_interpolationSuspended && r->_interpolationOverloadStrikes==0 && p.calls==1);
+    @synchronized(r){r->_currentFrameSequence=8;r->_interpolationStagingSequence=8;r->_interpolationStagingStartedAtMs=LiGetMillis();}
+    assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:8 enqueueTimeMs:LiGetMillis() frameNumber:42 displayRefreshRate:180]);
+    waitFor(r.finished);
+    assert(r->_interpolationOverloadStrikes==1 && !r->_interpolationSuspended && q.calls==1);
+    dispose(r);
     puts("ok: FI failure does not rewarm; overload stops compute; healthy calls reset; stale/retired completions isolated");
     puts("ok: native FI lifecycle 8 scenarios; real CV/dispatch, simulated VT");
 } return 0; }
