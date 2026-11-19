@@ -211,8 +211,13 @@ def wiring(policy_text, renderer_text, swift_text):
     # the full-assumption formula would predict; without it the hold grid outruns the panel.
     if "MIN(_measuredInterpolatedFpsEma, _measuredSourceFpsEma)" not in renderer_text:
         gaps.append("the snap's production answer never folds in the measured interpolation rate")
-    if "self->_measuredInterpolatedFpsEma = 0.5 * self->_measuredInterpolatedFpsEma + 0.5 * interpWindowFps" not in renderer_text:
+    if "self->_measuredInterpolatedFpsEma = 0.75 * self->_measuredInterpolatedFpsEma + 0.25 * interpWindowFps" not in renderer_text:
         gaps.append("the measured interpolation rate is never blended from the one-second windows")
+    # The grid the hold stands on must not flip on a boundary wobble: the field session
+    # measured a production sitting on the 45/36 FPS boundary, and the one-second windows
+    # swung the EMA across it every other window, which the panel read as a second beat.
+    if "candidateError + 4.0 < currentError" not in renderer_text:
+        gaps.append("the snap grid can flip on a boundary wobble (no dead zone)")
     # The drawable pool sizes itself to the hold, not to a constant that is right for a one-
     # refresh hold and wrong for a multi-refresh one: a 50 ms hold with a depth-2 pool queues
     # the next submission inside the hold and the next-drawable timeout drops it (33 ms P95).
