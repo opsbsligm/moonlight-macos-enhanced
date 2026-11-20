@@ -223,6 +223,19 @@ def wiring(policy_text, renderer_text, swift_text):
     # the next submission inside the hold and the next-drawable timeout drops it (33 ms P95).
     if "MAX(2LL, _activeCadenceRefreshesPerFrame + 1)" not in renderer_text:
         gaps.append("the drawable pool does not size itself to the cadence hold")
+    # The hold must be locked to the scan-out grid the display-link callback defines, not
+    # to the submission's own wall time: a duration counted from submission makes each
+    # frame's visible gap alternate between N and N+1 refreshes, the beat the field
+    # session read as jitter. The tick is the only anchor, and the target must be stepped
+    # onto the grid with a ceiling, not rounded.
+    if "self->_lastScanoutMediaTime = CACurrentMediaTime()" not in renderer_text:
+        gaps.append("the display-link callback never records the scan-out tick the grid locks to")
+    if "ceil((gridNow - scanoutAnchor) / gridPeriod)" not in renderer_text:
+        gaps.append("the presentation hold is not stepped onto the scan-out grid")
+    if "[commandBuffer presentDrawable:drawable afterMinimumDuration:gridHoldSeconds]" not in renderer_text:
+        gaps.append("the cadence-locked present does not use the grid-aligned hold")
+    if re.search(r"afterMinimumDuration:presentationHoldSeconds", renderer_text):
+        gaps.append("a present still hands the window server the un-aligned hold duration")
     if "completedStats.receivedFrames >= 4" not in renderer_text:
         gaps.append("a sub-four-frame window can seed the measured source rate")
     listed = re.search(r"static\s+var\s+fpss\s*:\s*\[Int\]\s*=\s*\[([^\]]*)\]", swift_text)
