@@ -1764,7 +1764,7 @@ check("presentDrawable:drawable afterMinimumDuration:" in enhanced_present
       and re.search(r"presentationCadenceForInterpolationHold:&", enhanced_present)
       else "the enhanced draw presents every frame unpaced again, which is the honey defect")
 check(enhanced_present.count("presentDrawable:drawable") == 2
-      and re.search(r"afterMinimumDuration:presentationHoldSeconds\];\s*\n\s*\} else \{\s*\n\s*"
+      and re.search(r"afterMinimumDuration:gridHoldSeconds\];\s*\n\s*\} else \{\s*\n\s*"
                     r"\[commandBuffer presentDrawable:drawable\];", enhanced_present),
       "the non-interpolating enhanced frame still presents unpaced beside the paced branch"
       if enhanced_present.count("presentDrawable:drawable") == 2
