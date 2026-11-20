@@ -1586,6 +1586,23 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // check against a subjective report of a real session.
     int64_t _lastLoggedPresentationHoldNs;
     NSInteger _lastLoggedPresentationHoldFps;
+    // The wall time of the most recent display-link scan-out tick. The hold this renderer
+    // asks the window server for is a duration counted from submission, and a submission
+    // that lands between scan-outs makes each frame's visible gap alternate between N and
+    // N+1 refreshes -- the 16.7/22.2 ms beat the field session read as jitter. Locking the
+    // hold to the grid this callback defines is the CVDisplayLink-side equivalent of what
+    // the original Qt renderer gets for free from CAMetalDisplayLink's target timestamp
+    // (see docs/stream-pacing-qt-benchmark.md).
+    CFTimeInterval _lastScanoutMediaTime;
+    // The scan-out grid point the last cadence-locked present targeted, so the next one
+    // lands exactly one whole hold later instead of wherever the next submission happens
+    // to fall. Reset when the display rate changes, because the old grid no longer
+    // describes the panel.
+    CFTimeInterval _lastGridPresentTarget;
+    // The refresh rate the remembered scan-out grid belongs to; a different rate is a
+    // different grid, so the anchor and the remembered target must die together.
+    double _lastScanoutDisplayHz;
+    BOOL _cadenceGridlockLogged;
 
     // Stats helpers
     uint64_t _lastFrameReceiveTimeMs;
@@ -3053,6 +3070,10 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _lastLoggedMeasuredSourceFps = 0.0;
     _lastLoggedPresentationHoldNs = -1;
     _lastLoggedPresentationHoldFps = 0;
+    _lastScanoutMediaTime = 0.0;
+    _lastGridPresentTarget = 0.0;
+    _lastScanoutDisplayHz = 0.0;
+    _cadenceGridlockLogged = NO;
     _frameInterpolationNoSlotWidth = 0;
     _frameInterpolationNoSlotHeight = 0;
     [self teardownFrameInterpolationProcessor];
@@ -5899,7 +5920,42 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
             CFTimeInterval presentationHoldSeconds = 0.0;
             if ([self presentationCadenceForInterpolationHold:&presentationHoldSeconds outputFps:NULL]) {
-                [commandBuffer presentDrawable:drawable afterMinimumDuration:presentationHoldSeconds];
+                // The decision above answered with a duration, and a duration counted from
+                // submission time is the original sin: the submission lands somewhere
+                // between scan-outs, so each frame's visible gap alternates between N and
+                // N+1 refreshes (16.7/22.2 ms on 180 Hz) and the panel reads it as jitter.
+                // The display-link callback fires once per scan-out, so its tick is the
+                // only clock the grid may be built from -- the CVDisplayLink-side
+                // equivalent of the target timestamp CAMetalDisplayLink hands the original
+                // Qt renderer for free (docs/stream-pacing-qt-benchmark.md). Steady state
+                // lands each frame exactly one whole hold after the previous frame's grid
+                // point, so the visible interval is N refreshes, no beat; after a gap the
+                // first frame snaps to the next grid point that is at least N periods
+                // away instead of to wherever the wall clock sits.
+                CFTimeInterval gridHoldSeconds = presentationHoldSeconds;
+                const CFTimeInterval scanoutAnchor = _lastScanoutMediaTime;
+                if (scanoutAnchor > 0.0 && _lastDisplayRefreshRate > 0.0 && _activeCadenceRefreshesPerFrame >= 2) {
+                    const CFTimeInterval gridPeriod = 1.0 / _lastDisplayRefreshRate;
+                    const CFTimeInterval gridNow = CACurrentMediaTime();
+                    CFTimeInterval gridTarget;
+                    if (_lastGridPresentTarget > gridNow) {
+                        gridTarget = _lastGridPresentTarget + presentationHoldSeconds;
+                    } else {
+                        const double cyclesSinceAnchor = ceil((gridNow - scanoutAnchor) / gridPeriod);
+                        gridTarget = scanoutAnchor + (cyclesSinceAnchor + (_activeCadenceRefreshesPerFrame - 1)) * gridPeriod;
+                    }
+                    while (gridTarget <= gridNow) {
+                        gridTarget += gridPeriod;
+                    }
+                    gridHoldSeconds = gridTarget - gridNow;
+                    _lastGridPresentTarget = gridTarget;
+                    if (!_cadenceGridlockLogged) {
+                        Log(LOG_I, @"[video] Presentation gridlock: holds locked to the scan-out grid at %lld refresh(es) on %.2f Hz",
+                            _activeCadenceRefreshesPerFrame, _lastDisplayRefreshRate);
+                        _cadenceGridlockLogged = YES;
+                    }
+                }
+                [commandBuffer presentDrawable:drawable afterMinimumDuration:gridHoldSeconds];
             } else {
                 [commandBuffer presentDrawable:drawable];
             }
@@ -6064,6 +6120,18 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     }
     @synchronized(self) {
         self->_lastDisplayRefreshRate = displayRefreshRate;
+        // This callback runs once per scan-out, so it is the only clock the presentation
+        // grid may be built from. Recording the tick keeps the cadence hold locked to the
+        // same grid the display itself runs on instead of to each submission's own wall
+        // time. A rate change puts the old grid on a different panel, so the remembered
+        // target dies with it.
+        if (displayRefreshRate > 0.0) {
+            self->_lastScanoutMediaTime = CACurrentMediaTime();
+            if (fabs(self->_lastScanoutDisplayHz - displayRefreshRate) > 0.5) {
+                self->_lastScanoutDisplayHz = displayRefreshRate;
+                self->_lastGridPresentTarget = 0.0;
+            }
+        }
     }
     int desiredPendingFrames = [self desiredPendingFramesForDisplayRefreshRate:displayRefreshRate];
     if (self->_lastLoggedPendingTarget != desiredPendingFrames) {
