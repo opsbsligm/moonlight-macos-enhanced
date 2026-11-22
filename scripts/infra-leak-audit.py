@@ -115,7 +115,7 @@ def self_test():
     with tempfile.TemporaryDirectory() as tmp:
         # 1. a clean tree passes
         plant(tmp, "README.md", "hello\n")
-        plant(tmp, "AGENTS.md", "- station https://www" + ".gitlab.example.com:8445 and 172.16" + ".130.6\n")
+        plant(tmp, "AGENTS.md", "- station https://www" + ".bsligm" + ".com:8445 and 172.16" + ".130.6\n")
         if audit(tmp):
             failures.append("a clean tree was refused")
         # 2. each pattern in the wrong place is refused

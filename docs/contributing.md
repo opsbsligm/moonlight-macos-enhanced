@@ -108,6 +108,7 @@ Moonlight-macOS/
 2. 创建特性分支：`git checkout -b feature/your-feature`
 3. 提交更改，遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范
 4. 推送分支并创建 Pull Request
+5. 大体积截图 / 图片（~15MB 级 PNG 等）建议压缩后再入库，或走 Git LFS；本仓目前未强制 LFS
 
 ### Commit 规范
 ```
