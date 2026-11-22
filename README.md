@@ -13,6 +13,8 @@
 
 本仓库始于 [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced)（其上游为 [Moonlight Game Streaming Project](https://github.com/moonlight-stream)）。自 2026-10 起**完全独立**，删除所有上游 remote，不再同步任何上游更改，所有开发方向自主决定。
 
+> **商标声明**：本仓为社区增强 fork，与 Moonlight 官方（[moonlight-stream](https://github.com/moonlight-stream) / Moonlight Game Streaming Project）无关联、未获其认可；Moonlight 为各自权利人的商标/名称。
+
 ---
 
 ## ✨ 核心特性

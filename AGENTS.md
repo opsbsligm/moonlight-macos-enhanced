@@ -17,7 +17,7 @@ Wave AO 起，真实基础设施值从本文件迁出到**仓外本地文档**
 `~/Documents/ChatGPT/moonlight/infra-baseline/infra-baseline.md`（不入库），
 本文件只保留规则与占位约定，不再持有地址。
 
-- **唯一事实源**：家庭 GitLab（域名 / 端口 / project id 见本地基线文档），
+- **唯一事实源**：家庭 GitLab（`gitlab.example.com:8445`；project id 见本地基线文档），
   项目 `moonlight/moonlight-macos-enhanced`。开发 PAT `~/.config/gitlab-<instance>/pat`，
   审查 PAT `~/.config/gitlab-<instance>/review-pat`（均 mode 600，不入库、不出日志）。
 - **GitHub 镜像**：`opsbsligm/moonlight-macos-enhanced`（镜像账号本身是公开设计，

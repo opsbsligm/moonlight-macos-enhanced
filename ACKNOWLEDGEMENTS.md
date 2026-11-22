@@ -7,6 +7,7 @@ This repository is an enhanced macOS distribution in the Moonlight ecosystem. Th
 ## Direct Code Lineage / 直接代码谱系
 
 - **[`moonlight-macos`](https://github.com/MichaelMKenny/moonlight-macos)** — Native macOS client foundation for this repository / 本仓库最直接的 macOS 客户端基础来源
+- **App icon / App 图标** — Derived from the upstream moonlight-macOS AppIcon (GPLv3). The icon artwork in `Limelight/macOS/Assets.xcassets/AppIcon.appiconset/` is adapted from the original moonlight-macOS distribution.
 - **[`moonlight-ios`](https://github.com/moonlight-stream/moonlight-ios)** — Historical Limelight/Moonlight client lineage that earlier macOS work was derived from / 更上层的 Limelight / Moonlight 客户端历史谱系来源
 - **[`moonlight-common-c`](https://github.com/moonlight-stream/moonlight-common-c)** — Core GameStream/Sunshine client protocol implementation used by the project / 项目使用的核心 GameStream / Sunshine 客户端协议实现
 - **[`qiin2333/moonlight-common-c`](https://github.com/qiin2333/moonlight-common-c)** — Important integration reference for the microphone-capable common-c path used in this enhanced branch / 当前增强分支中麦克风相关 common-c 能力的重要集成参考

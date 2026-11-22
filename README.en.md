@@ -8,6 +8,8 @@
 
 A standalone enhanced macOS client derived from the [Moonlight Game Streaming Project](https://github.com/moonlight-stream), historically originating from [skyhua0224/moonlight-macos-enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced). Since October 2026 this repository is the independent mainline and no longer syncs with any upstream.
 
+> **Trademark notice**: This repository is a community-enhanced fork, unaffiliated with and not endorsed by the official Moonlight project ([moonlight-stream](https://github.com/moonlight-stream) / Moonlight Game Streaming Project). "Moonlight" is a trademark or name of its respective owners.
+
 **What differs from the original, in one line**: keyboard and mouse input follow the same industrial-standard mapping used by Parsec, UU Remote and Steam Link, and that mapping is testable and diagnosable. Everything else — codecs, HDR, audio, controllers — comes from upstream. The mapping table, the design rules and the root causes behind the fixed issues are in [`docs/input-mapping-design.md`](docs/input-mapping-design.md); the head-to-head comparison is in [`docs/input-mapping-benchmark.md`](docs/input-mapping-benchmark.md).
 
 ## What it does
