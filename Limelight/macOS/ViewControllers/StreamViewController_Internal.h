@@ -409,7 +409,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic, strong, readonly) NSImageView *iconView;
 @property (nonatomic, copy) void (^activationHandler)(NSEvent *event);
 @property (nonatomic, copy) void (^dragHandler)(NSGestureRecognizerState state, NSPoint translation);
-@property (nonatomic, copy) void (^hoverHandler)(BOOL hovering);
+@property (nonatomic, copy) void (^hoverHandler)(NSEvent *event);
 @property (nonatomic) BOOL activeAppearance;
 @property (nonatomic) BOOL compactAppearance;
 // The compact tab answering a pointer that stopped at the edge. Drawing-only: it

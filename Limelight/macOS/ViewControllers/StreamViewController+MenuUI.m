@@ -1311,8 +1311,17 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
         }
         [strongSelf handleEdgeMenuButtonDragWithState:state translation:translation];
     };
-    self.edgeMenuButton.hoverHandler = ^(__unused BOOL hovering) {
+    self.edgeMenuButton.hoverHandler = ^(NSEvent *event) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf.edgeMenuPhase == MLEdgeMenuPhaseCollapsed) {
+            // The floating panel can receive tracking over the activation band.
+            // Give the existing dwell timer that event, but leave locked flicks
+            // to the stream's relative motion path.
+            if (!strongSelf.isMouseCaptured || strongSelf.isRemoteDesktopMode) {
+                [strongSelf handleEdgeSensorSummonForEvent:event];
+            }
+            return;
+        }
         [strongSelf handleEdgeMenuHover];
     };
     [panelContentView addSubview:self.edgeMenuButton];
