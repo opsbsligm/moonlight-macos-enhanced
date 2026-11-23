@@ -5,6 +5,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+static inline bool MLInterpolationCanStageAfterSource(uint64_t previousSource,
+                                                      uint64_t submittedSource)
+{
+    return previousSource != 0 && previousSource == submittedSource;
+}
+
 static inline bool MLInterpolationResultIsCurrent(uint64_t current, uint64_t result,
                                                   uint64_t submittedSource)
 {
