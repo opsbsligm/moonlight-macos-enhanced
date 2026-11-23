@@ -1575,10 +1575,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // real production and the hold grid outran the frames it was supposed to pace.
     double _measuredInterpolatedFpsEma;
     double _lastLoggedMeasuredInterpolatedFps;
-    // The whole-refresh answer the last cadence decision produced, so the drawable pool
-    // can size itself to the hold instead of to a constant that was right for a 1 refresh
-    // hold and wrong for a 3 refresh one: a 50 ms hold with a depth-2 pool queues the next
-    // submission inside the hold and the next-drawable timeout drops it for nothing.
+    // The whole-refresh answer the last cadence decision produced for queue sizing.
     long long _activeCadenceRefreshesPerFrame;
     // The hold the last present asked the window server for, in nanoseconds, and the frame
     // rate it was computed for. Both exist so the answer is logged when it changes and not
@@ -3199,11 +3196,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 
     if (_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
         _activeCadenceRefreshesPerFrame >= 2) {
-        // A multi-refresh hold parks the pipeline mid-frame: with a constant depth-2 pool the
-        // next submission waits inside the hold and the next-drawable timeout drops it, which
-        // is the measured 33 ms frame P95. One slot per held refresh plus headroom carries the
-        // hold; the 2 floor keeps a 1 refresh session byte-for-byte on the shipped constant.
-        return (NSUInteger)MAX(2LL, _activeCadenceRefreshesPerFrame + 1);
+        return 3;
     }
 
     return 2;

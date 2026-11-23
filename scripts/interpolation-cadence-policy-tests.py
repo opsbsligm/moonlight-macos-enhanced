@@ -218,11 +218,13 @@ def wiring(policy_text, renderer_text, swift_text):
     # swung the EMA across it every other window, which the panel read as a second beat.
     if "candidateError + 4.0 < currentError" not in renderer_text:
         gaps.append("the snap grid can flip on a boundary wobble (no dead zone)")
-    # The drawable pool sizes itself to the hold, not to a constant that is right for a one-
-    # refresh hold and wrong for a multi-refresh one: a 50 ms hold with a depth-2 pool queues
-    # the next submission inside the hold and the next-drawable timeout drops it (33 ms P95).
-    if "MAX(2LL, _activeCadenceRefreshesPerFrame + 1)" not in renderer_text:
-        gaps.append("the drawable pool does not size itself to the cadence hold")
+    drawable_policy = re.search(
+        r"- \(NSUInteger\)desiredEnhancedDrawableDepth\s*\{(.*?)\n\}", renderer_text, re.S)
+    if drawable_policy is None or set(re.findall(r"\breturn\s+([^;]+);", drawable_policy[1])) != {"2", "3"}:
+        gaps.append("the drawable pool must use only Metal's supported depths of two or three")
+    if drawable_policy is None or not re.search(
+        r"_activeCadenceRefreshesPerFrame >= 2\)\s*\{\s*return 3;", drawable_policy[1]):
+        gaps.append("the drawable pool must use three buffers for a multi-refresh hold")
     if re.findall(r"presentDrawable:drawable afterMinimumDuration:(\w+)", renderer_text) != ["presentationHoldSeconds"]:
         gaps.append("Metal must receive the previous drawable's minimum display duration")
     if not re.search(r"hasInterpolatedPair\s*&&\s*\[self presentationCadenceForInterpolationHold:", renderer_text):
@@ -338,21 +340,13 @@ def red_proofs():
               % ("ok" if hit else "FAIL", len(wrong)))
         rc |= 0 if hit else 1
 
-    # A depth-2 pool is right for a one-refresh hold and wrong for a multi-refresh one: the
-    # next submission waits inside the 50 ms hold and the next-drawable timeout drops it,
-    # which is the 33 ms frame P95 the field session measured. Putting the constant back
-    # must go red.
-    shallow = renderer.replace(
-        "return (NSUInteger)MAX(2LL, _activeCadenceRefreshesPerFrame + 1);",
-        "return 2;", 1)
-    if shallow == renderer:
-        print("FAIL  the drawable pool depth could not be mutated (the source text moved)")
-        rc = 1
-    else:
-        gaps = wiring(policy, shallow, swift)
-        hit = any("size itself to the cadence hold" in gap for gap in gaps)
-        print("%-4s letting the drawable pool forget the cadence hold is refused (%d gaps named)"
-              % ("ok" if hit else "FAIL", len(gaps)))
+    for depth, expected in [("2", "three buffers for a multi-refresh hold"),
+                            ("4", "supported depths of two or three")]:
+        mutated_pool = renderer.replace(
+            "_activeCadenceRefreshesPerFrame >= 2) {\n        return 3;",
+            "_activeCadenceRefreshesPerFrame >= 2) {\n        return " + depth + ";", 1)
+        hit = any(expected in gap for gap in wiring(policy, mutated_pool, swift))
+        check(hit, "reject unsupported drawable policy: " + expected)
         rc |= 0 if hit else 1
 
     # The production answer must be measured, not assumed: dropping the interpolation EMA
