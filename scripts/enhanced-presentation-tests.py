@@ -278,6 +278,13 @@ assert 'dispatch_async(_vtInterpolationQueue' in fi_teardown and '_interpolation
 assert '!queuedInterpolation && _interpolationStagingSequence == sourceSequence' in decode, 'decode immediately clears async staging'
 
 assert '_interpolationStagingSequence = sourceSequence;' in decode, 'staging guard disconnected'
+assert re.search(
+    r'if \(!measureInterpolationOnly\) \{\s+_interpolationStagingSequence = sourceSequence;', decode
+), 'a timing probe must not stage source presentation'
+assert (
+    'MLEnhancementProbeDue(_lastInterpolationTimingProbeMs, nowMs,' in decode
+    and '_lastInterpolationTimingProbeMs = nowMs;' in decode
+), 'slow interpolation must be measured again at bounded intervals'
 assert decode.index('MLInterpolationCanStageAfterSource(_currentFrameSequence,') < decode.index('CVBufferRelease(_currentFrame);'), 'admission must check the previous source before replacing it'
 assert decode.index('MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs)') < decode.index('previousInterpolationSourceFrame = CVBufferRetain('), 'slow VT work can stage before the source deadline check'
 assert '_previousInterpolationSourceFrame == _currentFrame' in decode, 'stale cached buffer can still seed interpolation'
@@ -471,6 +478,14 @@ if native_toolchain is not None:
     fi_native_replay(fi_methods.replace('dispatch_async(_vtInterpolationQueue, ^{','MLTestRunInline(^{',1),'FI-end-session-during-process',False)
     fi_native_replay(fi_methods.replace('_interpolationProcessInFlight ||','(_interpolationProcessInFlight && false) ||',1),'FI-overlapping-tasks',False)
     fi_native_replay(fi_methods.replace('!MLEnhancementShouldWait(true, _interpolationStagingStartedAtMs,','!MLEnhancementShouldWait(true, LiGetMillis(),',1),'FI-unbounded-staging',False)
+    fi_native_replay(
+        fi_methods.replace('(measureOnly || MLEnhancementMayPublish(', '(false || MLEnhancementMayPublish(', 1),
+        'FI-probe-skips-already-submitted-source', False,
+    )
+    fi_native_replay(
+        fi_methods.replace('if (measureOnly || !current ||', 'if (!current ||', 1),
+        'FI-probe-publishes-midpoint', False,
+    )
 # Hardware is opt-in, but its report contract is verified on every normal gate run.
 spec=importlib.util.spec_from_file_location('vt_hardware_probe', ROOT/'scripts/vt-enhancement-probe.py')
 vt_probe=importlib.util.module_from_spec(spec);spec.loader.exec_module(vt_probe)

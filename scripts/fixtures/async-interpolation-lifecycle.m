@@ -69,6 +69,7 @@ static NSString *MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpola
     uint32_t _interpolationOverloadStrikes;
     BOOL _interpolationSuspended;
     uint64_t _interpolationSuspendedSinceMs, _interpolationProbeBackoffMs;
+    uint64_t _lastInterpolationTimingProbeMs;
     BOOL _interpolationProcessInFlight, _frameInterpolationWarmupInFlight, _frameInterpolationCadenceForced;
     NSInteger _frameInterpolationWarmupWidth, _frameInterpolationWarmupHeight;
     NSInteger _frameInterpolationInputWidth, _frameInterpolationInputHeight;
@@ -118,7 +119,13 @@ static Probe *freshProbe(BOOL blocked) {
     r->_currentFrameSequence=7;r->_lastPresentedFrameSequence=6;r->_interpolationStagingSequence=7;
     r->_interpolationStagingStartedAtMs=100;r->_interpolationStagingBudgetMs=5;return r;
 }
-static BOOL stage(Probe *r) { return [r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:7 enqueueTimeMs:90 frameNumber:42 displayRefreshRate:180]; }
+static BOOL stageMeasurement(Probe *r, BOOL measureOnly) {
+    return [r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame
+                                              toSource:r->_currentFrame
+                                         frameSequence:7 enqueueTimeMs:90 frameNumber:42
+                                    displayRefreshRate:180 measureOnly:measureOnly];
+}
+static BOOL stage(Probe *r) { return stageMeasurement(r, NO); }
 static void dispose(Probe *r) { [r teardownFrameInterpolationProcessor];dispatch_sync(r->_vtInterpolationQueue,^{});if(r->_currentFrame){CVBufferRelease(r->_currentFrame);r->_currentFrame=NULL;} }
 int main(void) { @autoreleasepool {
     assert([NSStringFromClass([VTFrameProcessorFrame class]) isEqualToString:@"MLTestFIFrameProcessorFrame"]);
@@ -130,6 +137,23 @@ int main(void) { @autoreleasepool {
     assert(stage(r));waitFor(r.finished);assert(r->_pendingInterpolatedFrame && r->_pendingInterpolatedForSourceSequence==7);
     assert(!p.ranOnCaller && fabs(p.midpoint-0.995)<0.000001 && fabs(p.previousTime-0.99)<0.000001);
     assert(r->_interpolationStagingSequence==0 && r->_pendingInterpolatedFrameNumber==42);dispose(r);
+    // A timing probe must update a stale estimate even after the source displayed.
+    // It also must not publish a midpoint when the source has yet to display.
+    for (int submitted = 0; submitted <= 1; ++submitted) {
+        r = freshProbe(NO);
+        p = r->_frameInterpolationProcessor;
+        p.elapsedMs = 2;
+        r->_interpolationStagingSequence = 0;
+        r->_lastPresentedFrameSequence = submitted ? 7 : 6;
+        r->_interpolationCallEmaMs = 12;
+        assert(MLPresentationNeedsDraw(7, 0, r->_lastPresentedFrameSequence, 0, false) == !submitted);
+        assert(stageMeasurement(r, YES));
+        waitFor(r.finished);
+        assert(p.calls == 1 && r->_interpolationCallEmaMs == 9);
+        assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0, r->_interpolationCallEmaMs));
+        assert(!r->_pendingInterpolatedFrame && !r->_interpolationStagingSequence);
+        dispose(r);
+    }
     // Timeout releases source without releasing the task's ownership slot.
     r=freshProbe(YES);p=r->_frameInterpolationProcessor;assert(stage(r));waitFor(p.entered);
     assert(!stage(r));atomic_store(&testClock,106);[r expireInterpolationStagingIfNeeded];
@@ -178,7 +202,7 @@ int main(void) { @autoreleasepool {
                 r->_interpolationStagingStartedAtMs=LiGetMillis();
             }
             p.elapsedMs=mode==0?900:((mode==3&&task==1)?900:((mode==2&&task==1)?4:10));
-            assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:7+task enqueueTimeMs:90 frameNumber:42 displayRefreshRate:180]);
+            assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:7+task enqueueTimeMs:90 frameNumber:42 displayRefreshRate:180 measureOnly:NO]);
             waitFor(r.finished);
         }
         assert(r->_interpolationSuspended==(mode!=0&&mode!=2));
@@ -204,7 +228,7 @@ int main(void) { @autoreleasepool {
         atomic_store(&testClock,105);
         @synchronized(r){r->_currentFrameSequence=8;r->_interpolationStagingSequence=8;r->_interpolationStagingStartedAtMs=LiGetMillis();}
         p.elapsedMs=900;
-        assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:8 enqueueTimeMs:105 frameNumber:42 displayRefreshRate:180]);
+        assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:8 enqueueTimeMs:105 frameNumber:42 displayRefreshRate:180 measureOnly:NO]);
         waitFor(r.finished);
         assert(r->_interpolationSuspended && r->_interpolationOverloadStrikes==3 && !r->_pendingInterpolatedFrame && p.calls==2);
         dispose(r);
@@ -224,7 +248,7 @@ int main(void) { @autoreleasepool {
     dispatch_semaphore_signal(p.releaseWork);waitFor(r.finished);
     assert(!r->_interpolationSuspended && r->_interpolationOverloadStrikes==0 && p.calls==1);
     @synchronized(r){r->_currentFrameSequence=8;r->_interpolationStagingSequence=8;r->_interpolationStagingStartedAtMs=LiGetMillis();}
-    assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:8 enqueueTimeMs:LiGetMillis() frameNumber:42 displayRefreshRate:180]);
+    assert([r stageInterpolatedFrameFromPreviousSource:r->_previousInterpolationSourceFrame toSource:r->_currentFrame frameSequence:8 enqueueTimeMs:LiGetMillis() frameNumber:42 displayRefreshRate:180 measureOnly:NO]);
     waitFor(r.finished);
     assert(r->_interpolationOverloadStrikes==1 && !r->_interpolationSuspended && q.calls==1);
     dispose(r);

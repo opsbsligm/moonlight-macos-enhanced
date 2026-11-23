@@ -1517,6 +1517,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // long to wait before the next single-frame retry. Both reset with the breaker.
     uint64_t _interpolationSuspendedSinceMs;
     uint64_t _interpolationProbeBackoffMs;
+    uint64_t _lastInterpolationTimingProbeMs;
     uint64_t _interpolationStagingStartedAtMs;
     uint64_t _interpolationStagingBudgetMs;
     // Exponential mean of finished VTLLFI calls in ms. The staging deadline is
@@ -2056,6 +2057,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         _interpolationSuspended = NO;
         _interpolationSuspendedSinceMs = 0;
         _interpolationProbeBackoffMs = 0;
+        _lastInterpolationTimingProbeMs = 0;
         _interpolationCallEmaMs = 0;
         _frameInterpolationWarmupGeneration += 1;
         _frameInterpolationWarmupInFlight = NO;
@@ -3650,11 +3652,13 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
     CVImageBufferRef previousInterpolationSourceFrame = NULL;
     uint64_t sourceSequence = 0;
+    BOOL measureInterpolationOnly = NO;
     @synchronized(self) {
         const BOOL cacheMatchesSource = _currentFrame != NULL &&
             _previousInterpolationSourceFrame == _currentFrame &&
             CMTimeCompare(_previousInterpolationSourcePresentationTimeStamp, _currentFramePresentationTimeStamp) == 0;
         if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff &&
+            !_interpolationProcessInFlight &&
             MLInterpolationCanStageAfterSource(_currentFrameSequence, _lastPresentedFrameSequence, cacheMatchesSource)) {
             CMTime sourceInterval = CMTimeSubtract(presentationTimeStamp, _currentFramePresentationTimeStamp);
             if (CMTIME_IS_NUMERIC(sourceInterval) && CMTimeCompare(sourceInterval, kCMTimeZero) > 0) {
@@ -3663,6 +3667,13 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                 if (MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs)) {
                     previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
                 } else {
+                    const uint64_t nowMs = LiGetMillis();
+                    if (MLEnhancementProbeDue(_lastInterpolationTimingProbeMs, nowMs,
+                                              MAX((uint64_t)2000, _interpolationProbeBackoffMs))) {
+                        _lastInterpolationTimingProbeMs = nowMs;
+                        measureInterpolationOnly = YES;
+                        previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
+                    }
                     _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
                     [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
                                                      report:MLVideoFrameInterpolationReportPausedForProcessing
@@ -3691,7 +3702,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         sourceSequence = _currentFrameSequence;
         if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff &&
             previousInterpolationSourceFrame != NULL) {
-            _interpolationStagingSequence = sourceSequence;
+            if (!measureInterpolationOnly) {
+                _interpolationStagingSequence = sourceSequence;
+            }
             _interpolationStagingStartedAtMs = LiGetMillis();
             uint64_t previousInterpolationStagingBudgetMs = _interpolationStagingBudgetMs;
             _interpolationStagingBudgetMs = MLEnhancementAdaptiveBudgetMs(
@@ -3699,7 +3712,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             // One line per budget change (not per frame) so a session log can
             // replay the engine's cost distribution and the window it was
             // charged against, instead of only the calls that tripped it.
-            if (_interpolationStagingBudgetMs != previousInterpolationStagingBudgetMs) {
+            if (!measureInterpolationOnly && _interpolationStagingBudgetMs != previousInterpolationStagingBudgetMs) {
                 Log(LOG_I, @"[video] VT frame interpolation staging budget %llums -> %llums (ema call %.0fms refresh %.1fHz source %d fps)",
                     (unsigned long long)previousInterpolationStagingBudgetMs,
                     (unsigned long long)_interpolationStagingBudgetMs,
@@ -3715,7 +3728,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                          frameSequence:sourceSequence
                                          enqueueTimeMs:(frameContext != NULL ? frameContext->enqueueTimeMs : 0)
                                           frameNumber:(frameContext != NULL ? frameContext->frameNumber : 0)
-                                    displayRefreshRate:_lastDisplayRefreshRate];
+                                    displayRefreshRate:_lastDisplayRefreshRate
+                                            measureOnly:measureInterpolationOnly];
         @synchronized(self) {
             if (!queuedInterpolation && _interpolationStagingSequence == sourceSequence) {
                 _interpolationStagingSequence = 0;
@@ -4607,6 +4621,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                    enqueueTimeMs:(uint64_t)enqueueTimeMs
                                      frameNumber:(uint32_t)frameNumber
                               displayRefreshRate:(double)displayRefreshRate
+                                     measureOnly:(BOOL)measureOnly
 {
     @synchronized(self) {
         if (_interpolationProcessInFlight || _currentFrame != sourceFrame ||
@@ -4692,10 +4707,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     CVPixelBufferPoolRef pool = (__bridge CVPixelBufferPoolRef)poolLifetime;
                     BOOL runTask;
                     @synchronized(self) {
+                        // A timing probe measures VT even if the source has already displayed.
                         runTask = processor == self->_frameInterpolationProcessor &&
-                            MLEnhancementMayPublish(generation, self->_interpolationProcessGeneration,
+                            generation == self->_interpolationProcessGeneration &&
+                            (measureOnly || MLEnhancementMayPublish(generation, self->_interpolationProcessGeneration,
                                 sourceSequence, self->_currentFrameSequence, self->_currentFrame == input,
-                                self->_lastPresentedFrameSequence == sourceSequence) &&
+                                self->_lastPresentedFrameSequence == sourceSequence)) &&
                             MLEnhancementShouldWait(true, startedAtMs, LiGetMillis(), budgetMs);
                     }
                     uint64_t processStartedAtMs = LiGetMillis();
@@ -4747,7 +4764,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 self->_lastPresentedFrameSequence == sourceSequence);
                         if (self->_interpolationStagingSequence == sourceSequence)
                             self->_interpolationStagingSequence = 0;
-                        if (!current || !interpolatedFrame || self->_interpolationSuspended ||
+                        if (measureOnly || !current || !interpolatedFrame || self->_interpolationSuspended ||
                             !MLEnhancementShouldWait(true, startedAtMs, LiGetMillis(), budgetMs)) {
                             if (interpolatedFrame) CVBufferRelease(interpolatedFrame);
                             // Preserve the paused processor identity. Retiring here
