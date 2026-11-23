@@ -26,6 +26,13 @@ int main(void) {
     assert(MLInterpolationCanStageAfterSource(9,9,true));
     assert(!MLInterpolationCanStageAfterSource(10,9,true));
     assert(!MLInterpolationCanStageAfterSource(10,10,false));
+    // The same measured cost can fit a quiet desktop but not a true 90 FPS source.
+    assert(!MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,20));
+    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 37.0,20));
+    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,6));
+    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,0));
+    assert(!MLInterpolationCanFinishBeforeNextSource(11.0,11));
+    assert(!MLInterpolationCanFinishBeforeNextSource(0.0,0));
     assert(MLPresentationNeedsDraw(11,0,9,0,false));
     assert(MLInterpolationCanStageAfterSource(11,11,true));
     assert(!MLPresentationNeedsDraw(0,0,0,0,false));
@@ -272,6 +279,7 @@ assert '!queuedInterpolation && _interpolationStagingSequence == sourceSequence'
 
 assert '_interpolationStagingSequence = sourceSequence;' in decode, 'staging guard disconnected'
 assert decode.index('MLInterpolationCanStageAfterSource(_currentFrameSequence,') < decode.index('CVBufferRelease(_currentFrame);'), 'admission must check the previous source before replacing it'
+assert decode.index('MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs)') < decode.index('previousInterpolationSourceFrame = CVBufferRetain('), 'slow VT work can stage before the source deadline check'
 assert '_previousInterpolationSourceFrame == _currentFrame' in decode, 'stale cached buffer can still seed interpolation'
 assert 'CMTimeCompare(_previousInterpolationSourcePresentationTimeStamp, _currentFramePresentationTimeStamp) == 0' in decode, 'a reused buffer can still carry a stale timestamp'
 assert '_interpolationStagingSequence == sourceSequence' in decode, 'old completion clears newer staging'

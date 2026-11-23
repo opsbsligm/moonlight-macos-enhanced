@@ -3654,8 +3654,21 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         const BOOL cacheMatchesSource = _currentFrame != NULL &&
             _previousInterpolationSourceFrame == _currentFrame &&
             CMTimeCompare(_previousInterpolationSourcePresentationTimeStamp, _currentFramePresentationTimeStamp) == 0;
-        if (MLInterpolationCanStageAfterSource(_currentFrameSequence, _lastPresentedFrameSequence, cacheMatchesSource)) {
-            previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
+        if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff &&
+            MLInterpolationCanStageAfterSource(_currentFrameSequence, _lastPresentedFrameSequence, cacheMatchesSource)) {
+            CMTime sourceInterval = CMTimeSubtract(presentationTimeStamp, _currentFramePresentationTimeStamp);
+            if (CMTIME_IS_NUMERIC(sourceInterval) && CMTimeCompare(sourceInterval, kCMTimeZero) > 0) {
+                const double sourceIntervalMs = CMTimeGetSeconds(sourceInterval) * 1000.0;
+                // A later source replaces this pair even if VT has time left in its processing budget.
+                if (MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs)) {
+                    previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
+                } else {
+                    _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+                    [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                                     report:MLVideoFrameInterpolationReportPausedForProcessing
+                                                     reason:@"measured VT processing cost does not fit the current source interval"];
+                }
+            }
         }
         if (_currentFrame) {
             CVBufferRelease(_currentFrame);

@@ -12,6 +12,12 @@ static inline bool MLInterpolationCanStageAfterSource(uint64_t previousSource,
     return previousSource != 0 && previousSource == submittedSource && cacheMatchesSource;
 }
 
+static inline bool MLInterpolationCanFinishBeforeNextSource(double sourceIntervalMs,
+                                                           uint64_t interpolationCostMs)
+{
+    return sourceIntervalMs > (double)interpolationCostMs;
+}
+
 static inline bool MLInterpolationResultIsCurrent(uint64_t current, uint64_t result,
                                                   uint64_t submittedSource)
 {
