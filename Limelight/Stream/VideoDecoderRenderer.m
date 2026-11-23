@@ -3649,11 +3649,14 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     }
 
     CVImageBufferRef previousInterpolationSourceFrame = NULL;
-    BOOL previousSourceSubmitted = NO;
     uint64_t sourceSequence = 0;
     @synchronized(self) {
-        previousSourceSubmitted = MLInterpolationCanStageAfterSource(_currentFrameSequence,
-                                                                     _lastPresentedFrameSequence);
+        const BOOL cacheMatchesSource = _currentFrame != NULL &&
+            _previousInterpolationSourceFrame == _currentFrame &&
+            CMTimeCompare(_previousInterpolationSourcePresentationTimeStamp, _currentFramePresentationTimeStamp) == 0;
+        if (MLInterpolationCanStageAfterSource(_currentFrameSequence, _lastPresentedFrameSequence, cacheMatchesSource)) {
+            previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
+        }
         if (_currentFrame) {
             CVBufferRelease(_currentFrame);
         }
@@ -3667,9 +3670,6 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         _pendingInterpolatedFrameNumber = 0;
         _deferredCurrentSourceSequence = 0;
         _interpolationStagingSequence = 0;
-        if (previousSourceSubmitted && _previousInterpolationSourceFrame) {
-            previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
-        }
         _currentFrame = CVBufferRetain(imageBuffer);
         _currentFramePresentationTimeStamp = presentationTimeStamp;
         _currentFrameEnqueueTimeMs = frameContext != NULL ? frameContext->enqueueTimeMs : 0;

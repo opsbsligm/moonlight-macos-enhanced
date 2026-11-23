@@ -22,11 +22,12 @@ DRIVER = r'''
 #include "ActualPresentationMetrics.h"
 #include <assert.h>
 int main(void) {
-    assert(!MLInterpolationCanStageAfterSource(0,0));
-    assert(MLInterpolationCanStageAfterSource(9,9));
-    assert(!MLInterpolationCanStageAfterSource(10,9));
+    assert(!MLInterpolationCanStageAfterSource(0,0,false));
+    assert(MLInterpolationCanStageAfterSource(9,9,true));
+    assert(!MLInterpolationCanStageAfterSource(10,9,true));
+    assert(!MLInterpolationCanStageAfterSource(10,10,false));
     assert(MLPresentationNeedsDraw(11,0,9,0,false));
-    assert(MLInterpolationCanStageAfterSource(11,11));
+    assert(MLInterpolationCanStageAfterSource(11,11,true));
     assert(!MLPresentationNeedsDraw(0,0,0,0,false));
     // Staging cannot let the source overtake its midpoint.
     assert(!MLPresentationNeedsDraw(10,10,9,0,false));
@@ -195,6 +196,7 @@ header = POLICY.read_text()
 assert replay(header) == 0, 'shipping replay failed'
 mutations = [
     ('midpoint-replaces-missed-source', 'previousSource == submittedSource', 'previousSource >= submittedSource'),
+    ('midpoint-uses-stale-cache', '&& cacheMatchesSource;', '&& (cacheMatchesSource || submittedSource != 0);'),
     ('source-overtakes-midpoint', 'current == 0 || staging == current', 'current == 0 || staging == UINT64_MAX'),
     ('repeat-super-resolution', 'return current != submittedSource;', 'return current != UINT64_MAX || submittedSource == 0;'),
     ('accept-stale-VT', 'result == current', 'result <= current'),
@@ -250,7 +252,8 @@ def section(start, end):
 draw = section('- (void)drawInMTKView:', '- (void)start\n')
 stage = section('- (BOOL)stageInterpolatedFrameFromPreviousSource:', '- (BOOL)presentationCadenceForInterpolationHold:')
 callback = section('static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,\n', '- (void)stop\n')
-decode = section('- (void)handleDecompressionOutput:', '- (BOOL)createDecompressionSession')
+decode_start = source.rindex('- (void)handleDecompressionOutput:')
+decode = source[decode_start:source.index('- (BOOL)createDecompressionSession', decode_start)]
 assert draw.index('MLPresentationNeedsDraw(') < draw.index('copyFrameUsingFrameProcessorIfNeeded:'), 'duplicate SR work'
 assert 'MLPresentationNeedsDraw(' in callback and 'if (shouldRetryEnhancedFrame)' in callback, 'refresh retry disconnected'
 assert stage.index('MLEnhancementMayPublish(') < stage.index('_pendingInterpolatedFrame = interpolatedFrame;'), 'stale publication'
@@ -268,8 +271,9 @@ assert 'dispatch_async(_vtInterpolationQueue' in fi_teardown and '_interpolation
 assert '!queuedInterpolation && _interpolationStagingSequence == sourceSequence' in decode, 'decode immediately clears async staging'
 
 assert '_interpolationStagingSequence = sourceSequence;' in decode, 'staging guard disconnected'
-assert decode.index('MLInterpolationCanStageAfterSource(_currentFrameSequence,') < decode.index('_currentFrameSequence += 1;'), 'admission must check the previous source'
-assert 'if (previousSourceSubmitted && _previousInterpolationSourceFrame)' in decode, 'missed source does not suppress the next midpoint'
+assert decode.index('MLInterpolationCanStageAfterSource(_currentFrameSequence,') < decode.index('CVBufferRelease(_currentFrame);'), 'admission must check the previous source before replacing it'
+assert '_previousInterpolationSourceFrame == _currentFrame' in decode, 'stale cached buffer can still seed interpolation'
+assert 'CMTimeCompare(_previousInterpolationSourcePresentationTimeStamp, _currentFramePresentationTimeStamp) == 0' in decode, 'a reused buffer can still carry a stale timestamp'
 assert '_interpolationStagingSequence == sourceSequence' in decode, 'old completion clears newer staging'
 assert draw.index('dispatch_semaphore_wait(') < draw.index('copyFrameUsingFrameProcessorIfNeeded:'), 'SR runs before GPU admission'
 assert draw.count('dispatch_semaphore_wait(') == 1, 'double reservation'

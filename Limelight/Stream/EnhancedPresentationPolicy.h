@@ -6,9 +6,10 @@
 #include <stdint.h>
 
 static inline bool MLInterpolationCanStageAfterSource(uint64_t previousSource,
-                                                      uint64_t submittedSource)
+                                                      uint64_t submittedSource,
+                                                      bool cacheMatchesSource)
 {
-    return previousSource != 0 && previousSource == submittedSource;
+    return previousSource != 0 && previousSource == submittedSource && cacheMatchesSource;
 }
 
 static inline bool MLInterpolationResultIsCurrent(uint64_t current, uint64_t result,
