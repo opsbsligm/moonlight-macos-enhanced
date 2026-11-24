@@ -3198,7 +3198,11 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 
     if (_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
         _activeCadenceRefreshesPerFrame >= 2) {
-        return 3;
+        // A multi-refresh hold parks the pipeline mid-frame: with a constant depth-2 pool the
+        // next submission waits inside the hold and the next-drawable timeout drops it, which
+        // is the measured 33 ms frame P95. One slot per held refresh plus headroom carries the
+        // hold; the 2 floor keeps a 1 refresh session byte-for-byte on the shipped constant.
+        return (NSUInteger)MAX(2LL, _activeCadenceRefreshesPerFrame + 1);
     }
 
     return 2;
