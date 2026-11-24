@@ -3196,13 +3196,11 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         return 3;
     }
 
+    // CAMetalLayer supports at most three drawables. Use the extra slot
+    // during a multi-refresh hold so the next frame can obtain a drawable.
     if (_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
         _activeCadenceRefreshesPerFrame >= 2) {
-        // A multi-refresh hold parks the pipeline mid-frame: with a constant depth-2 pool the
-        // next submission waits inside the hold and the next-drawable timeout drops it, which
-        // is the measured 33 ms frame P95. One slot per held refresh plus headroom carries the
-        // hold; the 2 floor keeps a 1 refresh session byte-for-byte on the shipped constant.
-        return (NSUInteger)MAX(2LL, _activeCadenceRefreshesPerFrame + 1);
+        return 3;
     }
 
     return 2;
