@@ -614,6 +614,7 @@ static const NSTimeInterval MLStatsOverlayRefreshIntervalSec = 0.5;
 @property (nonatomic) BOOL edgeMenuClickConsumedLocally;
 @property (nonatomic) double edgeSensorLastSampleLogMs;
 @property (nonatomic) double edgeSensorLastRefusalLogMs;
+@property (nonatomic) double edgeSensorLastInsideLogMs;
 // Arm/summon drops are named, not silent: one line a second per path says which
 // gate stayed shut, so a field session that never mentions the sensor can still
 // answer "why".

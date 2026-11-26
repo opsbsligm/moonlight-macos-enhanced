@@ -204,6 +204,12 @@ typedef NS_ENUM(NSInteger, MLAudioRendererBackend) {
     // letting the underrun warning loop masquerade as the root cause.
     BOOL _audioEverReceivedTraffic;
     uint64_t _audioTrafficArmedTime;
+    // The P1 hint above covers a host that is silent from the start. The field session
+    // measured the other half of the same family: a host whose audio thread sends a
+    // second of samples and then stops, which the render loop reads as a permanent
+    // underrun while the client is perfectly healthy. Remember when traffic was last
+    // seen so a dead stream can be named on the underrun path, not only the silent one.
+    uint64_t _audioLastTrafficTime;
     BOOL _audioDecodeThreadPriorityRaised;
     uint64_t _audioDecodeSampleCount;
     uint64_t _audioDecodeFailureCount;
@@ -724,6 +730,7 @@ int ArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION originalOpusC
     // flips the flag, the 30s check below names a host that never sends any.
     conn->_audioEverReceivedTraffic = NO;
     conn->_audioTrafficArmedTime = (uint64_t)dispatch_time(DISPATCH_TIME_NOW, 0);
+    conn->_audioLastTrafficTime = 0;
     conn->_audioSamplesPerFrame = opusConfig.samplesPerFrame;
     conn->_audioBufferStride = opusConfig.channelCount * opusConfig.samplesPerFrame;
     // M5 fix: validate opus config to prevent zero-stride heap overflow.
@@ -979,6 +986,7 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
                 (int)conn->_audioRendererBackend);
         }
     }
+    conn->_audioLastTrafficTime = (uint64_t)dispatch_time(DISPATCH_TIME_NOW, 0);
 
     int decodeLen;
 
@@ -1192,6 +1200,21 @@ void ArDecodeAndPlaySample(char* sampleData, int sampleLength)
                     @"audio output device or mute; the underrun warnings are derived from "
                     @"this silence, not a client buffer fault",
                     (long long)(elapsedNs / NSEC_PER_SEC), (int)_audioRendererBackend);
+            }
+        }
+        // The other half of the same family: traffic started, then stopped. The field
+        // session measured a host whose audio thread sent a second of samples and never
+        // sent another; from the render side that reads as a permanent client underrun
+        // while the client is healthy. Name the host instead, on the same throttle.
+        else if (copiedFrames == 0 && _audioEverReceivedTraffic && _audioLastTrafficTime != 0) {
+            uint64_t sinceNs = (uint64_t)dispatch_time(DISPATCH_TIME_NOW, 0) - _audioLastTrafficTime;
+            if (sinceNs >= 15ull * NSEC_PER_SEC && (_audioUnderrunCount % 800) == 1) {
+                Log(LOG_W, @"Host audio stream appears dead: no audio traffic for %llds "
+                    @"(backend=%d, %llu underruns so far): check the host audio thread or "
+                    @"output device; the underrun warnings are derived from the stopped "
+                    @"stream, not a client buffer fault",
+                    (long long)(sinceNs / NSEC_PER_SEC), (int)_audioRendererBackend,
+                    (unsigned long long)_audioUnderrunCount);
             }
         }
     }

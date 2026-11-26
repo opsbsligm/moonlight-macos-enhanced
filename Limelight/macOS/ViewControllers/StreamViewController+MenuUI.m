@@ -475,6 +475,22 @@ static void MLFinishUSBHubMenu(NSMenu *devices, NSMenu *hubs) {
 }
 
 - (NSRect)edgeSensorActivationRectInBounds:(NSRect)bounds {
+    CGFloat bandWidth = [self edgeSensorBandWidthPoints];
+    switch (self.edgeMenuDockEdge) {
+        case MLFreeMouseExitEdgeLeft:
+            return NSIntersectionRect(NSMakeRect(NSMinX(bounds), NSMinY(bounds), bandWidth, bounds.size.height), bounds);
+        case MLFreeMouseExitEdgeRight:
+            return NSIntersectionRect(NSMakeRect(NSMaxX(bounds) - bandWidth, NSMinY(bounds), bandWidth, bounds.size.height), bounds);
+        case MLFreeMouseExitEdgeTop:
+            return NSIntersectionRect(NSMakeRect(NSMinX(bounds), NSMaxY(bounds) - bandWidth, bounds.size.width, bandWidth), bounds);
+        case MLFreeMouseExitEdgeBottom:
+            return NSIntersectionRect(NSMakeRect(NSMinX(bounds), NSMinY(bounds), bounds.size.width, bandWidth), bounds);
+        default:
+            return NSZeroRect;
+    }
+}
+
+- (NSRect)edgeSensorActivationRectInBoundsLegacy:(NSRect)bounds {
     NSRect handle = [self expandedFrameForEdgeMenuButtonInBounds:bounds];
     NSRect region = handle;
     CGFloat bandWidth = [self edgeSensorBandWidthPoints];

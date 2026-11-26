@@ -13,9 +13,19 @@ static inline bool MLInterpolationCanStageAfterSource(uint64_t previousSource,
 }
 
 static inline bool MLInterpolationCanFinishBeforeNextSource(double sourceIntervalMs,
-                                                           uint64_t interpolationCostMs)
+                                                           uint64_t interpolationCostMs,
+                                                           bool wasActive)
 {
-    return sourceIntervalMs > (double)interpolationCostMs;
+    // The field session measured a 36 FPS source whose per-frame interval jitters inside
+    // 19-28 ms while the measured cost sits on the 18/19 ms boundary: a bare > lets the
+    // gate flip every frame, and the engine follows it Off/On at frame rate. The margin is
+    // the hysteresis band: entering (or staying in) On needs headroom above it, and a
+    // frame that only falls short of it keeps the current answer instead of forcing one.
+    const double emaMs = (double)interpolationCostMs;
+    const double margin = 1.5 > 0.10 * emaMs ? 1.5 : 0.10 * emaMs;
+    if (sourceIntervalMs > emaMs + margin) return true;
+    if (wasActive) return sourceIntervalMs >= emaMs - margin;
+    return false;
 }
 
 static inline bool MLInterpolationResultIsCurrent(uint64_t current, uint64_t result,

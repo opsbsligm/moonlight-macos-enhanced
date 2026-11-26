@@ -27,12 +27,21 @@ int main(void) {
     assert(!MLInterpolationCanStageAfterSource(10,9,true));
     assert(!MLInterpolationCanStageAfterSource(10,10,false));
     // The same measured cost can fit a quiet desktop but not a true 90 FPS source.
-    assert(!MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,20));
-    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 37.0,20));
-    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,6));
-    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,0));
-    assert(!MLInterpolationCanFinishBeforeNextSource(11.0,11));
-    assert(!MLInterpolationCanFinishBeforeNextSource(0.0,0));
+    assert(!MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,20,false));
+    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 37.0,20,false));
+    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,6,false));
+    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,0,false));
+    assert(!MLInterpolationCanFinishBeforeNextSource(11.0,11,false));
+    assert(!MLInterpolationCanFinishBeforeNextSource(0.0,0,false));
+    // Hysteresis: on the field session the 36 FPS source's interval jittered 19-28 ms
+    // around the 18/19 ms measured cost, and a bare > flipped the engine Off/On every
+    // frame. Entering On needs headroom above the margin; inside the band an active
+    // engine keeps its answer while an idle one does not light up.
+    assert(MLInterpolationCanFinishBeforeNextSource(20.9,19,true));
+    assert(!MLInterpolationCanFinishBeforeNextSource(16.9,19,true));
+    assert(!MLInterpolationCanFinishBeforeNextSource(19.0,19,false));
+    assert(MLInterpolationCanFinishBeforeNextSource(28.0,19,false));
+    assert(MLInterpolationCanFinishBeforeNextSource(11.11,9,true));
     assert(MLPresentationNeedsDraw(11,0,9,0,false));
     assert(MLInterpolationCanStageAfterSource(11,11,true));
     assert(!MLPresentationNeedsDraw(0,0,0,0,false));
@@ -286,7 +295,7 @@ assert (
     and '_lastInterpolationTimingProbeMs = nowMs;' in decode
 ), 'slow interpolation must be measured again at bounded intervals'
 assert decode.index('MLInterpolationCanStageAfterSource(_currentFrameSequence,') < decode.index('CVBufferRelease(_currentFrame);'), 'admission must check the previous source before replacing it'
-assert decode.index('MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs)') < decode.index('previousInterpolationSourceFrame = CVBufferRetain('), 'slow VT work can stage before the source deadline check'
+assert decode.index('MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs,') < decode.index('previousInterpolationSourceFrame = CVBufferRetain('), 'slow VT work can stage before the source deadline check'
 assert '_previousInterpolationSourceFrame == _currentFrame' in decode, 'stale cached buffer can still seed interpolation'
 assert 'CMTimeCompare(_previousInterpolationSourcePresentationTimeStamp, _currentFramePresentationTimeStamp) == 0' in decode, 'a reused buffer can still carry a stale timestamp'
 assert '_interpolationStagingSequence == sourceSequence' in decode, 'old completion clears newer staging'
