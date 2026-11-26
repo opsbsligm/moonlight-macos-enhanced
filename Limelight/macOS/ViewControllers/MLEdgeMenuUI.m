@@ -215,14 +215,14 @@
 - (void)mouseEntered:(NSEvent *)event {
     [super mouseEntered:event];
     if (self.hoverHandler) {
-        self.hoverHandler(YES);
+        self.hoverHandler(event);
     }
 }
 
 - (void)mouseExited:(NSEvent *)event {
     [super mouseExited:event];
     if (self.hoverHandler) {
-        self.hoverHandler(NO);
+        self.hoverHandler(event);
     }
 }
 
@@ -332,7 +332,7 @@
 - (void)mouseMoved:(NSEvent *)event {
     [super mouseMoved:event];
     if (self.hoverHandler) {
-        self.hoverHandler(YES);
+        self.hoverHandler(event);
     }
 }
 

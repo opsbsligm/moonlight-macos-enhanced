@@ -236,6 +236,17 @@ assert 'constrainFrameRect:(NSRect)frame toScreen:' in edgeui, \
 # the plate would let an invisible overlay swallow game clicks. Pin both halves
 # structurally; the runtime probe pins the phase/flag behaviour.
 def pinned_input_contract(menu_src, edgeui_src):
+    tracking = method(menu_src, 'self.edgeMenuButton.hoverHandler =')
+    assert re.search(
+        r'if \(strongSelf\.edgeMenuPhase == MLEdgeMenuPhaseCollapsed\)\s*\{\s*'
+        r'(?://[^\n]*\n\s*)*'
+        r'if \(!strongSelf\.isMouseCaptured \|\| strongSelf\.isRemoteDesktopMode\)\s*\{\s*'
+        r'\[strongSelf handleEdgeSensorSummonForEvent:event\];',
+        tracking,
+    ), 'collapsed panel tracking must feed the common sensor only with a free local pointer'
+    for callback in ('mouseEntered', 'mouseMoved', 'mouseExited'):
+        assert 'self.hoverHandler(event);' in method(edgeui_src, f'- (void){callback}:'), \
+            f'{callback} drops the native tracking event'
     transition = method(menu_src, '- (void)transitionEdgeMenuToPhase:')
     assert 'self.edgeMenuPanel.ignoresMouseEvents = phase == MLEdgeMenuPhaseHidden;' in transition, \
         'the collapsed panel no longer stays clickable: only Hidden may take native input away'
