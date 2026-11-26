@@ -1,5 +1,12 @@
 # 串流节拍对照：原版 moonlight-qt 最佳实践与本仓修复
 
+> 勘误：下文记录的是历史 gridlock 实验。Metal 的
+> [`afterMinimumDuration:`](https://developer.apple.com/documentation/metal/mtlcommandbuffer/present(_:afterminimumduration:))
+> 表示**上一帧**的最短显示时长。原补丁传入 `target - now`，两者语义不同。
+> 现已撤掉该换算。只有真实帧和对应补帧组成的一对使用最短显示时长，只有真实帧时直接提交。
+> 如果前一真实帧未能提交，下一真实帧优先提交并跳过该次补帧。
+> 这一修复的实机效果仍需用同主机、同设置、同运动内容复测。
+
 本文件记录一次针对「36 FPS 源 / 180 Hz 屏插帧会话读出拍频抖动」的跨实现对照结论，
 以及按该结论实施的 gridlock 修复的边界。引用路径均为本仓相对路径；原版路径为
 moonlight-qt 上游源码树相对路径。

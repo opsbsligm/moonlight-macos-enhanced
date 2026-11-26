@@ -218,24 +218,17 @@ def wiring(policy_text, renderer_text, swift_text):
     # swung the EMA across it every other window, which the panel read as a second beat.
     if "candidateError + 4.0 < currentError" not in renderer_text:
         gaps.append("the snap grid can flip on a boundary wobble (no dead zone)")
-    # The drawable pool sizes itself to the hold, not to a constant that is right for a one-
-    # refresh hold and wrong for a multi-refresh one: a 50 ms hold with a depth-2 pool queues
-    # the next submission inside the hold and the next-drawable timeout drops it (33 ms P95).
-    if "MAX(2LL, _activeCadenceRefreshesPerFrame + 1)" not in renderer_text:
-        gaps.append("the drawable pool does not size itself to the cadence hold")
-    # The hold must be locked to the scan-out grid the display-link callback defines, not
-    # to the submission's own wall time: a duration counted from submission makes each
-    # frame's visible gap alternate between N and N+1 refreshes, the beat the field
-    # session read as jitter. The tick is the only anchor, and the target must be stepped
-    # onto the grid with a ceiling, not rounded.
-    if "self->_lastScanoutMediaTime = CACurrentMediaTime()" not in renderer_text:
-        gaps.append("the display-link callback never records the scan-out tick the grid locks to")
-    if "ceil((gridNow - scanoutAnchor) / gridPeriod)" not in renderer_text:
-        gaps.append("the presentation hold is not stepped onto the scan-out grid")
-    if "[commandBuffer presentDrawable:drawable afterMinimumDuration:gridHoldSeconds]" not in renderer_text:
-        gaps.append("the cadence-locked present does not use the grid-aligned hold")
-    if re.search(r"afterMinimumDuration:presentationHoldSeconds", renderer_text):
-        gaps.append("a present still hands the window server the un-aligned hold duration")
+    drawable_policy = re.search(
+        r"- \(NSUInteger\)desiredEnhancedDrawableDepth\s*\{(.*?)\n\}", renderer_text, re.S)
+    if drawable_policy is None or set(re.findall(r"\breturn\s+([^;]+);", drawable_policy[1])) != {"2", "3"}:
+        gaps.append("the drawable pool must use only Metal's supported depths of two or three")
+    if drawable_policy is None or not re.search(
+        r"_activeCadenceRefreshesPerFrame >= 2\)\s*\{\s*return 3;", drawable_policy[1]):
+        gaps.append("the drawable pool must use three buffers for a multi-refresh hold")
+    if re.findall(r"presentDrawable:drawable afterMinimumDuration:(\w+)", renderer_text) != ["presentationHoldSeconds"]:
+        gaps.append("Metal must receive the previous drawable's minimum display duration")
+    if not re.search(r"hasInterpolatedPair\s*&&\s*\[self presentationCadenceForInterpolationHold:", renderer_text):
+        gaps.append("a source without its midpoint can still incur an interpolation hold")
     if "completedStats.receivedFrames >= 4" not in renderer_text:
         gaps.append("a sub-four-frame window can seed the measured source rate")
     listed = re.search(r"static\s+var\s+fpss\s*:\s*\[Int\]\s*=\s*\[([^\]]*)\]", swift_text)
@@ -278,6 +271,15 @@ def main():
 def red_proofs():
     rc = 0
     policy, renderer, swift = read(POLICY), read(RENDERER), read(DERIVED)
+
+    countdown = renderer.replace("afterMinimumDuration:presentationHoldSeconds",
+                                 "afterMinimumDuration:gridHoldSeconds", 1)
+    unpaired_hold = renderer.replace("hasInterpolatedPair &&", "YES &&", 1)
+    for mutation, expected in [(countdown, "previous drawable's minimum"),
+                               (unpaired_hold, "without its midpoint")]:
+        hit = any(expected in gap for gap in wiring(policy, mutation, swift))
+        check(hit, "reject pacing regression: " + expected)
+        rc |= 0 if hit else 1
 
     # Putting the pre-divisibility headroom rule back must go red: under it 120 FPS is
     # admitted on a 180 Hz panel (the pairing that measured as viscous jitter), which is
@@ -338,21 +340,13 @@ def red_proofs():
               % ("ok" if hit else "FAIL", len(wrong)))
         rc |= 0 if hit else 1
 
-    # A depth-2 pool is right for a one-refresh hold and wrong for a multi-refresh one: the
-    # next submission waits inside the 50 ms hold and the next-drawable timeout drops it,
-    # which is the 33 ms frame P95 the field session measured. Putting the constant back
-    # must go red.
-    shallow = renderer.replace(
-        "return (NSUInteger)MAX(2LL, _activeCadenceRefreshesPerFrame + 1);",
-        "return 2;", 1)
-    if shallow == renderer:
-        print("FAIL  the drawable pool depth could not be mutated (the source text moved)")
-        rc = 1
-    else:
-        gaps = wiring(policy, shallow, swift)
-        hit = any("size itself to the cadence hold" in gap for gap in gaps)
-        print("%-4s letting the drawable pool forget the cadence hold is refused (%d gaps named)"
-              % ("ok" if hit else "FAIL", len(gaps)))
+    for depth, expected in [("2", "three buffers for a multi-refresh hold"),
+                            ("4", "supported depths of two or three")]:
+        mutated_pool = renderer.replace(
+            "_activeCadenceRefreshesPerFrame >= 2) {\n        return 3;",
+            "_activeCadenceRefreshesPerFrame >= 2) {\n        return " + depth + ";", 1)
+        hit = any(expected in gap for gap in wiring(policy, mutated_pool, swift))
+        check(hit, "reject unsupported drawable policy: " + expected)
         rc |= 0 if hit else 1
 
     # The production answer must be measured, not assumed: dropping the interpolation EMA

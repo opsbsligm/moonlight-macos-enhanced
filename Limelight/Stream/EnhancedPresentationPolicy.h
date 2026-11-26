@@ -5,6 +5,19 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+static inline bool MLInterpolationCanStageAfterSource(uint64_t previousSource,
+                                                      uint64_t submittedSource,
+                                                      bool cacheMatchesSource)
+{
+    return previousSource != 0 && previousSource == submittedSource && cacheMatchesSource;
+}
+
+static inline bool MLInterpolationCanFinishBeforeNextSource(double sourceIntervalMs,
+                                                           uint64_t interpolationCostMs)
+{
+    return sourceIntervalMs > (double)interpolationCostMs;
+}
+
 static inline bool MLInterpolationResultIsCurrent(uint64_t current, uint64_t result,
                                                   uint64_t submittedSource)
 {

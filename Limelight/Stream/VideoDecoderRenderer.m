@@ -1517,6 +1517,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // long to wait before the next single-frame retry. Both reset with the breaker.
     uint64_t _interpolationSuspendedSinceMs;
     uint64_t _interpolationProbeBackoffMs;
+    uint64_t _lastInterpolationTimingProbeMs;
     uint64_t _interpolationStagingStartedAtMs;
     uint64_t _interpolationStagingBudgetMs;
     // Exponential mean of finished VTLLFI calls in ms. The staging deadline is
@@ -1575,10 +1576,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // real production and the hold grid outran the frames it was supposed to pace.
     double _measuredInterpolatedFpsEma;
     double _lastLoggedMeasuredInterpolatedFps;
-    // The whole-refresh answer the last cadence decision produced, so the drawable pool
-    // can size itself to the hold instead of to a constant that was right for a 1 refresh
-    // hold and wrong for a 3 refresh one: a 50 ms hold with a depth-2 pool queues the next
-    // submission inside the hold and the next-drawable timeout drops it for nothing.
+    // The whole-refresh answer the last cadence decision produced for queue sizing.
     long long _activeCadenceRefreshesPerFrame;
     // The hold the last present asked the window server for, in nanoseconds, and the frame
     // rate it was computed for. Both exist so the answer is logged when it changes and not
@@ -1586,23 +1584,6 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // check against a subjective report of a real session.
     int64_t _lastLoggedPresentationHoldNs;
     NSInteger _lastLoggedPresentationHoldFps;
-    // The wall time of the most recent display-link scan-out tick. The hold this renderer
-    // asks the window server for is a duration counted from submission, and a submission
-    // that lands between scan-outs makes each frame's visible gap alternate between N and
-    // N+1 refreshes -- the 16.7/22.2 ms beat the field session read as jitter. Locking the
-    // hold to the grid this callback defines is the CVDisplayLink-side equivalent of what
-    // the original Qt renderer gets for free from CAMetalDisplayLink's target timestamp
-    // (see docs/stream-pacing-qt-benchmark.md).
-    CFTimeInterval _lastScanoutMediaTime;
-    // The scan-out grid point the last cadence-locked present targeted, so the next one
-    // lands exactly one whole hold later instead of wherever the next submission happens
-    // to fall. Reset when the display rate changes, because the old grid no longer
-    // describes the panel.
-    CFTimeInterval _lastGridPresentTarget;
-    // The refresh rate the remembered scan-out grid belongs to; a different rate is a
-    // different grid, so the anchor and the remembered target must die together.
-    double _lastScanoutDisplayHz;
-    BOOL _cadenceGridlockLogged;
 
     // Stats helpers
     uint64_t _lastFrameReceiveTimeMs;
@@ -2076,6 +2057,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         _interpolationSuspended = NO;
         _interpolationSuspendedSinceMs = 0;
         _interpolationProbeBackoffMs = 0;
+        _lastInterpolationTimingProbeMs = 0;
         _interpolationCallEmaMs = 0;
         _frameInterpolationWarmupGeneration += 1;
         _frameInterpolationWarmupInFlight = NO;
@@ -3070,10 +3052,6 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _lastLoggedMeasuredSourceFps = 0.0;
     _lastLoggedPresentationHoldNs = -1;
     _lastLoggedPresentationHoldFps = 0;
-    _lastScanoutMediaTime = 0.0;
-    _lastGridPresentTarget = 0.0;
-    _lastScanoutDisplayHz = 0.0;
-    _cadenceGridlockLogged = NO;
     _frameInterpolationNoSlotWidth = 0;
     _frameInterpolationNoSlotHeight = 0;
     [self teardownFrameInterpolationProcessor];
@@ -3218,13 +3196,11 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         return 3;
     }
 
+    // CAMetalLayer supports at most three drawables. Use the extra slot
+    // during a multi-refresh hold so the next frame can obtain a drawable.
     if (_activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency &&
         _activeCadenceRefreshesPerFrame >= 2) {
-        // A multi-refresh hold parks the pipeline mid-frame: with a constant depth-2 pool the
-        // next submission waits inside the hold and the next-drawable timeout drops it, which
-        // is the measured 33 ms frame P95. One slot per held refresh plus headroom carries the
-        // hold; the 2 floor keeps a 1 refresh session byte-for-byte on the shipped constant.
-        return (NSUInteger)MAX(2LL, _activeCadenceRefreshesPerFrame + 1);
+        return 3;
     }
 
     return 2;
@@ -3678,7 +3654,35 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
 
     CVImageBufferRef previousInterpolationSourceFrame = NULL;
     uint64_t sourceSequence = 0;
+    BOOL measureInterpolationOnly = NO;
     @synchronized(self) {
+        const BOOL cacheMatchesSource = _currentFrame != NULL &&
+            _previousInterpolationSourceFrame == _currentFrame &&
+            CMTimeCompare(_previousInterpolationSourcePresentationTimeStamp, _currentFramePresentationTimeStamp) == 0;
+        if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff &&
+            !_interpolationProcessInFlight &&
+            MLInterpolationCanStageAfterSource(_currentFrameSequence, _lastPresentedFrameSequence, cacheMatchesSource)) {
+            CMTime sourceInterval = CMTimeSubtract(presentationTimeStamp, _currentFramePresentationTimeStamp);
+            if (CMTIME_IS_NUMERIC(sourceInterval) && CMTimeCompare(sourceInterval, kCMTimeZero) > 0) {
+                const double sourceIntervalMs = CMTimeGetSeconds(sourceInterval) * 1000.0;
+                // A later source replaces this pair even if VT has time left in its processing budget.
+                if (MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs)) {
+                    previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
+                } else {
+                    const uint64_t nowMs = LiGetMillis();
+                    if (MLEnhancementProbeDue(_lastInterpolationTimingProbeMs, nowMs,
+                                              MAX((uint64_t)2000, _interpolationProbeBackoffMs))) {
+                        _lastInterpolationTimingProbeMs = nowMs;
+                        measureInterpolationOnly = YES;
+                        previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
+                    }
+                    _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
+                    [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
+                                                     report:MLVideoFrameInterpolationReportPausedForProcessing
+                                                     reason:@"measured VT processing cost does not fit the current source interval"];
+                }
+            }
+        }
         if (_currentFrame) {
             CVBufferRelease(_currentFrame);
         }
@@ -3692,9 +3696,6 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         _pendingInterpolatedFrameNumber = 0;
         _deferredCurrentSourceSequence = 0;
         _interpolationStagingSequence = 0;
-        if (_previousInterpolationSourceFrame) {
-            previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
-        }
         _currentFrame = CVBufferRetain(imageBuffer);
         _currentFramePresentationTimeStamp = presentationTimeStamp;
         _currentFrameEnqueueTimeMs = frameContext != NULL ? frameContext->enqueueTimeMs : 0;
@@ -3703,7 +3704,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         sourceSequence = _currentFrameSequence;
         if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff &&
             previousInterpolationSourceFrame != NULL) {
-            _interpolationStagingSequence = sourceSequence;
+            if (!measureInterpolationOnly) {
+                _interpolationStagingSequence = sourceSequence;
+            }
             _interpolationStagingStartedAtMs = LiGetMillis();
             uint64_t previousInterpolationStagingBudgetMs = _interpolationStagingBudgetMs;
             _interpolationStagingBudgetMs = MLEnhancementAdaptiveBudgetMs(
@@ -3711,7 +3714,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             // One line per budget change (not per frame) so a session log can
             // replay the engine's cost distribution and the window it was
             // charged against, instead of only the calls that tripped it.
-            if (_interpolationStagingBudgetMs != previousInterpolationStagingBudgetMs) {
+            if (!measureInterpolationOnly && _interpolationStagingBudgetMs != previousInterpolationStagingBudgetMs) {
                 Log(LOG_I, @"[video] VT frame interpolation staging budget %llums -> %llums (ema call %.0fms refresh %.1fHz source %d fps)",
                     (unsigned long long)previousInterpolationStagingBudgetMs,
                     (unsigned long long)_interpolationStagingBudgetMs,
@@ -3727,7 +3730,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                          frameSequence:sourceSequence
                                          enqueueTimeMs:(frameContext != NULL ? frameContext->enqueueTimeMs : 0)
                                           frameNumber:(frameContext != NULL ? frameContext->frameNumber : 0)
-                                    displayRefreshRate:_lastDisplayRefreshRate];
+                                    displayRefreshRate:_lastDisplayRefreshRate
+                                            measureOnly:measureInterpolationOnly];
         @synchronized(self) {
             if (!queuedInterpolation && _interpolationStagingSequence == sourceSequence) {
                 _interpolationStagingSequence = 0;
@@ -3736,7 +3740,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         CVBufferRelease(previousInterpolationSourceFrame);
     } else if (previousInterpolationSourceFrame != NULL) {
         CVBufferRelease(previousInterpolationSourceFrame);
-    } else if (_requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff) {
+    } else if (sourceSequence == 1 && _requestedFrameInterpolationMode != MLRequestedVideoFrameInterpolationModeOff) {
         _activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
         [self logActiveFrameInterpolationEngine:_activeFrameInterpolationEngine
                                          report:MLVideoFrameInterpolationReportWaitingForSourceFrame
@@ -4619,6 +4623,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                    enqueueTimeMs:(uint64_t)enqueueTimeMs
                                      frameNumber:(uint32_t)frameNumber
                               displayRefreshRate:(double)displayRefreshRate
+                                     measureOnly:(BOOL)measureOnly
 {
     @synchronized(self) {
         if (_interpolationProcessInFlight || _currentFrame != sourceFrame ||
@@ -4704,10 +4709,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     CVPixelBufferPoolRef pool = (__bridge CVPixelBufferPoolRef)poolLifetime;
                     BOOL runTask;
                     @synchronized(self) {
+                        // A timing probe measures VT even if the source has already displayed.
                         runTask = processor == self->_frameInterpolationProcessor &&
-                            MLEnhancementMayPublish(generation, self->_interpolationProcessGeneration,
+                            generation == self->_interpolationProcessGeneration &&
+                            (measureOnly || MLEnhancementMayPublish(generation, self->_interpolationProcessGeneration,
                                 sourceSequence, self->_currentFrameSequence, self->_currentFrame == input,
-                                self->_lastPresentedFrameSequence == sourceSequence) &&
+                                self->_lastPresentedFrameSequence == sourceSequence)) &&
                             MLEnhancementShouldWait(true, startedAtMs, LiGetMillis(), budgetMs);
                     }
                     uint64_t processStartedAtMs = LiGetMillis();
@@ -4759,7 +4766,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 self->_lastPresentedFrameSequence == sourceSequence);
                         if (self->_interpolationStagingSequence == sourceSequence)
                             self->_interpolationStagingSequence = 0;
-                        if (!current || !interpolatedFrame || self->_interpolationSuspended ||
+                        if (measureOnly || !current || !interpolatedFrame || self->_interpolationSuspended ||
                             !MLEnhancementShouldWait(true, startedAtMs, LiGetMillis(), budgetMs)) {
                             if (interpolatedFrame) CVBufferRelease(interpolatedFrame);
                             // Preserve the paused processor identity. Retiring here
@@ -5528,6 +5535,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
     uint32_t frameNumber = 0;
     uint64_t frameSequence = 0;
     BOOL presentingInterpolatedFrame = NO;
+    BOOL hasInterpolatedPair = NO;
     CMTime framePresentationTimeStamp = kCMTimeInvalid;
     uint64_t observationGeneration = 0;
     dispatch_semaphore_t inflightSemaphore = nil;
@@ -5553,14 +5561,17 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             framePresentationTimeStamp = _currentFramePresentationTimeStamp;
         }
         if (_pendingInterpolatedFrame != NULL &&
-            _pendingInterpolatedForSourceSequence != 0 &&
-            _pendingInterpolatedForSourceSequence == _deferredCurrentSourceSequence &&
-            !_pendingInterpolatedPresented) {
-            interpolatedFrame = CVBufferRetain(_pendingInterpolatedFrame);
-            frameEnqueueTimeMs = _pendingInterpolatedEnqueueTimeMs;
-            frameNumber = _pendingInterpolatedFrameNumber;
-            framePresentationTimeStamp = _pendingInterpolatedPresentationTimeStamp;
-            presentingInterpolatedFrame = YES;
+            frameSequence != 0 &&
+            _pendingInterpolatedForSourceSequence == frameSequence &&
+            _deferredCurrentSourceSequence == frameSequence) {
+            hasInterpolatedPair = YES;
+            if (!_pendingInterpolatedPresented) {
+                interpolatedFrame = CVBufferRetain(_pendingInterpolatedFrame);
+                frameEnqueueTimeMs = _pendingInterpolatedEnqueueTimeMs;
+                frameNumber = _pendingInterpolatedFrameNumber;
+                framePresentationTimeStamp = _pendingInterpolatedPresentationTimeStamp;
+                presentingInterpolatedFrame = YES;
+            }
         }
     }
 
@@ -5919,43 +5930,9 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             }];
 
             CFTimeInterval presentationHoldSeconds = 0.0;
-            if ([self presentationCadenceForInterpolationHold:&presentationHoldSeconds outputFps:NULL]) {
-                // The decision above answered with a duration, and a duration counted from
-                // submission time is the original sin: the submission lands somewhere
-                // between scan-outs, so each frame's visible gap alternates between N and
-                // N+1 refreshes (16.7/22.2 ms on 180 Hz) and the panel reads it as jitter.
-                // The display-link callback fires once per scan-out, so its tick is the
-                // only clock the grid may be built from -- the CVDisplayLink-side
-                // equivalent of the target timestamp CAMetalDisplayLink hands the original
-                // Qt renderer for free (docs/stream-pacing-qt-benchmark.md). Steady state
-                // lands each frame exactly one whole hold after the previous frame's grid
-                // point, so the visible interval is N refreshes, no beat; after a gap the
-                // first frame snaps to the next grid point that is at least N periods
-                // away instead of to wherever the wall clock sits.
-                CFTimeInterval gridHoldSeconds = presentationHoldSeconds;
-                const CFTimeInterval scanoutAnchor = _lastScanoutMediaTime;
-                if (scanoutAnchor > 0.0 && _lastDisplayRefreshRate > 0.0 && _activeCadenceRefreshesPerFrame >= 2) {
-                    const CFTimeInterval gridPeriod = 1.0 / _lastDisplayRefreshRate;
-                    const CFTimeInterval gridNow = CACurrentMediaTime();
-                    CFTimeInterval gridTarget;
-                    if (_lastGridPresentTarget > gridNow) {
-                        gridTarget = _lastGridPresentTarget + presentationHoldSeconds;
-                    } else {
-                        const double cyclesSinceAnchor = ceil((gridNow - scanoutAnchor) / gridPeriod);
-                        gridTarget = scanoutAnchor + (cyclesSinceAnchor + (_activeCadenceRefreshesPerFrame - 1)) * gridPeriod;
-                    }
-                    while (gridTarget <= gridNow) {
-                        gridTarget += gridPeriod;
-                    }
-                    gridHoldSeconds = gridTarget - gridNow;
-                    _lastGridPresentTarget = gridTarget;
-                    if (!_cadenceGridlockLogged) {
-                        Log(LOG_I, @"[video] Presentation gridlock: holds locked to the scan-out grid at %lld refresh(es) on %.2f Hz",
-                            _activeCadenceRefreshesPerFrame, _lastDisplayRefreshRate);
-                        _cadenceGridlockLogged = YES;
-                    }
-                }
-                [commandBuffer presentDrawable:drawable afterMinimumDuration:gridHoldSeconds];
+            if (hasInterpolatedPair &&
+                [self presentationCadenceForInterpolationHold:&presentationHoldSeconds outputFps:NULL]) {
+                [commandBuffer presentDrawable:drawable afterMinimumDuration:presentationHoldSeconds];
             } else {
                 [commandBuffer presentDrawable:drawable];
             }
@@ -6120,18 +6097,6 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
     }
     @synchronized(self) {
         self->_lastDisplayRefreshRate = displayRefreshRate;
-        // This callback runs once per scan-out, so it is the only clock the presentation
-        // grid may be built from. Recording the tick keeps the cadence hold locked to the
-        // same grid the display itself runs on instead of to each submission's own wall
-        // time. A rate change puts the old grid on a different panel, so the remembered
-        // target dies with it.
-        if (displayRefreshRate > 0.0) {
-            self->_lastScanoutMediaTime = CACurrentMediaTime();
-            if (fabs(self->_lastScanoutDisplayHz - displayRefreshRate) > 0.5) {
-                self->_lastScanoutDisplayHz = displayRefreshRate;
-                self->_lastGridPresentTarget = 0.0;
-            }
-        }
     }
     int desiredPendingFrames = [self desiredPendingFramesForDisplayRefreshRate:displayRefreshRate];
     if (self->_lastLoggedPendingTarget != desiredPendingFrames) {

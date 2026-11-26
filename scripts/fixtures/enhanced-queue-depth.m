@@ -190,17 +190,17 @@ int main(void) {
         assert([p desiredPendingFramesForDisplayRefreshRate:180] == 0);
         p.shortQueueOnDoubledCadence = NO;
 
-        // The drawable pool sizes itself to the cadence hold: a multi-refresh hold
-        // parks the pipeline mid-frame, and a constant depth-2 pool drops the next
-        // submission inside the hold. A refresh-rate value alone never touches the
-        // pool; the engine must be active and the snap must have committed a
-        // multi-refresh hold before the pool grows by one slot per held refresh.
+        // The drawable pool caps at Metal's three supported drawables during a
+        // multi-refresh hold: a constant depth-2 pool drops the next submission
+        // inside the hold. A refresh-rate value alone never touches the pool;
+        // the engine must be active and the snap must have committed a
+        // multi-refresh hold before the pool grows to the cap.
         p->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineNone;
         p->_activeCadenceRefreshesPerFrame = 3;
         assert([p desiredEnhancedDrawableDepth] == 2);
         assert([p desiredEnhancedInflightLimit] == 1);
         p->_activeFrameInterpolationEngine = MLActiveVideoFrameInterpolationEngineVTLowLatency;
-        assert([p desiredEnhancedDrawableDepth] == 4);
+        assert([p desiredEnhancedDrawableDepth] == 3);
         assert([p desiredEnhancedInflightLimit] == 2);
         p->_activeCadenceRefreshesPerFrame = 1;
         assert([p desiredEnhancedDrawableDepth] == 2);

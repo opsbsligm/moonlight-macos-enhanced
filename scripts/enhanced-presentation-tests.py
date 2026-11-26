@@ -22,6 +22,19 @@ DRIVER = r'''
 #include "ActualPresentationMetrics.h"
 #include <assert.h>
 int main(void) {
+    assert(!MLInterpolationCanStageAfterSource(0,0,false));
+    assert(MLInterpolationCanStageAfterSource(9,9,true));
+    assert(!MLInterpolationCanStageAfterSource(10,9,true));
+    assert(!MLInterpolationCanStageAfterSource(10,10,false));
+    // The same measured cost can fit a quiet desktop but not a true 90 FPS source.
+    assert(!MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,20));
+    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 37.0,20));
+    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,6));
+    assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0,0));
+    assert(!MLInterpolationCanFinishBeforeNextSource(11.0,11));
+    assert(!MLInterpolationCanFinishBeforeNextSource(0.0,0));
+    assert(MLPresentationNeedsDraw(11,0,9,0,false));
+    assert(MLInterpolationCanStageAfterSource(11,11,true));
     assert(!MLPresentationNeedsDraw(0,0,0,0,false));
     // Staging cannot let the source overtake its midpoint.
     assert(!MLPresentationNeedsDraw(10,10,9,0,false));
@@ -189,6 +202,8 @@ def replay(header, processing_header=enhancement_header, observations_header=act
 header = POLICY.read_text()
 assert replay(header) == 0, 'shipping replay failed'
 mutations = [
+    ('midpoint-replaces-missed-source', 'previousSource == submittedSource', 'previousSource >= submittedSource'),
+    ('midpoint-uses-stale-cache', '&& cacheMatchesSource;', '&& (cacheMatchesSource || submittedSource != 0);'),
     ('source-overtakes-midpoint', 'current == 0 || staging == current', 'current == 0 || staging == UINT64_MAX'),
     ('repeat-super-resolution', 'return current != submittedSource;', 'return current != UINT64_MAX || submittedSource == 0;'),
     ('accept-stale-VT', 'result == current', 'result <= current'),
@@ -244,7 +259,8 @@ def section(start, end):
 draw = section('- (void)drawInMTKView:', '- (void)start\n')
 stage = section('- (BOOL)stageInterpolatedFrameFromPreviousSource:', '- (BOOL)presentationCadenceForInterpolationHold:')
 callback = section('static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,\n', '- (void)stop\n')
-decode = section('- (void)handleDecompressionOutput:', '- (BOOL)createDecompressionSession')
+decode_start = source.rindex('- (void)handleDecompressionOutput:')
+decode = source[decode_start:source.index('- (BOOL)createDecompressionSession', decode_start)]
 assert draw.index('MLPresentationNeedsDraw(') < draw.index('copyFrameUsingFrameProcessorIfNeeded:'), 'duplicate SR work'
 assert 'MLPresentationNeedsDraw(' in callback and 'if (shouldRetryEnhancedFrame)' in callback, 'refresh retry disconnected'
 assert stage.index('MLEnhancementMayPublish(') < stage.index('_pendingInterpolatedFrame = interpolatedFrame;'), 'stale publication'
@@ -262,6 +278,17 @@ assert 'dispatch_async(_vtInterpolationQueue' in fi_teardown and '_interpolation
 assert '!queuedInterpolation && _interpolationStagingSequence == sourceSequence' in decode, 'decode immediately clears async staging'
 
 assert '_interpolationStagingSequence = sourceSequence;' in decode, 'staging guard disconnected'
+assert re.search(
+    r'if \(!measureInterpolationOnly\) \{\s+_interpolationStagingSequence = sourceSequence;', decode
+), 'a timing probe must not stage source presentation'
+assert (
+    'MLEnhancementProbeDue(_lastInterpolationTimingProbeMs, nowMs,' in decode
+    and '_lastInterpolationTimingProbeMs = nowMs;' in decode
+), 'slow interpolation must be measured again at bounded intervals'
+assert decode.index('MLInterpolationCanStageAfterSource(_currentFrameSequence,') < decode.index('CVBufferRelease(_currentFrame);'), 'admission must check the previous source before replacing it'
+assert decode.index('MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs)') < decode.index('previousInterpolationSourceFrame = CVBufferRetain('), 'slow VT work can stage before the source deadline check'
+assert '_previousInterpolationSourceFrame == _currentFrame' in decode, 'stale cached buffer can still seed interpolation'
+assert 'CMTimeCompare(_previousInterpolationSourcePresentationTimeStamp, _currentFramePresentationTimeStamp) == 0' in decode, 'a reused buffer can still carry a stale timestamp'
 assert '_interpolationStagingSequence == sourceSequence' in decode, 'old completion clears newer staging'
 assert draw.index('dispatch_semaphore_wait(') < draw.index('copyFrameUsingFrameProcessorIfNeeded:'), 'SR runs before GPU admission'
 assert draw.count('dispatch_semaphore_wait(') == 1, 'double reservation'
@@ -451,6 +478,14 @@ if native_toolchain is not None:
     fi_native_replay(fi_methods.replace('dispatch_async(_vtInterpolationQueue, ^{','MLTestRunInline(^{',1),'FI-end-session-during-process',False)
     fi_native_replay(fi_methods.replace('_interpolationProcessInFlight ||','(_interpolationProcessInFlight && false) ||',1),'FI-overlapping-tasks',False)
     fi_native_replay(fi_methods.replace('!MLEnhancementShouldWait(true, _interpolationStagingStartedAtMs,','!MLEnhancementShouldWait(true, LiGetMillis(),',1),'FI-unbounded-staging',False)
+    fi_native_replay(
+        fi_methods.replace('(measureOnly || MLEnhancementMayPublish(', '(false || MLEnhancementMayPublish(', 1),
+        'FI-probe-skips-already-submitted-source', False,
+    )
+    fi_native_replay(
+        fi_methods.replace('if (measureOnly || !current ||', 'if (!current ||', 1),
+        'FI-probe-publishes-midpoint', False,
+    )
 # Hardware is opt-in, but its report contract is verified on every normal gate run.
 spec=importlib.util.spec_from_file_location('vt_hardware_probe', ROOT/'scripts/vt-enhancement-probe.py')
 vt_probe=importlib.util.module_from_spec(spec);spec.loader.exec_module(vt_probe)
