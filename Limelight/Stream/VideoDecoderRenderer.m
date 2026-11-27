@@ -1526,6 +1526,13 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // engine should re-test under the same honest window, and it resets with the
     // processor configuration that produced the measurement.
     uint64_t _interpolationCallEmaMs;
+    // The cost gate flipped Off/On at frame rate on the field session: the measured cost
+    // sat on the 36 FPS source's interval-jitter boundary, and one stale reading re-lit
+    // the engine every 48 ms. After an Off, the first On therefore needs the fresh probe's
+    // own verdict, and this pair remembers when the gate left and whether the probe that
+    // followed it already ran.
+    uint64_t _interpolationGateOffSinceMs;
+    BOOL _interpolationGateOffFreshProbe;
     NSUInteger _enhancementProcessGeneration;
     BOOL _enhancementProcessInFlight;
     CVImageBufferRef _enhancementTaskSourceFrame; // borrowed from the retained task
@@ -1578,11 +1585,12 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     double _lastLoggedMeasuredInterpolatedFps;
     // The whole-refresh answer the last cadence decision produced for queue sizing.
     long long _activeCadenceRefreshesPerFrame;
-    // The hold the last present asked the window server for, in nanoseconds, and the frame
+    // The hold the last present asked the window server for, in printed milliseconds, and the frame
     // rate it was computed for. Both exist so the answer is logged when it changes and not
     // once per frame: a cadence claim that never appears in the log is a claim nobody can
     // check against a subjective report of a real session.
-    int64_t _lastLoggedPresentationHoldNs;
+    int64_t _lastLoggedPresentationHoldMs;
+    BOOL _lastSoftHoldLogLogged;
     NSInteger _lastLoggedPresentationHoldFps;
 
     // Stats helpers
@@ -3050,7 +3058,10 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _lastDisplayRefreshRate = 0.0;
     _measuredSourceFpsEma = 0.0;
     _lastLoggedMeasuredSourceFps = 0.0;
-    _lastLoggedPresentationHoldNs = -1;
+    _lastLoggedPresentationHoldMs = -1;
+    _lastSoftHoldLogLogged = NO;
+    _interpolationGateOffSinceMs = 0;
+    _interpolationGateOffFreshProbe = NO;
     _lastLoggedPresentationHoldFps = 0;
     _frameInterpolationNoSlotWidth = 0;
     _frameInterpolationNoSlotHeight = 0;
@@ -3665,14 +3676,38 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             CMTime sourceInterval = CMTimeSubtract(presentationTimeStamp, _currentFramePresentationTimeStamp);
             if (CMTIME_IS_NUMERIC(sourceInterval) && CMTimeCompare(sourceInterval, kCMTimeZero) > 0) {
                 const double sourceIntervalMs = CMTimeGetSeconds(sourceInterval) * 1000.0;
-                // A later source replaces this pair even if VT has time left in its processing budget.
-                if (MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs)) {
+                // Not const: the re-entry window below may demote a passing verdict to NO.
+                BOOL gateOn = MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs,
+                    _activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency);
+                if (gateOn && _interpolationGateOffSinceMs != 0) {
+                    // The Off left this gate recently: a single passing interval against a stale
+                    // ema is the 48 ms self-sustained ring the field session measured. The first
+                    // re-entry is admitted only while the probe that ran after the Off is fresh;
+                    // the probe is what the engine re-arms with, so its verdict must be recent.
+                    const uint64_t gateNowMs = LiGetMillis();
+                    const uint64_t gateProbeWindowMs = MAX((uint64_t)2000, _interpolationProbeBackoffMs);
+                    if (!(_interpolationGateOffFreshProbe &&
+                          gateNowMs >= _interpolationGateOffSinceMs &&
+                          gateNowMs - _interpolationGateOffSinceMs <= gateProbeWindowMs)) {
+                        gateOn = NO;
+                    }
+                }
+                if (gateOn) {
+                    if (_interpolationGateOffSinceMs != 0) {
+                        _interpolationGateOffSinceMs = 0;
+                        _interpolationGateOffFreshProbe = NO;
+                    }
                     previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
                 } else {
                     const uint64_t nowMs = LiGetMillis();
+                    if (_interpolationGateOffSinceMs == 0) {
+                        _interpolationGateOffSinceMs = nowMs;
+                        _interpolationGateOffFreshProbe = NO;
+                    }
                     if (MLEnhancementProbeDue(_lastInterpolationTimingProbeMs, nowMs,
                                               MAX((uint64_t)2000, _interpolationProbeBackoffMs))) {
                         _lastInterpolationTimingProbeMs = nowMs;
+                        _interpolationGateOffFreshProbe = YES;
                         measureInterpolationOnly = YES;
                         previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
                     }
@@ -3709,8 +3744,16 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             }
             _interpolationStagingStartedAtMs = LiGetMillis();
             uint64_t previousInterpolationStagingBudgetMs = _interpolationStagingBudgetMs;
-            _interpolationStagingBudgetMs = MLEnhancementAdaptiveBudgetMs(
+            const uint64_t nextInterpolationStagingBudgetMs = MLEnhancementAdaptiveBudgetMs(
                 _interpolationCallEmaMs, _lastDisplayRefreshRate, self.frameRate);
+            // The ema's integer 18/19 ms wobble maps to a 23/24 ms budget, and one log line
+            // per single-step wobble is the 563-lines-per-7-minutes tail of the same
+            // oscillation the gate now holds: a one-step nudge stays put, a real move logs.
+            if (nextInterpolationStagingBudgetMs - _interpolationStagingBudgetMs > 2) {
+                _interpolationStagingBudgetMs = nextInterpolationStagingBudgetMs;
+            } else if (_interpolationStagingBudgetMs - nextInterpolationStagingBudgetMs > 2) {
+                _interpolationStagingBudgetMs = nextInterpolationStagingBudgetMs;
+            }
             // One line per budget change (not per frame) so a session log can
             // replay the engine's cost distribution and the window it was
             // charged against, instead of only the calls that tripped it.
@@ -4731,7 +4774,10 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                         // processor/configuration which actually ran the call.
                         if (runTask && processor == self->_frameInterpolationProcessor &&
                             generation == self->_interpolationProcessGeneration) {
-                            if (processElapsedMs != UINT64_MAX) {
+                            // A measure-only probe measures the gate, it does not drive it:
+                            // charging probe cost into the running ema lets a probe that ran
+                            // under a different scene move the deadline of the next real frame.
+                            if (!measureOnly && processElapsedMs != UINT64_MAX) {
                                 self->_interpolationCallEmaMs = self->_interpolationCallEmaMs == 0
                                     ? processElapsedMs
                                     : (self->_interpolationCallEmaMs * 3 + processElapsedMs) / 4;
@@ -4902,9 +4948,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
         *outputFpsOut = outputFps;
     }
 
-    const int64_t holdNs = (int64_t)llround(hold * 1e9);
-    if (_lastLoggedPresentationHoldNs != holdNs || _lastLoggedPresentationHoldFps != outputFps) {
-        _lastLoggedPresentationHoldNs = holdNs;
+    // The field log printed 4786 copies of this line per 7 minutes: the panel refresh
+    // rate re-quantises every display-link tick, so a nanosecond key changes on a wobble
+    // that the printed millisecond value already rounds away. Key on what is printed.
+    const int64_t holdMs = (int64_t)llround(hold * 1000.0);
+    if (_lastLoggedPresentationHoldMs != holdMs || _lastLoggedPresentationHoldFps != outputFps) {
+        _lastLoggedPresentationHoldMs = holdMs;
         _lastLoggedPresentationHoldFps = outputFps;
         Log(LOG_I, @"[video] Presentation cadence bound: each frame held %.3fms on %.2fHz display at %d FPS output",
             hold * 1000.0,
@@ -5932,6 +5981,13 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             CFTimeInterval presentationHoldSeconds = 0.0;
             if (hasInterpolatedPair &&
                 [self presentationCadenceForInterpolationHold:&presentationHoldSeconds outputFps:NULL]) {
+                @synchronized(self) {
+                    if (!_lastSoftHoldLogLogged) {
+                        _lastSoftHoldLogLogged = YES;
+                        Log(LOG_I, @"[video] Presentation cadence locked (soft hold): interpolated pair paced at %.3fms/frame on %.2fHz display",
+                            presentationHoldSeconds * 1000.0, _lastDisplayRefreshRate);
+                    }
+                }
                 [commandBuffer presentDrawable:drawable afterMinimumDuration:presentationHoldSeconds];
             } else {
                 [commandBuffer presentDrawable:drawable];

@@ -1178,8 +1178,26 @@ static inline NSPoint MLClampFreeMousePointToExitEdge(NSPoint point,
         if (![self edgeSensorPointIsOnVisibleHandle:point]) [self resetEdgeSensorSummonState];
         return NO;
     }
-    if (inside) [self beginEdgeSensorDwellTimerIfNeededForEdge:self.edgeMenuDockEdge];
-    else [self resetEdgeSensorSummonState];
+    if (inside) {
+        // The inside/outside pair is the difference between "the sensor sees the band"
+        // and "the band is not where the pointer is": the 56pt-window geometry that sat
+        // outside this log for a field session can no longer stay silent in either state.
+        double insideNow = [self nowMs];
+        if (insideNow - self.edgeSensorLastInsideLogMs >= 1000.0) {
+            self.edgeSensorLastInsideLogMs = insideNow;
+            Log(LOG_D, @"[diag] Edge sensor inside: point=(%.1f,%.1f) edge=%ld captured=%d",
+                point.x, point.y, (long)self.edgeMenuDockEdge, self.isMouseCaptured);
+        }
+        [self beginEdgeSensorDwellTimerIfNeededForEdge:self.edgeMenuDockEdge];
+    } else {
+        double outsideNow = [self nowMs];
+        if (outsideNow - self.edgeSensorLastRefusalLogMs >= 1000.0) {
+            self.edgeSensorLastRefusalLogMs = outsideNow;
+            Log(LOG_D, @"[diag] Edge sensor outside: point=(%.1f,%.1f) edge=%ld captured=%d",
+                point.x, point.y, (long)self.edgeMenuDockEdge, self.isMouseCaptured);
+        }
+        [self resetEdgeSensorSummonState];
+    }
     return NO;
 }
 

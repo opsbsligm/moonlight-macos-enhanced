@@ -182,6 +182,7 @@ static NSEventModifierFlags MLRelevantShortcutModifiers(NSEventModifierFlags f) 
 @property NSInteger summons;
 @property NSString *reason;
 @property double edgeSensorLastSampleLogMs;
+@property double edgeSensorLastInsideLogMs;
 @property BOOL edgeMenuClickConsumedLocally;
 - (BOOL)expandEdgeMenuForLocalClickAtCurrentPointer;
 - (double)nowMs;
@@ -302,14 +303,18 @@ int main(void) { @autoreleasepool {
         s = fresh(edge); s.view.bounds = NSMakeRect(-80,35,sizes[size].width,sizes[size].height);
         NSRect dock = [s expandedFrameForEdgeMenuButtonInBounds:s.view.bounds];
         NSRect region = [s edgeSensorActivationRectInBounds:s.view.bounds];
+        NSRect legacyRegion = [s edgeSensorActivationRectInBoundsLegacy:s.view.bounds];
         CHECK(NSContainsRect(s.view.bounds,dock), "all four placements fit wide, portrait and small bounds");
         CHECK(NSContainsRect(s.view.bounds,region), "activation never extends onto another display");
         CHECK((edge <= 2 ? NSWidth(region) : NSHeight(region)) == MLEdgeSensorBandWidth, "activation depth matches the twelve-point band");
         CHECK(MLEdgeSensorBandWidth >= 8 && MLEdgeSensorBandWidth <= 16, "band is findable after release yet far shallower than the old 24pt regression");
-        CHECK((edge <= 2 ? NSHeight(region) : NSWidth(region)) == 56, "activation is limited to the handle span");
-        CHECK(![s edgeSensorPointIsInHoverRegion:NSMakePoint(NSMidX(dock),NSMidY(dock)) edge:edge], "expanded interaction box is not an activation region");
-        NSPoint outsideSpan = edge <= 2 ? NSMakePoint(NSMidX(region),NSMinY(s.view.bounds)+1) : NSMakePoint(NSMinX(s.view.bounds)+1,NSMidY(region));
-        CHECK(![s edgeSensorPointIsInHoverRegion:outsideSpan edge:edge], "rest of the screen edge cannot summon controls");
+        CHECK((edge <= 2 ? NSHeight(region) : NSWidth(region)) == (edge <= 2 ? NSHeight(s.view.bounds) : NSWidth(s.view.bounds)), "the band runs the whole edge, not only the handle span");
+        CHECK(NSIntersectionRect(region, legacyRegion).size.width > 0.5 && NSIntersectionRect(region, legacyRegion).size.height > 0.5, "the full-edge band still covers the handle span");
+        CHECK(![s edgeSensorPointIsInHoverRegion:NSMakePoint(NSMidX(dock),NSMidY(dock)) edge:edge], "expanded interaction box centre is deeper than the activation band");
+        // The span-limited window is the old geometry: a pointer aimed at the middle of
+        // the edge but outside the 56pt window must no longer be one of the silent ones.
+        NSPoint offSpan = edge <= 2 ? NSMakePoint(NSMidX(region),NSMinY(s.view.bounds)+1) : NSMakePoint(NSMinX(s.view.bounds)+1,NSMidY(region));
+        CHECK([s edgeSensorPointIsInHoverRegion:offSpan edge:edge], "the rest of the screen edge can summon controls");
         // Edge-band hysteresis geometry: a pointer that has just crossed the edge must still
         // be recognised as "aiming at the dock" so the exit handler holds the capture. A
         // point that has genuinely travelled away must not. The allowance is one band-width
@@ -548,7 +553,10 @@ int main(void) { @autoreleasepool {
         s.suppressFreeMouseEdgeUncaptureUntilMs = 0;
         NSRect after = [s edgeMenuVisibleHandleRectInBounds:s.view.bounds];
         NSRect band = [s edgeSensorActivationRectInBounds:s.view.bounds];
-        CHECK(fabs(NSMidY(band) - NSMidY(after)) <= 0.6, "the activation band follows the dragged tab");
+        CHECK(fabs(NSMidY(band) - NSMidY(s.view.bounds)) < 0.6,
+              "the activation band stays the full edge after the tab moves");
+        CHECK(NSMinY(band) <= NSMinY(after) + 0.6 && NSMaxY(band) >= NSMaxY(after) - 0.6,
+              "the activation band still covers the dragged tab");
         NSRect anchor = NSMakeRect(-1900.0, 320.0, 1920.0, 1080.0);   // second display, left of main
         NSRect panel = [s collapsedFrameForEdgeMenuPanelInScreenRect:anchor];
         CGFloat onScreen = NSMidY(NSIntersectionRect(panel, anchor));
@@ -1201,6 +1209,7 @@ def run_runtime_probe(objc, menu, internal, helpers="", self_test=False):
         '- (BOOL)isPointInsideEdgeMenuInteractionRect:',
         '- (BOOL)edgeMenuButtonExpanded', '- (BOOL)edgeMenuDragging', '- (BOOL)edgeMenuMenuVisible',
         '- (void)transitionEdgeMenuToPhase:', '- (void)handleEdgeMenuHover', '- (NSRect)edgeSensorActivationRectInBounds:',
+        '- (NSRect)edgeSensorActivationRectInBoundsLegacy:',
         '- (void)deactivateEdgeMenuTemporaryReleaseAndRecaptureIfNeeded:', '- (void)setEdgeMenuButtonExpanded:',
         '- (NSTimeInterval)edgeMenuReturnDelay', '- (BOOL)edgeMenuPhaseIsOnScreen:',
         '- (void)cancelEdgeMenuAutoCollapse', '- (void)scheduleEdgeMenuAutoCollapse',
