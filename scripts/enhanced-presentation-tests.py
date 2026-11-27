@@ -296,6 +296,9 @@ assert (
 ), 'slow interpolation must be measured again at bounded intervals'
 assert decode.index('MLInterpolationCanStageAfterSource(_currentFrameSequence,') < decode.index('CVBufferRelease(_currentFrame);'), 'admission must check the previous source before replacing it'
 assert decode.index('MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs,') < decode.index('previousInterpolationSourceFrame = CVBufferRetain('), 'slow VT work can stage before the source deadline check'
+assert 'gateNowMs - _interpolationGateOffProbeMs > gateProbeWindowMs' in decode, 're-arm window anchored to the Off instead of the probe verdict'
+assert re.search(r'if \(_interpolationGateOffSinceMs == 0\) \{\s+_interpolationGateOffSinceMs = nowMs;\s+_interpolationGateOffFreshProbe = NO;\s+_interpolationGateOffProbeMs = 0;', decode), 'gate re-entry state not reset on a fresh Off'
+assert re.search(r'if \(measureOnly && processor == self->_frameInterpolationProcessor &&\s+generation == self->_interpolationProcessGeneration\) \{\s+self->_interpolationGateOffProbeMs = LiGetMillis\(\);', stage), 'probe verdict never anchors the re-arm window'
 assert '_previousInterpolationSourceFrame == _currentFrame' in decode, 'stale cached buffer can still seed interpolation'
 assert 'CMTimeCompare(_previousInterpolationSourcePresentationTimeStamp, _currentFramePresentationTimeStamp) == 0' in decode, 'a reused buffer can still carry a stale timestamp'
 assert '_interpolationStagingSequence == sourceSequence' in decode, 'old completion clears newer staging'
@@ -494,6 +497,10 @@ if native_toolchain is not None:
     fi_native_replay(
         fi_methods.replace('if (measureOnly || !current ||', 'if (!current ||', 1),
         'FI-probe-publishes-midpoint', False,
+    )
+    fi_native_replay(
+        fi_methods.replace('if (processElapsedMs != UINT64_MAX) {', 'if (!measureOnly && processElapsedMs != UINT64_MAX) {', 1),
+        'FI-probe-never-charges-estimate', False,
     )
 # Hardware is opt-in, but its report contract is verified on every normal gate run.
 spec=importlib.util.spec_from_file_location('vt_hardware_probe', ROOT/'scripts/vt-enhancement-probe.py')
