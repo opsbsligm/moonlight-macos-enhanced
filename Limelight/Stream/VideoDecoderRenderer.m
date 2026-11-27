@@ -3676,7 +3676,8 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             CMTime sourceInterval = CMTimeSubtract(presentationTimeStamp, _currentFramePresentationTimeStamp);
             if (CMTIME_IS_NUMERIC(sourceInterval) && CMTimeCompare(sourceInterval, kCMTimeZero) > 0) {
                 const double sourceIntervalMs = CMTimeGetSeconds(sourceInterval) * 1000.0;
-                const BOOL gateOn = MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs,
+                // Not const: the re-entry window below may demote a passing verdict to NO.
+                BOOL gateOn = MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs,
                     _activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency);
                 if (gateOn && _interpolationGateOffSinceMs != 0) {
                     // The Off left this gate recently: a single passing interval against a stale
