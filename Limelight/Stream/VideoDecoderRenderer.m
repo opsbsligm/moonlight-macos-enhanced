@@ -1533,6 +1533,12 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     // followed it already ran.
     uint64_t _interpolationGateOffSinceMs;
     BOOL _interpolationGateOffFreshProbe;
+    // The re-arm window is anchored to the probe's own completion, not to the Off: a window
+    // that closes before its anchor probe has finished never sees a fresh verdict at all,
+    // which is how the cold-start session pinned a pre-measurement ema and starved the
+    // re-arm for a ten minute session. Zero means "the Off is out and no probe has finished".
+    uint64_t _interpolationGateOffProbeMs;
+    BOOL _interpolationGateOffLogged;
     NSUInteger _enhancementProcessGeneration;
     BOOL _enhancementProcessInFlight;
     CVImageBufferRef _enhancementTaskSourceFrame; // borrowed from the retained task
@@ -3062,6 +3068,8 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     _lastSoftHoldLogLogged = NO;
     _interpolationGateOffSinceMs = 0;
     _interpolationGateOffFreshProbe = NO;
+    _interpolationGateOffProbeMs = 0;
+    _interpolationGateOffLogged = NO;
     _lastLoggedPresentationHoldFps = 0;
     _frameInterpolationNoSlotWidth = 0;
     _frameInterpolationNoSlotHeight = 0;
@@ -3679,16 +3687,20 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                 // Not const: the re-entry window below may demote a passing verdict to NO.
                 BOOL gateOn = MLInterpolationCanFinishBeforeNextSource(sourceIntervalMs, _interpolationCallEmaMs,
                     _activeFrameInterpolationEngine == MLActiveVideoFrameInterpolationEngineVTLowLatency);
-                if (gateOn && _interpolationGateOffSinceMs != 0) {
-                    // The Off left this gate recently: a single passing interval against a stale
-                    // ema is the 48 ms self-sustained ring the field session measured. The first
-                    // re-entry is admitted only while the probe that ran after the Off is fresh;
-                    // the probe is what the engine re-arms with, so its verdict must be recent.
+                if (gateOn && _interpolationGateOffSinceMs != 0 &&
+                    !_interpolationGateOffProbeMs) {
+                    // The Off left this gate and no probe finished after it: a single passing
+                    // interval against the ema the Off measured against is the 48 ms
+                    // self-sustained ring the field session measured. The probe is what the
+                    // engine re-arms with, so the first re-entry waits for its verdict.
+                    gateOn = NO;
+                } else if (gateOn && _interpolationGateOffSinceMs != 0) {
+                    // The probe that measured this re-arm has finished: allow the engine back
+                    // while that verdict is still recent, then close the window.
                     const uint64_t gateNowMs = LiGetMillis();
                     const uint64_t gateProbeWindowMs = MAX((uint64_t)2000, _interpolationProbeBackoffMs);
-                    if (!(_interpolationGateOffFreshProbe &&
-                          gateNowMs >= _interpolationGateOffSinceMs &&
-                          gateNowMs - _interpolationGateOffSinceMs <= gateProbeWindowMs)) {
+                    if (gateNowMs >= _interpolationGateOffProbeMs &&
+                        gateNowMs - _interpolationGateOffProbeMs > gateProbeWindowMs) {
                         gateOn = NO;
                     }
                 }
@@ -3696,6 +3708,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     if (_interpolationGateOffSinceMs != 0) {
                         _interpolationGateOffSinceMs = 0;
                         _interpolationGateOffFreshProbe = NO;
+                        _interpolationGateOffProbeMs = 0;
                     }
                     previousInterpolationSourceFrame = CVBufferRetain(_previousInterpolationSourceFrame);
                 } else {
@@ -3703,6 +3716,12 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                     if (_interpolationGateOffSinceMs == 0) {
                         _interpolationGateOffSinceMs = nowMs;
                         _interpolationGateOffFreshProbe = NO;
+                        _interpolationGateOffProbeMs = 0;
+                        if (!_interpolationGateOffLogged) {
+                            _interpolationGateOffLogged = YES;
+                            Log(LOG_W, @"[video] Frame interpolation cost gate off: measured %.0fms VT calls against a %.1fms source interval; a probe re-arms it",
+                                (double)_interpolationCallEmaMs, sourceIntervalMs);
+                        }
                     }
                     if (MLEnhancementProbeDue(_lastInterpolationTimingProbeMs, nowMs,
                                               MAX((uint64_t)2000, _interpolationProbeBackoffMs))) {
@@ -4774,10 +4793,13 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                         // processor/configuration which actually ran the call.
                         if (runTask && processor == self->_frameInterpolationProcessor &&
                             generation == self->_interpolationProcessGeneration) {
-                            // A measure-only probe measures the gate, it does not drive it:
-                            // charging probe cost into the running ema lets a probe that ran
-                            // under a different scene move the deadline of the next real frame.
-                            if (!measureOnly && processElapsedMs != UINT64_MAX) {
+                            // A measure-only probe charges the running estimate as well as
+                            // reporting it: the re-arm window is anchored to the probe's
+                            // verdict, and a verdict the estimate never absorbed cannot lower
+                            // itself back down. The 2246 field session healed in seconds for
+                            // exactly this reason; holding the estimate out of the probe is
+                            // what pinned a cold-start reading and starved the re-arm forever.
+                            if (processElapsedMs != UINT64_MAX) {
                                 self->_interpolationCallEmaMs = self->_interpolationCallEmaMs == 0
                                     ? processElapsedMs
                                     : (self->_interpolationCallEmaMs * 3 + processElapsedMs) / 4;
@@ -4804,6 +4826,14 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
                                 // A healthy probe cleared the breaker: forget the backoff.
                                 self->_interpolationProbeBackoffMs = 0;
                             }
+                        }
+                        // The re-arm window is anchored to this probe's completion whether or
+                        // not the call ran: a deadline-dropped probe still ends the wait for a
+                        // verdict, and anchoring only the charged runs would lock the gate
+                        // while probes keep arriving that never stamp.
+                        if (measureOnly && processor == self->_frameInterpolationProcessor &&
+                            generation == self->_interpolationProcessGeneration) {
+                            self->_interpolationGateOffProbeMs = LiGetMillis();
                         }
                         self->_interpolationProcessInFlight = NO;
                         BOOL current = processor == self->_frameInterpolationProcessor &&

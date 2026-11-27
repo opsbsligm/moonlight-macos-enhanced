@@ -72,6 +72,7 @@ static NSString *MLVideoFrameInterpolationEngineName(MLActiveVideoFrameInterpola
     uint64_t _lastInterpolationTimingProbeMs;
     uint64_t _interpolationGateOffSinceMs;
     BOOL _interpolationGateOffFreshProbe;
+    uint64_t _interpolationGateOffProbeMs;
     BOOL _interpolationProcessInFlight, _frameInterpolationWarmupInFlight, _frameInterpolationCadenceForced;
     NSInteger _frameInterpolationWarmupWidth, _frameInterpolationWarmupHeight;
     NSInteger _frameInterpolationInputWidth, _frameInterpolationInputHeight;
@@ -152,9 +153,10 @@ int main(void) { @autoreleasepool {
         assert(MLPresentationNeedsDraw(7, 0, r->_lastPresentedFrameSequence, 0, false) == !submitted);
         assert(stageMeasurement(r, YES));
         waitFor(r.finished);
-        // The probe measured the gate but did not charge the running estimate:
-        // a probe that ran under this scene must not move the next real frame's deadline.
-        assert(p.calls == 1 && r->_interpolationCallEmaMs == 12);
+        // The probe charges the running estimate as well as reporting it: the re-arm
+        // window is anchored to the probe's verdict, and a verdict the estimate never
+        // absorbed cannot lower itself back down after a cold-start pin.
+        assert(p.calls == 1 && r->_interpolationCallEmaMs == (12 * 3 + 2) / 4);
         assert(MLInterpolationCanFinishBeforeNextSource(1000.0 / 90.0, r->_interpolationCallEmaMs, true));
         assert(!r->_pendingInterpolatedFrame && !r->_interpolationStagingSequence);
         dispose(r);
