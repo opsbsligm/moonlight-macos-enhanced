@@ -1462,6 +1462,9 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     VideoStats _activeWndVideoStats;
     MLActualPresentationState _actualPresentationState;
     CFTimeInterval _lastActualPresentationLogTime;
+    BOOL _actualPresentationZeroSteadyState;
+    uint64_t _actualPresentationZeroSinceMs;
+    uint64_t _actualPresentationLastDrawableID;
     int _lastFrameNumber;
 
     NSString *_runtimeHostKey;
@@ -1644,6 +1647,7 @@ static MTLViewport MLViewportForContent(MLContentRect content)
     BOOL _preparedHDRDisplaySupportsEDRPresentation;
     CGDirectDisplayID _preparedHDRDisplayID;
     BOOL _metalDrawScheduled;
+    uint64_t _metalDrawScheduledMs;
     NSUInteger _lastLoggedDrawableWidth;
     NSUInteger _lastLoggedDrawableHeight;
     OSType _lastLoggedDecodedPixelFormat;
@@ -1879,6 +1883,9 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
 {
     @synchronized(self) {
         MLActualPresentationReset(&_actualPresentationState);
+        _actualPresentationZeroSteadyState = NO;
+        _actualPresentationZeroSinceMs = 0;
+        _actualPresentationLastDrawableID = 0;
         _lastActualPresentationLogTime = 0.0;
         if (_currentFrame) {
             CVBufferRelease(_currentFrame);
@@ -1935,14 +1942,28 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
         MLActualPresentationReading reading = MLActualPresentationRead(&_actualPresentationState, now);
         _lastActualPresentationLogTime = now;
         if (!reading.available) {
-            Log(LOG_I, @"[video] Actual drawable presentation unavailable samples=%lu presented=%llu unpresented=%llu invalid=%llu callbackTime=%.6f latestTime=%.6f now=%.6f",
-                (unsigned long)reading.count,
-                (unsigned long long)_actualPresentationState.presented,
-                (unsigned long long)_actualPresentationState.unpresented,
-                (unsigned long long)_actualPresentationState.invalid,
-                time, reading.latestTime, now);
+            // An all-zero steady state (frames shown while CAMetalLayer stops
+            // stamping presentedTime, e.g. the app is not the active one) used
+            // to log one line per second. Log the transition once with
+            // disambiguating context, then only a per-minute heartbeat.
+            uint64_t nowMs = LiGetMillis();
+            if (!_actualPresentationZeroSteadyState) {
+                _actualPresentationZeroSteadyState = YES;
+                _actualPresentationZeroSinceMs = nowMs;
+                Log(LOG_W, @"[video] Actual drawable presentation went all-zero: appActive=%d drawableID=%llu unpresented=%llu presented=%llu (CAMetalLayer stopped stamping while the stream continues)",
+                    (int)[NSApp isActive],
+                    (unsigned long long)_actualPresentationLastDrawableID,
+                    (unsigned long long)_actualPresentationState.unpresented,
+                    (unsigned long long)_actualPresentationState.presented);
+            } else if (nowMs - (nowMs / 60000) * 60000 < 1000) {
+                Log(LOG_I, @"[video] Actual drawable presentation still all-zero: unpresented=%llu for %llums appActive=%d",
+                    (unsigned long long)_actualPresentationState.unpresented,
+                    (unsigned long long)(nowMs - _actualPresentationZeroSinceMs),
+                    (int)[NSApp isActive]);
+            }
             return;
         }
+        _actualPresentationZeroSteadyState = NO;
         Log(LOG_I, @"[video] Actual drawable present fps=%.2f frameP95=%.3fms submitWaitP95=%.3fms waitAvailable=%d samples=%lu source=%llu interpolated=%llu scaled=%llu",
             reading.fps, reading.frameP95Ms, reading.waitP95Ms, reading.waitAvailable,
             (unsigned long)reading.count,
@@ -2660,6 +2681,7 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
             return;
         }
         _metalDrawScheduled = YES;
+        _metalDrawScheduledMs = LiGetMillis();
     }
 
     void (^drawBlock)(void) = ^{
@@ -2684,6 +2706,30 @@ static CGDirectDisplayID getDisplayID(NSScreen* screen)
     } else {
         dispatch_async(dispatch_get_main_queue(), drawBlock);
     }
+}
+
+- (void)performWatchdogEnhancedDraw
+{
+    // Fallback for the posted draw block when the main runloop has been busy
+    // longer than a frame period (CUA screen capture/AX/paste bursts hold it
+    // for seconds; submitted=0 + queueAvg=0 freeze windows). Runs on the
+    // display-link thread; drawInMTKView: rechecks its own guards and the
+    // drawable pool is handed out on this same thread in normal operation.
+    @synchronized(self) {
+        if (!_metalDrawScheduled) {
+            return;
+        }
+        if (LiGetMillis() - _metalDrawScheduledMs < 100) {
+            return;
+        }
+        _metalDrawScheduled = NO;
+        if (_activeRendererMode != MLActiveVideoRendererModeEnhanced || _metalView == nil) {
+            return;
+        }
+        Log(LOG_W, @"[video] Main-thread draw watchdog: posted draw pending %llums, drawing from display link",
+            (unsigned long long)(LiGetMillis() - _metalDrawScheduledMs));
+    }
+    [_metalView draw];
 }
 
 - (void)publishVideoRuntimeStatusSummary:(NSString *)summaryKey
@@ -6003,6 +6049,7 @@ void decompressionOutputCallback(void *decompressionOutputRefCon, void *sourceFr
             [drawable addPresentedHandler:^(id<MTLDrawable> presentedDrawable) {
                 __strong typeof(weakRenderer) renderer = weakRenderer;
                 if (!renderer) return;
+                renderer->_actualPresentationLastDrawableID = presentedDrawable.drawableID;
                 [renderer recordActualDrawableTime:presentedDrawable.presentedTime
                                        submittedAt:submittedAt generation:observationGeneration
                                      interpolated:presentingInterpolatedFrame scaled:actuallyScaled];
@@ -6163,6 +6210,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink,
 {
     VideoDecoderRenderer *self = (__bridge VideoDecoderRenderer *)displayLinkContext;
     [self->_pacer signalVsync];
+    [self performWatchdogEnhancedDraw];
     PML_DEPACKETIZER_CONTEXT depacketizerCtx = (PML_DEPACKETIZER_CONTEXT)self.depacketizerContext;
     if (depacketizerCtx == NULL) {
         return kCVReturnSuccess;
